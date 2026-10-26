@@ -1,0 +1,505 @@
+/* A milestone bar, Gr8r's: a 24px bar with a 6px radius, filled with its
+   status hue at 16% over the surface and outlined in the full hue (--c,
+   set per status below, docs/architecture.md §8.2 "Status colours":
+   overdue red, at risk amber, on track green, complete the neutral
+   --text-2, never green beside a red bar; an inactive project grey), so
+   its edge reads at 3:1 or more on the surface (WCAG 1.4.11). A complete
+   bar steps back by a lighter fill and --text-2 words, never by opacity
+   (a faded label falls under 4.5:1 on the tint). A missing input is a
+   dashed --text-3 outline on the surface. The status is never the hue
+   alone (WCAG 1.4.1): the bar's name is led by its StatusMark, and the
+   10px diamond at the due date takes the same shapes (overdue solid, at
+   risk half filled, on track hollow, complete solid with a tick, missing
+   a broken outline, inactive a grey outline). The name is --text; the
+   receipts are --text-2, the tags small pills, the "Missing: …" line
+   amber (4.5:1 on every bar tint; test/timeline-contrast.test.ts).
+   Stacking (inside the chart body): bars 2, diamonds and handle 3, the
+   live tip 4; the sticky lane column (5) and header (6) cover them while
+   scrolling. */
+
+.item {
+  position: absolute;
+  height: 24px;
+}
+
+/* scroll-margin keeps keyboard focus clear of the sticky lane column and
+   header when the browser scrolls a focused bar into view. */
+.bar {
+  --c: var(--gray);
+
+  scroll-margin: 60px 24px 12px calc(var(--timeline-lane-width, 264px) + 24px);
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  padding: 0 12px 0 9px;
+  /* clip, not hidden: hidden would make the bar a scroll container and
+     pin its sticky content to the bar instead of the chart. */
+  overflow: clip;
+  border: 1px solid var(--c);
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--c) 16%, var(--surface));
+  color: var(--text);
+  font-size: var(--fs-sm);
+  text-align: left;
+  white-space: nowrap;
+  transition:
+    border-color var(--dur) ease,
+    box-shadow var(--dur) ease;
+}
+
+/* Shrink-wrapped so it can slide: sticky never leaves the bar, so the
+   content moves right until it meets the bar's end. It sticks 10px past
+   the lane column (--timeline-lane-width, set by the chart from
+   LANE_WIDTH). It wraps onto a clipped second line, so in a narrow
+   bar the trailing receipts drop out whole before the name truncates.
+   Its width is also capped to the part of the bar still visible beside
+   the lane column: the bar's end (--bar-end, track px) less the chart's
+   scroll offset (--timeline-scroll-x), the 10px gap and the bar's right
+   border and padding (13px). Without the cap a bar mostly scrolled under
+   the lane column keeps its full-width content pinned to its end, and the
+   column covers the name ("ards 0/2 Next"). */
+.content {
+  position: sticky;
+  left: calc(var(--timeline-lane-width, 264px) + 10px);
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: center;
+  column-gap: 6px;
+  min-width: 0;
+  max-width: min(
+    100%,
+    calc(var(--bar-end, 100000px) - var(--timeline-scroll-x, 0px) - 23px)
+  );
+  height: 22px;
+  overflow: hidden;
+}
+
+.label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-soft);
+  line-height: 22px;
+}
+
+/* The ◂ before a name whose bar starts before the window, then the
+   status mark (aria-hidden: the bar's name says the status). */
+.label .cue {
+  margin-right: 5px;
+}
+
+.mark {
+  display: inline-flex;
+  flex: none;
+  margin-right: 6px;
+  vertical-align: -2px;
+}
+
+.progress,
+.missingLine {
+  flex: none;
+  font-size: var(--fs-xs);
+  line-height: 22px;
+  font-variant-numeric: tabular-nums;
+}
+
+.progress {
+  color: var(--text-2);
+}
+
+/* "Next", "↑5": Gr8r's small neutral pill. */
+.tag {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--r-chip);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The missing rubric input blocks allocation: the warning hue, which reads
+   4.5:1 on every bar tint. */
+.missingLine {
+  color: var(--amber);
+  font-weight: var(--fw-medium);
+}
+
+.cue {
+  flex: none;
+  font-size: var(--fs-2xs);
+  line-height: 1;
+  color: var(--text-2);
+}
+
+.cueEnd {
+  margin-left: auto;
+}
+
+/* ---- status ----------------------------------------------------------- */
+
+.on_track {
+  --c: var(--green);
+}
+
+.at_risk {
+  --c: var(--amber);
+}
+
+.overdue {
+  --c: var(--red);
+}
+
+/* Finished: the neutral grey (done keeps a neutral mark, never green
+   next to red), stepped back like Gr8r's done bars by a lighter fill and
+   --text-2 words instead of Gr8r's 60% opacity, which would take the label
+   under 4.5:1. The edge keeps the full --text-2, so the bar stays
+   visible. */
+.done {
+  --c: var(--text-2);
+
+  background: color-mix(in srgb, var(--c) 10%, var(--surface));
+}
+
+.done .label {
+  color: var(--text-2);
+}
+
+/* Missing input (rubric-invalid): no hue to claim, a dashed --text-3
+   outline (5.6:1) on the plain surface, the "Missing: …" line saying what
+   to add. */
+.missing {
+  --c: var(--text-3);
+
+  border: 1px dashed var(--text-3);
+  background: var(--surface);
+}
+
+/* An inactive project: greys only, never loud; a lighter fill (8%) so
+   its grey status mark keeps 3:1 on the bar. */
+.muted {
+  --c: var(--gray);
+
+  background: color-mix(in srgb, var(--c) 8%, var(--surface));
+  color: var(--text-2);
+}
+
+.muted .missingLine {
+  color: var(--text-3);
+}
+
+/* The open milestone: the accent ring Gr8r uses for a selection. */
+.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Forced colours drop the ring's shadow: an outline instead. */
+@media (forced-colors: active) {
+  .selected {
+    outline: 2px solid Highlight;
+    outline-offset: 1px;
+  }
+}
+
+.bar:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* Hover doubles the edge in its own hue (the outline already has the
+   full hue, Gr8r's hover). The fill stays: a deeper tint would take the
+   amber "Missing: …" line under 4.5:1. */
+@media (hover: hover) and (width >= 901px) {
+  .bar:hover {
+    box-shadow: inset 0 0 0 1px var(--c);
+  }
+
+  .missing:hover {
+    border-color: var(--text-2);
+    background: var(--surface-2);
+    box-shadow: none;
+  }
+
+  .selected:hover {
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+
+  .point:hover + .diamond {
+    box-shadow:
+      0 0 0 1.5px var(--surface),
+      0 0 0 3.5px var(--accent-line);
+  }
+}
+
+/* A zero-length milestone is a Gantt milestone proper: no box, the
+   diamond alone (it still is the button, 12px wide, centred on it). */
+.point,
+.point:hover,
+.point.missing,
+.point.selected {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* ---- the due-date diamond --------------------------------------------- */
+
+/* Gr8r's milestone diamond (a 2px-radius square turned 45°) in the bar's
+   hue, ringed in the surface so it sits cleanly on the bar's end. Its
+   shape says the status as StatusMark's diamonds do (never the hue
+   alone): overdue solid, at risk the lower half filled, on track hollow,
+   complete solid with a tick, missing a dotted --text-3 outline, an
+   inactive lane a grey outline. --hollow is the open interior (the
+   surface; Canvas in forced colours). */
+.diamond {
+  --c: var(--gray);
+  --hollow: var(--surface);
+
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  /* 2px, not 1.5: Chrome snaps a 1.5px border down to 1px at 1x, and a
+     1px outline turned 45° washes out below 3:1 in the greys. */
+  border: 2px solid var(--c);
+  border-radius: 2px;
+  background: var(--c);
+  box-shadow: 0 0 0 1.5px var(--hollow);
+  transform: rotate(45deg);
+  pointer-events: none;
+  transition:
+    background-color var(--dur) ease,
+    box-shadow var(--dur) ease;
+}
+
+/* Complete takes StatusMark's neutral --text (never green next to red). */
+.d_done {
+  --c: var(--text);
+}
+
+.d_overdue {
+  --c: var(--red);
+}
+
+/* On track: hollow. */
+.d_on_track {
+  --c: var(--green);
+
+  background: var(--hollow);
+}
+
+/* At risk: the lower half filled. The square is turned 45° clockwise, so
+   its bottom-right half is the diamond's lower half. */
+.d_at_risk {
+  --c: var(--amber);
+
+  background: linear-gradient(135deg, var(--hollow) 50%, var(--c) 50%);
+}
+
+/* Complete: solid with a tick knocked out in the surface colour. The
+   element is already turned 45°, so the tick's L needs no turn of its
+   own to read as a check. */
+.d_done::after {
+  content: '';
+  position: absolute;
+  top: 46%;
+  left: 54%;
+  width: 2.5px;
+  height: 4.5px;
+  border: solid var(--hollow);
+  border-width: 0 1.5px 1.5px 0;
+  transform: translate(-50%, -50%);
+}
+
+/* Missing input: hollow with a broken (dotted) edge, like the bar. */
+.d_missing {
+  --c: var(--text-3);
+
+  /* Dotted at 2px: a 2px dash is 6px long and closes up on a 10px side,
+     which would read as the inactive outline. */
+  border-style: dotted;
+  background: var(--hollow);
+}
+
+.d_muted {
+  --c: var(--gray);
+
+  background: var(--hollow);
+}
+
+/* Forced colours drop backgrounds and shadows, which would erase the
+   solid and half fills: keep the shapes, drawn in the system colours. */
+@media (forced-colors: active) {
+  .diamond {
+    --c: CanvasText;
+    --hollow: Canvas;
+
+    forced-color-adjust: none;
+  }
+}
+
+/* ---- label outside a narrow bar --------------------------------------- */
+
+.outside {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  left: calc(100% + 14px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.outside .mark {
+  margin-right: 0;
+}
+
+.outsideLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.outsideMeta {
+  flex: none;
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+/* ---- the re-date handle ----------------------------------------------- */
+
+/* A 12px hit area centred on the due date. At rest only the bar shows; on
+   hover, focus or while editing a grip appears on the diamond: a 6px x 16px
+   accent pill ringed in the surface, Gr8r's "this edge moves" cue. */
+.handle {
+  scroll-margin: 60px 24px 12px calc(var(--timeline-lane-width, 264px) + 24px);
+  position: absolute;
+  z-index: 3;
+  top: -4px;
+  width: 12px;
+  height: 32px;
+  border-radius: var(--r-xs);
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.handle::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  left: 3px;
+  width: 6px;
+  height: 16px;
+  border-radius: 3px;
+  background: var(--accent);
+  box-shadow: 0 0 0 1.5px var(--surface);
+  opacity: 0;
+  transform: scaleY(0.6);
+  transition:
+    opacity var(--dur) ease,
+    transform var(--dur) var(--ease);
+}
+
+.handle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.handle:focus-visible::before,
+.editing .handle::before {
+  opacity: 1;
+  transform: none;
+}
+
+.handleBusy {
+  cursor: progress;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .item:hover .handle::before {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The bar being re-dated paints above its neighbours (a drag past the
+   next milestone overlaps it) but stays under the sticky lane column. */
+.editing {
+  z-index: 4;
+}
+
+.editing .bar {
+  border-color: var(--accent);
+}
+
+/* Picked up: Gr8r's drag shadow under the bar. */
+.dragging .bar {
+  box-shadow: var(--shadow-drag);
+}
+
+.dragging,
+.dragging .bar {
+  cursor: ew-resize;
+}
+
+/* ---- live date tip ---------------------------------------------------- */
+
+/* Gr8r's tooltip: inverted, 11px medium, 5px radius. */
+.tip {
+  position: absolute;
+  z-index: 4;
+  bottom: calc(100% + 8px);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  transform: translateX(-50%);
+  border-radius: var(--r-chip);
+  background: var(--text);
+  color: var(--text-inv);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.tipNote {
+  color: color-mix(in srgb, var(--text-inv) 72%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar,
+  .diamond,
+  .handle::before {
+    transition: none;
+  }
+
+  .handle::before {
+    transform: none;
+  }
+}

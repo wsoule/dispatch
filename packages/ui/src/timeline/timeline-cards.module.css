@@ -1,0 +1,267 @@
+/* Phone fallback, Gr8r's phone list: under each initiative's heading (and
+   its quiet link, e.g. "Graph"), one bordered 10px card per project (name,
+   the lead under it), then one row per milestone split by --divider rules
+   (status mark, name + receipts, due date). Hidden above 900px, where the
+   chart draws instead. */
+
+.cards {
+  display: none;
+}
+
+@media (width <= 900px) {
+  .cards {
+    display: block;
+    margin-top: 16px;
+  }
+}
+
+.group + .group {
+  margin-top: 24px;
+}
+
+/* Gr8r's group header: the name semibold, the count quiet beside it. */
+.groupHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 0 2px;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
+/* The heading keeps the head's type (not the h3 default size) and
+   ellipsizes before the count or the link give way. */
+.groupName {
+  min-width: 0;
+  overflow: hidden;
+  font-size: inherit;
+  font-weight: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.groupCount {
+  flex: none;
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+/* The group's quiet link (TimelineGroup.link, e.g. "Graph"), pushed to
+   the head's right edge: a ghost button's look (--text-2, a --surface-2
+   fill on hover). The negative block margin keeps the head's height. */
+.groupLink {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: var(--h-xs);
+  margin: -4px -6px -4px auto;
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+  white-space: nowrap;
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease;
+}
+
+/* Cards only draw at ≤ 900px, so (as for the card names) only touch is
+   kept from the hover. */
+@media (hover: hover) {
+  .groupLink:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+}
+
+.card {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  scroll-margin-top: calc(var(--nav-h, 0px) + 12px);
+}
+
+.card + .card {
+  margin-top: 10px;
+}
+
+/* The lane named in ?project=: the accent selection ring. */
+.cardFocus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.cardHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  padding: 11px 12px 10px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.cardName {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-section);
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+}
+
+a.cardName:focus-visible {
+  text-decoration-color: var(--border-strong);
+}
+
+/* Cards only draw at ≤ 900px, so the desktop width gate cannot apply;
+   hover is still kept off touch screens. */
+@media (hover: hover) {
+  a.cardName:hover {
+    text-decoration-color: var(--border-strong);
+  }
+}
+
+.cardSub {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* "No lead", a deactivated lead: the lane's tone (warning), in its ink
+   from the data-tone hook. */
+.cardSubToned {
+  font-weight: var(--fw-medium);
+  color: var(--tone-ink);
+}
+
+.cardMuted .cardName {
+  color: var(--text-3);
+}
+
+.rows > li + li {
+  border-top: 1px solid var(--divider);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 9px 12px;
+  text-align: left;
+  transition: background-color var(--dur) ease;
+}
+
+.row:focus-visible {
+  outline-offset: -2px;
+}
+
+@media (hover: hover) {
+  .row:hover {
+    background: var(--surface-2);
+  }
+}
+
+/* The open milestone: Gr8r's selected row, the accent tint plus a 2px
+   accent bar inside the left edge (the tint alone is under 3:1). */
+.rowSelected,
+.rowSelected:hover {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* Forced colours drop the tint and the bar's shadow: an outline instead. */
+@media (forced-colors: active) {
+  .rowSelected {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
+.rowBody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rowName {
+  font-size: var(--fs);
+  font-weight: var(--fw-medium);
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.rowMeta {
+  font-size: var(--fs-xs);
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+/* The status word in the line's tone (danger overdue, warning at risk or
+   missing an input), from the data-tone hook; the rest stays quiet. */
+.rowMetaToned .rowStatus {
+  font-weight: var(--fw-medium);
+  color: var(--tone-ink);
+}
+
+.rowMissing:not([data-tone='default']) {
+  font-weight: var(--fw-medium);
+  color: var(--tone-ink);
+}
+
+/* "Next", "↑5": the bars' small neutral pill. */
+.rowTag {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  margin-left: 6px;
+  vertical-align: 1px;
+  padding: 0 6px;
+  border-radius: var(--r-chip);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.rowDue {
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+/* An overdue date, or "No date" on an active lane: the tone's ink. */
+.rowDueToned {
+  font-weight: var(--fw-medium);
+  color: var(--tone-ink);
+}
+
+.cardMuted .rowName,
+.cardMuted .rowDue {
+  color: var(--text-3);
+}
+
+.none {
+  padding: 12px;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .groupLink,
+  .row {
+    transition: none;
+  }
+}

@@ -1,0 +1,200 @@
+/* Description and comment editing in Gr8r's composer idiom: the text in
+   the reading voice with a small ghost Edit; the editor is one rounded box
+   (Gr8r's .cbox: the --control-border edge, 8px radius, a 2px accent edge
+   and a soft halo while focus is anywhere in it) holding a borderless
+   textarea over its bar (shortcut, count, Cancel and the primary Save). */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The open editor: the box. */
+.root[data-text-editor='edit'],
+.root[data-text-editor='compose'] {
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--r);
+  background: var(--surface);
+  transition:
+    border-color var(--dur) ease,
+    box-shadow var(--dur) ease;
+}
+
+/* :focus-within, not :has(): every supported browser (Firefox 120 has no
+   :has) draws the ring while the textarea or the bar's buttons hold focus. */
+.root[data-text-editor]:focus-within {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 0 4px var(--accent-soft);
+}
+
+/* A refused or over-long text is an error (architecture §8.2): Gr8r's
+   error field on the box (data-invalid mirrors the textarea's
+   aria-invalid), a red edge thickened by a 1px red shadow. While focus is
+   in it the edge stays and the focus ring stands 2px outside it, so focus
+   does not hide in the red. */
+.root[data-invalid='true'] {
+  border-color: var(--red);
+  box-shadow: 0 0 0 1px var(--red);
+}
+
+.root[data-invalid='true']:focus-within {
+  border-color: var(--red);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 1px var(--red);
+}
+
+.view[data-pending='true'] {
+  opacity: 0.55;
+}
+
+/* Each line takes its own direction, as in the read-only description. */
+.text {
+  font-size: var(--fs);
+  font-weight: var(--fw-regular);
+  line-height: var(--lh-long);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+
+.empty {
+  font-size: var(--fs);
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px 12px;
+}
+
+.edit {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--h-sm);
+  padding: 0 8px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+  white-space: nowrap;
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease;
+}
+
+.edit:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .edit:not(:disabled):hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+}
+
+.input {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: var(--fs);
+  font-weight: var(--fw-regular);
+  line-height: 1.5;
+  resize: vertical;
+  unicode-bidi: plaintext;
+}
+
+/* The box draws the focus (its accent edge and halo); the transparent
+   outline is what forced-colours mode paints, as it drops shadows. */
+.input:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+
+.input::placeholder {
+  color: var(--text-3);
+}
+
+.input[data-pending='true'] {
+  color: var(--text-3);
+}
+
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  min-height: var(--h-sm);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-regular);
+  color: var(--text-3);
+}
+
+.hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* "Unsaved changes: Esc again discards" warns of losing the draft: the
+   amber warning hue. */
+.armed {
+  color: var(--amber);
+  font-weight: var(--fw-medium);
+}
+
+.count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Past the limit the text cannot be saved: the red error hue. */
+.count[data-over='true'] {
+  color: var(--red);
+  font-weight: var(--fw-medium);
+}
+
+.actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* No hardware keyboard to speak of on a phone: the shortcut goes. */
+@media (width <= 640px) {
+  .hint {
+    display: none;
+  }
+
+  .input {
+    font-size: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .root[data-text-editor='edit'],
+  .root[data-text-editor='compose'],
+  .edit {
+    transition: none;
+  }
+}

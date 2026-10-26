@@ -1,0 +1,158 @@
+/* "Copy Mermaid" in Gr8r's look: one --r-lg panel. A row with the
+   secondary button and a quiet receipt, then a disclosure ("Mermaid
+   source", a turning chevron) that opens the source as code: Geist Mono
+   on a recessed --sunken well with a line-number gutter. The copy result
+   is a word plus an icon in its tone (green tick, red cross), never the
+   accent. */
+
+.wrap {
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 8px 12px;
+}
+
+.copyIcon {
+  flex: none;
+}
+
+.copy[data-state='copied'] .copyIcon {
+  color: var(--green);
+}
+
+.copy[data-state='failed'] .copyIcon {
+  color: var(--red);
+}
+
+.meta {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.details {
+  border-top: 1px solid var(--divider);
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+  cursor: pointer;
+  list-style: none;
+  transition:
+    background-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.summary::-webkit-details-marker {
+  display: none;
+}
+
+.details[open] .summary {
+  border-radius: 0;
+  color: var(--text);
+}
+
+.chevron {
+  flex: none;
+  color: var(--text-3);
+  transition: transform var(--dur) var(--ease);
+}
+
+.details[open] .chevron {
+  transform: rotate(90deg);
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .summary:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+}
+
+.pre {
+  margin: 0;
+  padding: 10px 0 12px;
+  overflow-x: auto;
+  border-top: 1px solid var(--divider);
+  border-radius: 0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
+  background: var(--sunken);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text);
+}
+
+.code {
+  display: block;
+  min-width: max-content;
+  counter-reset: line;
+}
+
+/* Numbers are generated content, so a manual select-and-copy takes only
+   the source. */
+.line {
+  display: block;
+  padding-right: 16px;
+  white-space: pre;
+}
+
+.line::before {
+  content: counter(line);
+  counter-increment: line;
+  display: inline-block;
+  width: 44px;
+  margin-right: 14px;
+  padding-right: 10px;
+  border-right: 1px solid var(--border);
+  color: var(--text-3);
+  text-align: right;
+  user-select: none;
+}
+
+@media (width <= 768px) {
+  .bar {
+    padding: 8px 10px;
+  }
+
+  .meta {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+
+  .summary {
+    padding: 0 10px;
+  }
+
+  .pre {
+    font-size: 11px;
+  }
+
+  .line::before {
+    width: 34px;
+    margin-right: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .summary,
+  .chevron {
+    transition: none;
+  }
+}

@@ -1,0 +1,437 @@
+/* The command palette and shortcuts sheet, Gr8r's: a 640px white card
+   with a 12px radius and the pop shadow over the warm --overlay scrim
+   (never blur; dark mode darkens the page instead of veiling it), a 50px
+   input row, uppercase eyebrow section headers, 38px rows whose active one
+   is a --surface-2 fill, query matches in the accent, and a --sunken footer
+   of key hints. */
+
+.layer {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 12vh 16px 16px;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--overlay);
+  animation: fade-in 0.18s ease both;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(640px, 100%);
+  max-height: min(70vh, 600px);
+  overflow: hidden;
+  border-radius: var(--r-xl);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-pop);
+  animation: pop-in 0.22s var(--ease) both;
+}
+
+.panel:focus {
+  outline: none;
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---- input row ---------------------------------------------------- */
+
+.inputRow {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 50px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.searchIcon {
+  flex: 0 0 auto;
+  color: var(--text-3);
+}
+
+.input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  /* Transparent, not none: forced-colours mode paints it, so the field
+     keeps a visible focus there (the palette is the ring otherwise). */
+  outline: 2px solid transparent;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-regular);
+  /* A placeholder longer than the field ends in "…", not mid-word. */
+  text-overflow: ellipsis;
+}
+
+.input:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+}
+
+.input::placeholder {
+  color: var(--text-3);
+}
+
+.escButton {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  height: var(--h-xs);
+  padding: 0 2px;
+  border-radius: var(--r-xs);
+  color: var(--text-2);
+  transition: background-color var(--dur) ease;
+}
+
+/* ---- results ------------------------------------------------------ */
+
+.scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+}
+
+.list {
+  display: block;
+}
+
+.group {
+  padding-bottom: 4px;
+}
+
+.group + .group,
+.list:not(:empty) + .loading {
+  margin-top: 2px;
+  border-top: 1px solid var(--divider);
+}
+
+/* Gr8r's palette section header: the uppercase eyebrow. */
+.groupTitle {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 10px 4px;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-caps);
+  line-height: 1.3;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.groupError {
+  color: var(--red);
+}
+
+.groupCount {
+  font-weight: var(--fw-medium);
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 38px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  color: var(--text);
+  font-size: var(--fs);
+  font-weight: var(--fw-regular);
+  user-select: none;
+}
+
+/* Active row (keyboard or pointer): Gr8r's soft highlight plus a 2px
+   accent bar on the left edge. Focus stays in the input
+   (aria-activedescendant), so this row is the only focus cue, and the
+   fill alone is 1.1:1; the bar is 3.4:1 or better (WCAG 2.4.7, 1.4.11). */
+.option[aria-selected='true'] {
+  background: var(--surface-2);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+@media (forced-colors: active) {
+  .option[aria-selected='true'] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
+.optionIcon {
+  flex: 0 0 16px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-2);
+}
+
+.optionIcon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.optionLabel {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The hint gives way first: it starts from no width and only takes the
+   room the label leaves, so on a phone "Schema cutover" stays whole and its
+   project hint ellipsizes. (A large shrink factor still took a fraction of
+   a pixel from the label, which ellipsized it.) The label shrinks only once
+   the hint is down to its 3em. */
+.optionHint {
+  flex: 1 1 0;
+  min-width: 3em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.optionKeys {
+  margin-left: auto;
+}
+
+.hit {
+  background: transparent;
+  color: var(--accent-ink);
+  font-weight: var(--fw-semibold);
+}
+
+.more {
+  padding: 2px 10px 6px 36px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.loading {
+  padding-bottom: 4px;
+}
+
+.skeletonRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 38px;
+  padding: 0 10px;
+}
+
+.skeletonRow .skeletonMark {
+  border-radius: 50%;
+}
+
+.skeletonEnd {
+  margin-left: auto;
+}
+
+.empty {
+  padding: 28px 16px;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  text-align: center;
+}
+
+/* ---- footer: a recessed strip of key hints (Gr8r's .pal-f) ----------- */
+
+.footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 36px;
+  padding: 0 8px 0 14px;
+  border-top: 1px solid var(--border);
+  background: var(--sunken);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.footerHint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.footerButton,
+.footerAction {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: var(--h-xs);
+  padding: 0 6px;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease;
+}
+
+.footerButton {
+  margin-left: auto;
+}
+
+/* The free-text action sits where the "Tab Sections" hint was, flush with
+   the hints (the hint's padding is 0, so the button's 6px is taken back). */
+.footerAction {
+  margin-left: -6px;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .escButton:hover {
+    background: var(--surface-2);
+  }
+
+  .footerButton:hover,
+  .footerAction:hover {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+}
+
+/* ---- shortcuts sheet ------------------------------------------------ */
+
+.sheet {
+  width: min(720px, 100%);
+}
+
+.sheetHead {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 50px;
+  padding: 0 10px 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sheetTitle {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-section);
+}
+
+.sheetHead .escButton {
+  margin-left: auto;
+}
+
+.sheetBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Columns, not a grid: groups of different lengths balance instead of
+     leaving an empty cell. */
+  columns: 2;
+  column-gap: 0;
+  column-rule: 1px solid var(--divider);
+  padding: 6px 0 12px;
+}
+
+.sheetGroup {
+  break-inside: avoid;
+  padding: 0 6px 6px;
+}
+
+.sheetGroup dl {
+  margin: 0;
+}
+
+.sheetRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+.sheetLabel {
+  min-width: 0;
+  font-size: var(--fs);
+  font-weight: var(--fw-regular);
+  color: var(--text);
+}
+
+.sheetKeys {
+  margin: 0 0 0 auto;
+}
+
+/* ---- phones ---------------------------------------------------------- */
+
+/* 16px keeps iOS from zooming into the field (touch screens of any width). */
+@media (width <= 640px), (pointer: coarse) {
+  .input {
+    font-size: 16px;
+  }
+}
+
+/* Gr8r pins the palette 8px from the top on a phone. */
+@media (width <= 640px) {
+  .layer {
+    padding: 8px;
+  }
+  .panel {
+    max-height: calc(100dvh - 16px);
+  }
+  .option {
+    height: 42px;
+  }
+  .footerHint {
+    display: none;
+  }
+  .sheetBody {
+    columns: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrim,
+  .panel {
+    animation: none;
+  }
+  .escButton,
+  .footerButton,
+  .footerAction {
+    transition: none;
+  }
+}

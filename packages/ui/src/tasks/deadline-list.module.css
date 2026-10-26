@@ -1,0 +1,149 @@
+/* Gr8r's "Upcoming deadlines" panel: one rounded panel of groups (Overdue
+   / Today / Tomorrow / This week), each a semibold label with a quiet
+   count over compact rows (status mark, milestone, a quiet line under it,
+   the due date). The group's tone (data-tone on its label) colours the
+   label: danger for overdue, warning for due today or tomorrow. An empty
+   group keeps its label and says so in a faint line (Gr8r's "Nothing
+   due"). Rows take the hover fill; nothing inverts. */
+
+.root {
+  overflow: clip;
+  padding: 4px 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.group + .group {
+  margin-top: 2px;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 14px 4px;
+  font: inherit;
+}
+
+.label {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  line-height: 1.3;
+  color: var(--text);
+}
+
+/* A group label with a tone (data-tone: danger Overdue, warning Today and
+   Tomorrow when they hold something) in the tone's TEXT colour; the
+   dates under it stay quiet (the mark beside each carries its status). */
+.toned {
+  color: var(--tone-ink);
+}
+
+.count {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* An empty group's line: Gr8r's faint 12.5px "Nothing due", lined up
+   with the label (--text-3, as --text-4 is never words). */
+.empty {
+  margin: 0;
+  padding: 2px 14px 8px;
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+  color: var(--text-3);
+}
+
+.items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.link {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  column-gap: 10px;
+  align-items: center;
+  min-height: 40px;
+  padding: 5px 14px;
+  color: var(--text);
+  transition: background-color var(--dur) ease;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.itemLabel {
+  overflow: hidden;
+  font-size: var(--fs);
+  line-height: 1.35;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sub {
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.due {
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.link:focus-visible {
+  outline-offset: -2px;
+  background: var(--surface-2);
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .link:hover {
+    background: var(--surface-2);
+  }
+}
+
+/* "+N more": quiet, lined up with the milestone names. */
+.more {
+  display: block;
+  width: 100%;
+  padding: 4px 14px 6px 36px;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  text-align: left;
+  color: var(--text-3);
+  transition: color var(--dur) ease;
+}
+
+.more:focus-visible {
+  outline-offset: -2px;
+  color: var(--text);
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .more:hover {
+    color: var(--text);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .link,
+  .more {
+    transition: none;
+  }
+}

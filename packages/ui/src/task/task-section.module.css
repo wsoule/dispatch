@@ -1,0 +1,51 @@
+/* A section of the task view, Gr8r's drawer section head: the title at
+   13.5px semibold in sentence case, the count after it in the quiet text
+   step, and a right-aligned note or control (a ghost "+ Add"). */
+
+.section {
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--h-sm);
+  margin-bottom: 8px;
+}
+
+/* Inline text: the count follows the title like a word, and a long host
+   title wraps instead of pushing the meta note off the row. margin: 0
+   because a deeply nested view puts its sections at h5 or h6, which the
+   base reset does not cover. */
+.title {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-sans);
+  font-size: var(--fs);
+  font-weight: var(--fw-semibold);
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.count {
+  margin-left: 7px;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: auto;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-regular);
+  line-height: 1.4;
+  text-align: right;
+  color: var(--text-3);
+}

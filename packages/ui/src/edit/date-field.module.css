@@ -1,0 +1,136 @@
+/* The native date input as a quiet Gr8r pill: at rest the date and the
+   browser's calendar icon with no visible box (its text lines up with the
+   other values; touch screens keep the field edge so it reads as one),
+   the field's --control-border edge on hover, and on focus Gr8r's field
+   ring (a 2px accent edge and a soft halo) over a transparent outline.
+   A small ghost Clear (X) sits beside it. color-scheme comes from the theme, so the browser's calendar follows
+   light and dark. */
+
+.root {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.input {
+  min-height: 28px;
+  margin-left: -8px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
+  font-variant-numeric: tabular-nums;
+  transition:
+    border-color var(--dur) ease,
+    box-shadow var(--dur) ease;
+}
+
+/* :focus-within, not :focus-visible: Tab also lands on the browser's
+   calendar button inside the field, where the input matches neither
+   :focus nor :focus-visible (only :focus-within), and the field must
+   still show where focus is (a text field shows its ring on a click
+   anyway). */
+.input:focus-within {
+  border-color: var(--accent);
+  border-radius: var(--r-sm);
+  /* Transparent, not none: forced colours paint it (they drop shadows). */
+  outline: 2px solid transparent;
+  outline-offset: 1px;
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 0 4px var(--accent-soft);
+}
+
+.input:disabled {
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.root[data-pending='true'] .input {
+  color: var(--text-3);
+}
+
+/* A refused value is an error (architecture §8.2): Gr8r's error field, a
+   red edge thickened by a 1px red shadow. Focused, the edge stays and the
+   focus ring stands 2px outside it, so focus does not hide in the red. */
+.input[aria-invalid='true'] {
+  border-color: var(--red);
+  box-shadow: 0 0 0 1px var(--red);
+}
+
+.input[aria-invalid='true']:focus-within {
+  border-color: var(--red);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 1px var(--red);
+}
+
+.input::-webkit-calendar-picker-indicator {
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+/* Clear: Gr8r's small icon button (an X, named "Clear Due date"). */
+.clear {
+  display: inline-grid;
+  place-items: center;
+  width: var(--h-sm);
+  height: var(--h-sm);
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease;
+}
+
+.clear:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .input:not(:disabled, :focus-within, [aria-invalid='true']):hover {
+    border-color: var(--control-border);
+  }
+
+  .clear:not(:disabled):hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+}
+
+/* Touch has no hover to reveal the box: keep the field's 3:1 edge. */
+@media (hover: none) {
+  .input:not(:focus-within, [aria-invalid='true']) {
+    border-color: var(--control-border);
+  }
+}
+
+/* 16px keeps iOS from zooming into the field (touch screens of any width). */
+@media (width <= 640px), (pointer: coarse) {
+  .input {
+    font-size: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .input,
+  .clear {
+    transition: none;
+  }
+}

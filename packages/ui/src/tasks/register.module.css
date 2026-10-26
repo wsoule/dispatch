@@ -1,0 +1,437 @@
+/* The register: Gr8r's panel table. One rounded panel (surface, soft
+   border, no shadow), an optional header row (12px medium, quiet, a border
+   under it), rows split by the divider and never ruled against the panel
+   edge. A linked row answers hover with the hover fill and a selected row
+   takes the accent tint; neither inverts anything. Below a width the rows
+   stack into card layouts (the subject on top, the other cells in a grid
+   with their own labels), still inside the one panel. */
+
+.register {
+  --register-gap: 20px;
+  --register-pad-x: 14px;
+
+  /* clip, not hidden: rows keep the rounded corners without the panel
+     becoming a scroll container. */
+  overflow: clip;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.header {
+  display: grid;
+  grid-template-columns: var(--register-cols);
+  column-gap: var(--register-gap);
+  align-items: center;
+  min-height: 34px;
+  padding: 6px var(--register-pad-x);
+  border-bottom: 1px solid var(--border);
+}
+
+.headerCell {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 1.3;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--register-cols);
+  column-gap: var(--register-gap);
+  align-items: center;
+  min-height: 48px;
+  padding: 10px var(--register-pad-x);
+  color: var(--text);
+  transition: background-color var(--dur) ease;
+}
+
+.row + .row {
+  border-top: 1px solid var(--divider);
+}
+
+/* The row the host has open: Gr8r's selected row, the accent tint, with
+   a 2px accent bar inside its left edge (the tint alone is 1.1:1 against
+   the panel, under WCAG 1.4.11's 3:1; the bar is 4.1:1 light, 3.4:1
+   dark). Forced colours outline it. */
+.selected {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+@media (forced-colors: active) {
+  .selected {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
+/* Stretched row target; links and buttons inside cells sit above it. */
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.overlay:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+  border-radius: var(--r-xs);
+}
+
+.cell a,
+.cell button,
+.cell [role='switch'] {
+  position: relative;
+  z-index: 2;
+}
+
+.linked:not(.selected):has(.overlay:focus-visible) {
+  background: var(--surface-2);
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .linked:not(.selected):hover {
+    background: var(--surface-2);
+  }
+}
+
+/* ---- cells ------------------------------------------------------------- */
+
+.cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.end {
+  align-items: flex-end;
+  justify-self: end;
+  text-align: right;
+}
+
+/* The cell's own label, shown when there is no header row or the rows
+   stack: Gr8r's column-header voice. */
+.cellLabel {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 1.3;
+  color: var(--text-3);
+}
+
+.cellValue {
+  min-width: 0;
+  font-size: var(--fs);
+  font-weight: var(--fw-regular);
+  line-height: var(--lh);
+  color: var(--text);
+}
+
+/* The secondary line under a value (an initiative, a due date, why a
+   project is blocked). */
+.cellSub {
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The row's subject. */
+.variantName .cellValue {
+  font-weight: var(--fw-medium);
+  line-height: 1.35;
+}
+
+/* Dates, counts, states and other short facts: Geist with tabular
+   figures, one step smaller and quieter than body copy (the prop keeps
+   its old name, "mono"). */
+.variantMono .cellValue {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A toned cell (any tone but default and muted) prints its value in the
+   tone's text colour (data-tone); the line under it stays secondary
+   text... */
+.toneText .cellValue {
+  color: var(--tone-ink);
+}
+
+/* ...unless the cell opts in (toneSub): a reason line that is the point,
+   e.g. a blocked project's "Project has no lead" under Blocked. */
+.toneSub .cellSub {
+  color: var(--tone-ink);
+}
+
+.toneMuted .cellValue {
+  color: var(--text-3);
+}
+
+/* A quiet row (an inactive project): its subject steps back too. */
+.rowMuted .variantName .cellValue {
+  color: var(--text-2);
+}
+
+/* Under a header row the column label is already printed once; the cell's
+   own label is kept for assistive tech only (until the rows stack). */
+.hasHeader .cellLabel {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- stacked: one card layout per row ---------------------------------
+   The header goes, each row lays its cells out on --register-stacked-cols
+   under the subject, and every cell shows its own label again. The same
+   rules four times: by the viewport (stackBelow 700 / 900) and by the
+   register's own width (stackWithin, a container query). */
+
+@media (width <= 900px) {
+  .stack900 .header {
+    display: none;
+  }
+
+  .stack900 .row {
+    grid-template-columns: var(--register-stacked-cols);
+    gap: 10px 16px;
+    align-items: start;
+    padding: 12px var(--register-pad-x);
+  }
+
+  .stack900 .row > .cell:first-of-type {
+    grid-column: 1 / -1;
+  }
+
+  .stack900 .end {
+    align-items: flex-start;
+    justify-self: start;
+    text-align: left;
+  }
+
+  .stack900.hasHeader .cellLabel {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+  }
+
+  /* The subject cell is the card's title: its label ("Project", "Run")
+     would only repeat what the name says, so it stays for assistive tech
+     only, as it is under the desktop header. */
+  .stack900 .row > .cell:first-of-type .cellLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+@media (width <= 700px) {
+  .stack700 .header {
+    display: none;
+  }
+
+  .stack700 .row {
+    grid-template-columns: var(--register-stacked-cols);
+    gap: 10px 16px;
+    align-items: start;
+    padding: 12px var(--register-pad-x);
+  }
+
+  .stack700 .row > .cell:first-of-type {
+    grid-column: 1 / -1;
+  }
+
+  .stack700 .end {
+    align-items: flex-start;
+    justify-self: start;
+    text-align: left;
+  }
+
+  .stack700.hasHeader .cellLabel {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+  }
+
+  .stack700 .row > .cell:first-of-type .cellLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/* ---- stacked by the register's own width (stackWithin) ---------------
+   The same card layout as above, keyed to the register's width through a
+   container query, for registers inside a sidebar shell (where the
+   viewport overstates the room) and for wide many-column registers. The
+   root is the container, so these rules reach its header, rows and cells. */
+
+.container {
+  container: register / inline-size;
+}
+
+@container register (width < 700px) {
+  .within700 .header {
+    display: none;
+  }
+
+  .within700 .row {
+    grid-template-columns: var(--register-stacked-cols);
+    gap: 10px 16px;
+    align-items: start;
+    padding: 12px var(--register-pad-x);
+  }
+
+  .within700 .row > .cell:first-of-type {
+    grid-column: 1 / -1;
+  }
+
+  .within700 .end {
+    align-items: flex-start;
+    justify-self: start;
+    text-align: left;
+  }
+
+  .within700.hasHeader .cellLabel {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+  }
+
+  .within700 .row > .cell:first-of-type .cellLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+@container register (width < 900px) {
+  .within900 .header {
+    display: none;
+  }
+
+  .within900 .row {
+    grid-template-columns: var(--register-stacked-cols);
+    gap: 10px 16px;
+    align-items: start;
+    padding: 12px var(--register-pad-x);
+  }
+
+  .within900 .row > .cell:first-of-type {
+    grid-column: 1 / -1;
+  }
+
+  .within900 .end {
+    align-items: flex-start;
+    justify-self: start;
+    text-align: left;
+  }
+
+  .within900.hasHeader .cellLabel {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+  }
+
+  .within900 .row > .cell:first-of-type .cellLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+@container register (width < 1000px) {
+  .within1000 .header {
+    display: none;
+  }
+
+  .within1000 .row {
+    grid-template-columns: var(--register-stacked-cols);
+    gap: 10px 16px;
+    align-items: start;
+    padding: 12px var(--register-pad-x);
+  }
+
+  .within1000 .row > .cell:first-of-type {
+    grid-column: 1 / -1;
+  }
+
+  .within1000 .end {
+    align-items: flex-start;
+    justify-self: start;
+    text-align: left;
+  }
+
+  .within1000.hasHeader .cellLabel {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+  }
+
+  .within1000 .row > .cell:first-of-type .cellLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row {
+    transition: none;
+  }
+}

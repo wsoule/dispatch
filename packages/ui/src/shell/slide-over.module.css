@@ -1,0 +1,199 @@
+/* Gr8r's slide-over drawer: a white right-hand panel lifted off the page
+   by a soft leftward shadow and a 1px --border left edge (no scrim on a
+   desktop), a 46px header bar like the topbar, and a title that scrolls
+   with the body. It eases in from 48px with a fade. */
+
+.panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  /* SLIDE_OVER_WIDTH in slide-over.tsx: keep the two in step. */
+  width: min(620px, 100vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  color: var(--text);
+  /* --drawer-edge: --border in light; in dark the drawer and the page are
+     the same --surface and a black shadow barely shows, so the token is
+     --border-strong there (a token, not a dark-ancestor selector, so a
+     light wrapper inside a dark page keeps the light edge). */
+  border-left: 1px solid var(--drawer-edge, var(--border));
+  box-shadow: var(--shadow-drawer);
+  animation: drawer-in 0.34s var(--ease-drawer) both;
+}
+
+.panel:focus {
+  outline: none;
+}
+
+.panel[data-state='closing'] {
+  animation: drawer-out 0.22s ease both;
+  pointer-events: none;
+}
+
+@keyframes drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(48px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes drawer-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(48px);
+  }
+}
+
+.header {
+  flex: 0 0 auto;
+}
+
+/* The header bar: 46px like the topbar, so the panel lines up with the
+   shell; crumb on the left, icon actions and close on the right. */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 46px;
+  padding: 0 10px 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.crumb {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.actions {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: flex;
+  white-space: nowrap;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Gr8r's icon button: no box until hover. */
+.close {
+  display: grid;
+  place-items: center;
+  width: var(--h-md);
+  height: var(--h-md);
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .close:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+}
+
+.title {
+  margin: 0 0 16px;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  line-height: 1.25;
+  letter-spacing: var(--ls-heading);
+  overflow-wrap: anywhere;
+}
+
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px 24px 32px;
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+  background: var(--overlay);
+  animation: fade-in 0.18s ease both;
+}
+
+.scrim[data-state='closing'] {
+  animation: fade-out 0.22s ease both;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/* Phones: the drawer covers the screen (Gr8r), over the scrim. */
+@media (width <= 900px) {
+  .bar {
+    padding: 0 4px 0 16px;
+  }
+  .close {
+    width: 40px;
+    height: 40px;
+  }
+  .body {
+    padding: 16px 16px calc(32px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@media (width <= 640px) {
+  .panel {
+    border-left: 0;
+  }
+
+  /* A header action with an icon and words ("Open in Linear ↗", "Copy
+     link") shows only its icon here, so the crumb keeps its room. The
+     words are hidden visually, not removed, so each button keeps its
+     accessible name. */
+  .actions
+    :is(a, button):has(> [aria-hidden='true'])
+    > span:not([aria-hidden='true']) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel,
+  .panel[data-state='closing'],
+  .scrim,
+  .scrim[data-state='closing'] {
+    animation: none;
+  }
+  .close {
+    transition: none;
+  }
+}

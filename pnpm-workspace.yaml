@@ -100,6 +100,9 @@ catalog:
   # Astro's default markdown processor, at the version astro pins; apps/site
   # passes it the protocol pages' hast plugins. Bump it together with astro.
   '@astrojs/markdown-satteri': '0.4.0'
+  # @dispatch/ui's dependency graph layout (dagre's layered layout). 3.1.2
+  # and 3.1.3 are younger than the age gate above; raise this once they age.
+  '@dagrejs/dagre': '3.1.1'
   '@dnd-kit/core': '6.3.1'
   '@dnd-kit/utilities': '3.2.2'
   '@fontsource-variable/inter': '5.3.0'

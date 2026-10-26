@@ -1,0 +1,113 @@
+/* Gr8r's alert, tinted by data-tone (the --tone-* variables come from the
+   tone hook in tokens.css): a status tone fills an 8px box with its soft
+   tint, no border, and prints the 14px icon in the tone's hue and the
+   lead-in word in the tone's text colour; the sentence stays --text and
+   the follow-up is an accent link.
+   default and muted are a bordered neutral box, like the Notice's quiet
+   tone. .plain is a row of a neutral alert list: no box at all. */
+.strip {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  background: var(--tone-soft, var(--amber-soft));
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.strip:where([data-tone='default'], [data-tone='muted']) {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+/* A row of a neutral list (TaskDetail's second and later alerts): the
+   list draws the box and the rules. Two classes, so it wins over the
+   tone rule above whatever the order. */
+.strip.plain {
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.strip.plain .text {
+  color: var(--text-2);
+}
+
+.lead {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  /* One line of the sentence tall, so icon and word sit on its line. */
+  min-height: calc(var(--fs-sm) * 1.5);
+}
+
+.icon {
+  flex: none;
+  color: var(--tone, var(--amber));
+}
+
+.key {
+  font-weight: var(--fw-semibold);
+  color: var(--tone-ink, var(--text));
+  white-space: nowrap;
+}
+
+/* overflow-wrap: a message quoting a long identifier wraps inside the
+   box instead of running out of it. */
+.text {
+  min-width: 0;
+  font-weight: var(--fw-regular);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.action {
+  display: inline;
+  font-weight: var(--fw-semibold);
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 50%, transparent);
+  text-underline-offset: 3px;
+  white-space: nowrap;
+  transition:
+    color var(--dur) ease,
+    text-decoration-color var(--dur) ease;
+}
+
+.action:focus-visible {
+  color: var(--accent-ink-hover);
+  text-decoration-color: currentColor;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .action:hover {
+    color: var(--accent-ink-hover);
+    text-decoration-color: currentColor;
+  }
+}
+
+@media (width <= 640px) {
+  .strip {
+    flex-direction: column;
+    gap: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .action {
+    transition: none;
+  }
+}
+
+/* Forced colours drop the tint: keep the box's edge. */
+@media (forced-colors: active) {
+  .strip:not(.plain) {
+    border-color: CanvasText;
+  }
+}

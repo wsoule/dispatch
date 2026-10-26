@@ -1,0 +1,393 @@
+/* ============================================================================
+   SHARED PRIMITIVES (Milestone Planner)
+   Built only from the token block in tokens.css, in Gr8r's moves: soft
+   borders, 4–12px radius, tinted (-soft) fills for status, sentence-case
+   labels, mono only for ids and keys. The tone variables (--tone,
+   --tone-ink, --tone-soft, --tone-line, --on-tone) come from the data-tone
+   hook in tokens.css. Scoped like tokens.css (see SCOPE there): page-wide
+   unless <html> has data-bt-ui-scoped, then only inside [data-bt-ui]
+   wrappers.
+   ========================================================================== */
+
+/* The page body under the nav. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .page {
+  padding-bottom: 72px;
+}
+
+/* ---- text ---------------------------------------------------------------- */
+
+/* A lead-in word before a sentence (a Notice's "Demo data", "Blocked"):
+   semibold, in the surrounding tone's text colour. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .key {
+  font-weight: var(--fw-semibold);
+  color: var(--tone-ink, var(--text));
+  white-space: nowrap;
+}
+
+/* A small label (a field name, a column header): sentence case. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .label {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-3);
+}
+
+/* Gr8r's eyebrow: the one uppercase voice (sidebar and menu section
+   headers, day headers). Small, tracked, quiet; never a sentence. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .eyebrow {
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .muted {
+  color: var(--text-2);
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .faint {
+  color: var(--text-3);
+}
+
+/* Ids, keys and code: Geist Mono a touch smaller than the text around it. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .mono {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  letter-spacing: -0.01em;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* A text link in the accent ("Open in Linear", "Graph", "Settings →
+   Modes" inside a sentence). Underlined at rest, softly, so a link in
+   running text is not told apart by colour alone (WCAG 1.4.1); the
+   underline takes the full colour on hover and focus. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .accentLink {
+  font-weight: var(--fw-medium);
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 50%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+  transition:
+    color var(--dur) ease,
+    text-decoration-color var(--dur) ease;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .accentLink:hover,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .accentLink:focus-visible {
+  color: var(--accent-ink-hover);
+  text-decoration-color: currentColor;
+}
+
+/* ---- buttons -------------------------------------------------------------
+   Plain-markup twins of the Button component (src/tasks/button.tsx):
+   .button = Gr8r's secondary (white, strong border, small shadow),
+   .buttonPrimary = the purple fill. 30px, 6px radius, 12.5px medium. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .button,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .buttonPrimary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--h-md);
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    background-color var(--dur) ease,
+    border-color var(--dur) ease,
+    color var(--dur) ease,
+    transform var(--dur) ease;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .button {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .buttonPrimary {
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.12);
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .button:disabled,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .buttonPrimary:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  box-shadow: none;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+  .button:not(:disabled):active,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+  .buttonPrimary:not(:disabled):active {
+  transform: scale(0.97);
+}
+
+@media (hover: hover) and (width >= 901px) {
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+    .button:not(:disabled):hover {
+    background: var(--surface-2);
+  }
+
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+    .buttonPrimary:not(:disabled):hover {
+    background: var(--accent-hover);
+  }
+}
+
+/* ---- fields --------------------------------------------------------------
+   Gr8r's inputs: 30px, 6px radius, sans, with the --control-border edge
+   (3:1 on every surface, WCAG 1.4.11). Focus swaps the global ring for
+   Gr8r's: an accent border thickened to 2px by a 1px accent shadow, plus a
+   soft halo; the outline stays, transparent, so forced-colours mode (which
+   drops box-shadows) still draws a ring. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .input,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .select,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .textarea {
+  min-height: var(--h-md);
+  padding: 0 10px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: var(--fs);
+  font-weight: var(--fw-regular);
+  transition:
+    border-color var(--dur) ease,
+    box-shadow var(--dur) ease;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .input::placeholder,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .textarea::placeholder {
+  color: var(--text-3);
+}
+
+@media (hover: hover) and (width >= 901px) {
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .input:hover,
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .select:hover,
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .textarea:hover {
+    border-color: var(--text-3);
+  }
+}
+
+/* The field ring: an accent border, a 1px accent shadow and a soft halo,
+   over a transparent outline so forced colours still draw one. A native
+   date input also keeps it on :focus-within: Tab lands on its calendar
+   button, where the input matches neither :focus nor :focus-visible, and
+   Chrome's own near-black ring round the icon cannot be seen on the dark
+   surface. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .input:focus-visible,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .select:focus-visible,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .textarea:focus-visible,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+  .input[type='date']:focus-within {
+  border-color: var(--accent);
+  border-radius: var(--r-sm);
+  outline: 2px solid transparent;
+  outline-offset: 1px;
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 0 4px var(--accent-soft);
+}
+
+/* A value the form or the server refused (aria-invalid): Gr8r's error
+   field, a red edge thickened by a 1px red shadow. Focused, it keeps that
+   edge and takes the focus ring 2px outside it, a ring of its own that
+   the red edge is not (a red halo alone changed it by only 1.16:1); the
+   words of the error line carry the error too. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .input[aria-invalid='true'],
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+  .select[aria-invalid='true'],
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+  .textarea[aria-invalid='true'] {
+  border-color: var(--red);
+  box-shadow: 0 0 0 1px var(--red);
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+  .input[aria-invalid='true']:focus-visible,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+  .select[aria-invalid='true']:focus-visible,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+  .textarea[aria-invalid='true']:focus-visible,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+  .input[type='date'][aria-invalid='true']:focus-within {
+  border-color: var(--red);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 1px var(--red);
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .input:disabled,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .select:disabled,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .textarea:disabled {
+  background: var(--surface-2);
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .textarea {
+  width: 100%;
+  min-height: 72px;
+  padding: 8px 10px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+/* The chevron is Gr8r's thin stroke, not a solid triangle: two 5px tiles
+   side by side, each holding one 1.5px diagonal ("\" then "/") in the
+   quiet text colour, meeting at the point. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .select {
+  appearance: none;
+  padding-right: 28px;
+  background-image:
+    linear-gradient(
+      45deg,
+      transparent calc(50% - 0.75px),
+      var(--text-3) calc(50% - 0.75px),
+      var(--text-3) calc(50% + 0.75px),
+      transparent calc(50% + 0.75px)
+    ),
+    linear-gradient(
+      -45deg,
+      transparent calc(50% - 0.75px),
+      var(--text-3) calc(50% - 0.75px),
+      var(--text-3) calc(50% + 0.75px),
+      transparent calc(50% + 0.75px)
+    );
+  background-position:
+    calc(100% - 15px) 50%,
+    calc(100% - 10px) 50%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+
+/* The native search-field clear button, drawn as a 10px cross in the quiet
+   text colour rather than the browser's blue glyph. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+  .input[type='search']::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  margin-left: 8px;
+  background:
+    linear-gradient(
+      45deg,
+      transparent 44%,
+      var(--text-3) 44%,
+      var(--text-3) 56%,
+      transparent 56%
+    ),
+    linear-gradient(
+      -45deg,
+      transparent 44%,
+      var(--text-3) 44%,
+      var(--text-3) 56%,
+      transparent 56%
+    );
+  cursor: pointer;
+}
+
+/* ---- notice and empty state ---------------------------------------------
+   Gr8r's alert: 8px radius, 12.5px copy. Neutral (default, muted) is a
+   bordered surface; every other tone fills the box with its soft tint and
+   prints the lead-in key in the tone's ink; the copy stays --text. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .notice {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  position: relative;
+  z-index: 1;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+  .notice:where(
+    [data-tone='accent'],
+    [data-tone='info'],
+    [data-tone='success'],
+    [data-tone='warning'],
+    [data-tone='danger']
+  ) {
+  border-color: transparent;
+  background: var(--tone-soft);
+}
+
+/* Gr8r's empty state (.empty-state.sm): honest copy centred in a soft
+   box, never an illustration. EmptyState adds the 22px icon, the title
+   and the action above and below the sentence. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .empty {
+  padding: 28px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  font-family: var(--font-body);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
+  line-height: 1.5;
+  color: var(--text-2);
+  text-align: center;
+}
+
+/* Something is missing (rather than nothing to show): a dashed edge, the
+   way Gr8r draws an empty slot. Replaces the old diagonal hatch. Kept
+   after .empty, whose border shorthand would otherwise undo the dash. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .hatched {
+  border-style: dashed;
+  border-color: var(--border-strong);
+}
+
+/* iOS Safari zooms the page into any focused field under 16px; phones and
+   other touch screens get 16px fields (as the pickers already do). */
+@media (width <= 640px), (pointer: coarse) {
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .input,
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .select,
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .textarea {
+    font-size: 16px;
+  }
+}
+
+@media (width <= 768px) {
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .notice {
+    flex-direction: column;
+    gap: 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .button,
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .buttonPrimary,
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .accentLink,
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .input,
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .select,
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .textarea {
+    transition: none;
+  }
+
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+    .button:not(:disabled):active,
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+    .buttonPrimary:not(:disabled):active {
+    transform: none;
+  }
+}

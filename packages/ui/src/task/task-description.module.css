@@ -1,0 +1,140 @@
+/* The description in the reading voice (13.5px at the long-form line
+   height): plain text with its own line breaks, clamped by line count
+   rather than height so it never cuts a line in half. */
+
+.wrap {
+  min-width: 0;
+}
+
+/* plaintext: every line break starts a paragraph that picks its own
+   direction from its first strong character, so an Arabic or Hebrew line
+   in an English description reads right to left (and aligns right). */
+.text {
+  font-size: var(--fs);
+  font-weight: var(--fw-regular);
+  line-height: var(--lh-long);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+
+/* A host-rendered body: only the reading voice and wrapping are set. */
+.content {
+  min-width: 0;
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--clamp-lines, 12);
+  overflow: hidden;
+}
+
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  margin-top: 8px;
+}
+
+/* Show more / Show less: an accent text link. */
+.toggle {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+  transition:
+    color var(--dur) ease,
+    text-decoration-color var(--dur) ease;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .toggle:hover {
+    color: var(--accent-ink-hover);
+    text-decoration-color: currentcolor;
+  }
+}
+
+.source {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-regular);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+.empty {
+  font-size: var(--fs);
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+.empty + .source {
+  margin-top: 6px;
+  margin-left: 0;
+}
+
+/* A failed read: Gr8r's danger alert, a red-tinted 8px box with the
+   lead-in in red and the sentence in the text colour. */
+.error {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--r);
+  background: var(--red-soft);
+}
+
+.errorKey {
+  flex: none;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--red);
+}
+
+.errorText {
+  min-width: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.retry {
+  font-weight: var(--fw-medium);
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+  transition:
+    color var(--dur) ease,
+    text-decoration-color var(--dur) ease;
+}
+
+.retry:focus-visible {
+  color: var(--accent-ink-hover);
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .retry:hover {
+    color: var(--accent-ink-hover);
+    text-decoration-color: currentcolor;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toggle,
+  .retry {
+    transition: none;
+  }
+}

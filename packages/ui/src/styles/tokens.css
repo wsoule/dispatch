@@ -1,0 +1,702 @@
+/* Milestone Planner tokens, reset and block chrome, in the Gr8r Studio
+   visual language (owner decision 2026-10-23, design doc §12: "adopt the
+   Gr8r restyle after all"): warm neutral surfaces, soft low-contrast
+   lines, radius, soft shadows only on floating things, tinted status
+   colours, Geist / Geist Mono at Gr8r's scale. The one brand colour is our
+   purple (#9747ff) in Gr8r's accent role (primary, focus, selection,
+   progress, today, unread); it never means a status. The status hues
+   (red, amber, green, blue, grey) keep the mapping of
+   docs/architecture.md §8.2 "Status colours". The host app must also set
+   html[data-theme] before first paint (see themeScript in
+   src/lib/theme.ts). The rules for using these tokens:
+   docs/architecture.md §8.2.
+
+   SCOPE. By default this sheet styles the whole document (the planner owns
+   its page). A host that embeds the components in an app with its own
+   design system (Dispatch: Tailwind, its own --accent/--border/--muted…)
+   puts data-bt-ui-scoped on <html> and data-bt-ui on each wrapper element:
+   the tokens are then declared on the wrapper only, and the reset, block
+   chrome and primitive classes (.pageBlock, .button, .label…) apply only inside
+   it, so nothing leaks into the host's own UI. Every selector below is
+   written as :where(<unscoped html>, [data-bt-ui]) <selector>, which adds
+   no specificity, so the unscoped cascade is exactly the old global one.
+   Dark mode in a wrapper: data-theme="dark" on the wrapper or on <html>. */
+
+/* ============================================================================
+   TOKENS: the source of truth.
+   Light is this block; dark redefines the colours (not an inversion) in the
+   two blocks below, which must stay identical. Colours that text sits on or
+   that are text are literal hex, so test/styles-contrast.test.ts can check
+   every text token at 4.5:1 on every surface and every mark at 3:1.
+   ========================================================================== */
+
+:root:where(:not([data-bt-ui-scoped])),
+[data-bt-ui] {
+  /* surfaces, back to front */
+  --bg: #fbfaf8; /* page behind everything; signed-out pages */
+  --bg-side: #f4f3f0; /* the sidebar */
+  --surface: #ffffff; /* main column, panels, cards, drawer, menus */
+  --surface-2: #f6f5f2; /* hover fill of rows, ghost buttons, menu items */
+  --surface-3: #eeede9; /* pressed / on fill, segmented track, bar track */
+  --sunken: #f7f6f3; /* recessed wells: group rows, weekends, footers */
+  --overlay: rgba(24, 22, 19, 0.28); /* modal / palette / drawer scrim */
+
+  /* lines, by weight */
+  --border: #e9e7e2; /* container edges and section rules */
+  --border-strong: #dad7d0; /* secondary buttons, chips, hover outlines */
+  --divider: #f0eeea; /* row separators inside a container */
+  /* The edge of a control you type in or toggle (input, select, textarea,
+     checkbox box, switch track when off): WCAG 1.4.11 wants 3:1 against
+     the surface, which the soft --border-strong is not. 3.0:1 or better on
+     every surface in this theme. */
+  --control-border: #8c8880;
+
+  /* text, four steps (text-4 is for icons and glyphs, never words) */
+  --text: #1d1c1a;
+  --text-2: #57544e;
+  --text-3: #6b6760;
+  --text-4: #8c8880;
+  --text-inv: #ffffff; /* text on an inverted (--text) fill: toast, tip */
+
+  /* the accent: primary buttons, focus, selection, progress, today, unread.
+     Never a status. Its text step is darker (light) / lighter (dark) so it
+     reads 4.5:1 on every surface and on its own soft tint. */
+  --accent: #9747ff;
+  --on-accent: #ffffff; /* 4.51:1 on #9747ff */
+  --accent-ink: #7c33ea;
+  --accent-ink-hover: #6b28d0;
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent) 38%, transparent);
+  --accent-hover: color-mix(in srgb, var(--accent) 88%, #1d1c1a);
+  --accent-active: color-mix(in srgb, var(--accent) 78%, #1d1c1a);
+  /* The keyboard focus ring, the accent in its focus job: the fill purple
+     in light; in dark its lighter text step, since #9747ff falls under
+     3:1 on the dark status tints (an alert's link, a toned bar) and
+     #b385ff holds 4:1 or more on every dark surface and tint. On an
+     inverted (--text) fill, a toast or the bulk bar, the ring is
+     --focus-ring-inverse (the fill purple, 3.7:1 on either theme's
+     --text), which those components set as their --focus-ring. */
+  --focus-ring: var(--accent);
+  --focus-ring-inverse: var(--accent);
+
+  /* STATUS (owner decision 2026-10-22, docs/architecture.md §8.2 "Status
+     colours"): red = overdue, failed, urgent; amber = at risk, blocked,
+     unassigned, a missing input; green = on track, succeeded; blue = in
+     progress, live; grey = inactive. Each hue is text-safe (4.5:1) on
+     every surface and on its own -soft tint, and 3:1 as a mark, so one
+     value serves dots, icons, outlines, bars and words. -soft is the tint
+     a chip, notice or alert fills with; -line is a tinted border. Gr8r's
+     own hues one step darker in light, where its blue fell under 4.5:1 on
+     its tint. Components colour themselves through the data-tone hook
+     below (--tone, --tone-ink, --tone-soft, --tone-line, --on-tone), not
+     through these names. */
+  --red: #b03b2f;
+  --amber: #88590d;
+  --green: #247149;
+  --blue: #2f63ae;
+  --gray: #8a867e; /* the inactive mark: dots, outlines; never words */
+  --red-soft: color-mix(in srgb, var(--red) 10%, transparent);
+  --amber-soft: color-mix(in srgb, var(--amber) 12%, transparent);
+  --green-soft: color-mix(in srgb, var(--green) 11%, transparent);
+  --blue-soft: color-mix(in srgb, var(--blue) 10%, transparent);
+  --red-line: color-mix(in srgb, var(--red) 38%, transparent);
+  --amber-line: color-mix(in srgb, var(--amber) 38%, transparent);
+  --green-line: color-mix(in srgb, var(--green) 38%, transparent);
+  --blue-line: color-mix(in srgb, var(--blue) 38%, transparent);
+  /* The accent and each hue as text or an icon ON an inverted (--text)
+     fill: a toast, a tooltip, the bulk bar. The other theme's step, 4.5:1
+     on --text (checked by the contrast test). */
+  --accent-ink-inverse: #b385ff;
+  --red-ink-inverse: #e57d70;
+  --amber-ink-inverse: #d8a443;
+  --green-ink-inverse: #5cba86;
+  --blue-ink-inverse: #72a5ea;
+  /* Text on a solid fill of the hue (the danger button; 4.5:1). */
+  --on-red: #ffffff;
+  --on-amber: #ffffff;
+  --on-green: #ffffff;
+  --on-blue: #ffffff;
+  --on-danger: var(--on-red);
+
+  /* categorical hues for dots, swatches and avatars only (not text) */
+  --violet: #7652c2;
+  --teal: #1e8580;
+  --rose: #bc4270;
+  --orange: #c0612b;
+
+  /* Linear workflow-state glyph colours (StateGlyph), in the status
+     mapping of docs/architecture.md §8.2: triage, backlog and canceled
+     grey, todo the neutral ring, in progress blue, done green. Glyphs
+     only, each 3:1 or better on every surface (WCAG 1.4.11). */
+  --st-triage: #8c8880;
+  --st-backlog: #8c8880;
+  --st-todo: #7c7870;
+  --st-progress: #2f63ae;
+  --st-done: #247149;
+  --st-canceled: #8c8880;
+
+  /* elevation: only things that float or can be picked up */
+  --shadow-sm: 0 1px 2px rgba(28, 25, 20, 0.05);
+  --shadow-raised: 0 1px 2px rgba(28, 25, 20, 0.06), 0 0 0 1px var(--border);
+  --shadow-card: 0 1px 2px rgba(28, 25, 20, 0.04), 0 0 0 1px var(--border);
+  --shadow-pop:
+    0 12px 32px -8px rgba(28, 25, 20, 0.16),
+    0 2px 6px -2px rgba(28, 25, 20, 0.06), 0 0 0 1px var(--border);
+  --shadow-drag:
+    0 16px 36px -10px rgba(28, 25, 20, 0.28), 0 0 0 1px var(--border-strong);
+  --shadow-drawer: -18px 0 40px -24px rgba(0, 0, 0, 0.25);
+
+  /* theme-dependent looks of a few components, as tokens so a light
+     wrapper inside a dark page (scoped mode) keeps its light look: the
+     current sidebar / sub-nav item (a raised white pill; dark: a
+     --surface-3 fill), the slide-over's left edge (dark: stronger, the
+     shadow barely shows there) and the brand tile (dark in both themes). */
+  --nav-current-bg: var(--surface);
+  --nav-current-shadow: var(--shadow-raised);
+  --drawer-edge: var(--border);
+  --brand-tile-bg: var(--text);
+  --brand-tile-ink: var(--text-inv);
+  --brand-tile-edge: transparent;
+
+  /* radius */
+  --r-xs: 4px; /* kbd, checkbox, focus ring, tiny icon buttons */
+  --r-chip: 5px; /* chips, badges, segmented buttons, tooltips */
+  --r-sm: 6px; /* buttons, inputs, nav items, menu items, bars */
+  --r: 8px; /* cards, notices, alerts, toasts */
+  --r-lg: 10px; /* panels, popovers, boxed lists, empty states */
+  --r-xl: 12px; /* modals, command palette, full drawer */
+  --r-full: 999px;
+
+  /* spacing (4pt) and the one content edge */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --s-12: 48px;
+  --gutter: 24px;
+
+  /* type. The next/font variables, else the family by name: a host without
+     next/font (Vite) must still get a font stack, and an undefined var()
+     with no fallback would invalidate the whole stack (browser serif). */
+  --font-sans:
+    var(--font-geist, Geist), ui-sans-serif, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-body: var(--font-sans);
+  --font-mono:
+    var(--font-geist-mono, 'Geist Mono'), ui-monospace, SFMono-Regular, Menlo,
+    Consolas, monospace;
+  --fs-2xs: 11px; /* counts, eyebrows, kbd, issue keys */
+  --fs-xs: 12px; /* meta, chips, column headers, small buttons */
+  --fs-sm: 12.5px; /* buttons, crumbs, group headers, secondary text */
+  --fs: 13.5px; /* body, list titles, nav items, inputs */
+  --fs-md: 14.5px; /* section titles, modal title, empty-state title */
+  --fs-lg: 16px;
+  --fs-xl: 19px; /* drawer / project / settings title */
+  --fs-2xl: 23px; /* page title */
+  --fw-regular: 400;
+  --fw-soft: 450; /* nav items, card titles: dense text that reads soft */
+  --fw-medium: 500; /* buttons, labels, meta, active nav */
+  --fw-semibold: 600; /* headings, group headers, stat values */
+  --lh: 1.45;
+  --lh-long: 1.55; /* comments, descriptions */
+  --ls-title: -0.022em; /* --fs-2xl */
+  --ls-heading: -0.018em; /* --fs-xl */
+  --ls-section: -0.01em; /* --fs-md */
+  --ls-caps: 0.06em; /* the rare uppercase eyebrow */
+
+  /* component sizes */
+  --h-xs: 22px;
+  --h-sm: 26px;
+  --h-md: 30px;
+  --h-lg: 36px;
+  --side-w: 252px;
+  --side-row: 30px;
+  --row-h: 40px;
+  --card-pad: 10px;
+  --topbar-h: 46px;
+
+  /* motion */
+  --ease: cubic-bezier(0.23, 1, 0.32, 1);
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --dur: 140ms;
+  --nav-h: 80px;
+
+  /* The old Analytics names (--paper, --ink, --muted, --grey-*, --hatch,
+     the -ink steps, ...) were migration aliases while the screens moved to
+     the Gr8r tokens; every screen and every branch written before the
+     restyle has moved, so they are gone (docs/architecture.md §8.2 "Old
+     token names" maps each one). A sheet that reads one now gets nothing:
+     styles-contrast.test.ts and the planner's gr8r-tokens.test.ts check
+     every file, tokens.css included. */
+
+  color-scheme: light;
+}
+
+/* Gr8r's dark palette (warm charcoal, pastel hues), redefined rather than
+   inverted, and soft (owner 2026-10-23: the old near-black was too dark):
+   nothing is darker than #1a1a19, the sidebar, and the main column sits a
+   few steps above Gr8r's own #1d1d1c. The accent fill stays #9747ff; its
+   text step goes lighter. */
+html[data-theme='dark']:where(:not([data-bt-ui-scoped])),
+[data-bt-ui][data-theme='dark'],
+[data-theme='dark']
+  [data-bt-ui]:not([data-theme='light'], [data-theme='system']) {
+  --bg: #1c1c1b;
+  --bg-side: #1a1a19;
+  --surface: #20201f;
+  --surface-2: #272726;
+  --surface-3: #2e2e2c;
+  --sunken: #1c1c1b;
+  --overlay: rgba(0, 0, 0, 0.5);
+  --border: #2f2e2c;
+  --border-strong: #3d3c39;
+  --divider: #272725;
+  --control-border: #7c7974;
+  --text: #eceae5;
+  --text-2: #b5b2ab;
+  --text-3: #9e9a93;
+  --text-4: #77746e;
+  --text-inv: #1a1a19;
+  --accent-ink: #b385ff;
+  --accent-ink-hover: #c4a0ff;
+  --focus-ring: var(--accent-ink);
+  --red: #e57d70;
+  --amber: #d8a443;
+  --green: #5cba86;
+  --blue: #72a5ea;
+  --gray: #8f8b84;
+  --on-red: #1a1a19;
+  --on-amber: #1a1a19;
+  --on-green: #1a1a19;
+  --on-blue: #1a1a19;
+  --violet: #a98deb;
+  --teal: #58c0b6;
+  --rose: #e68aab;
+  --orange: #e3925f;
+  --st-triage: #7c7974;
+  --st-backlog: #7c7974;
+  --st-todo: #a6a39c;
+  --st-progress: #72a5ea;
+  --st-done: #5cba86;
+  --st-canceled: #7c7974;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 1px var(--border-strong);
+  --shadow-card: 0 0 0 1px var(--border);
+  --shadow-pop:
+    0 16px 40px -10px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border-strong);
+  --shadow-drag:
+    0 18px 40px -10px rgba(0, 0, 0, 0.65), 0 0 0 1px var(--border-strong);
+  --shadow-drawer: -18px 0 40px -24px rgba(0, 0, 0, 0.55);
+  --nav-current-bg: var(--surface-3);
+  --nav-current-shadow: none;
+  --drawer-edge: var(--border-strong);
+  --brand-tile-bg: var(--sunken);
+  --brand-tile-ink: var(--text);
+  --brand-tile-edge: var(--border-strong);
+  --accent-ink-inverse: #7c33ea;
+  --red-ink-inverse: #b03b2f;
+  --amber-ink-inverse: #88590d;
+  --green-ink-inverse: #247149;
+  --blue-ink-inverse: #2f63ae;
+
+  color-scheme: dark;
+}
+
+/* data-theme="system": the block above whenever the OS is dark, for a host
+   that follows the OS live with no theme script (Dispatch wires its own dark
+   mode to prefers-color-scheme): data-theme="system" on <html> or on a
+   [data-bt-ui] wrapper. The declarations must stay identical to the block
+   above (test/styles-scope.test.ts compares them). */
+@media (prefers-color-scheme: dark) {
+  html[data-theme='system']:where(:not([data-bt-ui-scoped])),
+  [data-bt-ui][data-theme='system'],
+  [data-theme='system'] [data-bt-ui]:not([data-theme='light']) {
+    --bg: #1c1c1b;
+    --bg-side: #1a1a19;
+    --surface: #20201f;
+    --surface-2: #272726;
+    --surface-3: #2e2e2c;
+    --sunken: #1c1c1b;
+    --overlay: rgba(0, 0, 0, 0.5);
+    --border: #2f2e2c;
+    --border-strong: #3d3c39;
+    --divider: #272725;
+    --control-border: #7c7974;
+    --text: #eceae5;
+    --text-2: #b5b2ab;
+    --text-3: #9e9a93;
+    --text-4: #77746e;
+    --text-inv: #1a1a19;
+    --accent-ink: #b385ff;
+    --accent-ink-hover: #c4a0ff;
+    --focus-ring: var(--accent-ink);
+    --red: #e57d70;
+    --amber: #d8a443;
+    --green: #5cba86;
+    --blue: #72a5ea;
+    --gray: #8f8b84;
+    --on-red: #1a1a19;
+    --on-amber: #1a1a19;
+    --on-green: #1a1a19;
+    --on-blue: #1a1a19;
+    --violet: #a98deb;
+    --teal: #58c0b6;
+    --rose: #e68aab;
+    --orange: #e3925f;
+    --st-triage: #7c7974;
+    --st-backlog: #7c7974;
+    --st-todo: #a6a39c;
+    --st-progress: #72a5ea;
+    --st-done: #5cba86;
+    --st-canceled: #7c7974;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-raised:
+      0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 1px var(--border-strong);
+    --shadow-card: 0 0 0 1px var(--border);
+    --shadow-pop:
+      0 16px 40px -10px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border-strong);
+    --shadow-drag:
+      0 18px 40px -10px rgba(0, 0, 0, 0.65), 0 0 0 1px var(--border-strong);
+    --shadow-drawer: -18px 0 40px -24px rgba(0, 0, 0, 0.55);
+    --nav-current-bg: var(--surface-3);
+    --nav-current-shadow: none;
+    --drawer-edge: var(--border-strong);
+    --brand-tile-bg: var(--sunken);
+    --brand-tile-ink: var(--text);
+    --brand-tile-edge: var(--border-strong);
+    --accent-ink-inverse: #7c33ea;
+    --red-ink-inverse: #b03b2f;
+    --amber-ink-inverse: #88590d;
+    --green-ink-inverse: #247149;
+    --blue-ink-inverse: #2f63ae;
+
+    color-scheme: dark;
+  }
+}
+
+/* ============================================================================
+   TONE HOOK
+   Any element with data-tone (UiTone in src/types.ts) gets five variables
+   for its tone, so a component colours itself from the tone without one
+   rule per value (docs/architecture.md §8.2):
+     --tone       the hue: dots, icons, outlines, bars, fills (3:1 or more)
+     --tone-ink   the tone's TEXT (4.5:1 on every surface and on its tint)
+     --tone-soft  the tinted background (Gr8r's -soft: chip, notice, alert)
+     --tone-line  a tinted border
+     --on-tone    text sitting ON a solid --tone fill (4.5:1)
+   default leaves the surrounding text alone; muted is the inactive grey;
+   accent the purple (new, unread, selected, progress; never a status);
+   danger red, warning amber, success green, info blue. :where() keeps it
+   at zero specificity, so a module can still set them. They resolve on
+   the toned element itself, from the hue tokens it inherits.
+   ========================================================================== */
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) :where([data-tone]) {
+  --tone: var(--text-2);
+  --tone-ink: currentcolor;
+  --tone-soft: var(--surface-2);
+  --tone-line: var(--border-strong);
+  --on-tone: var(--surface);
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+  :where([data-tone='muted']) {
+  --tone: var(--gray);
+  --tone-ink: var(--text-3);
+  --tone-soft: var(--surface-2);
+  --tone-line: var(--border);
+  --on-tone: var(--surface);
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+  :where([data-tone='accent']) {
+  --tone: var(--accent);
+  --tone-ink: var(--accent-ink);
+  --tone-soft: var(--accent-soft);
+  --tone-line: var(--accent-line);
+  --on-tone: var(--on-accent);
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+  :where([data-tone='danger']) {
+  --tone: var(--red);
+  --tone-ink: var(--red);
+  --tone-soft: var(--red-soft);
+  --tone-line: var(--red-line);
+  --on-tone: var(--on-red);
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+  :where([data-tone='warning']) {
+  --tone: var(--amber);
+  --tone-ink: var(--amber);
+  --tone-soft: var(--amber-soft);
+  --tone-line: var(--amber-line);
+  --on-tone: var(--on-amber);
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+  :where([data-tone='success']) {
+  --tone: var(--green);
+  --tone-ink: var(--green);
+  --tone-soft: var(--green-soft);
+  --tone-line: var(--green-line);
+  --on-tone: var(--on-green);
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) :where([data-tone='info']) {
+  --tone: var(--blue);
+  --tone-ink: var(--blue);
+  --tone-soft: var(--blue-soft);
+  --tone-line: var(--blue-line);
+  --on-tone: var(--on-blue);
+}
+
+/* ============================================================================
+   RESET
+   ========================================================================== */
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]),
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) *,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) *::before,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) *::after {
+  box-sizing: border-box;
+}
+
+html:where(:not([data-bt-ui-scoped])),
+:where(html:not([data-bt-ui-scoped])) body {
+  /* clip, NOT hidden: hidden silently turns the root into a scroll container
+     and breaks every position: sticky on the page. */
+  overflow-x: clip;
+  max-width: 100%;
+}
+
+html:where(:not([data-bt-ui-scoped])) {
+  -webkit-text-size-adjust: 100%;
+}
+
+:where(html:not([data-bt-ui-scoped])) body {
+  margin: 0;
+}
+
+/* The page's surface and voice (Gr8r's body: 13.5px Geist at 1.45, weight
+   400, ss01 + cv11); a scoped wrapper carries them itself. */
+:where(html:not([data-bt-ui-scoped])) body,
+:where([data-bt-ui]) {
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: var(--fs);
+  font-weight: var(--fw-regular);
+  line-height: var(--lh);
+  font-feature-settings:
+    'ss01' 1,
+    'cv11' 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) h1,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) h2,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) h3,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) h4,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) p,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) figure,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) blockquote,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) ul,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) ol {
+  margin: 0;
+  padding: 0;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) ul,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) ol {
+  list-style: none;
+}
+
+/* Links are undecorated; affordance is supplied per component (an inline
+   link in running text uses .accentLink, which is underlined). */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) a {
+  color: inherit;
+  text-decoration: none;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) input,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) textarea,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) [contenteditable] {
+  caret-color: var(--accent);
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) img,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) svg {
+  display: block;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+/* A tint of the accent under the text; the text keeps its own colour. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) ::selection {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* Gr8r's ring: 2px --focus-ring hugging the control (3:1 or more on
+   every surface and every status tint, in both themes; the contrast test
+   checks it). Fields draw their own (an accent border, a 1px accent
+   shadow and a soft halo) over a transparent outline, so forced colours
+   still draw a ring. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) :focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* The ring's 4px corners, for an element with no radius of its own (a
+   text link, a bare row). A rule of its own with no specificity at all
+   (:focus-visible inside :where), so any class that sets a radius (a
+   pill, a 6px button, a graph box, a round avatar) keeps its own corners
+   when focused instead of the ring reshaping it. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) :where(:focus-visible) {
+  border-radius: var(--r-xs);
+}
+
+/* Thin rounded scrollbars on a clear track (Gr8r): a ~4px thumb in the
+   strong border colour, darker on hover. Firefox gets the thin standard. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) ::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 3px solid transparent;
+  border-radius: 10px;
+  background-clip: padding-box;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+  ::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-4);
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) ::-webkit-scrollbar-track,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) ::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html:where(:not([data-bt-ui-scoped])) {
+    scroll-behavior: smooth;
+  }
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Gr8r's skip link: an inverted pill that drops in on focus. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .skipLink {
+  position: absolute;
+  left: 12px;
+  top: -200px;
+  z-index: 200;
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  background: var(--text);
+  color: var(--text-inv);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  box-shadow: var(--shadow-pop);
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .skipLink:focus {
+  top: 12px;
+}
+
+/* ============================================================================
+   BLOCK CHROME
+   A page section: .pageBlock sets the column, .blockBar is its heading row
+   (Gr8r's section title: 14.5px semibold, a quiet meta on the right). No
+   box, no texture and no section numbers. The column is .pageBlock, not
+   .block: a host that still loads Tailwind has a `block` utility
+   (display: block) on many of its own elements, and in page mode this
+   column would land on every one of them.
+   ========================================================================== */
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .pageBlock {
+  max-width: 1440px;
+  margin: 40px auto 0;
+  padding: 0 48px;
+  scroll-margin-top: calc(var(--nav-h) + 12px);
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .blockBar {
+  display: flex;
+  align-items: center;
+  gap: 8px 12px;
+  min-height: 32px;
+  padding: 0 0 8px;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .blockTitle {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-section);
+  line-height: 1.3;
+  color: var(--text);
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .blockMeta {
+  margin-left: auto;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@media (width <= 768px) {
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .pageBlock {
+    padding: 0 16px;
+    margin-top: 32px;
+  }
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .blockBar {
+    flex-wrap: wrap;
+    gap: 2px 12px;
+  }
+  :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .blockMeta {
+    margin-left: 0;
+    flex-basis: 100%;
+    white-space: normal;
+  }
+}

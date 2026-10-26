@@ -1,0 +1,116 @@
+/* Gr8r's auth frame: the warm --bg page with a plain top row (the 22px
+   brand tile and the product name on the left, a quiet badge for the
+   mode, the theme toggle on the right) above the content. No box, no
+   rule, no texture. */
+
+.frame {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  min-height: 62px;
+  padding: 12px 24px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 6px;
+  margin-left: -6px;
+  border-radius: var(--r-sm);
+  transition: background-color var(--dur) ease;
+}
+
+.logo {
+  flex: 0 0 22px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-sm);
+  /* Dark in both themes, like the sidebar's tile (tokens.css). */
+  background: var(--brand-tile-bg, var(--text));
+  box-shadow: inset 0 0 0 1px var(--brand-tile-edge, transparent);
+  color: var(--brand-tile-ink, var(--text-inv));
+  font-size: 10px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.01em;
+  line-height: 1;
+}
+
+.brandName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-section);
+  color: var(--text);
+}
+
+/* Gr8r's neutral badge ("Demo"), 12px off the name as in the bar. */
+.brandLabel {
+  flex: 0 0 auto;
+  margin-left: 4px;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-chip);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.main:focus {
+  outline: none;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .brand:hover {
+    background: var(--surface-3);
+  }
+}
+
+@media (width <= 640px) {
+  .bar {
+    min-height: 54px;
+    padding: 8px 12px 8px 16px;
+  }
+  .brandName {
+    font-size: var(--fs);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand {
+    transition: none;
+  }
+}

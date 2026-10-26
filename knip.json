@@ -39,6 +39,13 @@
       // runner tests, never imported.
       "entry": ["scripts/*.ts", "test/fixtures/adapters/*.ts"]
     },
+    "packages/ui": {
+      // src/index.ts is inferred from `exports`, and the bun plugin makes
+      // the *.test.ts(x) files entries; the test/*-ssr-entry.tsx render
+      // entries are spawned as child processes (`bun run`, no happy-dom) by
+      // the *-ssr tests, never imported, so nothing static reaches them.
+      "entry": ["test/**/*.ts", "test/**/*.tsx"]
+    },
     "packages/demo": {
       // storefront-src is a template copied into the generated demo repo
       // (see src/paths.ts's `template`), so nothing in this workspace ever

@@ -1,0 +1,25 @@
+{
+  "name": "@dispatch/planning",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pure planning domain logic and view models: rubric, risk, ordering, allocation plans, dependency graphs, Mermaid export, timeline and milestone views.",
+  "license": "FSL-1.1-ALv2",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsdown --clean",
+    "test": "bun test",
+    "tsc": "tsgo --noEmit --pretty"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:"
+  }
+}

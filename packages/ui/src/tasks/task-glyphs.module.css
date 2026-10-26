@@ -1,0 +1,60 @@
+.glyph {
+  flex: none;
+  overflow: visible;
+}
+
+/* Workflow colours (tokens.css --st-*), in the status mapping of
+   docs/architecture.md §8.2. */
+.triage {
+  color: var(--st-triage);
+}
+
+.backlog {
+  color: var(--st-backlog);
+}
+
+.unstarted {
+  color: var(--st-todo);
+}
+
+.started {
+  color: var(--st-progress);
+}
+
+.completed {
+  color: var(--st-done);
+}
+
+.canceled {
+  color: var(--st-canceled);
+}
+
+/* The completed tick is knocked out of the disc in the surface colour. */
+.check {
+  stroke: var(--surface);
+}
+
+/* Priority: lit bars in the secondary ink, the rest as ghosts. */
+.lit {
+  fill: var(--text-2);
+}
+
+.ghost {
+  fill: var(--border-strong);
+}
+
+.none {
+  fill: var(--text-3);
+}
+
+.urgent {
+  color: var(--red);
+}
+
+.bang {
+  stroke: var(--on-danger);
+}
+
+.bangDot {
+  fill: var(--on-danger);
+}

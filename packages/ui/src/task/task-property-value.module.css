@@ -1,0 +1,52 @@
+/* A property value with a quiet sentence under it, in Gr8r's .kv value
+   voice. A tone colours the value or the note in the tone's TEXT colour
+   (data-tone gives --tone-ink: warning "Unassigned", danger an overdue
+   date), with no fill: the toned look of docs/architecture.md §8.2; a
+   status value also steps up to 500 so the word reads as the claim. */
+
+.stack {
+  display: flex;
+  flex: 1 1 100%;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.value {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 7px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Dates, durations and counts: Geist with tabular figures (the name is
+   older than the look). */
+.mono {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Any tone but default and muted (data-tone gives --tone-ink): accent,
+   danger, warning, success, info. */
+.toned {
+  color: var(--tone-ink);
+}
+
+.value.toned {
+  font-weight: var(--fw-medium);
+}
+
+.muted {
+  color: var(--text-3);
+}
+
+.note {
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.noteDefault {
+  color: var(--text-2);
+}

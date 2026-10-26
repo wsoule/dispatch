@@ -1,0 +1,15 @@
+{
+  // The source as a host compiles it. Hosts type-check this package with
+  // their own flags; Dispatch's apps/desktop/tsconfig.app.json is not strict
+  // (strictNullChecks off, where `x !== undefined` does not narrow a union),
+  // with noUnusedLocals, noUnusedParameters and erasableSyntaxOnly. Run by
+  // the typecheck-host task. Its lib also lacks DOM.Iterable, which
+  // TypeScript 7 folds into DOM, so iterate a NodeList through Array.from.
+  "extends": "./tsconfig.json",
+  "include": ["src/**/*.ts", "src/**/*.tsx", "global.d.ts"],
+  "compilerOptions": {
+    "strict": false,
+    "strictNullChecks": false,
+    "tsBuildInfoFile": "tsconfig.host.tsbuildinfo"
+  }
+}

@@ -1,0 +1,58 @@
+/* Gr8r's small icon button: 26px, 6px radius, --text-2; a grey fill on
+   hover. The toggle sits on the grey sidebar and the signed-out --bg page,
+   where --surface-2 is all but invisible, so it hovers to --surface-3
+   (Gr8r's sidebar hover). */
+.toggle {
+  width: var(--h-sm);
+  height: var(--h-sm);
+  flex: 0 0 var(--h-sm);
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease;
+}
+
+@media (hover: hover) {
+  .toggle:hover {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+}
+
+.sun,
+.moon {
+  grid-area: 1 / 1;
+}
+
+/* Show the mode you would switch TO. */
+.sun {
+  display: none;
+}
+
+/* Dark on <html> or on a [data-bt-ui] wrapper; "system" follows the OS. */
+:global([data-theme='dark']) .sun {
+  display: block;
+}
+
+:global([data-theme='dark']) .moon {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :global([data-theme='system']) .sun {
+    display: block;
+  }
+
+  :global([data-theme='system']) .moon {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toggle {
+    transition: none;
+  }
+}

@@ -63,10 +63,10 @@ Dispatch is open core (`LICENSING.md`) — license is per package, not uniform:
   team tier. Federation spans three of the four: its wire format and the
   engine's receive side are MIT (`packages/protocol`), its roster, transport and
   mail are ELv2, and the daemon wiring and desktop are FSL.
-- Everything else (`packages/server`, `packages/ui-legacy`, `packages/web`,
-  `packages/demo`, `apps/desktop`, `apps/demo`, `apps/site`) is `FSL-1.1-ALv2`
-  (`LICENSE`), source-available and converting to Apache-2.0 two years after
-  each release.
+- Everything else (`packages/server`, `packages/ui`, `packages/planning`,
+  `packages/ui-legacy`, `packages/web`, `packages/demo`, `apps/desktop`,
+  `apps/demo`, `apps/site`) is `FSL-1.1-ALv2` (`LICENSE`), source-available and
+  converting to Apache-2.0 two years after each release.
 
 When adding a new workspace package, add it to the `EXPECTED` map in
 `scripts/check-licenses.ts` with the license the split above assigns it, set

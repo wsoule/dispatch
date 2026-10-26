@@ -18,6 +18,9 @@ catalogs:
     '@base-ui/react':
       specifier: 1.8.0
       version: 1.8.0
+    '@dagrejs/dagre':
+      specifier: 3.1.1
+      version: 3.1.1
     '@dnd-kit/core':
       specifier: 6.3.1
       version: 6.3.1
@@ -652,6 +655,18 @@ importers:
         specifier: 5.9.2
         version: 5.9.2
 
+  packages/planning:
+    devDependencies:
+      '@types/bun':
+        specifier: 'catalog:'
+        version: 1.3.12
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.15.11(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(@typescript/native-preview@7.0.0-dev.20260128.1)(oxc-resolver@11.24.2)(typescript@5.9.2)
+      typescript:
+        specifier: 5.9.2
+        version: 5.9.2
+
   packages/protocol:
     dependencies:
       '@dispatch-foo/core':
@@ -730,6 +745,43 @@ importers:
         version: 5.9.2
 
   packages/tokens: {}
+
+  packages/ui:
+    dependencies:
+      '@dagrejs/dagre':
+        specifier: 'catalog:'
+        version: 3.1.1
+      lucide-react:
+        specifier: 'catalog:'
+        version: 1.25.0(react@19.2.7)
+    devDependencies:
+      '@happy-dom/global-registrator':
+        specifier: 'catalog:'
+        version: 20.11.1
+      '@testing-library/dom':
+        specifier: 'catalog:'
+        version: 10.4.1
+      '@testing-library/react':
+        specifier: 'catalog:'
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@types/bun':
+        specifier: 'catalog:'
+        version: 1.3.12
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.2.17
+      '@types/react-dom':
+        specifier: 'catalog:'
+        version: 19.2.3(@types/react@19.2.17)
+      react:
+        specifier: 'catalog:'
+        version: 19.2.7
+      react-dom:
+        specifier: 'catalog:'
+        version: 19.2.7(react@19.2.7)
+      typescript:
+        specifier: 5.9.2
+        version: 5.9.2
 
   packages/ui-legacy:
     dependencies:
@@ -1310,6 +1362,12 @@ packages:
     engines: {node: '>=18'}
     peerDependencies:
       postcss-selector-parser: ^7.0.0
+
+  '@dagrejs/dagre@3.1.1':
+    resolution: {integrity: sha512-zroZB1dFOFiGgv4Xcrn1DckB1o4aOikPqD2NDQPV0WM//CXGcS6xiD0rNkqHmw6FEg4tabt4nxPLwgCWT+Vb2A==}
+
+  '@dagrejs/graphlib@4.0.5':
+    resolution: {integrity: sha512-7xrBTqIts3o+PMUZX97wSc+7TUbW+/rULzGNCTP6yooNVDXbzw4Wutg/H/xOutTB/c/k0YqOAavgPh4/Zk9PFA==}
 
   '@dnd-kit/accessibility@3.1.1':
     resolution: {integrity: sha512-2P+YgaXF+gRsIihwwY1gCsQSYnu9Zyj2py8kY5fFvUM1qm2WA2u639R6YNVfU4GWr+ZM5mqEsfHZZLoRONbemw==}
@@ -6205,6 +6263,12 @@ snapshots:
   '@csstools/selector-specificity@5.0.0(postcss-selector-parser@7.1.5)':
     dependencies:
       postcss-selector-parser: 7.1.5
+
+  '@dagrejs/dagre@3.1.1':
+    dependencies:
+      '@dagrejs/graphlib': 4.0.5
+
+  '@dagrejs/graphlib@4.0.5': {}
 
   '@dnd-kit/accessibility@3.1.1(react@19.2.7)':
     dependencies:

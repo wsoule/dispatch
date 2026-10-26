@@ -1,0 +1,69 @@
+/* Gr8r's round avatar: initials at 0.4x the size, 600, on a 17% tint of
+   the person's hue (data-hue, picked from the name among the decorative
+   hues violet, teal, rose and orange) with the hue mixed into the text,
+   ringed in the surface so it sits cleanly on any row or in a stack.
+   Nobody is a dashed empty circle. 20 / 22 / 26 / 36px (data-size). */
+
+.avatar {
+  --c: var(--gray);
+  --sz: 20px;
+
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: var(--sz);
+  height: var(--sz);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--c) 17%, var(--surface));
+  box-shadow: 0 0 0 1.5px var(--surface);
+  color: color-mix(in srgb, var(--c) 55%, var(--text));
+  font-family: var(--font-body);
+  font-size: calc(var(--sz) * 0.4);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.01em;
+  line-height: 1;
+  text-transform: none;
+  user-select: none;
+}
+
+.avatar[data-size='base'] {
+  --sz: 22px;
+}
+
+.avatar[data-size='md'] {
+  --sz: 26px;
+}
+
+.avatar[data-size='lg'] {
+  --sz: 36px;
+}
+
+.avatar[data-hue='violet'] {
+  --c: var(--violet);
+}
+
+.avatar[data-hue='teal'] {
+  --c: var(--teal);
+}
+
+.avatar[data-hue='rose'] {
+  --c: var(--rose);
+}
+
+.avatar[data-hue='orange'] {
+  --c: var(--orange);
+}
+
+.avatar[data-empty='true'] {
+  background: transparent;
+  box-shadow: none;
+  border: 1.3px dashed var(--border-strong);
+  color: var(--text-4);
+}
+
+/* Forced colours drop the tint: keep the circle's edge. */
+@media (forced-colors: active) {
+  .avatar {
+    border: 1px solid CanvasText;
+  }
+}

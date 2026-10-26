@@ -36,6 +36,12 @@
       "path": "packages/ui-legacy/tsconfig.json"
     },
     {
+      "path": "packages/ui/tsconfig.json"
+    },
+    {
+      "path": "packages/planning/tsconfig.json"
+    },
+    {
       "path": "apps/desktop/tsconfig.json"
     }
   ]

@@ -1,0 +1,40 @@
+{
+  "name": "@dispatch/ui",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Framework-agnostic React components for the task UI in Gr8r Studio's layout and look: shell, grouped task table, timeline, dependency graph, task detail, pickers. Consumed as TypeScript source by the host's bundler; there is no dist.",
+  "license": "FSL-1.1-ALv2",
+  "type": "module",
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles/index.css",
+    "./*": "./src/*"
+  },
+  "scripts": {
+    "test": "bun test",
+    "tsc": "tsgo --noEmit --pretty",
+    "typecheck-host": "tsc -p tsconfig.host.json --noEmit --pretty"
+  },
+  "dependencies": {
+    "@dagrejs/dagre": "catalog:",
+    "lucide-react": "catalog:"
+  },
+  "devDependencies": {
+    "@happy-dom/global-registrator": "catalog:",
+    "@testing-library/dom": "catalog:",
+    "@testing-library/react": "catalog:",
+    "@types/bun": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "typescript": "catalog:"
+  },
+  "peerDependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  }
+}

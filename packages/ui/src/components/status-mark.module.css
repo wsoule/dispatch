@@ -1,0 +1,144 @@
+.wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  vertical-align: middle;
+}
+
+/* A milestone's status as a 12px diamond (the milestone symbol the
+   timeline draws), so it never reads as an issue's workflow glyph (those
+   are circles, task-glyphs). The shape carries the status as well as the
+   hue (docs/architecture.md §8.2), so it survives colour blindness,
+   greyscale and forced colours:
+     overdue          solid diamond, red
+     at risk          bottom half filled, amber
+     on track         outline, green
+     complete         solid with a tick knocked out, the neutral --text:
+                      never green, because a green fill is as light as
+                      the red one and done and overdue would read the same
+                      without red-green vision or in greyscale
+     missing input    dotted outline, --text-3
+     open             outline, --text-2 (no status claim of its own: an
+                      issue box on the graph, whose status is its
+                      milestone's)
+     muted (inactive) outline, --gray
+   The box stays a 12px square for layout; `::before` is the diamond, a
+   square whose corners touch the box (inset = (1 - 1/√2) / 2 ≈ 14.6%)
+   turned 45°. Every size but the edge is relative, so a smaller box (10px
+   in a chip) shrinks the whole mark. The edge is 2px: Chrome snaps a
+   1.5px border down to 1px at 1x, and a 1px outline turned 45° washes out
+   under 3:1 in the greys. */
+.mark {
+  position: relative;
+  display: block;
+  flex: 0 0 12px;
+  width: 12px;
+  height: 12px;
+  color: var(--gray);
+  transition: color var(--dur) ease;
+}
+
+.mark::before {
+  content: '';
+  position: absolute;
+  inset: 14.6%;
+  border: 2px solid currentColor;
+  border-radius: 2px;
+  background: transparent;
+  transform: rotate(45deg);
+}
+
+/* Overdue: a solid red diamond. */
+.overdue {
+  color: var(--red);
+}
+
+.overdue::before {
+  background: currentColor;
+}
+
+/* At risk: amber, the bottom half filled. The square is turned 45°
+   clockwise, so its bottom-right half is the diamond's lower half. */
+.at_risk {
+  color: var(--amber);
+}
+
+.at_risk::before {
+  background: linear-gradient(135deg, transparent 50%, currentColor 50%);
+}
+
+/* On track: an open green diamond. */
+.on_track {
+  color: var(--green);
+}
+
+/* Complete: a solid neutral diamond with a tick knocked out in the
+   surface colour (the tick, and the lightness, tell it from overdue). */
+.done {
+  color: var(--text);
+}
+
+.done::before {
+  background: currentColor;
+}
+
+.done::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  width: 22%;
+  height: 42%;
+  border: solid var(--surface);
+  border-width: 0 1.5px 1.5px 0;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+/* An input is missing (no date, no issues, a rubric gap): a dotted
+   outline (a 2px dash closes up on a side this short and reads as the
+   muted outline). Not loud by itself; the copy says what is missing (in
+   the warning tone where it blocks something). */
+.missing {
+  color: var(--text-3);
+}
+
+.missing::before {
+  border-style: dotted;
+}
+
+/* Open work with no status of its own: a neutral open diamond. */
+.open {
+  color: var(--text-2);
+}
+
+/* An inactive project's milestone (or any mark asked to be quiet): an
+   open grey diamond, never loud. --gray stays above 3:1 on every surface. */
+.muted {
+  color: var(--gray);
+}
+
+.text {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* Forced colours drop backgrounds, which would erase the solid and half
+   fills: keep the shapes and draw them in the system text colour. */
+@media (forced-colors: active) {
+  .mark {
+    forced-color-adjust: none;
+    color: CanvasText;
+  }
+
+  .done::after {
+    border-color: Canvas;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mark {
+    transition: none;
+  }
+}

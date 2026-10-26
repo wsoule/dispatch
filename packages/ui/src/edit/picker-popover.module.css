@@ -1,0 +1,887 @@
+/* The property picker in Gr8r's idiom. The trigger reads as the value it
+   holds and takes Gr8r's pill (.pillbtn: a --surface-2 fill, 6px radius)
+   on hover and while open, the accent ring on focus. The pill is drawn by
+   a pseudo-element a few pixels outside the button (the outsets in
+   picker-popover.tsx), so the value's text sits exactly where a plain
+   value's would and the row keeps its height; the popover lines up with
+   the pill. The status line's trigger (mono, the old name) is a bordered
+   pill, an "+ Add" (quiet) a ghost button, a list cell's (cell) the pill
+   in the cell's own voice, and the bulk bar's (bar) a ghost button in
+   --text-inv. The popover is Gr8r's .pop: a white 10px-radius card on
+   --shadow-pop with 4px of padding, a search row on top, 30px rows that
+   fill --surface-2 with a 2px accent bar when active, eyebrow group titles
+   and an accent check. On phones it is a bottom sheet over the --overlay
+   scrim. */
+
+.root {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.triggerRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* isolation: the pill below sits behind the face (z-index -1) yet above
+   whatever the trigger is drawn on (a row's hover fill or tint). */
+.trigger {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease;
+}
+
+/* The pill (hover, open) and the focus ring, a few pixels outside the
+   button. The pseudo-element is part of the button, so it is clickable
+   too. */
+.value::before,
+.mono::before,
+.cell::before {
+  content: '';
+  position: absolute;
+  inset: -4px -7px;
+  z-index: -1;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  transition:
+    background-color var(--dur) ease,
+    border-color var(--dur) ease;
+}
+
+/* mono: the status line's bordered pill, like Gr8r's project status pill
+   (a --surface pill in the soft border, filled on hover and while
+   open). */
+.mono::before {
+  inset: -4px -6px;
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+/* The ring moves onto the pill; the transparent outline stays on the
+   button, so forced colours still draw one. */
+.value:focus-visible,
+.mono:focus-visible,
+.cell:focus-visible {
+  outline: 2px solid transparent;
+}
+
+.value:focus-visible::before,
+.mono:focus-visible::before,
+.cell:focus-visible::before {
+  border: 2px solid var(--focus-ring);
+}
+
+.value[aria-expanded='true']::before,
+.mono[aria-expanded='true']::before {
+  background: var(--surface-2);
+}
+
+/* A list cell's pill is one step deeper: its row takes the --surface-2
+   hover fill around it. */
+.cell[aria-expanded='true']::before {
+  background: var(--surface-3);
+}
+
+.mono[aria-expanded='true']::before {
+  border-color: var(--border-strong);
+}
+
+.trigger:disabled {
+  cursor: default;
+}
+
+.face {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.trigger[data-pending='true'] .face {
+  opacity: 0.55;
+}
+
+.faceMark {
+  display: inline-flex;
+  flex: none;
+}
+
+.faceText {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* value: the property sheet's reading voice. */
+.value {
+  min-height: 20px;
+  font-size: var(--fs);
+  font-weight: var(--fw-regular);
+  line-height: var(--lh);
+  color: var(--text);
+}
+
+/* mono (the status line; the name is historical): a state name never
+   wraps. */
+.mono {
+  min-height: 16px;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  line-height: 1.3;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+/* quiet: a small ghost button ("+ Add"). */
+.quiet {
+  min-height: var(--h-sm);
+  padding: 0 8px;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+
+.quiet .face {
+  gap: 5px;
+}
+
+.quiet[aria-expanded='true'] {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+/* cell: a list cell's value, in the cell's own voice (the table's
+   secondary text), so its text sits exactly where the plain value's
+   would; the pill shows on hover. One line, cut with an ellipsis. */
+.cell {
+  min-height: 20px;
+  max-width: 100%;
+  font: inherit;
+  white-space: nowrap;
+}
+
+.cell .face {
+  gap: 6px;
+}
+
+.cell .faceText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+}
+
+/* bar: a ghost button on the inverted bulk bar (Gr8r's .bulkbar .btn):
+   --text-inv at 0.85 opacity (4.5:1 or better on the fill, checked in
+   tasks-contrast.test.ts), a faint light wash on hover or while open. */
+.bar {
+  min-height: var(--h-sm);
+  padding: 0 8px;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--text-inv);
+  opacity: 0.85;
+}
+
+.bar .face {
+  gap: 6px;
+}
+
+.bar[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--text-inv) 14%, transparent);
+  opacity: 1;
+}
+
+/* Inside its frame: the bar's action strip scrolls on a phone and would
+   cut an outside ring. */
+.bar:focus-visible {
+  outline-offset: -2px;
+  opacity: 1;
+}
+
+.bar:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* The pending note beside a bar trigger sits on the inverted fill too. */
+.bar + [data-edit-pending] {
+  color: var(--text-inv);
+  opacity: 0.85;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .value:not(:disabled):hover::before {
+    background: var(--surface-2);
+  }
+
+  .cell:not(:disabled):hover::before {
+    background: var(--surface-3);
+  }
+
+  .mono:not(:disabled):hover::before {
+    border-color: var(--border-strong);
+    background: var(--surface-2);
+  }
+
+  .quiet:not(:disabled):hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .bar:not(:disabled):hover {
+    background: color-mix(in srgb, var(--text-inv) 14%, transparent);
+    opacity: 1;
+  }
+}
+
+/* Touch has no hover to reveal the pill: a faint rule under the value
+   says "tap me". It stays inside the value's column (a wrapped list of
+   labels is as wide as the column). */
+@media (hover: none) {
+  .value::before,
+  .cell::before {
+    inset-inline: 0;
+    border-radius: 0;
+  }
+
+  .value:not(:disabled, :focus-visible)::before,
+  .cell:not(:disabled, :focus-visible)::before {
+    border-bottom-color: var(--border-strong);
+  }
+}
+
+/* An empty value: the quiet text step, unless the host gave it a tone
+   (below). */
+.placeholder {
+  color: var(--text-3);
+}
+
+/* A placeholder with a tone (accent, or a status: warning "Unassigned")
+   takes the tone's TEXT colour from data-tone. */
+.placeholder.toned {
+  color: var(--tone-ink);
+}
+
+.placeholder.plain {
+  color: inherit;
+}
+
+/* The shown option's status tone (PickerOption.tone: a red "Urgent" in a
+   list cell), in the tone's TEXT colour from data-tone. */
+.faceText.toned {
+  color: var(--tone-ink);
+}
+
+/* Several values (labels) as Gr8r's label chips (.lbl): a 20px neutral
+   bordered chip; the label's colour lives only in its small square. */
+.tokens {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  padding: 1px 0;
+}
+
+.token {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  min-height: 20px;
+  padding: 0 7px 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-chip);
+  background: var(--surface);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-regular);
+  line-height: 1.3;
+  color: var(--text-2);
+}
+
+.token [data-mark='swatch'] {
+  width: 6px;
+  height: 6px;
+}
+
+.tokenText {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.saveError {
+  max-width: 40ch;
+}
+
+/* ---- the popover ------------------------------------------------------- */
+
+/* The layer resets the browser's popover box (it may sit in the top
+   layer); the panel inside draws everything. It is placed by script
+   through the custom properties and stays hidden until it has been. */
+.layer {
+  position: fixed;
+  inset: auto;
+  top: var(--picker-top, 0);
+  left: var(--picker-left, 0);
+  z-index: 80;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  background: transparent;
+  color: var(--text);
+  visibility: hidden;
+}
+
+.layer[data-placed='true'] {
+  visibility: visible;
+}
+
+.layer[data-side='above'] {
+  top: auto;
+  bottom: var(--picker-bottom, 0);
+}
+
+/* Inherits nothing from where the trigger sits (a right-aligned section
+   note, the status pill): the panel sets its own voice. */
+.panel {
+  --picker-cap: 360px;
+
+  display: flex;
+  flex-direction: column;
+  width: clamp(264px, var(--picker-anchor-width, 264px), 400px);
+  max-width: calc(100vw - 16px);
+  max-height: min(
+    var(--picker-cap),
+    var(--picker-max-height, var(--picker-cap))
+  );
+  padding: 4px;
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: var(--fs);
+  font-weight: var(--fw-regular);
+  letter-spacing: normal;
+  line-height: var(--lh);
+  text-align: start;
+  text-transform: none;
+  white-space: normal;
+  transform-origin: top left;
+  animation: pop-in 0.16s var(--ease) both;
+}
+
+.layer[data-side='above'] .panel {
+  transform-origin: bottom left;
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Gr8r's search row: bleeds to the card's edges, a divider under it. */
+.searchRow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  margin: -4px -4px 4px;
+  padding: 0 6px 0 12px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.searchIcon {
+  flex: none;
+  color: var(--text-4);
+}
+
+.input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  /* Transparent, not none: forced-colours mode paints it, so the field
+     keeps a visible focus there. */
+  outline: 2px solid transparent;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: var(--fs);
+  font-weight: var(--fw-regular);
+  /* A placeholder longer than the field ends in "…", not mid-word. */
+  text-overflow: ellipsis;
+}
+
+.input:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+}
+
+.input::placeholder {
+  color: var(--text-3);
+}
+
+.close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  height: var(--h-xs);
+  padding: 0 3px;
+  border-radius: var(--r-xs);
+  color: var(--text-3);
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease;
+}
+
+.closeWord {
+  display: none;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .close:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+}
+
+.scroll {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.list:empty {
+  display: none;
+}
+
+/* A menu (no search row): the list holds focus, and its active option is
+   the focus indicator, as the search box's active option is (a
+   transparent outline, so forced colours still ring the list). */
+.list:focus-visible {
+  outline: 2px solid transparent;
+}
+
+/* A menu's "Done" for the phone sheet (the search row's is gone). A menu
+   draws no key hints (Gr8r's menus have no foot), so on a desktop its
+   foot shows only while a pick saves or after one failed. */
+.sheetClose {
+  display: none;
+}
+
+.foot:has(> .sheetClose:only-child) {
+  display: none;
+}
+
+/* A menu item without a mark starts at the edge (a picker keeps the mark
+   column so marked and unmarked values line up). */
+.panel[data-searchable='false'] .optionMark:empty {
+  display: none;
+}
+
+/* Groups part with Gr8r's menu separator: a divider to the card's edges. */
+.option + .group,
+.group + .group {
+  margin: 4px -4px 0;
+  padding: 4px 4px 0;
+  border-top: 1px solid var(--divider);
+}
+
+.groupTitle {
+  padding: 8px 8px 4px;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: var(--h-md);
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* The active row (the arrow keys, or the pointer on a hover screen):
+   Gr8r's soft fill plus a 2px accent bar on the left edge. Focus stays
+   in the search field (aria-activedescendant), so this is the only focus
+   cue, and the fill alone is 1.1:1; the bar is 3.4:1 or better. */
+.option[data-active='true'] {
+  background: var(--surface-2);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+@media (forced-colors: active) {
+  .option[data-active='true'] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
+.optionMark {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  color: var(--text-2);
+}
+
+.optionLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The hint (a handle, a date, an issue key) keeps its full width up to
+   45% of the row; the label gives way first, so "ENG-124" never reads
+   "ENG-…". */
+.hint {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+/* TaskRelationPicker's hints are issue keys: the mono id voice. */
+.keyHints .hint {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+}
+
+.tick {
+  flex: none;
+  color: var(--accent);
+}
+
+/* The multiple picker's box: the Checkbox primitive, 14px with a 4px
+   radius, hollow when off, the accent with an on-accent tick when on. */
+.check {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--control-border);
+  border-radius: var(--r-xs);
+  background: var(--surface);
+}
+
+.check svg {
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: var(--on-accent);
+  stroke-width: 1.8;
+  opacity: 0;
+}
+
+.check[data-checked='true'] {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.check[data-checked='true'] svg {
+  opacity: 1;
+}
+
+.disabled {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+.disabled .optionMark {
+  opacity: 0.6;
+}
+
+/* A disabled row is often a sentence (why a choice is off, a menu's
+   note): it wraps instead of being cut. */
+.disabled .optionLabel {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.retryRow .optionLabel {
+  font-weight: var(--fw-medium);
+  color: var(--accent-ink);
+}
+
+.statusRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+/* Loading is a shimmering bar (the Skeleton's), never a spinner. */
+.loadingBar {
+  flex: none;
+  width: 40px;
+  height: 8px;
+  border-radius: var(--r-xs);
+  background: linear-gradient(
+    90deg,
+    var(--surface-3) 0%,
+    var(--surface-2) 45%,
+    var(--surface-3) 90%
+  );
+  background-size: 220% 100%;
+  animation: shimmer 1.3s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: -100% 0;
+  }
+}
+
+.errorRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 4px -4px 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--divider);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.errorKey {
+  flex: none;
+  font-weight: var(--fw-semibold);
+  color: var(--red);
+}
+
+.errorText {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A quiet recessed foot (like the palette's): key hints, or the save
+   state while a pick is saving or after it failed. */
+.foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  margin: 4px -4px -4px;
+  padding: 5px 12px;
+  border-top: 1px solid var(--divider);
+  background: var(--sunken);
+}
+
+.hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.hints > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ---- phones: a bottom sheet -------------------------------------------- */
+
+@media (width <= 640px) {
+  .layer,
+  .layer[data-side='above'] {
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    background: var(--overlay);
+  }
+
+  .panel,
+  .layer[data-side='above'] .panel {
+    width: 100%;
+    max-width: none;
+    max-height: min(78vh, 560px);
+    padding: 4px 8px calc(4px + env(safe-area-inset-bottom, 0px));
+    border-radius: 14px 14px 0 0;
+    transform-origin: bottom center;
+    animation-name: sheet-in;
+    animation-duration: 0.28s;
+    animation-timing-function: var(--ease-drawer);
+  }
+
+  .searchRow {
+    height: 50px;
+    margin: -4px -8px 4px;
+    padding: 0 8px 0 18px;
+  }
+
+  /* 16px keeps iOS from zooming into the field. */
+  .input {
+    font-size: 16px;
+  }
+
+  .option {
+    min-height: 44px;
+    padding: 6px 10px;
+    font-size: 15px;
+  }
+
+  .option + .group,
+  .group + .group,
+  .errorRow {
+    margin-inline: -8px;
+    padding-inline: 8px;
+  }
+
+  .groupTitle,
+  .statusRow {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .errorRow {
+    padding-inline: 18px;
+  }
+
+  .foot {
+    margin: 4px -8px calc(-4px - env(safe-area-inset-bottom, 0px));
+    padding: 6px 18px calc(6px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .close {
+    height: 36px;
+    padding: 0 10px;
+    border-radius: var(--r-sm);
+  }
+
+  .closeKey {
+    display: none;
+  }
+
+  .closeWord {
+    display: inline;
+    font-size: var(--fs);
+    font-weight: var(--fw-semibold);
+    color: var(--accent-ink);
+  }
+
+  .foot:has(> .sheetClose:only-child) {
+    display: flex;
+  }
+
+  .sheetClose {
+    display: inline-flex;
+    align-items: center;
+    height: 36px;
+    margin-left: auto;
+    padding: 0 10px;
+    border-radius: var(--r-sm);
+    font-size: var(--fs);
+    font-weight: var(--fw-semibold);
+    color: var(--accent-ink);
+  }
+
+  .hints {
+    display: none;
+  }
+
+  .foot:has(> .hints:only-child) {
+    display: none;
+  }
+
+  /* A tap needs no active row: it is drawn once the arrow keys are used
+     (a phone with a keyboard). The tick still marks the current value. */
+  .list:not([data-keyboard='true']) .option[data-active='true'] {
+    background: transparent;
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trigger,
+  .close {
+    transition: none;
+  }
+
+  .panel,
+  .layer[data-side='above'] .panel {
+    animation: none;
+  }
+
+  .loadingBar {
+    animation: none;
+    opacity: 0.85;
+  }
+}

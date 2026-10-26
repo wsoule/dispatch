@@ -1,0 +1,24 @@
+/* Option marks. A person is the package's one round avatar
+   (InitialsAvatar, components/initials-avatar: its own sheet); a label's
+   colour is a small rounded square, the only colour from data the package
+   paints. */
+
+.swatch {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+/* Not a hex colour: a hollow square in the chip-box edge. */
+.swatch[data-empty='true'] {
+  border: 1px solid var(--border-strong);
+}
+
+/* Forced colours drop the fill: keep the square's edge. */
+@media (forced-colors: active) {
+  .swatch {
+    border: 1px solid CanvasText;
+  }
+}

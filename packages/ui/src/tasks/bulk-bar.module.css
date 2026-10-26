@@ -1,0 +1,237 @@
+/* Gr8r's bulk bar (.bulkbar): fixed at the bottom centre (of the content
+   column inside the app shell, which sets --shell-content-left) while rows
+   are selected, a --text fill with --text-inv ink (inverted in both
+   themes, like the toasts), --r-lg, the pop shadow, 6px 6px 6px 14px of
+   padding. "{n} selected", the host's actions (picker triggers with
+   appearance 'bar': ghost actions at 0.85 opacity with a faint light wash
+   on hover), then ✕, split by 1px separators of the ink at 20%. It springs
+   up when it appears; reduced
+   motion just shows it. On phones it spans the gutters above the shell's
+   tab bar, and host labels marked data-bulk-label hide at 390px and below
+   (their triggers keep their accessible names). */
+
+.bar {
+  /* An inverted fill: its controls' focus ring is the inverse one. */
+  --focus-ring: var(--focus-ring-inverse);
+
+  position: fixed;
+  bottom: 20px;
+  left: calc(50% + var(--shell-content-left, 0px) / 2);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100vw - var(--shell-content-left, 0px) - 32px);
+  min-height: 42px;
+  padding: 5px 5px 5px 13px;
+  /* Invisible here; forced colours draw it, so the bar keeps an edge
+     where its fill becomes the canvas. */
+  border: 1px solid transparent;
+  border-radius: var(--r-lg);
+  background: var(--text);
+  box-shadow: var(--shadow-pop);
+  font-size: var(--fs-sm);
+  color: var(--text-inv);
+  transform: translateX(-50%);
+  animation: pop-up 0.28s var(--spring);
+}
+
+.count {
+  flex: none;
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.sep {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: color-mix(in srgb, var(--text-inv) 20%, transparent);
+}
+
+/* A plain fieldset: it exists to disable every host control at once. */
+.actions {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.actions:disabled {
+  opacity: 0.6;
+}
+
+.note {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: 6px;
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  color: var(--text-inv);
+}
+
+.confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 0;
+  max-width: 640px;
+}
+
+.message {
+  flex: 1 1 260px;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+  color: var(--text-inv);
+}
+
+.confirmActions {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+}
+
+/* The confirmation's one primary: the accent fill (Button primary). */
+.primary {
+  display: inline-flex;
+  align-items: center;
+  height: var(--h-sm);
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  color: var(--on-accent);
+  transition: background-color var(--dur) ease;
+}
+
+.ghost,
+.close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--h-sm);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  color: var(--text-inv);
+  opacity: 0.85;
+  transition:
+    background-color var(--dur) ease,
+    opacity var(--dur) ease;
+}
+
+.ghost {
+  padding: 0 10px;
+}
+
+.close {
+  flex: none;
+  width: var(--h-sm);
+}
+
+/* The focus ring is the inverted fill's (--focus-ring-inverse, set as
+   the bar's --focus-ring): the fill purple, which reads on --text in both
+   themes where the dark ring's lighter step would not. */
+.primary:focus-visible,
+.ghost:focus-visible,
+.close:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+  opacity: 1;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .primary:hover {
+    background: var(--accent-hover);
+  }
+
+  .ghost:hover,
+  .close:hover {
+    background: color-mix(in srgb, var(--text-inv) 14%, transparent);
+    opacity: 1;
+  }
+}
+
+@keyframes pop-up {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+/* Phones: across the gutters, above the shell's tab bar when there is one
+   (the toasts' rule). */
+@media (width <= 900px) {
+  .bar {
+    right: 16px;
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    left: 16px;
+    max-width: none;
+    transform: none;
+    animation-name: pop-up-phone;
+  }
+
+  :global(body:has([data-shell-tabbar='true'])) .bar {
+    bottom: calc(56px + 12px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .actions {
+    flex: 1 1 auto;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .note {
+    white-space: normal;
+  }
+}
+
+@keyframes pop-up-phone {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (width <= 390px) {
+  .bar [data-bulk-label] {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar {
+    animation: none;
+  }
+
+  .primary,
+  .ghost,
+  .close {
+    transition: none;
+  }
+}

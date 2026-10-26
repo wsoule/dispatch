@@ -1,0 +1,992 @@
+/* The app frame in Gr8r's two-tone shell: a warm grey 252px sidebar
+   (--bg-side, a --border right edge) beside the white main column, a 46px
+   white topbar with sentence-case crumbs and a recessed search trigger,
+   30px nav rows whose current item is a raised white pill (dark: a
+   --surface-3 fill; both from the --nav-current-* tokens) with its icon
+   in the accent, and on phones an off-canvas drawer over the --overlay
+   scrim plus a white bottom tab bar. The page scrolls the document, so
+   position: sticky keeps working for every page under the topbar. */
+
+.shell {
+  --shell-sidebar-w: var(--side-w);
+  --shell-rail-w: 52px;
+  /* Where the content column starts: what fixed bars centre on (the bulk
+     bar), the sidebar here, the rail when collapsed, 0 on a phone. */
+  --shell-content-left: var(--shell-sidebar-w);
+  --shell-topbar-h: var(--topbar-h);
+  --shell-tabbar-h: 56px;
+  /* One left edge for crumbs, banner and page blocks: the .pageBlock gutter
+     (48px, 16px on phones), as Gr8r starts the first crumb on the
+     content gutter. */
+  --shell-gutter: 48px;
+  /* .pageBlock's scroll-margin clears the topbar instead of the site nav. */
+  --nav-h: var(--shell-topbar-h);
+
+  min-height: 100dvh;
+}
+
+/* ============================================================================
+   SIDEBAR
+   ========================================================================== */
+
+.sidebar {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  width: var(--shell-sidebar-w);
+  border-right: 1px solid var(--border);
+  background: var(--bg-side);
+  color: var(--text);
+  user-select: none;
+}
+
+.sidebar:focus {
+  outline: none;
+}
+
+/* ---- brand row: Gr8r's workspace switcher ---------------------------- */
+
+/* --shell-brand-inset: a host's extra left padding on the brand row (0 by
+   default), so a Tauri window with an overlay title bar can set the row
+   in from macOS's traffic lights. The host sets it on the shell or above. */
+.brand {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: var(--shell-topbar-h);
+  padding: 8px 8px 4px calc(8px + var(--shell-brand-inset, 0px));
+}
+
+.brandLink {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 6px;
+  border-radius: var(--r-sm);
+  transition: background-color var(--dur) ease;
+}
+
+/* The 22px tile: Gr8r's dark brand square with the product's initials.
+   It stays dark in both themes (--brand-tile-*: ink on light, a recessed
+   tile with a ring on dark). */
+.logo {
+  flex: 0 0 22px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-sm);
+  background: var(--brand-tile-bg, var(--text));
+  box-shadow: inset 0 0 0 1px var(--brand-tile-edge, transparent);
+  color: var(--brand-tile-ink, var(--text-inv));
+  font-size: 10px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.01em;
+  line-height: 1;
+}
+
+.brandText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.appName,
+.workspace {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.appName {
+  font-size: var(--fs);
+  font-weight: var(--fw-semibold);
+  line-height: 1.25;
+  color: var(--text);
+}
+
+.workspace {
+  font-size: var(--fs-xs);
+  line-height: 1.3;
+  color: var(--text-3);
+}
+
+.collapseWrap {
+  flex: 0 0 auto;
+  display: flex;
+}
+
+/* Gr8r's small icon button: no box until hover, 6px radius. */
+.iconButton {
+  flex: 0 0 var(--h-sm);
+  display: grid;
+  place-items: center;
+  width: var(--h-sm);
+  height: var(--h-sm);
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease;
+}
+
+.closeButton,
+.menuButton {
+  display: none;
+}
+
+/* ---- nav ------------------------------------------------------------ */
+
+.scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  padding: 4px 8px 12px;
+  scrollbar-width: none;
+}
+
+.scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+}
+
+.item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: var(--side-row);
+  padding: 0 8px;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-size: var(--fs);
+  font-weight: var(--fw-soft);
+  white-space: nowrap;
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease;
+}
+
+/* Current: the raised white pill on the grey sidebar (Gr8r); dark: a
+   --surface-3 fill, no shadow. Both come from tokens (--nav-current-*),
+   so a light wrapper inside a dark page keeps the light pill. The pill
+   alone is a soft 1.1:1 against the sidebar, so the icon turns the
+   accent (4:1 or better on the pill) to mark the page beyond colour
+   weight. */
+.item[aria-current='page'] {
+  background: var(--nav-current-bg, var(--surface));
+  color: var(--text);
+  font-weight: var(--fw-medium);
+  box-shadow: var(--nav-current-shadow, var(--shadow-raised));
+}
+
+.icon {
+  flex: 0 0 16px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-4);
+  transition: color var(--dur) ease;
+}
+
+.item[aria-current='page'] .icon {
+  color: var(--accent-ink);
+}
+
+/* A project row: Gr8r's quiet 18px tile with a folder, the name, and a
+   status mark on the right only when the next milestone needs attention
+   (overdue, at risk). The status is always in the accessible name. */
+.projectTile {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--r-chip);
+  background: var(--surface-3);
+  color: var(--text-3);
+}
+
+.projectTile svg {
+  width: 12px;
+  height: 12px;
+}
+
+.item[aria-current='page'] .projectTile {
+  color: var(--accent-ink);
+}
+
+.projectStatus {
+  flex: 0 0 auto;
+  display: flex;
+}
+
+.icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Gr8r's .ct: a quiet tabular number on the right. */
+.count {
+  flex: 0 0 auto;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+/* A toned count is a Gr8r badge: accent (new, unread) is the solid 16px
+   accent pill (.countAccent, Gr8r's unread .ct.dotc); a status tone
+   (data-tone, e.g. warning for blocked projects) is its tinted pill
+   (.countToned). */
+.countAccent,
+.countToned {
+  display: grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  font-weight: var(--fw-semibold);
+}
+
+.countAccent {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.countToned {
+  background: var(--tone-soft);
+  /* Pulled a step toward --text: the tint sits on the grey sidebar (and
+     its hover fill), not on a white surface, so this keeps 4.5:1. */
+  color: color-mix(in srgb, var(--tone-ink) 80%, var(--text));
+}
+
+/* Forced colours drop the fills: keep the pill's edge. */
+@media (forced-colors: active) {
+  .countAccent,
+  .countToned {
+    border: 1px solid CanvasText;
+  }
+}
+
+.hint {
+  display: none;
+  flex: 0 0 auto;
+}
+
+/* ---- sections (Projects) -------------------------------------------- */
+
+.section {
+  margin-top: 14px;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  padding: 0 8px;
+}
+
+/* Gr8r's sidebar section header: the eyebrow voice. */
+.sectionTitle {
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-caps);
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.sectionAction {
+  margin-left: auto;
+  padding: 2px 4px;
+  margin-right: -4px;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-3);
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease;
+}
+
+.sectionEmpty {
+  padding: 4px 8px;
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+/* ---- footer ----------------------------------------------------------- */
+
+.footer {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px 8px;
+  border-top: 1px solid var(--border);
+}
+
+.userRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 0 0 6px;
+}
+
+.userWrap {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.user {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  border-radius: var(--r-sm);
+}
+
+.userName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+/* Gr8r's neutral badge ("Guest", "Read only"). */
+.badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-chip);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.toolWrap,
+.signOut {
+  display: flex;
+}
+
+/* ============================================================================
+   COLUMN: topbar + content
+   ========================================================================== */
+
+.column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 100dvh;
+  margin-left: var(--shell-sidebar-w);
+  background: var(--surface);
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--shell-topbar-h);
+  padding: 0 12px 0 var(--shell-gutter);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.crumbs {
+  min-width: 0;
+}
+
+.crumbList {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0 -4px;
+  padding: 0 4px;
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.crumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* No fill: the text of the first crumb starts on the gutter, hover is
+   colour only (Gr8r). The 4px side padding (cancelled by the margins)
+   gives the focus ring room inside the list, whose overflow would clip a
+   ring drawn outside the link. */
+.crumbLink {
+  margin: 0 -4px;
+  padding: 3px 4px;
+  border-radius: var(--r-xs);
+  color: var(--text-2);
+  transition: color var(--dur) ease;
+}
+
+.crumbLink:focus-visible {
+  outline-offset: -2px;
+  color: var(--text);
+}
+
+.crumbCurrent {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+
+.sep {
+  font-size: 12px;
+  color: var(--text-4);
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+/* Gr8r's .topsearch: a recessed 26px field with the shortcut on the
+   right. */
+.search {
+  flex: 0 1 220px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: var(--h-sm);
+  padding: 0 4px 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--sunken);
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  transition:
+    border-color var(--dur) ease,
+    color var(--dur) ease;
+}
+
+.search svg {
+  flex: 0 0 auto;
+}
+
+.searchLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchKeys {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.topbarActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.main:focus {
+  outline: none;
+}
+
+/* Gr8r's offline-banner form: a thin full-bleed strip under the topbar
+   on --sunken with a --border bottom rule, its copy one --fs-sm line.
+   --shell-banner-h is its height when the copy is one line, for pages
+   that fill the viewport under it (settings). */
+.shell[data-shell-banner='true'] {
+  --shell-banner-h: 33px;
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  min-height: var(--shell-banner-h, 33px);
+  padding: 6px var(--shell-gutter);
+  border-bottom: 1px solid var(--border);
+  background: var(--sunken);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+/* A Notice passed as the banner is the strip's one line, not a box in a
+   box: no border, fill or padding of its own (its lead-in keeps its
+   tone's colour). Doubled so it beats the Notice's own two-class quiet
+   rule whatever the stylesheet order. */
+.banner.banner :global(.notice) {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.scrim,
+.tabbar {
+  display: none;
+}
+
+/* The rail tooltip: Gr8r's inverted tip, fixed beside the rail so the
+   sidebar's scroll clipping cannot cut it off. */
+.tip {
+  position: fixed;
+  left: calc(var(--shell-rail-w) + 8px);
+  z-index: 95;
+  padding: 5px 7px;
+  border-radius: var(--r-chip);
+  background: var(--text);
+  color: var(--text-inv);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+/* ============================================================================
+   HOVER: soft fills, only where hover is real and wide
+   ========================================================================== */
+
+@media (hover: hover) and (width >= 901px) {
+  .brandLink:hover,
+  .item:not([aria-current='page']):hover,
+  .iconButton:hover,
+  .tools button:hover {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+
+  .item:hover .icon {
+    color: var(--text-2);
+  }
+
+  .item:hover .hint,
+  .item:focus-visible .hint {
+    display: inline-flex;
+  }
+
+  .item:hover .count:has(+ .hint),
+  .item:focus-visible .count:has(+ .hint) {
+    display: none;
+  }
+
+  .sectionAction:hover {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+
+  .crumbLink:hover {
+    color: var(--text);
+  }
+
+  .search:hover {
+    border-color: var(--border-strong);
+    color: var(--text-2);
+  }
+}
+
+/* Gr8r drops the label and the shortcut first when the topbar narrows. */
+@media (width <= 1100px) and (width >= 901px) {
+  .search {
+    flex: 0 0 auto;
+    padding-right: 9px;
+  }
+  .search .searchLabel,
+  .search .searchKeys {
+    display: none;
+  }
+}
+
+/* ============================================================================
+   RAIL: the collapsed sidebar (desktop only). The attribute lives on <html>
+   so a pre-paint script can apply it before React hydrates.
+   ========================================================================== */
+
+@media (width >= 901px) {
+  :global(html[data-shell-collapsed='true']) .sidebar {
+    width: var(--shell-rail-w);
+  }
+
+  :global(html[data-shell-collapsed='true']) .shell {
+    --shell-content-left: var(--shell-rail-w);
+  }
+
+  :global(html[data-shell-collapsed='true']) .column {
+    margin-left: var(--shell-rail-w);
+  }
+
+  :global(html[data-shell-collapsed='true']) .brand {
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 6px 4px calc(6px + var(--shell-brand-inset, 0px));
+  }
+
+  :global(html[data-shell-collapsed='true']) .brandLink {
+    justify-content: center;
+    padding: 5px 0;
+  }
+
+  :global(html[data-shell-collapsed='true']) .brandText {
+    display: none;
+  }
+
+  :global(html[data-shell-collapsed='true']) .scroll {
+    padding: 4px 6px 12px;
+  }
+
+  :global(html[data-shell-collapsed='true']) .item {
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+  }
+
+  /* Labels leave the layout but stay in the accessible name. */
+  :global(html[data-shell-collapsed='true']) .label,
+  :global(html[data-shell-collapsed='true']) .userName {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* A count shrinks to a 6px dot beside the icon (accent for a badge). */
+  :global(html[data-shell-collapsed='true']) .count {
+    position: absolute;
+    top: 6px;
+    right: 9px;
+    width: 6px;
+    min-width: 0;
+    height: 6px;
+    padding: 0;
+    overflow: hidden;
+    border-radius: 50%;
+    background: var(--text-4);
+    font-size: 0;
+  }
+
+  :global(html[data-shell-collapsed='true']) .countToned {
+    background: var(--tone);
+  }
+
+  :global(html[data-shell-collapsed='true']) .countAccent {
+    background: var(--accent);
+  }
+
+  /* A project's attention mark rides the tile's corner in the rail. */
+  :global(html[data-shell-collapsed='true']) .projectStatus {
+    position: absolute;
+    top: 3px;
+    right: 7px;
+  }
+
+  :global(html[data-shell-collapsed='true']) .projectStatus [role='img'] {
+    width: 9px;
+    height: 9px;
+    flex-basis: 9px;
+  }
+
+  :global(html[data-shell-collapsed='true']) .item .hint,
+  :global(html[data-shell-collapsed='true']) .badge,
+  :global(html[data-shell-collapsed='true']) .sectionHead,
+  :global(html[data-shell-collapsed='true']) .sectionEmpty {
+    display: none;
+  }
+
+  :global(html[data-shell-collapsed='true']) .section {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+
+  :global(html[data-shell-collapsed='true']) .footer {
+    align-items: stretch;
+    padding: 6px 6px 8px;
+  }
+
+  :global(html[data-shell-collapsed='true']) .userRow {
+    flex-direction: column;
+    gap: 6px;
+    padding: 4px 0 2px;
+  }
+
+  :global(html[data-shell-collapsed='true']) .userWrap {
+    flex: 0 0 auto;
+  }
+
+  :global(html[data-shell-collapsed='true']) .tools {
+    flex-direction: column;
+    gap: 4px;
+    margin-left: 0;
+  }
+}
+
+/* ============================================================================
+   PHONE (≤ 900px): off-canvas drawer + bottom tab bar
+   ========================================================================== */
+
+@media (width <= 900px) {
+  .shell {
+    --shell-content-left: 0px;
+  }
+
+  .sidebar {
+    z-index: 70;
+    width: min(280px, 86vw);
+    visibility: hidden;
+    transform: translateX(-100%);
+    transition:
+      transform 0.22s var(--ease),
+      visibility 0s linear 0.22s;
+  }
+
+  .shell[data-drawer='open'] .sidebar {
+    visibility: visible;
+    transform: none;
+    box-shadow: var(--shadow-pop);
+    transition:
+      transform 0.22s var(--ease),
+      visibility 0s;
+  }
+
+  .collapseWrap {
+    display: none;
+  }
+
+  .closeButton {
+    display: grid;
+    flex-basis: 40px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .item {
+    height: var(--h-lg);
+  }
+
+  .scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 69;
+    background: var(--overlay);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.14s ease;
+  }
+
+  .shell[data-drawer='open'] .scrim {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .column {
+    margin-left: 0;
+  }
+
+  .topbar {
+    gap: 4px;
+    padding: 0 6px 0 4px;
+  }
+
+  .menuButton {
+    display: grid;
+    flex-basis: 40px;
+    width: 40px;
+    height: 40px;
+  }
+
+  /* An icon button at 40px (Gr8r's minimum topbar tap target). */
+  .search {
+    flex: 0 0 40px;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border-color: transparent;
+    background: transparent;
+    color: var(--text-2);
+  }
+
+  .search svg {
+    width: 19px;
+    height: 19px;
+  }
+
+  /* Doubled class: beats the Kbd module's own display rule. */
+  .search .searchLabel,
+  .search .searchKeys {
+    display: none;
+  }
+
+  /* Gr8r's bottom nav: a white bar on a --border rule; idle cells
+     --text-3, the current one --text. */
+  .tabbar {
+    display: block;
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 45;
+    padding: 4px 6px env(safe-area-inset-bottom, 0);
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .tabList {
+    display: grid;
+    grid-template-columns: repeat(var(--tab-count, 5), minmax(0, 1fr));
+  }
+
+  .tab {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    width: 100%;
+    height: calc(var(--shell-tabbar-h) - 8px);
+    border-radius: var(--r-sm);
+    color: var(--text-3);
+    font-size: var(--fs-2xs);
+    font-weight: var(--fw-medium);
+    line-height: 1.2;
+    transition: color var(--dur) ease;
+  }
+
+  .tab[aria-current='page'],
+  .tab[aria-expanded='true'] {
+    color: var(--text);
+  }
+
+  .tabIcon {
+    display: grid;
+    place-items: center;
+    width: 19px;
+    height: 19px;
+  }
+
+  .tabIcon svg {
+    width: 19px;
+    height: 19px;
+  }
+
+  .tabLabel {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Nothing hides behind the tab bar. */
+  .shell[data-shell-tabbar='true'] .main {
+    padding-bottom: calc(
+      var(--shell-tabbar-h) + env(safe-area-inset-bottom, 0px)
+    );
+  }
+}
+
+@media (width <= 768px) {
+  .shell {
+    --shell-gutter: 16px;
+  }
+}
+
+/* Gr8r's phone topbar is 50px and shows only the current crumb. */
+@media (width <= 640px) {
+  .shell {
+    --shell-topbar-h: 50px;
+  }
+  .crumb:not(:last-child),
+  .crumb:last-child .sep {
+    display: none;
+  }
+  .crumbList {
+    padding-left: 8px;
+    font-size: var(--fs);
+  }
+}
+
+/* Forced colours drop the pill's fill and shadow: outline the current
+   item instead. */
+@media (forced-colors: active) {
+  .item[aria-current='page'],
+  .tab[aria-current='page'] {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .shell[data-drawer='open'] .sidebar,
+  .scrim,
+  .brandLink,
+  .item,
+  .icon,
+  .iconButton,
+  .sectionAction,
+  .search,
+  .crumbLink,
+  .tab {
+    transition: none;
+  }
+}

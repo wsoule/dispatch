@@ -1,0 +1,132 @@
+/* A line of text edited in place, in the voice of whatever holds it (the
+   task view's heading), like Gr8r's drawer title: at rest it is the text,
+   hover washes it in --surface-2 (gated off touch), and the editor is the
+   same text on --surface-2 with the field's accent edge and soft halo. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.view {
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 12px;
+  max-width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  text-align: start;
+  cursor: text;
+  isolation: isolate;
+}
+
+/* The wash sits a few pixels outside the text (a pseudo-element, so the
+   heading keeps its exact position and the wash is still clickable). */
+.view::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -3px -6px;
+  border-radius: var(--r-sm);
+  background: transparent;
+  transition: background-color var(--dur) ease;
+}
+
+.view:focus-visible {
+  outline: 0;
+}
+
+.view:focus-visible::before {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+  background: var(--surface-2);
+}
+
+.view:disabled {
+  cursor: default;
+}
+
+.text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.view[data-empty='true'] .text {
+  color: var(--text-3);
+}
+
+.view[data-pending='true'] .text {
+  opacity: 0.55;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .view:not(:disabled):hover::before {
+    background: var(--surface-2);
+  }
+}
+
+.input {
+  display: block;
+  width: calc(100% + 12px);
+  min-width: 0;
+  margin: -3px -6px;
+  padding: 2px 5px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  overflow: hidden;
+  resize: none;
+  transition:
+    border-color var(--dur) ease,
+    box-shadow var(--dur) ease;
+}
+
+.input:focus-visible {
+  border-color: var(--accent);
+  border-radius: var(--r-sm);
+  /* Transparent, not none: forced colours paint it (they drop shadows). */
+  outline: 2px solid transparent;
+  outline-offset: 1px;
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 0 4px var(--accent-soft);
+}
+
+/* A refused value is an error (architecture §8.2): Gr8r's error field, a
+   red edge thickened by a 1px red shadow. Focused, the edge stays and the
+   focus ring stands 2px outside it, so focus does not hide in the red. */
+.input[aria-invalid='true'] {
+  border-color: var(--red);
+  box-shadow: 0 0 0 1px var(--red);
+}
+
+.input[aria-invalid='true']:focus-visible {
+  border-color: var(--red);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 1px var(--red);
+}
+
+.error {
+  margin-top: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view::before,
+  .input {
+    transition: none;
+  }
+}

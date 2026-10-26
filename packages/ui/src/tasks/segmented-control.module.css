@@ -1,0 +1,105 @@
+/* Gr8r's segmented control: a --surface-3 track with 2px padding and a
+   6px radius; options are 5px-radius cells in 12px medium; the selected
+   one is a raised white thumb (--shadow-raised) ringed in the accent, so
+   the selection reaches 3:1 against the track (WCAG 1.4.11) and does not
+   rest on the soft white-on-grey step alone. Wraps when the strip is
+   wider than its container. */
+
+.group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-width: 100%;
+  padding: 2px;
+  border-radius: var(--r-sm);
+  background: var(--surface-3);
+}
+
+.fill {
+  display: flex;
+}
+
+.fill .option {
+  flex: 1 1 0;
+}
+
+.option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: var(--r-chip);
+  color: var(--text-2);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease,
+    box-shadow var(--dur) ease;
+}
+
+.md .option {
+  min-height: var(--h-sm);
+  padding: 0 10px;
+  font-size: var(--fs-sm);
+}
+
+.sm .option {
+  min-height: var(--h-xs);
+  padding: 0 8px;
+  font-size: var(--fs-xs);
+}
+
+.count {
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.option[aria-checked='true'] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow:
+    inset 0 0 0 1.5px var(--accent),
+    var(--shadow-raised);
+}
+
+/* Forced colours drop the thumb's fill and shadow: outline it. */
+@media (forced-colors: active) {
+  .option[aria-checked='true'] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
+/* Focus stands 2px outside the option, over the track's padding and the
+   surface beyond it, so it never lands on the selected thumb's inset
+   accent ring: Tab always enters on the checked option and the arrows
+   move focus and selection together, so a ring drawn on top of the
+   selection would never show (WCAG 2.4.7). The track has no overflow to
+   clip it, and z-index keeps it over the neighbouring option. Coming
+   after the forced-colours block, this offset also moves a focused
+   selected option's Highlight outline outside, so focus shows there too. */
+.option:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline-offset: 2px;
+}
+
+.option:disabled {
+  cursor: not-allowed;
+  color: var(--text-3);
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .option[aria-checked='false']:not(:disabled):hover {
+    color: var(--text);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .option {
+    transition: none;
+  }
+}

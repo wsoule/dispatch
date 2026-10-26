@@ -1,0 +1,30 @@
+{
+  "extends": "../../tsconfig.options.json",
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "test/**/*.ts",
+    "test/**/*.tsx",
+    "global.d.ts"
+  ],
+  "exclude": ["node_modules"],
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "emitDeclarationOnly": false,
+    "noEmit": true,
+    "allowJs": false,
+    "checkJs": false,
+    "jsx": "react-jsx",
+    "lib": ["DOM", "DOM.Iterable", "ES2023"],
+    "types": ["bun", "react", "react-dom"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    // Hosts compile this package as source with their own flags; these two
+    // are Dispatch's (apps/desktop/tsconfig.app.json), so keep them passing.
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "tsBuildInfoFile": "tsconfig.tsbuildinfo"
+  }
+}

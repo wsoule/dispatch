@@ -1,0 +1,326 @@
+/* The task view in Gr8r's task-drawer idiom. Drawer: one column, no frame
+   (the slide-over or pane is the frame). Page: one 10px-radius panel with
+   a 46px header bar, the property sheet in a right rail (a soft --border
+   rule, not a full-height ink line) once the view is wide enough. */
+
+/* Property values carry notes under them, so each label sits on its
+   value's first line rather than floating at the middle of the row. */
+.detail {
+  --property-align: baseline;
+
+  min-width: 0;
+  color: var(--text);
+}
+
+/* The base reset covers h1-h4, p and lists but not dl: without this the
+   property sheet (and any host dl in the rail) carries the browser's 16px
+   margins, pushing it off the alerts and widening the gap below it. */
+.detail dl {
+  margin: 0;
+}
+
+/* ---- header ------------------------------------------------------------ */
+
+/* The view's own header bar: 46px like the topbar and the drawer's. */
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-height: var(--topbar-h);
+  padding: 6px 10px 6px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.crumb {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.actions {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Gr8r's drawer title: 19px semibold, tight. */
+.title {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  line-height: 1.3;
+  letter-spacing: var(--ls-heading);
+  overflow-wrap: anywhere;
+}
+
+/* Done and canceled tasks go quiet; the state still says which.
+   closedTitle is the same for the title TaskSlideOver hands its drawer. */
+.detail[data-closed='true'] .title,
+.closedTitle {
+  color: var(--text-2);
+}
+
+/* ---- the lead: title, status line, alerts ------------------------------ */
+
+.lead {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.title + .statusLine {
+  margin-top: -2px;
+}
+
+.statusLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-height: var(--h-sm);
+}
+
+/* The issue key: the mono id voice. */
+.key {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-regular);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.keyLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0 -4px;
+  padding: 3px 4px;
+  border-radius: var(--r-xs);
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease;
+}
+
+.keyLink svg {
+  color: var(--text-4);
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .keyLink:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+}
+
+/* A read-only state: the same bordered pill as the editable one (Gr8r's
+   project status pill), the glyph carrying the colour, the name neutral. */
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: var(--h-sm);
+  padding: 0 9px 0 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.control {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.statusMeta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+/* Alerts stack as separate tinted callouts, 8px apart. */
+.alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* The second and later alerts: one neutral panel, rows split by
+   --divider rules (AlertStrip plain draws no box of its own). */
+.alertList {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+}
+
+.alertList > * + * {
+  border-top: 1px solid var(--divider);
+}
+
+/* ---- drawer ------------------------------------------------------------ */
+
+/* Gr8r's drawer sections sit 26px apart. */
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  min-width: 0;
+}
+
+/* The properties follow the alerts closely; the sections below breathe. */
+.column > .lead + .properties {
+  margin-top: -10px;
+}
+
+/* Standalone (a split pane), the view pads itself; inside SlideOver the
+   panel's body already does. */
+.drawer.withHeader .column {
+  padding: 20px 24px 32px;
+}
+
+/* ---- page -------------------------------------------------------------- */
+
+.page {
+  container: task-detail / inline-size;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.page .bar {
+  padding-left: 24px;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    'head'
+    'rail'
+    'body';
+}
+
+.head {
+  grid-area: head;
+  min-width: 0;
+  padding: 24px 24px 0;
+}
+
+.rail {
+  grid-area: rail;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  min-width: 0;
+  padding: 20px 24px 0;
+}
+
+.body {
+  grid-area: body;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  min-width: 0;
+  padding: 26px 24px 36px;
+}
+
+/* ---- narrow ------------------------------------------------------------ */
+
+/* Phone widths. Before the container queries on purpose: a page view that
+   is still 760px wide on a 900px screen keeps its two-column padding. */
+
+@media (width <= 900px) {
+  .bar,
+  .page .bar {
+    padding: 6px 6px 6px 16px;
+  }
+
+  .drawer.withHeader .column {
+    padding: 16px 16px calc(32px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .head {
+    padding: 18px 16px 0;
+  }
+
+  .rail {
+    padding: 18px 16px 0;
+  }
+
+  .body {
+    padding: 24px 16px 32px;
+  }
+}
+
+/* Wide enough for two columns: the main column reads on the left, the
+   property sheet sits in a rail on the right for the full height, set off
+   by a soft rule. */
+@container task-detail (width >= 760px) {
+  .grid {
+    grid-template:
+      'head rail' auto
+      'body rail' 1fr
+      / minmax(0, 1fr) 340px;
+  }
+
+  .page .bar,
+  .head {
+    padding-left: 32px;
+  }
+
+  .head {
+    padding-top: 28px;
+    padding-right: 32px;
+  }
+
+  .body {
+    padding: 28px 32px 44px;
+  }
+
+  .rail {
+    --property-label-width: 112px;
+
+    padding: 24px 22px 40px;
+    border-left: 1px solid var(--border);
+  }
+}
+
+@container task-detail (width >= 1100px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr) 380px;
+  }
+
+  .page .bar,
+  .head,
+  .body {
+    padding-left: 44px;
+  }
+
+  .head,
+  .body {
+    padding-right: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .keyLink {
+    transition: none;
+  }
+}

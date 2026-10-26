@@ -1,0 +1,181 @@
+/* The history as Gr8r's activity lines: a 22px mark cell (an 8px round
+   dot coloured by the line's tone: green assigned, red a failed write,
+   amber a partial one, the accent something new; a hollow grey ring for
+   background noise; the quiet text step otherwise), what happened with
+   its context under it, and the date right-aligned in the meta voice. */
+
+.list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The DOM keeps the date first (it is read first); the grid draws it on
+   the right, like Gr8r's. */
+.item {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  grid-template-areas: 'mark main at';
+  column-gap: 9px;
+  align-items: start;
+  padding: 5px 0;
+}
+
+.at {
+  grid-area: at;
+  padding-top: 1px;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+/* Sits on the label's first line (12.5px x 1.5). Decoration: the label
+   says what happened. */
+.mark {
+  grid-area: mark;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 19px;
+}
+
+.mark::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+/* A toned item's mark is filled in its MARK colour (data-tone --tone). */
+.accent .mark::before,
+.danger .mark::before,
+.warning .mark::before,
+.success .mark::before,
+.info .mark::before {
+  background: var(--tone);
+}
+
+/* Noise (a dry run, a skip, the lifecycle): a hollow grey ring. */
+.muted .mark::before {
+  border: 2px solid var(--gray);
+  background: transparent;
+}
+
+.main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.label {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
+  line-height: 1.5;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* What needs action also colours its label (the tone's TEXT colour);
+   success and info keep the plain label beside their coloured mark. */
+.accent .label,
+.danger .label,
+.warning .label {
+  color: var(--tone-ink);
+}
+
+.muted .label {
+  color: var(--text-2);
+}
+
+.detail {
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.link {
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 3px;
+  transition:
+    color var(--dur) ease,
+    text-decoration-color var(--dur) ease;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .link:hover {
+    color: var(--text);
+    text-decoration-color: currentcolor;
+  }
+}
+
+.more {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--h-sm);
+  margin-top: 4px;
+  margin-left: 23px;
+  padding: 0 8px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .more:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+}
+
+.empty {
+  font-size: var(--fs);
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+/* A phone: the date drops under the label, so the sentence keeps the
+   width. */
+@media (width <= 640px) {
+  .item {
+    grid-template-columns: 22px minmax(0, 1fr);
+    grid-template-areas:
+      'mark main'
+      '. at';
+    row-gap: 1px;
+  }
+
+  .at {
+    padding-top: 0;
+  }
+}
+
+/* Forced colours drop background fills: keep every dot as a system-colour
+   disc (a ring for noise). */
+@media (forced-colors: active) {
+  .mark::before {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+
+  .muted .mark::before {
+    border-color: CanvasText;
+    background: Canvas;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .link,
+  .more {
+    transition: none;
+  }
+}

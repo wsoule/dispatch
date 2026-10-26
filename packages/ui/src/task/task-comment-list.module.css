@@ -1,0 +1,172 @@
+/* Comments as Gr8r's drawer draws them: a 26px round avatar, the author
+   in semibold beside a quiet date, the text in the reading voice, 10px of
+   air between comments and no rules. Bots and integrations go quiet. */
+
+.list {
+  display: flex;
+  flex-direction: column;
+}
+
+.item {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  column-gap: 10px;
+  align-items: start;
+  padding: 10px 0;
+}
+
+.item:first-child {
+  padding-top: 2px;
+}
+
+.avatar {
+  display: inline-flex;
+}
+
+/* A bot's avatar is the neutral one. */
+.muted .avatar > [data-mark='avatar'] {
+  --c: var(--gray);
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+}
+
+.author {
+  min-width: 0;
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.muted .author {
+  color: var(--text-2);
+}
+
+.at {
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.link {
+  display: inline-grid;
+  place-items: center;
+  align-self: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-xs);
+  color: var(--text-4);
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .link:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .retry:hover {
+    color: var(--accent-ink-hover);
+    text-decoration-color: currentcolor;
+  }
+}
+
+/* As typed: line breaks kept, each line in its own direction. */
+.body {
+  font-size: var(--fs);
+  font-weight: var(--fw-regular);
+  line-height: var(--lh-long);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+
+.content {
+  min-width: 0;
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.muted .body,
+.muted .content {
+  color: var(--text-2);
+}
+
+.empty {
+  font-size: var(--fs);
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+/* A failed read: Gr8r's danger alert, a red-tinted 8px box. */
+.error {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--r);
+  background: var(--red-soft);
+}
+
+.errorKey {
+  flex: none;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--red);
+}
+
+.errorText {
+  min-width: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.retry {
+  font-weight: var(--fw-medium);
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+  transition:
+    color var(--dur) ease,
+    text-decoration-color var(--dur) ease;
+}
+
+.retry:focus-visible {
+  color: var(--accent-ink-hover);
+}
+
+/* The composer sits under the newest comment. */
+.composer {
+  margin-top: 10px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .link,
+  .retry {
+    transition: none;
+  }
+}

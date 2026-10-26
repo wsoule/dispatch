@@ -1,0 +1,1251 @@
+/* The dependency graph in Gr8r's look (architecture §8.4 Graph): one
+   --r-lg panel holding a flat toolbar, a recessed canvas (--sunken,
+   Gr8r's board well) that scrolls inside itself, and the readout line as
+   its last row. Boxes are Gr8r cards on the canvas, frames soft rounded
+   outlines, edges thin curved connectors. Box metrics (padding, font
+   sizes, line heights) mirror GRAPH_METRICS in layout.ts, and the frame
+   titles CLUSTER_METRICS: the layout sizes every box and frame from these
+   numbers, so change them together.
+
+   Colour (§8.2 "Status colours"): status in the semantic tones through
+   data-tone (danger red, warning amber, success green, info blue; muted
+   quiet), never the accent; the accent is the selection, the paths being
+   read, keyboard focus and a chain's focus ring. Every mark, edge, ring
+   and frame clears 3:1 on the canvas in both themes and every word 4.5:1
+   (test/graph-contrast.test.ts), and none relies on colour alone:
+   cycles, crossings and outside boxes are dashed, unblocked edges dotted,
+   rings and edges differ in weight, and every flag is a word. */
+
+.graph {
+  min-width: 0;
+  max-width: 100%;
+  overflow: clip;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+/* ---- toolbar ------------------------------------------------------------ */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  min-height: 44px;
+  padding: 6px 8px 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.toolbarStart {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.hint {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+/* Gr8r's ghost icon buttons around a quiet percentage. */
+.zoom {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.hint + .zoom {
+  margin-left: 0;
+}
+
+.zoomButton,
+.zoomValue {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: var(--h-sm);
+  min-width: var(--h-sm);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+.zoomButton {
+  padding: 0 5px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  font-family: inherit;
+  transition:
+    background-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.zoomButton:disabled {
+  color: var(--text-4);
+  cursor: not-allowed;
+}
+
+.zoomValue {
+  min-width: 44px;
+}
+
+.fitButton {
+  padding: 0 8px 0 6px;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .zoomButton:not(:disabled):hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+}
+
+/* ---- the canvas --------------------------------------------------------- */
+
+/* Critical path's step control: a small floating bar (the zoom group's
+   ghost buttons around the step count) over the canvas's bottom-left
+   corner, clear of the horizontal scrollbar. It floats over the drawing,
+   so it takes the floating shadow. Its anchor is a 0px-tall box right
+   under the canvas, so it moves nothing around it. */
+.stepsAnchor {
+  position: relative;
+  height: 0;
+}
+
+.steps {
+  position: absolute;
+  bottom: 14px;
+  left: 12px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+
+.steps .zoomValue {
+  min-width: 96px;
+  padding: 0 4px;
+  color: var(--text);
+}
+
+/* Fixed footprint from the layout's height at 100% (plus room for a thin
+   scrollbar), capped by the viewport: zooming changes what is inside the
+   canvas, never the page around it. */
+.viewport {
+  position: relative;
+  display: grid;
+  height: clamp(220px, calc(var(--graph-h) + 12px), min(70vh, 720px));
+  overflow: auto;
+  background: var(--sunken);
+  cursor: grab;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+
+  /* Native panning and pinch zoom, but no double-tap zoom: a double tap
+     on a box opens its graph. */
+  touch-action: manipulation;
+}
+
+.viewport[data-panning] {
+  cursor: grabbing;
+  user-select: none;
+}
+
+/* A grid item with auto margins: centred while smaller than the canvas,
+   scrollable from its true edge once larger. */
+.canvas {
+  position: relative;
+  margin: auto;
+}
+
+.stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+/* ---- groups (project frames) -------------------------------------------- */
+
+.group {
+  position: absolute;
+  border: 1px solid var(--control-border);
+  border-radius: var(--r-lg);
+  pointer-events: none;
+}
+
+/* The title interrupts the frame's top edge, on a patch of the canvas. */
+.groupTitle {
+  position: absolute;
+  top: 0;
+  left: 10px;
+  max-width: calc(100% - 20px);
+  padding: 0 6px;
+  overflow: hidden;
+  transform: translateY(-50%);
+  background: var(--sunken);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- clusters (labelled frames by parent) --------------------------------- */
+
+/* A frame around the boxes that share a parent (a milestone, a project, an
+   initiative): a 1px --control-border edge (3:1 on the canvas: the frame
+   is the only cue that groups) with --r-lg corners, no fill or shadow,
+   under the arrows and boxes. Its sentence-case title sits inside the
+   top-left corner (placed from CLUSTER_METRICS in layout.ts: 12px
+   semibold on a 16px line, 8px down, 10px in) on a patch of the canvas
+   drawn above the arrows, so a line passes behind it. A top-level frame
+   titles in --text-2, a nested one in --text-3. Never a status hue: the
+   frame only groups, the boxes say where they stand. */
+.cluster {
+  position: absolute;
+  border: 1px solid var(--control-border);
+  border-radius: var(--r-lg);
+  pointer-events: none;
+}
+
+.clusterTitle {
+  position: absolute;
+  padding: 0 3px;
+  margin-left: -3px;
+  overflow: hidden;
+  border-radius: var(--r-xs);
+  background: var(--sunken);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clusterTitleTop {
+  color: var(--text-2);
+}
+
+/* A frame whose graph a double-click (or double tap) on its title opens:
+   the zoom-in cursor says so, and the title selects no text. Its single
+   click does nothing (it may be half of a double-click). On hover the
+   title steps to the link colour, the accent's link role. */
+.clusterTitleDrill {
+  cursor: zoom-in;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .clusterTitleDrill:hover {
+    color: var(--accent-ink);
+  }
+}
+
+/* Inactive work (a paused project): dashed in the inactive grey (3:1 on
+   the canvas), its title quiet. The boxes inside keep their own quiet
+   look. */
+.clusterMuted {
+  border-style: dashed;
+  border-color: var(--gray);
+}
+
+.clusterTitleMuted {
+  color: var(--text-3);
+}
+
+/* Outside the scope: dashed, like an outside box. */
+.clusterExternal {
+  border-style: dashed;
+}
+
+/* ---- edges -------------------------------------------------------------- */
+
+.edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* Gr8r's connectors: a thin --text-2 curve. No colour transition on
+   edges: a path read on a big graph recolours every other edge at once,
+   and animating that restyles the whole drawing for several frames
+   (architecture §8.4 Graph, "Hover cost"). */
+.edge {
+  color: var(--text-2);
+}
+
+.edgeLine {
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.25;
+}
+
+.edgeArrow {
+  fill: currentcolor;
+  stroke: none;
+}
+
+/* The status hues (architecture §8.2): a risk chain in amber (warning), a
+   cycle in red (danger); both are text-safe, so the weight count's digits
+   use them too (--edge-ink). Under Risk a risk chain is also heavier, so
+   weight, not only hue, tells it from an ordinary edge. */
+.edgeRisk {
+  --edge-ink: var(--amber);
+
+  color: var(--amber);
+}
+
+:where(.graph[data-highlight='risk']) .edgeRisk .edgeLine {
+  stroke-width: 2;
+}
+
+.edgeCycle {
+  --edge-ink: var(--red);
+
+  color: var(--red);
+}
+
+/* Long dashes for a cycle, short ones for a crossing. */
+.edgeCycle .edgeLine {
+  stroke-dasharray: 6 3.5;
+}
+
+.edgeCross .edgeLine {
+  stroke-dasharray: 3 3;
+}
+
+/* No longer blocking (one end is done): 2px round dots, never a line, in
+   --text-3 so the antialiased dots still clear 3:1 on the canvas. */
+.edgeResolved {
+  color: var(--text-3);
+}
+
+.edgeResolved .edgeLine {
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 0.1 4;
+}
+
+/* The count of relations on an edge: a small surface pill outlined in the
+   edge's colour, its figure in the edge's text-safe hue. */
+.weight rect {
+  fill: var(--surface);
+  stroke: currentcolor;
+  stroke-width: 1;
+}
+
+.weight text {
+  fill: var(--edge-ink, currentcolor);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The Status highlight: what no longer blocks is green dots (unblocked),
+   and a risk chain is drawn as any other block (the Risk highlight keeps
+   the amber). The Critical path highlight draws risk chains as blocks too.
+   The mode prefixes sit in :where() so these rules weigh what the kind's
+   own rule weighs (they win by order), and the forced-colours block below
+   still overrides every edge colour. */
+:where(.graph[data-highlight='status']) .edgeResolved {
+  --edge-ink: var(--green);
+
+  color: var(--green);
+}
+
+:where(.graph:is([data-highlight='status'], [data-highlight='critical']))
+  .edgeRisk {
+  --edge-ink: currentcolor;
+
+  color: var(--text-2);
+}
+
+/* Under Status and Critical path, an edge that crosses a boundary
+   (data-cross) is dashed whatever its kind, but only while it blocks and
+   is not a cycle: one line has one dash pattern, and the unblocked dots
+   and the cycle's long dashes are those edges' only cue besides colour. */
+:where(.graph:is([data-highlight='status'], [data-highlight='critical']))
+  .edge[data-cross]:is(.edgeDefault, .edgeRisk, .edgeCross)
+  .edgeLine {
+  stroke-dasharray: 3 3;
+}
+
+/* 2px is emphasis: spent on the paths being read (drawn again in the
+   overlay, above the rest). What the node waits on runs in the accent (a
+   selection-derived highlight, never a status); a cycle keeps its red and,
+   under Risk, a risk chain its amber (heavier still). What it holds up
+   runs in --text. */
+.edge.lit .edgeLine,
+.edge.down .edgeLine {
+  stroke-width: 2;
+}
+
+:where(.graph[data-highlight='risk']) .edge.lit.edgeRisk .edgeLine {
+  stroke-width: 2.75;
+}
+
+.edge.lit:is(.edgeDefault, .edgeCross),
+:where(.graph:not([data-highlight='risk'])) .edge.lit.edgeRisk {
+  --edge-ink: var(--accent-ink);
+
+  color: var(--accent);
+}
+
+.edge.down:is(.edgeDefault, .edgeCross),
+:where(.graph:not([data-highlight='risk'])) .edge.down.edgeRisk {
+  color: var(--text);
+}
+
+/* The critical path: 2.5px --text, keeping its dashes; a cycle keeps its
+   red. */
+.edge.chain .edgeLine {
+  stroke-width: 2.5;
+}
+
+.edge.chain:is(.edgeDefault, .edgeCross, .edgeRisk) {
+  color: var(--text);
+}
+
+/* Receding: a plain line steps down to --text-3 (still 3:1 and more on
+   the canvas, so it reads); a risk chain (under Risk), a cycle and
+   unblocked dots keep their look, facts that stay true while another path
+   is read. */
+.edge.dim:is(.edgeDefault, .edgeCross),
+:where(.graph:not([data-highlight='risk'])) .edge.dim.edgeRisk {
+  --edge-ink: currentcolor;
+
+  color: var(--text-3);
+}
+
+/* ---- nodes -------------------------------------------------------------- */
+
+/* Gr8r's card: --surface, a soft --border, --r-sm, 10px by 12px. The
+   card's own edge is decoration (its words name it); everything that
+   carries a meaning (a tone edge, dashes, rings, marks) clears 3:1. */
+.node {
+  position: absolute;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+
+  /* A click locks, a double-click drills down: neither selects text. */
+  user-select: none;
+  -webkit-user-select: none;
+
+  /* Only the fill and the rings fade: text and edge colours change at
+     once, so receding every other box while a path is read (one class per
+     box) never animates hundreds of boxes. */
+  transition:
+    background-color var(--dur) var(--ease),
+    outline-color var(--dur) var(--ease);
+
+  /* The status diamond's hues (.glyph below). A quiet box turns them to
+     the inactive grey, shape kept; done keeps its neutral --text. */
+  --glyph-ink: var(--text);
+  --glyph-green: var(--green);
+  --glyph-amber: var(--amber);
+  --glyph-red: var(--red);
+  --glyph-open: var(--text-2);
+  --glyph-quiet: var(--text-3);
+}
+
+div.node {
+  cursor: default;
+}
+
+.linkWrap {
+  position: absolute;
+  display: block;
+}
+
+.linkWrap > .node {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* The status diamond (StatusMark's family, drawn here at 12px so a quiet
+   box can turn its hues grey without losing its shape): the shape says the
+   status and the hue says it again (§8.2): done a solid --text diamond
+   with a tick knocked out (never green, so it never reads as the red one
+   without red-green vision), on track an open green one, at risk amber
+   with its lower half filled, overdue a solid red one, a missing input a
+   dotted --text-3 outline, open (an issue, whose status is its
+   milestone's) a --text-2 outline. `::before` is the diamond: a square
+   whose corners touch the 12px box, turned 45°, with a 2px edge (Chrome
+   snaps a thinner rotated edge down to 1px, under 3:1). */
+.glyph {
+  position: relative;
+  flex: 0 0 12px;
+  width: 12px;
+  height: 12px;
+  margin-top: 3px;
+  color: var(--glyph-quiet);
+}
+
+.glyph::before {
+  content: '';
+  position: absolute;
+  inset: 14.6%;
+  border: 2px solid currentcolor;
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+
+.done {
+  color: var(--glyph-ink);
+}
+
+.done::before {
+  background: currentcolor;
+}
+
+.done::after {
+  content: '';
+  position: absolute;
+  top: 45%;
+  left: 50%;
+  width: 22%;
+  height: 42%;
+  border: solid var(--surface);
+  border-width: 0 1.5px 1.5px 0;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.on_track {
+  color: var(--glyph-green);
+}
+
+.at_risk {
+  color: var(--glyph-amber);
+}
+
+.at_risk::before {
+  background: linear-gradient(135deg, transparent 50%, currentcolor 50%);
+}
+
+.overdue {
+  color: var(--glyph-red);
+}
+
+.overdue::before {
+  background: currentcolor;
+}
+
+.missing {
+  color: var(--glyph-quiet);
+}
+
+.missing::before {
+  border-style: dotted;
+}
+
+.open {
+  color: var(--glyph-open);
+}
+
+.text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.label {
+  display: flex;
+  flex-direction: column;
+  font-size: var(--fs);
+  font-weight: var(--fw-medium);
+  line-height: 18px;
+}
+
+.line,
+.sublabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sublabel {
+  margin-top: 2px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* An issue key leading the sublabel: the one mono voice. */
+.key {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+}
+
+/* The chips: the Chip atom, sentence case, 4px apart, 8px under the
+   text (GRAPH_METRICS tagGap, tagsGap). */
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+/* The readiness chip's slot (data-readiness-chip, and data-tone under
+   Status): it holds one Chip and adds nothing to it. */
+.chipSlot {
+  display: inline-flex;
+  max-width: 100%;
+}
+
+/* A tinted Chip (data-filled: its soft tint is see-through) on a tinted
+   box (the overdue red, the selection's or the box being read's accent)
+   is laid over the card's own surface, so its words keep 4.5:1 there as
+   on any card (test/graph-contrast.test.ts). */
+:is(.overdueNode, .selected, .pointed) > .text > .tags [data-filled] {
+  background: linear-gradient(var(--tone-soft), var(--tone-soft)) var(--surface);
+}
+
+/* ---- node tones --------------------------------------------------------- */
+
+/* A status tone (data-tone, tokens.css): warning amber for needs action
+   (unassigned, at risk, blocked), danger red for stuck, a host's accent
+   purple. A 2px edge (Chrome draws a 1.5px border at 1px, which would
+   match ready's), so padding gives the extra pixel back and the content
+   never moves. */
+.toned {
+  padding: 9px 11px;
+  border: 2px solid var(--tone);
+}
+
+/* Ready under the Status highlight: the box's own 1px edge in the green,
+   nothing more. Most boxes are ready, and a 1px edge against a blocked
+   box's 2px one, with the chip's words, tells the two apart without
+   their hues. */
+.toneEdge {
+  border-color: var(--tone);
+}
+
+/* Closed or inactive work is quiet: its words step to --text-3 and its
+   status diamond turns to the inactive grey (shape kept, never loud). Done
+   keeps its solid --text diamond: done's one shape. */
+.toneMuted {
+  --glyph-green: var(--gray);
+  --glyph-amber: var(--gray);
+  --glyph-red: var(--gray);
+  --glyph-open: var(--gray);
+  --glyph-quiet: var(--gray);
+}
+
+.toneMuted > .text > .label {
+  color: var(--text-3);
+}
+
+/* Outside the scope: present for context, its edge dashed. A status edge
+   keeps its hue in the dashes: it is the box's state, and the edge is a
+   ready box's only shape. */
+.external {
+  border-style: dashed;
+}
+
+.external:not(.toned, .toneEdge, .overdueNode) {
+  border-color: var(--control-border);
+}
+
+/* Overdue under the Risk highlight: Gr8r's tint, never a flood. The red's
+   soft tint over the card inside a 1px red edge; the words, the diamond
+   and the chips keep their own colours on it (4.5:1, test). */
+.node.overdueNode {
+  padding: 10px 12px;
+  border-width: 1px;
+  border-color: var(--red);
+  background: linear-gradient(var(--red-soft), var(--red-soft)) var(--surface);
+}
+
+/* In a cycle: a 2px dashed red outline (danger; a 1.5px one is drawn at
+   1px) standing off the box, past the path rings (0-2px out) and the
+   focus ring (1-3px out), so it survives both. */
+.cycle::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border: 2px dashed var(--red);
+  border-radius: calc(var(--r-sm) + 5px);
+  pointer-events: none;
+}
+
+/* The node the graph is about (focusId): a 2px accent ring standing 3px
+   off the box, apart from the path rings that hug it and lighting
+   nothing. Keyboard focus (the global ring, 1px out) fits in the gap, so
+   focusing it still shows. A cycle's outline moves out past it. */
+.focus::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border: 2px solid var(--accent);
+  border-radius: calc(var(--r-sm) + 5px);
+  pointer-events: none;
+}
+
+.focus.cycle::before {
+  inset: -10px;
+  border-radius: calc(var(--r-sm) + 9px);
+}
+
+/* Selected: Gr8r's selected row, a soft accent fill inside a 2px accent
+   edge (the fill alone is under 3:1; the edge is the mark). Padding gives
+   the extra pixel back. A tone edge gives way to it while it is selected;
+   the chips still say the tone. */
+.node.selected {
+  padding: 9px 11px;
+  border: 2px solid var(--accent);
+  background: linear-gradient(var(--accent-soft), var(--accent-soft))
+    var(--surface);
+}
+
+/* ---- paths ----------------------------------------------------------------
+   The box being read (pointed at, focused, tapped or walked to), what it
+   waits on and what it holds up. Rings are outlines hugging the box
+   outside its edge, so the box's own edge (its status) still shows, and
+   forced colours keep them. The keyboard focus ring wins on the focused
+   box. */
+
+/* What it waits on, and the box being read: the accent (a
+   selection-derived highlight). What it holds up and the critical path:
+   --text, apart from the accent in lightness too, and apart in place
+   (blockers sit before what waits). A selected box keeps its own edge. */
+.node.lit:not(:focus-visible),
+.node.down:not(:focus-visible),
+.node.chain:not(:focus-visible),
+.node.active:not(.selected, :focus-visible) {
+  outline: 2px solid var(--text);
+  outline-offset: 0;
+}
+
+.node.lit:not(:focus-visible),
+.node.active:not(.selected, :focus-visible) {
+  outline-color: var(--accent);
+}
+
+/* The box being read on any input: the soft accent tint under its accent
+   ring (Gr8r's selection tint, the selection-derived highlight, never a
+   flood), so the subject of the paths is never just one more ring. A
+   tinted overdue box keeps its red tint, a selected one its own look. */
+.node.pointed:not(.selected, .overdueNode) {
+  background: linear-gradient(var(--accent-soft), var(--accent-soft))
+    var(--surface);
+}
+
+/* Receding while another node's paths are lit: the words step down to
+   --text-3 (still 4.5:1, so they read) and a plain box's edge goes to the
+   divider. A tone edge, the dashes of an outside box, the chips and the
+   status marks keep their colours: they are facts, true while another
+   path is read. The colour is set on the words themselves, never swapped
+   as an inherited colour or token on the box: a swap there restyles every
+   element inside every box, which at the draw limits cost a quarter of a
+   second a hover (architecture §8.4 Graph, "Hover cost"). */
+.node.dim > .text > :is(.label, .sublabel) {
+  color: var(--text-3);
+}
+
+.node.dim:not(.toned, .toneEdge, .external, .overdueNode, .selected) {
+  border-color: var(--divider);
+}
+
+/* "Ready next": what finishing the node being read alone would unblock.
+   A green dot pill (Chip's status pill) riding the box's top edge, on its
+   own surface, so the edge never strikes through the word. */
+.next {
+  position: absolute;
+  top: -10px;
+  right: 8px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-chip);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.next::before {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+/* A box's step on the critical path: a 16px --text disc with --text-inv
+   digits on the box's top-left corner, cut out of the edge by a surface
+   ring; members of one cycle share the number. */
+.step {
+  position: absolute;
+  top: -9px;
+  left: -9px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 3px;
+  border: 2px solid var(--surface);
+  border-radius: var(--r-full);
+  background: var(--text);
+  color: var(--text-inv);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* Gr8r's hover: the --surface-2 fill, nothing else moves. A tinted
+   overdue box keeps its tint, a selected one its own fill, and the locked
+   box its accent tint, so a lock reads as a lock (tint, ring and ticks)
+   with the pointer still on it, right after the click that made it. While a
+   box is locked (data-locked on the graph) the lock keeps the paths:
+   another box under the pointer also gets a thin neutral ring (1px
+   --control-border, 2px out), so it still reads as clickable without
+   moving the highlight. A box on the locked box's paths keeps its 2px
+   path ring under the pointer (the thin ring would replace it), and a
+   focused box its focus ring. */
+@media (hover: hover) and (width >= 901px) {
+  .node:not(.selected, .overdueNode, .locked):hover {
+    background: var(--surface-2);
+  }
+
+  :where(.graph[data-locked])
+    .node:not(.locked, .lit, .down, .chain, :focus-visible):hover {
+    outline: 1px solid var(--control-border);
+    outline-offset: 2px;
+  }
+}
+
+/* The locked box (owner request 2026-10-23, "lock on"): the box being
+   read (the soft accent tint under its 2px accent ring) plus its own
+   mark, four rounded corner ticks just inside the box (2px, 9px long, a
+   viewfinder's "locked on"), so a lock never reads as a hover. The mark
+   is not a ring, so it never reads as the keyboard focus ring either,
+   which still shows on the locked box when it has focus: a focus preview
+   (tint and ring), a lock (tint, ring and ticks) and a focused lock (tint,
+   focus ring and ticks) each look different. The ticks are the accent on
+   every box: 3:1 or better on the card, the accent tint and the overdue
+   red tint, in both themes (test/graph-contrast.test.ts). They are a
+   2px edge with a 4px radius (--r-xs), masked down to its four
+   corners (the mask reads alpha only), and sit in the box's padding,
+   clear of its words, under the step disc and the "Ready next" pill.
+   Selection-derived, never a status. */
+.lockMark {
+  --tick: 9px;
+
+  position: absolute;
+  inset: 2px;
+  border: 2px solid currentcolor;
+  border-radius: var(--r-xs);
+  color: var(--accent);
+  mask: conic-gradient(
+      at var(--tick) var(--tick),
+      transparent 75%,
+      currentcolor 0
+    )
+    0 0 / calc(100% - var(--tick)) calc(100% - var(--tick));
+  pointer-events: none;
+}
+
+/* ---- the locked box's action strip -------------------------------------- */
+
+/* Open, Open graph, Unlock: a small floating bar (the step control's
+   look: --surface, a 1px --border, --r and the floating shadow, the
+   only shadows in this sheet) riding the locked box just outside it, at
+   its own size whatever the zoom. Gr8r's buttons inside, sentence case:
+   Open the one primary (the accent fill, --on-accent words), Open graph
+   a secondary (bordered --surface, --text words, the small shadow),
+   Unlock a ghost icon button (--text-2, --surface-2 on hover). Buttons
+   are 26px tall, at least 26px wide (32px on a touch screen). Its
+   surface hides the arrows behind it. */
+.lockStrip {
+  position: absolute;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  cursor: default;
+}
+
+.lockButton,
+.readoutAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.lockButton {
+  min-width: var(--h-sm);
+  height: var(--h-sm);
+  padding: 0 9px;
+}
+
+/* Unlock: Gr8r's icon button, no box at rest. */
+.lockClose {
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-2);
+}
+
+.lockButton.actionOpen,
+.readoutAction.actionOpen {
+  border-color: transparent;
+  background: var(--accent);
+  box-shadow: none;
+  color: var(--on-accent);
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .lockButton:hover,
+  .readoutAction:hover {
+    background: var(--surface-2);
+  }
+
+  .lockClose:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .lockButton.actionOpen:hover,
+  .readoutAction.actionOpen:hover {
+    background: var(--accent-hover);
+  }
+}
+
+.lockButton.actionOpen:active,
+.readoutAction.actionOpen:active {
+  background: var(--accent-active);
+}
+
+/* A touch screen gets wider buttons but the same height: in a dense
+   drawing the gap under a box is narrower than the strip, and a taller
+   one would cover the top line of the box below. */
+@media (pointer: coarse) {
+  .lockButton {
+    min-width: 32px;
+  }
+}
+
+/* Forced colours drop backgrounds: the diamonds keep their shapes in the
+   system text colour (as StatusMark does), the rings take Highlight and
+   CanvasText, and the selection and the box being read a double rule. */
+@media (forced-colors: active) {
+  .glyph {
+    forced-color-adjust: none;
+    color: CanvasText;
+  }
+
+  .done::after {
+    border-color: Canvas;
+  }
+
+  /* Paths without hue: every line in the text colour (its dashes and dots
+     tell the kinds apart), what it waits on in the Highlight colour, a
+     receding line in GrayText; the ring of what it holds up dashed. */
+  .node.lit:not(:focus-visible) {
+    outline-color: Highlight;
+  }
+
+  .node.down:not(:focus-visible) {
+    outline: 2px dashed CanvasText;
+  }
+
+  .node.chain:not(:focus-visible) {
+    outline-color: CanvasText;
+  }
+
+  .graph .edge {
+    color: CanvasText;
+  }
+
+  .graph .edge.lit {
+    color: Highlight;
+  }
+
+  .graph .edge.down,
+  .graph .edge.chain {
+    color: CanvasText;
+  }
+
+  .graph .edge.dim {
+    color: GrayText;
+  }
+
+  /* The node being read, and the selected node (whose fill is dropped): a
+     double rule just outside the box, apart from the solid Highlight ring
+     of what it waits on and the dashed one of what it holds up. The
+     keyboard focus ring wins on the focused box. */
+  .node.pointed:not(:focus-visible),
+  .node.selected:not(:focus-visible, .lit, .down, .chain) {
+    outline: 4px double CanvasText;
+    outline-offset: 2px;
+  }
+
+  /* The chain's focus ring and a cycle's outline keep their shapes. */
+  .focus::after {
+    border-color: Highlight;
+  }
+
+  .cycle::before {
+    border-color: CanvasText;
+  }
+
+  /* The locked box: the double rule of the box being read (above) plus
+     its corner ticks, kept in the Highlight colour (the mark opts out so
+     its colour holds), apart from a box pointed at (the double rule
+     alone) and from the solid Highlight ring of what it waits on; the
+     strip's buttons keep their edges in ButtonText and Open a heavier
+     rule. */
+  .lockMark,
+  .node.locked > .lockMark {
+    forced-color-adjust: none;
+    color: Highlight;
+  }
+
+  .lockStrip,
+  .lockButton,
+  .readoutAction {
+    border-color: ButtonText;
+  }
+
+  .lockClose {
+    border-color: transparent;
+  }
+
+  .lockButton.actionOpen,
+  .readoutAction.actionOpen {
+    outline: 2px solid ButtonText;
+    outline-offset: -4px;
+  }
+
+  /* Frames keep their shape: solid, dashed outside the scope or paused; a
+     paused frame's edge and title in GrayText. */
+  .cluster {
+    border-color: CanvasText;
+  }
+
+  .clusterMuted {
+    border-color: GrayText;
+  }
+
+  .clusterTitle,
+  .clusterTitleTop {
+    color: CanvasText;
+  }
+
+  .clusterTitleMuted {
+    color: GrayText;
+  }
+
+  .step {
+    forced-color-adjust: none;
+    border-color: Canvas;
+    background: CanvasText;
+    color: Canvas;
+  }
+
+  .next {
+    border: 1px solid CanvasText;
+  }
+
+  .next::before {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+}
+
+/* ---- readout ------------------------------------------------------------ */
+
+/* The panel's last row, under the canvas: the node being read and its
+   paths in words, else the host's summary and how to trace a node. It
+   wraps to more lines on a phone. */
+.readout {
+  min-height: 40px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
+  line-height: var(--lh);
+}
+
+.readoutSubject {
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+}
+
+.readoutSep {
+  color: var(--text-3);
+}
+
+.readoutIdle {
+  color: var(--text);
+}
+
+/* "Locked on" and the locked box's actions, leading the readout: the
+   lead-in in the accent's text colour, semibold (the lock is a selection,
+   never a status), then the strip's buttons, small and inline (24px
+   targets): Open the primary, Open its graph and Unlock secondaries, so
+   the three read as one group of controls (a ghost Unlock in --text-2
+   read as one more fact, 2026-10-23 review). A short vertical rule, not
+   the facts' " · ", then parts the buttons from the facts. */
+.readoutLocked {
+  color: var(--accent-ink);
+  font-weight: var(--fw-semibold);
+}
+
+.readoutActions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 2px;
+  vertical-align: middle;
+}
+
+.readoutAction {
+  min-height: 24px;
+  padding: 0 8px;
+}
+
+/* A border, not a fill, so forced colours keep it. */
+.readoutBreak {
+  display: inline-block;
+  width: 0;
+  height: 16px;
+  margin: 0 8px 0 6px;
+  border-left: 1px solid var(--border-strong);
+  vertical-align: middle;
+}
+
+.readoutHint {
+  color: var(--text-3);
+}
+
+/* The hint names the gesture the device has: point and focus where
+   something can hover, tap elsewhere. */
+.hintHover {
+  display: none;
+}
+
+@media (hover: hover) {
+  .hintHover {
+    display: inline;
+  }
+
+  .hintTap {
+    display: none;
+  }
+}
+
+/* ---- empty -------------------------------------------------------------- */
+
+/* Gr8r's centred empty state (EmptyState) where the panel would be. */
+.emptyState {
+  margin: 0;
+}
+
+/* ---- phone -------------------------------------------------------------- */
+
+@media (width <= 900px) {
+  .toolbar {
+    padding: 6px 6px 6px 10px;
+  }
+
+  /* Touch pans natively; the pointer hint would be wrong here, and the
+     zoom group keeps to the right without it. */
+  .hint {
+    display: none;
+  }
+
+  .hint + .zoom {
+    margin-left: auto;
+  }
+
+  .viewport {
+    height: clamp(220px, calc(var(--graph-h) + 12px), 64vh);
+    cursor: auto;
+  }
+
+  .readout {
+    padding: 10px 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zoomButton,
+  .lockButton,
+  .readoutAction,
+  .node,
+  .next,
+  .step {
+    transition: none;
+  }
+}

@@ -1,0 +1,203 @@
+/* Gr8r's toasts: an inverted card (--text fill, --text-inv ink) in both
+   themes, 8px radius, the pop shadow, a leading 15px icon (red for an
+   error), the lead-in word in semibold, a soft-wash action and dismiss.
+   A thin line along the bottom counts the auto-dismiss down; it stops
+   while the toast is hovered or focused. */
+
+.viewport {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 100;
+  pointer-events: none;
+}
+
+/* A bulk bar (fixed 20px above the bottom; ToastProvider sets its height
+   as --bulk-bar-h on this element) is up: the toasts stack above it, so
+   an Undo toast never covers the selection's actions or its ✕. */
+:global(body:has([data-bulk-bar='true'])) .viewport {
+  bottom: calc(20px + var(--bulk-bar-h, 44px) + 12px);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.toast {
+  /* An inverted fill: the global ring on its buttons is the inverse one
+     (the fill purple; the dark ring's lighter step is 2.3:1 here). */
+  --focus-ring: var(--focus-ring-inverse);
+
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  width: max-content;
+  max-width: min(400px, calc(100vw - 32px));
+  padding: 8px 8px 8px 12px;
+  overflow: hidden;
+  border-radius: var(--r);
+  background: var(--text);
+  color: var(--text-inv);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  box-shadow: var(--shadow-pop);
+  pointer-events: auto;
+  animation: toast-in 0.2s var(--spring) both;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.icon {
+  flex: 0 0 15px;
+  display: grid;
+  place-items: center;
+  align-self: flex-start;
+  height: 18px;
+  color: color-mix(in srgb, var(--text-inv) 72%, transparent);
+}
+
+/* An error's icon in the red for an inverted surface (--red-ink-inverse,
+   4.5:1 on the toast's --text fill in both themes); the lead-in word says
+   it too. */
+.error .icon {
+  color: var(--red-ink-inverse);
+}
+
+.message {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-weight: var(--fw-regular);
+  overflow-wrap: anywhere;
+}
+
+.label {
+  margin-right: 2px;
+  font-weight: var(--fw-semibold);
+}
+
+.action,
+.dismiss {
+  flex: 0 0 auto;
+  border-radius: var(--r-chip);
+  color: var(--text-inv);
+  transition: background-color var(--dur) ease;
+}
+
+.action {
+  padding: 3px 8px;
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+  opacity: 0.92;
+}
+
+.dismiss {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  opacity: 0.6;
+}
+
+.action:focus-visible,
+.dismiss:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .action:hover,
+  .dismiss:hover {
+    background: color-mix(in srgb, var(--text-inv) 14%, transparent);
+    opacity: 1;
+  }
+}
+
+/* The countdown along the bottom edge. */
+.timer {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 3px;
+  height: 1.5px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--text-inv) 24%, transparent);
+  transform-origin: left center;
+  animation: countdown var(--toast-duration, 4000ms) linear both;
+}
+
+.error .timer {
+  background: var(--red-ink-inverse);
+}
+
+.toast[data-paused='true'] .timer {
+  animation-play-state: paused;
+}
+
+@keyframes countdown {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+/* Phones: full gutter width, lifted above the shell's tab bar when one is
+   on the page. */
+@media (width <= 900px) {
+  .viewport {
+    left: 16px;
+    right: 16px;
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+  :global(body:has([data-shell-tabbar='true'])) .viewport {
+    bottom: calc(56px + 12px + env(safe-area-inset-bottom, 0px));
+  }
+  /* Above the phone's bulk bar (16px up, or above the tab bar). */
+  :global(body:has([data-bulk-bar='true'])) .viewport {
+    bottom: calc(
+      16px + var(--bulk-bar-h, 44px) + 8px + env(safe-area-inset-bottom, 0px)
+    );
+  }
+  :global(body:has([data-shell-tabbar='true']):has([data-bulk-bar='true']))
+    .viewport {
+    bottom: calc(
+      56px + 12px + var(--bulk-bar-h, 44px) + 8px +
+        env(safe-area-inset-bottom, 0px)
+    );
+  }
+  .stack {
+    align-items: stretch;
+  }
+  .toast {
+    width: auto;
+    max-width: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+  .timer {
+    display: none;
+  }
+  .action,
+  .dismiss {
+    transition: none;
+  }
+}

@@ -1,0 +1,41 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+# The React component library (Gr8r Studio design system, shell, grouped
+# task table, timeline, dependency graph, task detail, pickers), consumed as
+# TypeScript source like ui-legacy: the desktop app's Vite compiles it, so
+# there is no dist. Inherits test and typecheck from the
+# shared bun-common tasks. Not listed in the root dependsOn because it
+# produces no dist (type-aware lint reads the source directly).
+language: 'typescript'
+layer: 'library'
+
+tasks:
+  # No-build library: passthrough so ^:build chains through this project to
+  # reach the dist outputs of the dependencies it imports. It emits nothing;
+  # src/**/* is listed so a change under src/ makes a consumer's ^:build deps
+  # (desktop:build, desktop:typecheck, desktop:test) affected in `moon ci`
+  # and changes their cache hashes.
+  build:
+    command: 'noop'
+    deps:
+      - '^:build'
+    inputs:
+      - 'src/**/*'
+
+  # The inherited tsgo typecheck, plus the host-flags one below: CI's
+  # `moon ci` list names `:typecheck` (not every project task), so without
+  # this edge ui:typecheck-host would never gate a merge. Better-Tracker's
+  # CI named it explicitly instead.
+  typecheck:
+    deps:
+      - '~:typecheck-host'
+
+  # The source under a host's looser flags (tsconfig.host.json: not strict,
+  # like Dispatch's apps/desktop). No workspace dependencies, so no build.
+  typecheck-host:
+    command: 'tsc -p tsconfig.host.json --noEmit --pretty'
+    inputs:
+      - 'src/**/*'
+      - 'global.d.ts'
+      - 'tsconfig.json'
+      - 'tsconfig.host.json'
