@@ -3,7 +3,6 @@ import {
   type KeyboardEvent,
   memo,
   useCallback,
-  useDeferredValue,
   useEffect,
   useRef,
   useState,
@@ -11,7 +10,6 @@ import {
 
 import { isTypingTarget } from '../../hooks/useGlobalKeyboard';
 import type { TaskTab } from '../../lib/appNav';
-import { TaskPane } from '../tasks/TaskPane';
 import { type BranchLaneGroup, FlightBranchLane } from './FlightBranchLane';
 import {
   type FlightBandView,
@@ -54,15 +52,19 @@ interface FlightStageProps {
   canDispatch: (id: string) => boolean;
   onDispatch: (id: string) => void;
   onOpenTask: (taskId: string, tab?: TaskTab, runId?: string) => void;
+  /** The quick-look slide-over (Space, and Enter or a click with `openIn="peek"`). */
   onPeekTask?: (taskId: string) => void;
-  openIn: 'pane' | 'page';
+  /** Where Enter or a click opens a node: the quick-look slide-over (through
+   * `onPeekTask`; the page when it is absent) or the task page. */
+  openIn: 'peek' | 'page';
   focusOnMount: boolean;
 }
 
 /**
- * The interactive half of the Flight Plan: the canvas, the branch lane and the split pane,
- * with the keyboard cursor held here so moving it re-renders this subtree alone — the
- * header, and every derivation above it, stay put. Its props are all memoized upstream.
+ * The interactive half of the Flight Plan: the canvas and the branch lane, with the
+ * keyboard cursor held here so moving it re-renders this subtree alone — the header, and
+ * every derivation above it, stay put. Its props are all memoized upstream. A node opens
+ * in the shell's slide-over or on its page; nothing is drawn beside the plan.
  */
 export const FlightStage = memo(function FlightStage({
   title,
@@ -85,9 +87,6 @@ export const FlightStage = memo(function FlightStage({
   const [cursor, setCursor] = useState<string | null>(null);
   // Whether the canvas holds keyboard focus; with no cursor yet it then marks a default.
   const [hasFocus, setHasFocus] = useState(false);
-  const [paneTaskId, setPaneTaskId] = useState<string | null>(null);
-  // The pane catches up at a lower priority so arrowing through the plan never waits on it.
-  const deferredPaneTaskId = useDeferredValue(paneTaskId);
   const canvasRef = useRef<HTMLDivElement>(null);
 
   const focusedId =
@@ -96,13 +95,6 @@ export const FlightStage = memo(function FlightStage({
       : hasFocus
         ? defaultCursor
         : null;
-
-  // The pane follows the cursor while it is open.
-  useEffect(() => {
-    if (paneTaskId !== null && cursor !== null && cursor !== paneTaskId) {
-      setPaneTaskId(cursor);
-    }
-  }, [cursor, paneTaskId]);
 
   useEffect(() => {
     if (focusOnMount) canvasRef.current?.focus({ preventScroll: true });
@@ -135,17 +127,18 @@ export const FlightStage = memo(function FlightStage({
     };
   }, []);
 
-  // The host's open verb changes identity with its data; read it through a ref so
+  // The host's open verbs change identity with their data; read them through a ref so
   // `activate` stays stable and a data change never re-renders every card.
-  const openTaskRef = useRef(onOpenTask);
+  const openRef = useRef({ onOpenTask, onPeekTask });
   useEffect(() => {
-    openTaskRef.current = onOpenTask;
-  }, [onOpenTask]);
+    openRef.current = { onOpenTask, onPeekTask };
+  }, [onOpenTask, onPeekTask]);
   const activate = useCallback(
     (id: string) => {
       setCursor(id);
-      if (openIn === 'page') openTaskRef.current(id);
-      else setPaneTaskId(id);
+      const { onOpenTask: open, onPeekTask: peek } = openRef.current;
+      if (openIn === 'page' || peek === undefined) open(id);
+      else peek(id);
       canvasRef.current?.focus({ preventScroll: true });
     },
     [openIn]
@@ -207,16 +200,11 @@ export const FlightStage = memo(function FlightStage({
         onDispatch(focusedId);
         return;
       case 'close':
-        if (paneTaskId === null) return;
-        // The shell's Escape would also navigate back.
-        e.preventDefault();
-        e.stopPropagation();
-        setPaneTaskId(null);
+        // Nothing of the plan's own to close: the shell's Escape closes the drawer.
         return;
     }
   }
 
-  const split = openIn === 'pane' && deferredPaneTaskId !== null;
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -260,18 +248,6 @@ export const FlightStage = memo(function FlightStage({
           />
         )}
       </div>
-      {split && (
-        <div className="shadow-hairline-left w-[min(520px,45%)] min-w-0 shrink-0">
-          <TaskPane
-            taskId={deferredPaneTaskId}
-            onClose={() => {
-              setPaneTaskId(null);
-              canvasRef.current?.focus({ preventScroll: true });
-            }}
-            onExpand={() => onOpenTask(deferredPaneTaskId)}
-          />
-        </div>
-      )}
     </div>
   );
 });

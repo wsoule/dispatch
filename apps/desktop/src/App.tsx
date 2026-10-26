@@ -80,13 +80,13 @@ import {
 import { useToasts } from './components/shell/Toasts';
 import { AiTaskComposer } from './components/tasks/AiTaskComposer';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
+import { TaskDrawer } from './components/tasks/detail/TaskDrawer';
 import { NeedsYouBlock } from './components/tasks/NeedsYouBlock';
 import { TaskPage } from './components/tasks/page/TaskPage';
 import {
   type TaskPageHost,
   TaskPageHostContext,
 } from './components/tasks/page/TaskPageHost';
-import { TaskPeekDialog } from './components/tasks/TaskPeekDialog';
 import { TasksBackButton } from './components/tasks/TasksPageHeader';
 import { useAdminItems } from './hooks/useAdminItems';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
@@ -514,8 +514,8 @@ function App() {
   }, []);
 
   // Tells whoever else is on this daemon which task this window has open —
-  // the full view or the peek, whichever is showing. Best effort: a failed
-  // report costs a teammate one stale "viewing", never an error here.
+  // the full page or the quick-look drawer, whichever is showing. Best effort:
+  // a failed report costs a teammate one stale "viewing", never an error here.
   const twoViewsTaskId =
     twoViewsState.tasksPage.kind === 'task'
       ? twoViewsState.tasksPage.taskId
@@ -625,8 +625,10 @@ function App() {
     [rawData.latestRunByTaskId]
   );
 
-  // A Tasks-page row or card open: a phase drill from the milestones layout names
-  // its tab; a plain click keeps the peek. Stable, so memo'd rows can skip renders.
+  // A Tasks-page row or card click: a phase drill from the milestones layout names
+  // its tab and opens the full page; a plain click is the quick-look drawer
+  // (owner decision: click and Space peek, Enter and o open). Stable, so memo'd
+  // rows can skip renders.
   const selectBoardTask = useCallback(
     (taskId: string, tab?: TaskTab, runId?: string) => {
       if (tab !== undefined) openTaskView(taskId, tab, runId);
@@ -925,9 +927,11 @@ function App() {
     },
   });
 
-  // What every task page — the split pane, the peek, the full page — draws a
+  // What every task surface — the quick-look drawer and the full page — draws a
   // task with: the project and where its links go. Absent until the config has loaded.
   const rawHandleDispatch = rawData.handleDispatch;
+  const rawHandleUpdate = rawData.handleUpdate;
+  const rawMoveTaskStatus = rawData.moveTaskStatus;
   const projectRuns = data.runs;
   const taskPageHost: TaskPageHost | null =
     data.config === null
@@ -944,6 +948,9 @@ function App() {
               batch: stayInPlace,
               effort,
             }),
+          // Raw too: the drawer's edit controls print a refusal beside themselves.
+          updateTask: rawHandleUpdate,
+          moveTaskStatus: rawMoveTaskStatus,
           openPr: (runId) => {
             const number = prNumberFromUrl(
               projectRuns.find((r) => r.id === runId)?.prUrl
@@ -1197,10 +1204,9 @@ function App() {
           openQuickAddTask: () => openQuickAddTask(),
           setProjectView: selectProjectView,
           setGlobalView,
-          peekTask: (taskId) => {
-            selectProjectView('board');
-            peekTask(taskId);
-          },
+          // The quick-look drawer opens over whichever view is showing (the
+          // old peek switched to the list first, where it was a pane).
+          peekTask,
           dispatchTask: (taskId) => void handleDispatch(taskId),
           openQuickCapture,
           openShortcuts,
@@ -1664,21 +1670,20 @@ function App() {
     }
   };
 
-  // What Tasks shows beside or instead of its list.
+  // What Tasks shows instead of its list. A task here is always the full page;
+  // the quick look is the drawer in the peek slot below.
   const renderTwoViewsPage = (page: TasksSidePage): ReactNode => {
     switch (page.kind) {
       case 'task':
         return data.config === null ? null : (
           <TaskPage
             key={page.taskId}
-            layout={page.full ? 'full' : 'split'}
+            layout="full"
             taskId={page.taskId}
             mode={page.tab}
             onModeChange={(tab) => dispatchNav({ type: 'setTaskTab', tab })}
             runId={page.runId}
             onSelectRun={(runId) => dispatchNav({ type: 'openRun', runId })}
-            onClose={closeTwoViewsPage}
-            onExpand={() => dispatchNav({ type: 'tv/expandTask' })}
             onBack={closeTwoViewsPage}
             conversationCount={speechByTask.get(page.taskId)?.count ?? 0}
           />
@@ -1855,7 +1860,12 @@ function App() {
   const closePeek = () => dispatchNav({ type: 'tv/closePeek' });
   const peek = twoViewsState.peek;
   const peekView: ReactNode =
-    peek?.kind === 'thread' ? (
+    peek?.kind === 'task' ? (
+      // The quick-look slide-over, remounted per task so per-task state (an
+      // open comment box, an in-flight dispatch) never leaks across a drawer
+      // re-pointed at another task.
+      <TaskDrawer key={peek.taskId} taskId={peek.taskId} onClose={closePeek} />
+    ) : peek?.kind === 'thread' ? (
       <ThreadPeek
         key={peek.messageId}
         data={data}
@@ -2252,6 +2262,8 @@ function App() {
             }
             presetContext={presetContext}
             onSelectTask={selectBoardTask}
+            onOpenTask={(taskId) => openTaskView(taskId)}
+            peekTaskId={peekTaskId}
             onNewTask={() => openCreateTask()}
             onNewProject={() => openCreateTask({ kind: 'project' })}
             onDispatchTask={cockpitDispatch}
@@ -2333,17 +2345,6 @@ function App() {
                         if (!open) dispatchNav({ type: 'closeShortcuts' });
                       }}
                     />
-
-                    {peekTaskId !== null && (
-                      // Remount per task so per-task state (a picked run, an in-flight
-                      // dispatch) never leaks across a peek re-pointed at another task.
-                      <TaskPeekDialog
-                        key={peekTaskId}
-                        taskId={peekTaskId}
-                        onClose={() => dispatchNav({ type: 'closePeek' })}
-                        onExpand={(taskId) => openTaskView(taskId)}
-                      />
-                    )}
 
                     {showCreate && data.config !== null && (
                       <CreateTaskModal

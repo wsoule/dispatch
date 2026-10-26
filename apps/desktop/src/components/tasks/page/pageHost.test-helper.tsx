@@ -176,6 +176,10 @@ export function fakeHost(
       });
       return Promise.resolve();
     },
+    // The same stubs as the project's (a test overrides `project.handleUpdate`
+    // to make them reject).
+    updateTask: (id, patch) => project.handleUpdate(id, patch),
+    moveTaskStatus: (id, status) => project.moveTaskStatus(id, status),
     openPr: () => {},
   };
 }

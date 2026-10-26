@@ -7,20 +7,12 @@ import {
   render,
   screen,
 } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { ReactNode } from 'react';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import { progress, run, task } from '../components/live/fixtures.test-helper';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { TaskAttention } from '../lib/taskAttention';
-
-// The side pane mounts the task page, whose Review mode pulls in the Pierre diff; its
-// worker import only Vite resolves.
-void mock.module('@/components/runs/PierreWorkerPool', () => ({
-  PierreWorkerPool: ({ children }: { children: ReactNode }) => children,
-}));
-
-const { LiveView } = await import('./LiveView');
+import { LiveView } from './LiveView';
 
 beforeEach(() => window.localStorage.clear());
 afterEach(cleanup);
@@ -296,97 +288,35 @@ describe('LiveView', () => {
     });
   });
 
-  test('Enter opens the task beside the bands, o its page, Space peeks', () => {
+  test('Enter and Space quick-look the task, o opens its page; nothing is drawn beside the bands', () => {
     const view = mount(dataWith());
     act(() => group().focus());
     press('Enter');
-    expect(document.querySelector('[data-slot=task-pane]')).not.toBeNull();
+    expect(view.calls.peeked).toEqual(['t-a']);
     press('o');
     press(' ');
     expect(view.calls.opened).toEqual(['t-a']);
-    expect(view.calls.peeked).toEqual(['t-a']);
-    press('Escape');
+    expect(view.calls.peeked).toEqual(['t-a', 't-a']);
     expect(document.querySelector('[data-slot=task-pane]')).toBeNull();
+    // Escape is left to the shell (which closes the drawer): not prevented here.
+    const escape = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      group().dispatchEvent(escape);
+    });
+    expect(escape.defaultPrevented).toBe(false);
   });
 
-  describe('the side pane', () => {
-    const paneTask = () =>
-      document
-        .querySelector('[data-slot=task-pane]')
-        ?.getAttribute('data-task-id') ?? null;
-    const rest = () =>
-      act(async () => {
-        await new Promise((done) => setTimeout(done, 300));
-      });
-    const click = (id: string) => act(() => node(id)?.click());
-
-    test('follows the cursor once it rests', async () => {
-      mount(dataWith());
-      act(() => group().focus());
-      press('Enter');
-      expect(paneTask()).toBe('t-a');
-      press('j');
-      await rest();
-      expect(paneTask()).toBe('t-b');
-    });
-
-    test('stays on its task when that task’s Loose run finishes', async () => {
-      const view = mount(dataWith());
-      click('l-1');
-      expect(paneTask()).toBe('l-1');
-      // A finished run waiting on a review is not Loose work, so l-1 leaves the view.
-      view.rerenderWith(
-        dataWith({
-          tasks: TASKS.map((t) =>
-            t.meta.id === 'l-1'
-              ? { ...t, meta: { ...t.meta, status: 'review' } }
-              : t
-          ),
-          runs: [run('t-b'), run('l-1', { state: 'finished' })],
-          attention: [
-            ['v-a', 'review'],
-            ['l-1', 'review'],
-          ],
-        })
-      );
-      expect(node('l-1')).toBeNull();
-      await rest();
-      expect(paneTask()).toBe('l-1');
-    });
-
-    test('stays on its task when its wave lands and folds', async () => {
-      const tasks = [
-        task('m-1', { kind: 'milestone', title: 'Checkout' }),
-        task('t-a', { parent: 'm-1', status: 'working' }),
-        task('t-b', { parent: 'm-1', blockedBy: ['t-a'] }),
-      ];
-      const sessions = [progress('m-1', 'active')];
-      const view = mount(
-        dataWith({ tasks, runs: [run('t-a')], sessions, attention: [] })
-      );
-      click('t-a');
-      expect(paneTask()).toBe('t-a');
-      view.rerenderWith(
-        dataWith({
-          tasks: tasks.map((t) =>
-            t.meta.id === 't-a'
-              ? { ...t, meta: { ...t.meta, status: 'landed' } }
-              : t
-          ),
-          runs: [
-            run('t-a', {
-              state: 'finished',
-              reviewedAt: '2026-09-20T01:00:00.000Z',
-            }),
-          ],
-          sessions,
-          attention: [],
-        })
-      );
-      expect(node('t-a')).toBeNull();
-      await rest();
-      expect(paneTask()).toBe('t-a');
-    });
+  test('a card click quick-looks its task and moves the cursor to it', () => {
+    const view = mount(dataWith());
+    act(() => node('l-1')?.click());
+    expect(view.calls.peeked).toEqual(['l-1']);
+    expect(group().getAttribute('aria-activedescendant')).toBe(
+      'flight-node-l-1'
+    );
   });
 
   test('a band links to its full Flight Plan', () => {

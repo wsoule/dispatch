@@ -105,7 +105,10 @@ interface Log {
   peeked: string[];
   copied: string[];
   linked: string[];
+  /** Quick looks the view asked for (a row click). */
   opened: string[];
+  /** Full pages the view asked for (Enter, `o`, the row menu's Open). */
+  pages: string[];
 }
 
 function newLog(): Log {
@@ -118,6 +121,7 @@ function newLog(): Log {
     copied: [],
     linked: [],
     opened: [],
+    pages: [],
   };
 }
 
@@ -251,6 +255,8 @@ interface HarnessProps {
   log: Log;
   initialMode?: TasksMode;
   page?: TasksPage;
+  /** The task in the quick-look drawer. */
+  peekTaskId?: string | null;
 }
 
 // App's side of the view: the mode and preset live in its reducer.
@@ -259,6 +265,7 @@ function Harness({
   log,
   initialMode = 'list',
   page = LIST,
+  peekTaskId = null,
 }: HarnessProps) {
   const [mode, setMode] = useState<TasksMode>(initialMode);
   const [preset, setPreset] = useState<TasksPreset>('all');
@@ -275,6 +282,8 @@ function Harness({
       onPreset={setPreset}
       presetContext={{ bucketOf: () => null, starred: new Set(), me: ME }}
       onSelectTask={(id) => log.opened.push(id)}
+      onOpenTask={(id) => log.pages.push(id)}
+      peekTaskId={peekTaskId}
       onNewTask={noop}
       onOpenRef={noop}
       onOpenDecision={noop}
@@ -298,6 +307,7 @@ interface MountOptions {
   data?: Partial<DispatchProjectData>;
   initialMode?: TasksMode;
   page?: TasksPage;
+  peekTaskId?: string | null;
   deepLink?: DeepLinkActions | null;
   people?: { ref: string; name: string; placeholder?: boolean }[];
 }
@@ -311,6 +321,7 @@ function mount(options: MountOptions = {}) {
       log={log}
       initialMode={options.initialMode}
       page={options.page}
+      peekTaskId={options.peekTaskId}
     />
   );
   if (options.deepLink !== undefined && options.deepLink !== null) {
@@ -731,22 +742,26 @@ test('a change to twenty or more selected rows asks first', async () => {
 
 // ---- keys ------------------------------------------------------------------------------
 
-test('Enter and o open the row beside the list, Space quick-looks it, ⌘C copies its id', () => {
+test('Enter and o open the row’s full page, Space quick-looks it, ⌘C copies its id', () => {
   const { log } = mount();
   const link = rowLink('Card one');
   fireEvent.keyDown(link, { key: 'Enter' });
   fireEvent.keyDown(link, { key: 'o' });
-  expect(log.opened).toEqual(['t-1', 't-1']);
+  expect(log.pages).toEqual(['t-1', 't-1']);
+  // Enter went to the page only: the table's own activation (the quick look)
+  // was prevented.
+  expect(log.opened).toEqual([]);
   fireEvent.keyDown(link, { key: ' ' });
   expect(log.peeked).toEqual(['t-1']);
   fireEvent.keyDown(link, { key: 'c', metaKey: true });
   expect(log.copied).toEqual(['t-1']);
 });
 
-test('clicking a row title opens that task', () => {
+test('clicking a row title quick-looks that task, never the page', () => {
   const { log } = mount();
   fireEvent.click(rowLink('Loose card'));
   expect(log.opened).toEqual(['t-3']);
+  expect(log.pages).toEqual([]);
 });
 
 test('s opens the focused row’s status picker, and only that one', async () => {
@@ -883,16 +898,16 @@ test('the view menu lists the presets, then starred views, then saved views', ()
   expect(api?.activeViewId).toBe('v-1');
 });
 
-test('an open task beside the list marks its row current and the pane is a region', () => {
-  mount({
-    page: {
-      kind: 'task',
-      taskId: 't-3',
-      tab: 'auto',
-      runId: null,
-      full: false,
-    },
-  });
+test('the task in the quick-look drawer marks its row current; nothing is drawn beside the list', () => {
+  mount({ peekTaskId: 't-3' });
   expect(rowOf('Loose card').getAttribute('aria-current')).toBe('true');
-  expect(screen.getByRole('region', { name: 'Task' })).not.toBeNull();
+  expect(screen.queryByRole('region', { name: 'Task' })).toBeNull();
+  expect(screen.getByTestId('issues-table')).not.toBeNull();
+});
+
+test('a task page replaces the list', () => {
+  mount({
+    page: { kind: 'task', taskId: 't-3', tab: 'auto', runId: null },
+  });
+  expect(screen.queryByTestId('issues-table')).toBeNull();
 });

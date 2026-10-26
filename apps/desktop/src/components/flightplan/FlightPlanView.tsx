@@ -88,7 +88,7 @@ export interface FlightPlanProps {
   onPeekTask?: (taskId: string) => void;
   /** Where a node opens on click or Enter: a split pane beside the plan (the default), or
    * the full task page — for a host that is itself a pane. */
-  openIn?: 'pane' | 'page';
+  openIn?: 'peek' | 'page';
   /** The branch lane beneath the plan; on by default. */
   showBranches?: boolean;
   /** Take keyboard focus once the plan is on screen. */
@@ -161,7 +161,7 @@ export function FlightPlan({
   onDispatchFailed,
   onOpenTask,
   onPeekTask,
-  openIn = 'pane',
+  openIn = 'peek',
   showBranches = true,
   focusOnMount = false,
   sendAgentsRequest = null,

@@ -1,18 +1,19 @@
-import type { EffortLevel } from '@dispatch-foo/core/browser';
+import type { EffortLevel, UpdatePatch } from '@dispatch-foo/core/browser';
 import type { ReactNode } from 'react';
 import { createContext, useContext } from 'react';
 
 import type { DispatchProjectData } from '../../../hooks/useDispatchProject';
 import type { TaskTab } from '../../../lib/appNav';
 
-/** The slice of the project the task page reads and writes through. App hands it the
- * whole project; tests fake only what they touch. */
+/** The slice of the project the task page and the quick-look drawer read and write
+ * through. App hands it the whole project; tests fake only what they touch. */
 export type TaskPageProject = Pick<
   DispatchProjectData,
   | 'client'
   | 'port'
   | 'daemonBaseUrl'
   | 'me'
+  | 'myTier'
   | 'messageAccess'
   | 'config'
   | 'executors'
@@ -55,19 +56,21 @@ export type TaskPageProject = Pick<
 >;
 
 /**
- * What every task page draws a task with, provided once by App: the project, and where
- * its links go. Any surface renders `<TaskPage taskId layout>` without threading these.
+ * What every task page (and the quick-look TaskDrawer) draws a task with, provided once by
+ * App: the project, and where its links go. Any surface renders `<TaskPage taskId layout>`
+ * or `<TaskDrawer taskId>` without threading these.
  */
 export interface TaskPageHost {
   /** The active project's display name, the first crumb. */
   projectName: string | null;
   project: TaskPageProject;
-  /** Peeks a task from a link on the page (a blocker, a sub-issue, a crumb). */
+  /** Quick-looks a task in the slide-over from a link on the page (a blocker, a
+   * sub-issue, a crumb). */
   peekTask: (taskId: string) => void;
   /** Opens a task's full page, on a mode and run when given. */
   openTaskPage: (taskId: string, mode?: TaskTab, runId?: string) => void;
   /** Dispatches without the app's own error toast, rejecting when the daemon refuses.
-   * `stayInPlace` keeps a split pane or peek where it is instead of opening the run. */
+   * `stayInPlace` keeps the drawer (or the page) where it is instead of opening the run. */
   dispatchTask: (
     taskId: string,
     executor: string | undefined,
@@ -76,6 +79,13 @@ export interface TaskPageHost {
     /** The effort picker's choice; absent lets the daemon apply the config's. */
     effort?: EffortLevel
   ) => Promise<void>;
+  /** Writes a task's metadata or body without the app's own error toast, rejecting
+   * when the daemon refuses: the drawer's edit controls await it, so a refusal is
+   * printed beside the control and the control rolls its value back
+   * (`project.handleUpdate` is the toasting, never-rejecting wrapper). */
+  updateTask: (taskId: string, patch: UpdatePatch) => Promise<void>;
+  /** The status counterpart of `updateTask` (the archived-task guard included). */
+  moveTaskStatus: (taskId: string, status: string) => Promise<void>;
   /** Opens a run's pull request on the PR review page. */
   openPr: (runId: string) => void;
   /** Opens a linked doc in the Docs view; absent hides the spec's Docs block, for a

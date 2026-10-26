@@ -157,10 +157,13 @@ export interface IssuesTableProps {
   bucketOf: (doc: TaskListItem) => TaskBucket | null;
   /** Unread messages to me per task, for the row's unread chip. */
   speechByTask?: ReadonlyMap<string, { count: number; mention: boolean }>;
-  /** The task open beside the list (the accent row). */
+  /** The task in the quick-look drawer (the accent row). */
   activeTaskId?: string;
-  /** A click, Enter or `o` on a row. */
+  /** A click on a row: the quick-look drawer (Space goes through the shell's
+   * peek verb, the same drawer). */
   onSelectTask: (taskId: string) => void;
+  /** Enter, `o` and the row menu's Open: the full page. */
+  onOpenTask: (taskId: string) => void;
   /** `f` on a row: the hub opens its Filter menu. */
   onRequestFilter: () => void;
   /** `⇧V` on a row: the hub opens its Display popover. */
@@ -190,6 +193,7 @@ export function IssuesTable({
   speechByTask,
   activeTaskId,
   onSelectTask,
+  onOpenTask,
   onRequestFilter,
   onRequestDisplay,
   footer,
@@ -496,7 +500,7 @@ export function IssuesTable({
       const current = latest.current;
       switch (action) {
         case 'open':
-          onSelectTask(id);
+          onOpenTask(id);
           return;
         case 'peek':
           shell.peekTask(id);
@@ -683,7 +687,7 @@ export function IssuesTable({
 
   // ---- the row's keys -----------------------------------------------------
 
-  // What the table leaves to the host: Enter / o open, Space quick-looks,
+  // What the table leaves to the host: Enter / o open the page, Space quick-looks,
   // s / p / a / m open the matching picker (the cell's when its column is
   // shown, else in the "…" slot), d dispatches, ⌘C copies the id, f and ⇧V ask
   // the hub for its menus, Escape clears the selection. A pending G chord
@@ -723,8 +727,10 @@ export function IssuesTable({
     switch (command) {
       case 'list-confirm':
       case 'list-open':
+        // Prevented, so the table does not also activate the row's link
+        // (its click path, the quick look).
         event.preventDefault();
-        onSelectTask(id);
+        onOpenTask(id);
         return;
       case 'list-peek':
         event.preventDefault();

@@ -145,10 +145,16 @@ describe('currentShellDestination', () => {
     ).toBe('needs-you');
   });
 
-  test('a task open beside the list keeps the list row current', () => {
-    const open = after([
+  test('a task quick-looked over the list, or open as its page, keeps the list row current', () => {
+    const peeked = after([
       { type: 'tv/showTasks' },
       { type: 'openPeek', taskId: 't-1' },
+    ]);
+    expect(peeked.peek).toEqual({ kind: 'task', taskId: 't-1' });
+    expect(currentShellDestination(peeked)).toBe('issues');
+    const open = after([
+      { type: 'tv/showTasks' },
+      { type: 'openTask', taskId: 't-1' },
     ]);
     expect(open.tasksPage.kind).toBe('task');
     expect(currentShellDestination(open)).toBe('issues');

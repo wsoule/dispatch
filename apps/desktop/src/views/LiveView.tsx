@@ -8,7 +8,6 @@ import type { EpicProgressChild } from '@dispatch/client';
 import {
   type KeyboardEvent,
   useCallback,
-  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -54,7 +53,6 @@ import { LiveReady } from '../components/live/LiveReady';
 import { usePeople } from '../components/people/PeopleContext';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { DispatchDialog } from '../components/tasks/DispatchDialog';
-import { TaskPane } from '../components/tasks/TaskPane';
 import {
   VirtualRows,
   type VirtualRowsHandle,
@@ -83,8 +81,6 @@ import {
 } from '@/ui/alert-dialog';
 import { Spinner } from '@/ui/spinner';
 
-/** How long the cursor rests on a node before an open side pane follows it. */
-const PANE_FOLLOW_MS = 120;
 /** How many ready containers the empty state offers. */
 const READY_LIMIT = 6;
 
@@ -114,9 +110,9 @@ export interface LiveViewProps {
   dispatchTask: (taskId: string) => Promise<void>;
   /** A dispatch or fan-out verb the daemon refused — App toasts it. */
   onDispatchFailed: (taskId: string, message: string) => void;
-  /** The full task page (`o`, the pane's expand, a band's Flight Plan). */
+  /** The full task page (`o`, a band's Flight Plan). */
   onOpenTask: (taskId: string, tab?: TaskTab, runId?: string) => void;
-  /** The peek dialog (Space). */
+  /** The quick-look slide-over (a card click, Enter, Space). */
   onPeekTask: (taskId: string) => void;
   /** False drops the page header, for a host that draws its own (Tasks' Graph mode). */
   showHeader?: boolean;
@@ -132,8 +128,8 @@ export interface LiveViewProps {
  * cached task list, runs and fan-out progress.
  *
  * Keyboard: j/k walk every node in reading order, J/K jump a band, h/l cross columns,
- * Enter opens the task beside the bands, `o` its page, Space peeks, `d` dispatches (never
- * a teammate's), Escape closes the pane.
+ * Enter and Space quick-look the task in the shell's slide-over, `o` opens its page, `d`
+ * dispatches (never a teammate's); Escape is the shell's (it closes the drawer).
  */
 export function LiveView({
   data,
@@ -375,11 +371,9 @@ export function LiveView({
     [viewCtx, pace, now, pending, data.latestRunByTaskId]
   );
 
-  // The cursor, the side pane, and the dialogs.
+  // The cursor and the dialogs.
   const [cursor, setCursor] = useState<LiveCursor | null>(null);
   const [hasFocus, setHasFocus] = useState(false);
-  const [paneTaskId, setPaneTaskId] = useState<string | null>(null);
-  const deferredPaneTaskId = useDeferredValue(paneTaskId);
   const [dialog, setDialog] = useState<FanoutDialogState | null>(null);
   const [confirmPause, setConfirmPause] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -401,22 +395,6 @@ export function LiveView({
   const focusedBand = focused?.band ?? null;
   const focusedId = focused?.id ?? null;
 
-  // Where a key last moved the cursor: the open pane follows it once it rests. A node
-  // leaving the view (its run finished, its wave folded) settles the cursor elsewhere but
-  // never swaps the task being read.
-  const [movedTo, setMovedTo] = useState<string | null>(null);
-  const showInPane = useCallback((taskId: string | null) => {
-    setMovedTo(null);
-    setPaneTaskId(taskId);
-  }, []);
-  useEffect(() => {
-    if (paneTaskId === null || movedTo === null || movedTo === paneTaskId) {
-      return;
-    }
-    const timer = setTimeout(() => setPaneTaskId(movedTo), PANE_FOLLOW_MS);
-    return () => clearTimeout(timer);
-  }, [movedTo, paneTaskId]);
-
   const daemonReady =
     !data.portLoading && !data.portError && data.client !== null;
   const hasBands = bands.length > 0;
@@ -426,22 +404,23 @@ export function LiveView({
     }
   }, [daemonReady, hasBands]);
 
-  // A card's click, read through a ref so its identity never changes: every card takes it,
-  // and a new one would re-render them all on each event.
+  // A card's click, read through refs so its identity never changes: every card takes it,
+  // and a new one would re-render them all on each event. It quick-looks the task.
   const locatedRef = useRef(located);
   useEffect(() => {
     locatedRef.current = located;
   }, [located]);
-  const activate = useCallback(
-    (taskId: string) => {
-      const where = locatedRef.current.get(taskId);
-      if (where === undefined) return;
-      setCursor({ band: where.band, id: taskId });
-      showInPane(taskId);
-      gridRef.current?.focus({ preventScroll: true });
-    },
-    [showInPane]
-  );
+  const peekRef = useRef(onPeekTask);
+  useEffect(() => {
+    peekRef.current = onPeekTask;
+  }, [onPeekTask]);
+  const activate = useCallback((taskId: string) => {
+    const where = locatedRef.current.get(taskId);
+    if (where === undefined) return;
+    setCursor({ band: where.band, id: taskId });
+    peekRef.current(taskId);
+    gridRef.current?.focus({ preventScroll: true });
+  }, []);
   const openPlan = useCallback(
     (containerId: string) => onOpenTask(containerId, 'plan'),
     [onOpenTask]
@@ -600,7 +579,6 @@ export function LiveView({
         const next = moveLiveCursor(navBands, focused, command);
         if (next === null) return;
         setCursor(next);
-        setMovedTo(next.id);
         if (command === 'next-band' || command === 'prev-band') {
           revealBand(next.band);
         }
@@ -609,7 +587,7 @@ export function LiveView({
       case 'open':
         if (focused === null) return;
         e.preventDefault();
-        showInPane(focused.id);
+        onPeekTask(focused.id);
         return;
       case 'open-full':
         if (focused === null) return;
@@ -630,11 +608,7 @@ export function LiveView({
         return;
       }
       case 'close':
-        if (paneTaskId === null) return;
-        // The shell's Escape would also navigate back.
-        e.preventDefault();
-        e.stopPropagation();
-        showInPane(null);
+        // Nothing of the view's own to close: the shell's Escape closes the drawer.
         return;
     }
   }
@@ -670,7 +644,6 @@ export function LiveView({
     dialog?.mode === 'raise'
       ? (epicProgressById.get(dialog.epicId)?.session ?? null)
       : null;
-  const split = deferredPaneTaskId !== null;
   const crumb = [...(projectName === null ? [] : [projectName]), 'Live'];
 
   return (
@@ -730,18 +703,6 @@ export function LiveView({
               handleRef={rows}
             />
           </div>
-          {split && (
-            <div className="shadow-hairline-left w-[min(520px,45%)] min-w-0 shrink-0">
-              <TaskPane
-                taskId={deferredPaneTaskId}
-                onClose={() => {
-                  showInPane(null);
-                  gridRef.current?.focus({ preventScroll: true });
-                }}
-                onExpand={() => onOpenTask(deferredPaneTaskId)}
-              />
-            </div>
-          )}
         </div>
       )}
       {confirmPause && (

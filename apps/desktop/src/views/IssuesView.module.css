@@ -1,7 +1,7 @@
 /* Layout of the Issues hub (views/IssuesView.tsx): the toolbar, tabs and
-   chips stack over the body; the body is the list column (fixed-width beside
-   an open task) and the task pane. Colours and type come from @dispatch/ui's
-   components and tokens; this sheet only places them. */
+   chips stack over the body, the list column (a task's quick look is the
+   shell's slide-over, not a pane here). Colours and type come from
+   @dispatch/ui's components and tokens; this sheet only places them. */
 
 .root {
   display: flex;
@@ -29,12 +29,6 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-}
-
-.column[data-split] {
-  flex: none;
-  width: 520px;
-  border-right: 1px solid var(--border);
 }
 
 .needs {
@@ -65,13 +59,6 @@
   display: flex;
   align-items: center;
   gap: 4px;
-}
-
-.pane {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
 }
 
 .full {

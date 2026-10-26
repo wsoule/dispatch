@@ -195,13 +195,33 @@ test('the sidebar footer opens Settings; "[" collapses the rail', async ({
   );
 });
 
-test('a row opens its task beside the list', async ({ page, baseURL }) => {
+test('a row click quick-looks its task in the slide-over; Enter opens the page', async ({
+  page,
+  baseURL,
+}) => {
   await page.goto(authedUrl(baseURL));
   await openDestination(page, 'Issues');
-  await page.getByText('Persist the cart across devices').first().click();
-  await expect(page.getByRole('region', { name: 'Task' })).toBeVisible();
+  const row = page.getByText('Persist the cart across devices').first();
+  await row.click();
+  // The slide-over is a dialog named by the task's title, over the list.
+  const drawer = page.getByRole('dialog', {
+    name: 'Persist the cart across devices',
+  });
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByRole('button', { name: 'Open' })).toBeVisible();
+  await expect(page.getByTestId('issues-table')).toBeVisible();
+  // Its row is the current one; Esc closes the drawer and keeps the list.
+  await expect(
+    page.locator('[data-nav-item="row"][aria-current="true"]')
+  ).toContainText('Persist the cart across devices');
+  await page.keyboard.press('Escape');
+  await expect(drawer).toHaveCount(0);
+  await expect(page.getByTestId('issues-table')).toBeVisible();
+
+  // Enter on the row opens the full page, whose crumb ends on the task.
+  await row.focus();
+  await page.keyboard.press('Enter');
   await expect(page.getByTestId('tasks-view')).toContainText('about t-6c40de');
-  // The open task is the last crumb.
   await expect(
     page.getByRole('navigation', { name: 'Breadcrumb' })
   ).toContainText('Persist the cart across devices');
@@ -213,7 +233,9 @@ test('a task’s conversation is one flat timeline with a composer locked to it'
 }) => {
   await page.goto(authedUrl(baseURL));
   await openDestination(page, 'Issues');
-  await page.getByText('Add address autocomplete').first().click();
+  // Enter opens the full page (a click would only quick-look the task).
+  await page.getByText('Add address autocomplete').first().focus();
+  await page.keyboard.press('Enter');
   await page.getByRole('button', { name: 'Conversation', exact: true }).click();
   await expect(page.getByTestId('conversation')).toBeVisible();
   await expect(page.getByTestId('timeline-message').first()).toBeVisible();

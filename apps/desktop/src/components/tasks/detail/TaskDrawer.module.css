@@ -1,0 +1,39 @@
+/* Layout of the quick-look drawer's own sections (components/tasks/detail/TaskDrawer.tsx):
+   the Work block's stack and the legacy pieces it hosts. Colours and type come from
+   @dispatch/ui's components and tokens; this sheet only places them. */
+
+/* The Work section: the dispatch card, the latest run's strip and the attachments, stacked. */
+.work {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+/* The sub-issues block (legacy) in the Work section, kept to the column's width. */
+.subtasks {
+  min-width: 0;
+}
+
+/* A read-only body (the description, the acceptance criteria) rendered as markdown. */
+.markdown {
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+}
+
+/* The read-only link value of a property (the Linear issue). */
+.link {
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link:hover,
+.link:focus-visible {
+  color: var(--accent-ink-hover);
+}
+
+/* The sentence a missing task's drawer shows under its title. */
+.gone {
+  padding: var(--s-4) 0;
+  color: var(--text-2);
+}

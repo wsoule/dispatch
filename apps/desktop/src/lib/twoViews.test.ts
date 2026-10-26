@@ -173,25 +173,30 @@ describe('twoViewsReducer', () => {
     expect(state.tasksPage).toEqual({ kind: 'view', view: 'files' });
   });
 
-  test('a row click in Tasks opens the task beside the list', () => {
+  test('a row click in Tasks quick-looks the task in the slide-over, over the list', () => {
     const state = run([
       { type: 'tv/showTasks' },
       { type: 'openPeek', taskId: 't-1' },
     ]);
-    expect(state.tasksPage).toEqual({
-      kind: 'task',
-      taskId: 't-1',
-      tab: 'auto',
-      runId: null,
-      full: false,
-    });
-    expect(state.peek).toBeNull();
+    expect(state.mainView).toBe('tasks');
+    expect(state.tasksPage).toEqual({ kind: 'list' });
+    expect(state.peek).toEqual({ kind: 'task', taskId: 't-1' });
+    // A quick look is not a place: history does not move.
+    expect(state.history).toHaveLength(2);
   });
 
   test('a task peek over Overseer stays a peek', () => {
     const state = run([{ type: 'openPeek', taskId: 't-1' }]);
     expect(state.mainView).toBe('overseer');
     expect(state.peek).toEqual({ kind: 'task', taskId: 't-1' });
+  });
+
+  test('a quick look re-pointed at another task swaps the drawer', () => {
+    const state = run([
+      { type: 'openPeek', taskId: 't-1' },
+      { type: 'openPeek', taskId: 't-2' },
+    ]);
+    expect(state.peek).toEqual({ kind: 'task', taskId: 't-2' });
   });
 
   test('openTask is the full page under Tasks', () => {
@@ -204,8 +209,16 @@ describe('twoViewsReducer', () => {
       taskId: 't-1',
       tab: 'run',
       runId: 'r-1',
-      full: true,
     });
+  });
+
+  test('opening the full page closes a quick look', () => {
+    const state = run([
+      { type: 'openPeek', taskId: 't-1' },
+      { type: 'openTask', taskId: 't-1' },
+    ]);
+    expect(state.peek).toBeNull();
+    expect(state.tasksPage).toMatchObject({ kind: 'task', taskId: 't-1' });
   });
 
   test('a task tab change and a run pick stay on the page', () => {
@@ -315,13 +328,12 @@ describe('twoViewsReducer', () => {
     expect(state.peek).toBeNull();
   });
 
-  test('expanding a split task makes it full; closing a page returns to the list', () => {
+  test('closing a page returns to the list', () => {
     let state = run([
       { type: 'tv/showTasks' },
-      { type: 'openPeek', taskId: 't-1' },
-      { type: 'tv/expandTask' },
+      { type: 'openTask', taskId: 't-1' },
     ]);
-    expect(state.tasksPage).toMatchObject({ kind: 'task', full: true });
+    expect(state.tasksPage).toMatchObject({ kind: 'task', taskId: 't-1' });
     state = twoViewsReducer(state, { type: 'tv/closePage' });
     expect(state.tasksPage).toEqual({ kind: 'list' });
   });
@@ -404,7 +416,7 @@ describe('the Tasks preset', () => {
   test('plain Tasks clears the filter and keeps the page', () => {
     const state = run([
       { type: 'tv/showTasks', preset: 'review' },
-      { type: 'openPeek', taskId: 't-1' },
+      { type: 'openTask', taskId: 't-1' },
       { type: 'tv/showOverseer' },
       { type: 'tv/showTasks' },
     ]);
@@ -454,10 +466,10 @@ describe('opening an address', () => {
     expect(state.tasksPage).toEqual({ kind: 'room', room: 'release' });
   });
 
-  test('a task opens beside the list', () => {
-    expect(
-      run([{ type: 'tv/openAddress', address: 'task:t-1' }]).tasksPage
-    ).toMatchObject({ kind: 'task', taskId: 't-1', full: false });
+  test('a task is a quick look over the current view', () => {
+    const state = run([{ type: 'tv/openAddress', address: 'task:t-1' }]);
+    expect(state.peek).toEqual({ kind: 'task', taskId: 't-1' });
+    expect(state.tasksPage).toEqual({ kind: 'list' });
   });
 
   test('anything else goes nowhere', () => {

@@ -84,8 +84,10 @@ import { ProjectsView } from './ProjectsView';
 // List | Board | Graph, the saved views, New task), the preset tabs with their
 // counts, the applied filters as chips, every ask of mine pinned on top, then
 // the list (IssuesViewTable on @dispatch/ui's TaskGroupTable), the board or the
-// graph, a task open beside the list, and the composer at the foot. The preset
-// and the filter clauses narrow every layout; Display shapes the list and board.
+// graph, and the composer at the foot. A row click quick-looks its task in the
+// shell's slide-over (App's peek slot, over this view); Enter, o and "Open" go
+// to the full page, which replaces the list here. The preset and the filter
+// clauses narrow every layout; Display shapes the list and board.
 
 const MODES: { id: TasksMode; label: string }[] = [
   { id: 'list', label: 'List' },
@@ -211,7 +213,13 @@ export interface IssuesViewProps {
   preset: TasksPreset;
   onPreset: (preset: TasksPreset) => void;
   presetContext: PresetContext;
+  /** A click on a row or card: the quick-look drawer; with a tab, the full page
+   * on that tab (a phase drill). */
   onSelectTask: (taskId: string, tab?: TaskTab, runId?: string) => void;
+  /** Enter, `o` and the row menu's Open: the full page. */
+  onOpenTask: (taskId: string) => void;
+  /** The task in the quick-look drawer, marked current in the list. */
+  peekTaskId: string | null;
   onNewTask: () => void;
   /** The creator, set to make a project (Graph mode's Projects layout). */
   onNewProject: () => void;
@@ -251,6 +259,8 @@ export function IssuesView({
   onPreset,
   presetContext,
   onSelectTask,
+  onOpenTask,
+  peekTaskId,
   onNewTask,
   onNewProject,
   onDispatchTask,
@@ -267,7 +277,6 @@ export function IssuesView({
   speechByTask,
   composer,
 }: IssuesViewProps) {
-  const split = page.kind === 'task' && !page.full;
   const [graphFolded, setGraphFolded] = useState(storedGraphFold);
   const onGraphFold = useCallback((folded: boolean) => {
     setGraphFolded(folded);
@@ -287,7 +296,7 @@ export function IssuesView({
     () => ({ ...prefs, layout: layoutForMode(mode) }),
     [prefs, mode]
   );
-  const full = page.kind !== 'list' && !split;
+  const full = page.kind !== 'list';
 
   // Applies the active saved view when a pick changes it — from the toolbar's menu or
   // the palette's Open view, which may land before this mounts. The session marker keeps
@@ -584,7 +593,7 @@ export function IssuesView({
         </div>
       ) : (
         <div className={styles.body}>
-          <div className={styles.column} data-split={split ? '' : undefined}>
+          <div className={styles.column}>
             <div className={styles.needs}>
               <NeedsYouBlock
                 flush
@@ -646,7 +655,11 @@ export function IssuesView({
                           data={data}
                           dispatchTask={onDispatchTask}
                           onDispatchFailed={onDispatchFailed}
-                          onOpenTask={onSelectTask}
+                          onOpenTask={(id, tab, runId) =>
+                            tab === undefined
+                              ? onOpenTask(id)
+                              : onSelectTask(id, tab, runId)
+                          }
                           onPeekTask={onPeekTask}
                         />
                       ),
@@ -663,8 +676,9 @@ export function IssuesView({
                   needs={needs}
                   bucketOf={presetContext.bucketOf}
                   speechByTask={speechByTask}
-                  activeTaskId={page.kind === 'task' ? page.taskId : undefined}
+                  activeTaskId={peekTaskId ?? undefined}
                   onSelectTask={(taskId) => onSelectTask(taskId)}
+                  onOpenTask={onOpenTask}
                   onRequestFilter={requestFilter}
                   onRequestDisplay={requestDisplay}
                   footer={footer}
@@ -672,11 +686,6 @@ export function IssuesView({
               )}
             </div>
           </div>
-          {split && (
-            <section aria-label="Task" className={styles.pane}>
-              {renderPage(page)}
-            </section>
-          )}
         </div>
       )}
       {composer}

@@ -8,7 +8,8 @@ import { useTaskPageHost } from './TaskPageHost';
  * room for one, so there a node opens its own page.
  */
 export function PlanMode({ page }: { page: TaskPageModel }) {
-  // Two views has no room for a third column: a node opens its own page there.
+  // Two views has no room for a third column: a node opens its own page there,
+  // otherwise the full page's plan quick-looks a node in the slide-over.
   const opensPages = useTaskPageHost()?.planOpensPages === true;
   const full = page.layout === 'full' && !opensPages;
   return (
@@ -18,7 +19,7 @@ export function PlanMode({ page }: { page: TaskPageModel }) {
     >
       <ContainerFlightPlanSection
         containerId={page.item.meta.id}
-        openIn={full ? 'pane' : 'page'}
+        openIn={full ? 'peek' : 'page'}
         focusOnMount={page.layout === 'full'}
       />
     </div>

@@ -27,9 +27,9 @@ export const FlightPlanHostContext = createContext<FlightPlanHost | null>(null);
 export interface ContainerFlightPlanSectionProps {
   /** Any container: a milestone, a parent issue, a project or an initiative. */
   containerId: string;
-  /** Where a node opens: a split pane beside the plan (default) or the task page — pass
-   * `page` when the section itself sits in a pane. */
-  openIn?: 'pane' | 'page';
+  /** Where a node opens: the quick-look slide-over (default) or the task page — pass
+   * `page` when the section itself sits in a drawer. */
+  openIn?: 'peek' | 'page';
   /** The branch lane beneath the plan; on by default. */
   showBranches?: boolean;
   /** Take keyboard focus once on screen — for a surface where the plan is the page. */

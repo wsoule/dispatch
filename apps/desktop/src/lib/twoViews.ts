@@ -37,7 +37,8 @@ export type HostedView = Extract<
   'files' | 'terminals' | 'threads'
 >;
 
-/** What the Tasks view shows beside or instead of its list. */
+/** What the Tasks view shows instead of its list. A task here is always the
+ * full page: a quick look at a task is a `Peek`, over whichever view shows. */
 export type TasksPage =
   | { kind: 'list' }
   | {
@@ -45,7 +46,6 @@ export type TasksPage =
       taskId: string;
       tab: TaskTab;
       runId: string | null;
-      full: boolean;
     }
   | {
       kind: 'docs';
@@ -61,7 +61,8 @@ export type TasksPage =
   /** The Files page opened on one file, e.g. from a file link in a thread. */
   | { kind: 'file'; path: string };
 
-/** A drawer over either view; it never changes the view underneath. */
+/** A drawer over either view; it never changes the view underneath. A task
+ * peek is the quick-look slide-over (a row click, Space, "Quick look"). */
 type Peek =
   | { kind: 'thread'; messageId: string }
   | { kind: 'task'; taskId: string }
@@ -94,7 +95,6 @@ export type TwoViewsAction =
   | { type: 'tv/closePeek' }
   | { type: 'tv/closePage' }
   | { type: 'tv/openFile'; path: string }
-  | { type: 'tv/expandTask' }
   /** Opens a person, an outside agent, a room or a task by address. */
   | { type: 'tv/openAddress'; address: string };
 
@@ -279,7 +279,8 @@ function withTaskPage(
   return { ...state, tasksPage: { ...page, ...patch } };
 }
 
-// Where an address leads: people and outside agents peek, rooms and tasks open under Tasks.
+// Where an address leads: people, outside agents and tasks peek (a task by
+// address is a quick look); rooms open under Tasks.
 function openAddress(state: TwoViewsState, address: string): TwoViewsState {
   const colon = address.indexOf(':');
   const kind = address.slice(0, colon);
@@ -292,13 +293,7 @@ function openAddress(state: TwoViewsState, address: string): TwoViewsState {
     case 'channel':
       return toTasks(state, { kind: 'room', room: rest });
     case 'task':
-      return toTasks(state, {
-        kind: 'task',
-        taskId: rest,
-        tab: 'auto',
-        runId: null,
-        full: false,
-      });
+      return { ...state, peek: { kind: 'task', taskId: rest } };
     default:
       return state;
   }
@@ -337,29 +332,25 @@ export function twoViewsReducer(
         globalViewDestination(action.view, action.page)
       );
     case 'openPeek':
-      // In Tasks the page opens beside the list; over Overseer it stays a peek.
-      return state.mainView === 'tasks'
-        ? toTasks(state, {
-            kind: 'task',
-            taskId: action.taskId,
-            tab: 'auto',
-            runId: null,
-            full: false,
-          })
-        : { ...state, peek: { kind: 'task', taskId: action.taskId } };
+      // The quick-look slide-over, over whichever view is showing (owner
+      // decision, Phase 3a: no split pane beside the list any more).
+      return { ...state, peek: { kind: 'task', taskId: action.taskId } };
     case 'closePeek':
     case 'tv/closePeek':
       return state.peek === null ? state : { ...state, peek: null };
     case 'openRun':
       return withTaskPage(state, { runId: action.runId });
     case 'openTask':
-      return toTasks(state, {
-        kind: 'task',
-        taskId: action.taskId,
-        tab: action.tab ?? 'auto',
-        runId: action.runId ?? null,
-        full: true,
-      });
+      // The full page replaces a quick look of any task, so the drawer closes.
+      return {
+        ...toTasks(state, {
+          kind: 'task',
+          taskId: action.taskId,
+          tab: action.tab ?? 'auto',
+          runId: action.runId ?? null,
+        }),
+        peek: null,
+      };
     case 'setTaskTab':
       return withTaskPage(state, { tab: action.tab });
     case 'openThread':
@@ -414,8 +405,6 @@ export function twoViewsReducer(
       return state.settings === null ? state : { ...state, settings: null };
     case 'tv/closePage':
       return toTasks(state, LIST);
-    case 'tv/expandTask':
-      return withTaskPage(state, { full: true });
     case 'tv/openAddress':
       return openAddress(state, action.address);
     case 'closeRun':
