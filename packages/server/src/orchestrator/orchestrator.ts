@@ -120,6 +120,7 @@ import {
   OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
+  redactMessageEntry,
   runKind,
   runLineage,
   runOperator,
@@ -730,11 +731,13 @@ export class Orchestrator {
   }
 
   // Logs a delivered message, tagged with its messageId, to the run's transcript
-  // and the bus, then hands it to the executor.
+  // and the bus, then hands it to the executor. `audience` is the message's
+  // (messaging's messageAudience): every other socket gets the entry redacted.
   deliverToRun(
     runId: string,
     text: string,
-    from: { label: string; messageId: string; human: boolean }
+    from: { label: string; messageId: string; human: boolean },
+    audience?: (who: SocketAudience | undefined) => boolean
   ): void {
     const { executorRun } = this.requireDeliverableRun(runId);
     const entry: NormalizedEntry = {
@@ -746,13 +749,13 @@ export class Orchestrator {
       messageId: from.messageId,
     };
     const index = this.appendRunEntry(runId, entry);
-    this.ctx.events.broadcast({ type: 'run.log', runId, entry, index });
+    this.broadcastRunLog(runId, entry, index, audience);
     executorRun.send(text);
   }
 
   // A run's own message to a human, logged on its transcript.
   // `audience` scopes the run.log frame to the message's participants: a DM
-  // never reaches other sockets (XH-R4).
+  // never reaches other sockets whole (XH-R4); they get it redacted.
   logOutgoing(
     runId: string,
     message: { id: string; body: string },
@@ -777,8 +780,15 @@ export class Orchestrator {
   }
 
   // deliverToRun for a non-interrupting channel digest: logged the same way,
-  // handed to the executor's notify() for the agent's next step.
-  notifyRun(runId: string, digest: string, messageId?: string): void {
+  // handed to the executor's notify() for the agent's next step. A digest of
+  // a bus message passes its id and audience; a daemon notice (docs, memory)
+  // has neither and reaches every socket.
+  notifyRun(
+    runId: string,
+    digest: string,
+    messageId?: string,
+    audience?: (who: SocketAudience | undefined) => boolean
+  ): void {
     const { executorRun } = this.requireDeliverableRun(runId);
     const entry: NormalizedEntry = {
       ts: new Date().toISOString(),
@@ -790,7 +800,7 @@ export class Orchestrator {
       ...(messageId !== undefined ? { messageId } : {}),
     };
     const index = this.appendRunEntry(runId, entry);
-    this.ctx.events.broadcast({ type: 'run.log', runId, entry, index });
+    this.broadcastRunLog(runId, entry, index, audience);
     executorRun.notify(digest);
   }
 
@@ -4808,14 +4818,22 @@ export class Orchestrator {
   // could not write (undefined). A frame with no index is shown as the next
   // entry, so a window that showed it would be one ahead of the transcript and
   // hold back the run's next real entry as one it already has; run.changed
-  // after it makes every window refetch the run and line up again.
+  // after it makes every window refetch the run and line up again. With an
+  // `audience`, a message entry reaches the sockets outside it redacted, at the
+  // same index, so their windows count the same entries.
   private broadcastRunLog(
     runId: string,
     entry: NormalizedEntry,
     index: number | undefined,
     audience?: (who: SocketAudience | undefined) => boolean
   ): void {
-    this.ctx.events.broadcast(runLog(runId, entry, index), audience);
+    const redacted =
+      audience !== undefined &&
+      entry.kind === 'message' &&
+      entry.messageId !== undefined
+        ? runLog(runId, redactMessageEntry(entry, entry.messageId), index)
+        : undefined;
+    this.ctx.events.broadcast(runLog(runId, entry, index), audience, redacted);
     if (index === undefined) this.ctx.events.broadcast({ type: 'run.changed' });
   }
 
@@ -5233,8 +5251,9 @@ export class Orchestrator {
   }
 
   // One frame of a run's live text: kept for the snapshot and broadcast to
-  // the same sockets run.log reaches (every one, today). A frame that lands
-  // after the run ended is dropped.
+  // every socket, as run.log sends the agent's own entries (only message
+  // entries follow a message's audience). A frame that lands after the run
+  // ended is dropped.
   private runDelta(
     runId: string,
     turnId: string,

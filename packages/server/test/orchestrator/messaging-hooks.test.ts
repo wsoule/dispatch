@@ -429,6 +429,77 @@ describe('Orchestrator messaging hooks', () => {
     expect(logged).toEqual(expected);
   });
 
+  it("sends a message entry whole to its message's audience and redacted, at the same index, to every other socket", async () => {
+    const { orchestrator, store, events } = makeOrchestrator(repo);
+    orchestrator.registerExecutor('stall', new StallingExecutor());
+    const task = store.create({ title: 'Task' });
+    const heard = new Map<string, ServerEvent[]>();
+    for (const ref of ['human:in', 'human:out']) {
+      const frames: ServerEvent[] = [];
+      heard.set(ref, frames);
+      events.add({
+        send: (data) => frames.push(JSON.parse(data) as ServerEvent),
+        data: { ref, tier: 'request', agentToken: false },
+      });
+    }
+    const listened: ServerEvent[] = [];
+    events.subscribe((e) => listened.push(e));
+    const audience = (who: { ref: string | null } | undefined) =>
+      who?.ref === 'human:in';
+
+    const meta = await orchestrator.dispatch(task.meta.id, 'stall');
+    orchestrator.deliverToRun(
+      meta.id,
+      'PRIVATE pushed',
+      { label: 'human:in', messageId: 'm-1', human: true },
+      audience
+    );
+    orchestrator.notifyRun(meta.id, 'PRIVATE digest', 'm-2', audience);
+    orchestrator.notifyRun(meta.id, 'a daemon notice');
+
+    const logs = (frames: ServerEvent[]) =>
+      frames.flatMap((e) =>
+        e.type === 'run.log' && e.entry.kind === 'message'
+          ? [{ index: e.index, entry: e.entry }]
+          : []
+      );
+    const whole = logs(heard.get('human:in') ?? []);
+    expect(whole.map((f) => f.entry.text)).toEqual([
+      'PRIVATE pushed',
+      'PRIVATE digest',
+      'a daemon notice',
+    ]);
+    const outside = logs(heard.get('human:out') ?? []);
+    expect(outside.map((f) => f.index)).toEqual(whole.map((f) => f.index));
+    expect(outside.map((f) => f.entry)).toEqual([
+      {
+        ts: whole[0].entry.ts,
+        kind: 'message',
+        messageId: 'm-1',
+        redacted: true,
+      },
+      {
+        ts: whole[1].entry.ts,
+        kind: 'message',
+        messageId: 'm-2',
+        redacted: true,
+      },
+      whole[2].entry,
+    ]);
+    // In-process listeners hear each entry once, whole.
+    expect(logs(listened).map((f) => f.entry)).toEqual(
+      whole.map((f) => f.entry)
+    );
+    // The transcript keeps every entry whole.
+    expect(
+      orchestrator
+        .getRun(meta.id)
+        ?.entries.filter((e) => e.kind === 'message')
+        .map((e) => e.text)
+    ).toEqual(['PRIVATE pushed', 'PRIVATE digest', 'a daemon notice']);
+    await orchestrator.cancel(meta.id);
+  });
+
   it('refuses delivery to a finished run', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     const executor = new StallingExecutor();

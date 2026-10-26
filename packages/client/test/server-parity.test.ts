@@ -169,6 +169,7 @@ describe('run types mirror dispatchd', () => {
       'NormalizedEntry'
     );
     expect(server).toContain('streamId?');
+    expect(server).toContain('redacted?');
     expect(fields(clientSource(), 'NormalizedEntry')).toEqual(server);
   });
 
