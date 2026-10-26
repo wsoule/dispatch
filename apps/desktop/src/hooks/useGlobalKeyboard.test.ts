@@ -158,4 +158,25 @@ describe('useGlobalKeyboard', () => {
     dispatchKeydown('c');
     expect(commands).toEqual(['new-task']);
   });
+
+  // The incoming @dispatch/ui slide-over, command palette and phone drawer are not Base UI
+  // dialogs: they mark their panel `aria-modal="true"` while open and unmount on close.
+  test('an open aria-modal surface swallows the shortcuts like a dialog', () => {
+    const { commands } = mount();
+    const el = document.createElement('div');
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-modal', 'true');
+    document.body.appendChild(el);
+    for (const key of ['c', 'Escape']) {
+      const event = dispatchKeydown(key);
+      expect(event.defaultPrevented).toBe(false);
+    }
+    dispatchKeydown('g');
+    dispatchKeydown('s');
+    expect(commands).toEqual([]);
+    // Unmounted on close, so the shortcuts come straight back.
+    el.remove();
+    dispatchKeydown('c');
+    expect(commands).toEqual(['new-task']);
+  });
 });

@@ -18,24 +18,28 @@ export function isTypingTarget(target: EventTarget | null): boolean {
   return isTypingTagName(target.tagName, target.isContentEditable);
 }
 
-/** True while any dialog is currently open. Every dialog builds on Base UI (`@/ui/dialog`'s
+/** True while any modal surface is currently open. Every dialog builds on Base UI (`@/ui/dialog`'s
  * `DialogContent` renders `data-slot="dialog-content"`, and `Dialog.Popup` carries a bare
  * `data-open` attribute only while open — it flips to `data-closed` for the exit animation, so
  * presence in the DOM alone is not enough). `AlertDialogContent` is the same device under
  * `data-slot="alert-dialog-content"`, so it is matched too — a destructive confirm has to
- * swallow the app's shortcuts exactly like any other modal does. Checked live via a DOM query at the moment a keydown fires, rather than threaded
- * through as reactive React state — every dialog instance (CreateTaskModal,
- * SessionDetailModal, DiffModal, CommandPalette, …) only renders into the DOM while open, so
- * the query is always exactly as current as the state would be, without App.tsx needing to
- * know about every modal that exists anywhere in the component tree (including ones mounted
- * deep inside the Sessions hub). CommandPalette is one of these too, so a keydown reaching
- * this listener while the palette is open resolves `Escape` to `null` here — Base UI's own
- * dismiss handling on `Dialog` already owns it, and `CommandPalette`'s `onClose` prop is the
+ * swallow the app's shortcuts exactly like any other modal does. The incoming `@dispatch/ui`
+ * library's modal surfaces (slide-over, command palette, phone drawer) are not Base UI dialogs:
+ * each sets `aria-modal="true"` on its panel while open and unmounts on close, so a bare
+ * `[aria-modal="true"]` match covers them (Base UI never sets that attribute, so an exiting
+ * dialog is not caught twice). Checked live via a DOM query at the moment a keydown fires,
+ * rather than threaded through as reactive React state — every dialog instance
+ * (CreateTaskModal, SessionDetailModal, DiffModal, CommandPalette, …) only renders into the DOM
+ * while open, so the query is always exactly as current as the state would be, without App.tsx
+ * needing to know about every modal that exists anywhere in the component tree (including ones
+ * mounted deep inside the Sessions hub). CommandPalette is one of these too, so a keydown
+ * reaching this listener while the palette is open resolves `Escape` to `null` here — Base UI's
+ * own dismiss handling on `Dialog` already owns it, and `CommandPalette`'s `onClose` prop is the
  * only thing that closes it (see `appNav.ts`'s `closePalette` case). */
 function isAnyModalOpen(): boolean {
   return (
     document.querySelector(
-      '[data-slot="dialog-content"][data-open], [data-slot="alert-dialog-content"][data-open]'
+      '[data-slot="dialog-content"][data-open], [data-slot="alert-dialog-content"][data-open], [aria-modal="true"]'
     ) !== null
   );
 }
