@@ -184,3 +184,76 @@ describe('updateConfig blocks', () => {
     }
   });
 });
+
+// The chat streaming switches Settings offers: `overseer.stream` and
+// `runs.stream`, each the only key of its block.
+describe('updateConfig stream switches', () => {
+  test('each is set, and null puts the default back', () => {
+    const dir = root();
+    const cfg = updateConfig(dir, {
+      overseer: { stream: 'narration' },
+      runs: { stream: 'off' },
+    });
+    expect(cfg.overseer).toEqual({ stream: 'narration' });
+    expect(cfg.runs).toEqual({ stream: 'off' });
+    expect(loadConfig(dir).overseer?.stream).toBe('narration');
+    const cleared = updateConfig(dir, { overseer: { stream: null } });
+    expect(cleared.overseer).toEqual({ stream: 'live' });
+    expect(cleared.runs).toEqual({ stream: 'off' });
+    // The emptied block goes, rather than reading back as `overseer: {}`.
+    expect(read(dir)).toBe('runs:\n  stream: off\n');
+  });
+
+  test('a mode the block does not have, or any other key, throws before writing', () => {
+    const before = 'overseer:\n  stream: off\n';
+    for (const bad of [
+      { overseer: { stream: 'typing' as never } },
+      // Narration is the Overseer's alone.
+      { runs: { stream: 'narration' as never } },
+      { runs: { stream: true as never } },
+      { overseer: { mode: 'live' } as never },
+    ]) {
+      const dir = root(before);
+      expect(() => updateConfig(dir, bad)).toThrow(/^invalid (overseer|runs)/);
+      expect(read(dir)).toBe(before);
+    }
+  });
+
+  // config.yml is hand-written and checked in: a save from Settings may
+  // change the one line it names and nothing else.
+  test('a switch changes its own line and leaves the rest as written', () => {
+    const before = [
+      '# Project settings, reviewed in PRs.',
+      'autoCommit: false',
+      '',
+      '# How the assistant chat shows a turn.',
+      'overseer:',
+      '  stream: live # the rollback switch',
+      '  laterKey: kept',
+      '',
+      '# Run chats stream too.',
+      'runs:',
+      '  stream: live',
+      'custom:',
+      '  owner: platform-team',
+      '',
+    ].join('\n');
+    const dir = root(before);
+    updateConfig(dir, { overseer: { stream: 'off' } });
+    const switched = before.replace('stream: live # the', 'stream: off # the');
+    expect(read(dir)).toBe(switched);
+    // A save elsewhere leaves both blocks alone.
+    updateConfig(dir, { autoCommit: true });
+    expect(read(dir)).toBe(
+      switched.replace('autoCommit: false', 'autoCommit: true')
+    );
+  });
+
+  test('writes under a block whose key is commented out', () => {
+    const dir = root('runs:\n  # stream: off\n');
+    expect(updateConfig(dir, { runs: { stream: 'off' } }).runs?.stream).toBe(
+      'off'
+    );
+    expect(read(dir)).toContain('# stream: off');
+  });
+});

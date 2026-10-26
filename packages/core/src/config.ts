@@ -2186,6 +2186,39 @@ function applyBlockPatches(doc: YAML.Document, patch: ConfigPatch): void {
   setOrDelete(doc, ['prWorktreeDir'], patch.prWorktreeDir);
 }
 
+// Writes the chat streaming switches, `overseer.stream` and `runs.stream`,
+// each checked before the write: `stream` is the only key either block has,
+// so any other would sit on disk unread, and a mode the block does not know
+// would make every later loadConfig throw. `null` removes the key, and the
+// block too once nothing is left in it, as effort does.
+function applyStreamPatches(doc: YAML.Document, patch: ConfigPatch): void {
+  const blocks = [
+    ['overseer', patch.overseer, OVERSEER_STREAM_MODES],
+    ['runs', patch.runs, RUN_STREAM_MODES],
+  ] as const;
+  for (const [block, fields, modes] of blocks) {
+    if (fields === undefined) continue;
+    for (const [field, value] of Object.entries(fields)) {
+      if (field !== 'stream') {
+        throw new ConfigError(
+          `invalid ${block} field: ${field} (expected stream)`
+        );
+      }
+      if (value === undefined) continue;
+      if (value !== null && !(modes as readonly unknown[]).includes(value)) {
+        throw new ConfigError(
+          `invalid ${block}.stream: must be one of ${modes.join('|')}`
+        );
+      }
+      setOrDelete(doc, [block, field], value);
+      const left = doc.getIn([block]);
+      if (value === null && YAML.isMap(left) && left.items.length === 0) {
+        doc.deleteIn([block]);
+      }
+    }
+  }
+}
+
 // The patched document as text, written the way the file on disk was, so a
 // line the patch did not touch stays as it is. Two of the library's defaults
 // would rewrite one: it wraps a plain value longer than 80 columns onto a
@@ -2453,6 +2486,7 @@ export function updateConfig(
   }
 
   applyBlockPatches(doc, patch);
+  applyStreamPatches(doc, patch);
   // The loader is lenient about memory keys, so a patch is checked strictly here.
   if (patch.memory !== undefined) {
     const block = doc.getIn(['memory']);

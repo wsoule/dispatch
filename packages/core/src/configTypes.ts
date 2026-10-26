@@ -886,4 +886,10 @@ export interface ConfigPatch {
   };
   /** A value sets the key, `null` removes it (its default applies again). */
   memory?: { [K in keyof MemoryConfig]?: MemoryConfig[K] | null };
+  /** How the Overseer chat shows a running turn; `null` removes the key,
+   *  so `live` applies again. */
+  overseer?: { stream?: OverseerStreamMode | null };
+  /** How a task run's chat shows the agent's text; `null` removes the key,
+   *  so `live` applies again. */
+  runs?: { stream?: RunStreamMode | null };
 }
