@@ -923,6 +923,12 @@ Comments, Activity, `children`.
   `PickerPopover` (the "⋯" menu, a property picker), an `InlineTextField` or
   `TextAreaEditor` being edited, and any host control that calls
   `preventDefault()` on Esc take it first; the next Esc closes the drawer.
+- **Tabs.** `tabs` is a row for the host's mode tabs (a `NavTabs`; Dispatch's
+  lifecycle: Spec, Run, Review, Summary, or Plan for a container), drawn under
+  the lead (title, status line, alerts) and above what follows: the properties
+  in the drawer, the main column's sections on the page, where it closes the
+  head cell and so spans the main column, never the rail. The host decides what
+  the body shows for each tab; the built-in sections are the Spec.
 - **Work.** Dispatch's Work block (the dispatch button, the latest runs) goes in
   `rail` as a `TaskDetailSection`: right after the properties in the drawer, so
   above the description and the relations, and in the properties rail beside the

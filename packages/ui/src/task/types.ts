@@ -324,6 +324,12 @@ export interface TaskDetailProps {
   /** Extra content in the status line (a priority glyph, "Updated 2h"). */
   statusMeta?: ReactNode;
   alerts?: TaskDetailAlert[];
+  /** A row of the host's tabs (a NavTabs) between the lead (title, status
+      line, alerts) and what follows: the properties in drawer layout, the
+      main column's sections in page layout, where it spans the main column
+      and not the rail. Dispatch's lifecycle modes (Spec, Run, Review,
+      Summary) go here. */
+  tabs?: ReactNode;
   /** The host's property sheet, in the host's order. Values are nodes, so
       they may be plain text or editors. */
   properties: PropertyListItem[];

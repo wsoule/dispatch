@@ -151,6 +151,18 @@
   color: var(--text-3);
 }
 
+/* The host's tabs row (a NavTabs on its own rule) under the lead. In page
+   layout it closes the head cell, so it spans the main column and the body
+   starts right under its rule; in the drawer the properties follow it. */
+.tabs {
+  min-width: 0;
+  margin-top: 20px;
+}
+
+.column > .tabs + .properties {
+  margin-top: -6px;
+}
+
 /* Alerts stack as separate tinted callouts, 8px apart. */
 .alerts {
   display: flex;

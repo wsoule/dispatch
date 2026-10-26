@@ -117,8 +117,8 @@ function TaskAlerts({
 /**
  * The content of a task (issue) view, in Gr8r's task-drawer order: a
  * header bar (breadcrumb, actions), the title, a status line (key and the
- * state pill), the alerts (tinted by tone), the host's property sheet and
- * `rail` sections,
+ * state pill), the alerts (tinted by tone), the host's `tabs` row when it
+ * has one, the host's property sheet and `rail` sections,
  * then Description, Blocked by, Blocks, Comments, Activity and any host
  * sections. `sectionMeta` puts a host's controls (an "+ Add" relation
  * picker, an Edit button) in those sections' headings.
@@ -143,6 +143,7 @@ export function TaskDetail({
   status,
   statusMeta,
   alerts,
+  tabs,
   properties,
   rail,
   relations,
@@ -221,6 +222,11 @@ export function TaskDetail({
       ) : null}
     </div>
   );
+
+  // The host's tabs row: under the lead, above whatever follows it.
+  const tabRow = hasNode(tabs) ? (
+    <div className={styles.tabs}>{tabs}</div>
+  ) : null;
 
   const propertySheet = (
     <TaskDetailSection
@@ -369,7 +375,10 @@ export function TaskDetail({
       {bar}
       {layout === 'page' ? (
         <div className={styles.grid}>
-          <div className={styles.head}>{lead}</div>
+          <div className={styles.head}>
+            {lead}
+            {tabRow}
+          </div>
           <div className={styles.rail}>
             {propertySheet}
             {rail}
@@ -379,6 +388,7 @@ export function TaskDetail({
       ) : (
         <div className={styles.column}>
           {lead}
+          {tabRow}
           {propertySheet}
           {rail}
           {sections}

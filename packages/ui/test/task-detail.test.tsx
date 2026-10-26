@@ -200,6 +200,38 @@ describe('TaskDetail', () => {
     );
   });
 
+  test('tabs sit under the alerts, above the properties in the drawer and above the body on the page', () => {
+    const tabs = (
+      <nav aria-label="Lifecycle">
+        <a href="#spec">Spec</a>
+      </nav>
+    );
+    const { rerender } = render(<TaskDetail {...baseProps()} tabs={tabs} />);
+    const after = (a: Element, b: Element) =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    let nav = screen.getByRole('navigation', { name: 'Lifecycle' });
+    const alert = screen.getByText('Search v2 beta was due Oct 19.');
+    expect(after(alert, nav)).toBe(true);
+    expect(
+      after(nav, screen.getByRole('heading', { name: 'Properties' }))
+    ).toBe(true);
+
+    rerender(<TaskDetail {...baseProps()} layout="page" tabs={tabs} />);
+    nav = screen.getByRole('navigation', { name: 'Lifecycle' });
+    const description = screen.getByRole('heading', { name: 'Description' });
+    const properties = screen.getByRole('heading', { name: 'Properties' });
+    // The row closes the head cell of the main column: it precedes the body
+    // and shares no cell with the rail.
+    expect(after(nav, description)).toBe(true);
+    const head = nav.parentElement?.parentElement ?? null;
+    expect(head).not.toBeNull();
+    expect(
+      head?.contains(screen.getByText('Search v2 beta was due Oct 19.'))
+    ).toBe(true);
+    expect(head?.contains(properties)).toBe(false);
+    expect(head?.contains(description)).toBe(false);
+  });
+
   test('headingLevel moves the title and every section', () => {
     render(<TaskDetail {...baseProps()} headingLevel={3} />);
     expect(
