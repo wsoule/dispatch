@@ -82,11 +82,11 @@ import { AiTaskComposer } from './components/tasks/AiTaskComposer';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
 import { TaskDrawer } from './components/tasks/detail/TaskDrawer';
 import { NeedsYouBlock } from './components/tasks/NeedsYouBlock';
-import { TaskPage } from './components/tasks/page/TaskPage';
 import {
   type TaskPageHost,
   TaskPageHostContext,
 } from './components/tasks/page/TaskPageHost';
+import { TaskPageView } from './components/tasks/page/TaskPageView';
 import { TasksBackButton } from './components/tasks/TasksPageHeader';
 import { useAdminItems } from './hooks/useAdminItems';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
@@ -972,7 +972,6 @@ function App() {
           // The repo-wide Files and Terminals live on each run's page.
           showLessons: true,
           planOpensPages: true,
-          compactPage: true,
           filesView: (runId: string) => <FilesView data={data} runId={runId} />,
           terminalView: (runId: string) => (
             <TerminalsView data={data} runId={runId} />
@@ -1676,9 +1675,8 @@ function App() {
     switch (page.kind) {
       case 'task':
         return data.config === null ? null : (
-          <TaskPage
+          <TaskPageView
             key={page.taskId}
-            layout="full"
             taskId={page.taskId}
             mode={page.tab}
             onModeChange={(tab) => dispatchNav({ type: 'setTaskTab', tab })}

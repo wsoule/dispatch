@@ -1,3 +1,4 @@
+import { Chip } from '@dispatch/ui';
 import { useQuery } from '@tanstack/react-query';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
@@ -5,9 +6,13 @@ import { a2aQueryKey } from '../../lib/a2a';
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import type { RefAction } from '../../lib/threadSources';
 import { ConversationTimeline } from '../conversation/ConversationTimeline';
-import { PeekChip, PeekDrawer, PresenceLine } from './PeekDrawer';
-import { InitialsAvatar } from '@/ui/ai/initials-avatar';
-import { Badge } from '@/ui/badge';
+import {
+  PeekChip,
+  PeekSlideOver,
+  PeekTitle,
+  PresenceLine,
+} from './PeekSlideOver';
+import styles from './PeekSlideOver.module.css';
 
 const STATUS: Record<string, string> = {
   active: 'active',
@@ -46,32 +51,15 @@ export function OutsidePeek({
 
   const name = peer?.name ?? alias;
   return (
-    <PeekDrawer
-      label={`Conversation with ${alias}`}
+    <PeekSlideOver
       testId="outside-peek"
-      title={
-        <span className="flex items-center gap-1.5">
-          <span className="truncate">{name}</span>
-          <Badge
-            variant="ghost"
-            className="h-5 bg-(--state-landing-surface) px-1.5 text-[11px] font-normal text-(--state-landing-fg)"
-          >
-            Outside
-          </Badge>
-        </span>
-      }
-      leading={
-        <InitialsAvatar
-          name={name}
-          color="var(--state-landing-fg)"
-          className="size-7 text-[11px]"
-        />
-      }
+      contentKey={address}
+      title={<PeekTitle name={name} note={<Chip tone="muted">Outside</Chip>} />}
       subtitle={`${address} · outside agent`}
       onClose={onClose}
       summary={
         <>
-          <PresenceLine live={peer?.status === 'active'} tone="green">
+          <PresenceLine live={peer?.status === 'active'} tone="success">
             {peer === undefined
               ? 'Not a known peer on this daemon'
               : [
@@ -83,29 +71,25 @@ export function OutsidePeek({
                 ].join(' · ')}
           </PresenceLine>
           {peer !== undefined && (
-            <span className="text-muted-foreground truncate font-mono text-[11px]">
-              {peer.interfaceUrl}
-            </span>
+            <span className={`mono ${styles.fact}`}>{peer.interfaceUrl}</span>
           )}
-          <span className="text-(--state-landing-fg)">
+          <span className={styles.caution}>
             plain text only · this machine only
           </span>
-          <div className="flex flex-wrap items-center gap-1">
+          <div className={styles.chips}>
             <PeekChip onClick={onOpenA2ASettings}>Settings › A2A</PeekChip>
           </div>
         </>
       }
     >
-      <div className="min-h-0 flex-1">
-        <ConversationTimeline
-          data={data}
-          query={{ with: address }}
-          composerTo={address}
-          composerLabel={name}
-          onOpenRef={onOpenRef}
-          emptyText={`Nothing between you and ${alias} yet.`}
-        />
-      </div>
-    </PeekDrawer>
+      <ConversationTimeline
+        data={data}
+        query={{ with: address }}
+        composerTo={address}
+        composerLabel={name}
+        onOpenRef={onOpenRef}
+        emptyText={`Nothing between you and ${alias} yet.`}
+      />
+    </PeekSlideOver>
   );
 }

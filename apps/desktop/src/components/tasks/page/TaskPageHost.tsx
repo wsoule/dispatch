@@ -56,9 +56,9 @@ export type TaskPageProject = Pick<
 >;
 
 /**
- * What every task page (and the quick-look TaskDrawer) draws a task with, provided once by
- * App: the project, and where its links go. Any surface renders `<TaskPage taskId layout>`
- * or `<TaskDrawer taskId>` without threading these.
+ * What every task page (TaskPageView) and the quick-look TaskDrawer draw a task with,
+ * provided once by App: the project, and where its links go. Any surface renders
+ * `<TaskPageView taskId>` or `<TaskDrawer taskId>` without threading these.
  */
 export interface TaskPageHost {
   /** The active project's display name, the first crumb. */
@@ -99,8 +99,6 @@ export interface TaskPageHost {
   showLessons?: boolean;
   /** A milestone's plan opens a task as its own page, not a pane beside the plan (Two views). */
   planOpensPages?: boolean;
-  /** Two views' page: properties as chips under the title, the column on demand, "‹ tasks" back. */
-  compactPage?: boolean;
   /** A run's pull request reviewed in place; without it "Review PR" leaves for the PR page. */
   prView?: (runId: string, onClose: () => void) => ReactNode;
   terminalView?: (runId: string) => ReactNode;

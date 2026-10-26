@@ -1,0 +1,111 @@
+/* Layout of the non-task peeks (components/peek/PeekSlideOver.tsx) inside @dispatch/ui's
+   SlideOver. Colours and type come from @dispatch/ui's components and tokens; this sheet
+   only places them. */
+
+/* The slide-over's body is a scrolling column holding the title and whatever the peek
+   puts in it. A peek's body is a timeline that scrolls inside itself with its composer at
+   the foot, so the panel body that holds one becomes a flex column (selected from the
+   dialog the panel renders, with :has, since the body's class is the package's own) and
+   the peek takes the room under the title. */
+[role='dialog']:has(> * > .fill) > :last-child {
+  display: flex;
+  flex-direction: column;
+}
+
+.fill {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* The address and its kind, in the header bar's crumb place. */
+.subtitle {
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}
+
+/* The facts between the title and the timeline. */
+.summary {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--divider);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* The title row: the avatar, the name, a note after it. */
+.title {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* One presence line: the dot takes the hue through data-tone (muted while away). */
+.presence {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tone);
+}
+
+.presenceText {
+  min-width: 0;
+}
+
+/* A quiet aside in a presence line ("this daemon only"). */
+.aside {
+  color: var(--text-3);
+}
+
+/* A mono fact (an outside agent's interface URL). */
+.fact {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}
+
+/* A line that warns: an outside agent's terms, in the warning tone's text. */
+.caution {
+  color: var(--amber);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.sectionLabel {
+  margin-top: 4px;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-3);
+}

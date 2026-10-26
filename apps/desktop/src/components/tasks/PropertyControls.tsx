@@ -382,7 +382,7 @@ const ESTIMATES = [1, 2, 3, 5, 8, 13];
 const NO_VALUE = '__none__';
 
 /** `3 points` — a task's estimate on a row, or `Estimate` when unset. */
-export function estimateLabel(estimate: number | null): string {
+function estimateLabel(estimate: number | null): string {
   if (estimate === null) return 'Estimate';
   return `${estimate} point${estimate === 1 ? '' : 's'}`;
 }
@@ -428,7 +428,7 @@ export function EstimateControl({
 }
 
 /** `Cycle 42`, or the cycle's own name when it has one. */
-export function cycleLabel(cycle: TaskCycle): string {
+function cycleLabel(cycle: TaskCycle): string {
   return cycle.name ?? `Cycle ${cycle.number}`;
 }
 

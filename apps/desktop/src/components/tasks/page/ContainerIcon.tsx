@@ -47,7 +47,7 @@ const KIND_ICON: Record<string, LucideIcon> = {
 };
 
 /** A kind's own glyph: a target for an initiative, a box for a project, and so on. */
-export function kindIcon(kind: string): LucideIcon {
+function kindIcon(kind: string): LucideIcon {
   return KIND_ICON[kind] ?? CircleDot;
 }
 

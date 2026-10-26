@@ -68,7 +68,8 @@ import { useDeepLinkActions } from '../../shell/DeepLinkContext';
 import { useShellActions } from '../../shell/ShellActionsContext';
 import type { TaskPageHost } from '../page/TaskPageHost';
 
-// One task, resolved for the quick-look drawer (TaskDrawer): the cached list
+// One task, resolved for the quick-look drawer (TaskDrawer) and the task page
+// (page/TaskPageView, through useTaskDetailProps): the cached list
 // item, its body and comments as they stream in, its runs and readiness, and
 // the plain models @dispatch/ui's TaskDetail family takes (adapters/taskDetail),
 // plus every write the drawer can make as a SaveResult-returning callback. The

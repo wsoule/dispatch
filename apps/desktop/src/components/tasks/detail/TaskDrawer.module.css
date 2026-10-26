@@ -14,24 +14,6 @@
   min-width: 0;
 }
 
-/* A read-only body (the description, the acceptance criteria) rendered as markdown. */
-.markdown {
-  font-size: var(--fs);
-  line-height: var(--lh-long);
-}
-
-/* The read-only link value of a property (the Linear issue). */
-.link {
-  color: var(--accent-ink);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.link:hover,
-.link:focus-visible {
-  color: var(--accent-ink-hover);
-}
-
 /* The sentence a missing task's drawer shows under its title. */
 .gone {
   padding: var(--s-4) 0;

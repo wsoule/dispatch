@@ -1,3 +1,4 @@
+import { Button } from '@dispatch/ui';
 import { useEffect, useMemo } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
@@ -13,8 +14,7 @@ import { subjectOf } from '../../lib/conversationScope';
 import type { RefAction } from '../../lib/threadSources';
 import { replyRoute } from '../../lib/threadSources';
 import { ThreadPane } from '../threads/ThreadPane';
-import { PeekDrawer } from './PeekDrawer';
-import { Button } from '@/ui/button';
+import { PeekSlideOver } from './PeekSlideOver';
 import { EmptyState } from '@/ui/chrome';
 import { Spinner } from '@/ui/spinner';
 
@@ -29,7 +29,7 @@ export interface ThreadPeekProps {
   onClose: () => void;
 }
 
-/** One thread in a drawer above the composer; it never changes the view underneath. */
+/** One thread in the shell's slide-over; it never changes the view underneath. */
 export function ThreadPeek({
   data,
   overseer,
@@ -57,17 +57,17 @@ export function ThreadPeek({
   const root = open.messages[0];
   const home = root === undefined || me === null ? null : subjectOf(root, me);
   return (
-    <PeekDrawer
-      label="Thread"
+    <PeekSlideOver
       testId="thread-peek"
+      contentKey={messageId}
       title="Thread"
       subtitle={home ?? undefined}
       onClose={onClose}
       actions={
         home !== null && (
           <Button
-            size="xs"
-            variant="link"
+            size="sm"
+            variant="quiet"
             onClick={() => {
               onClose();
               onOpenHome(home);
@@ -125,6 +125,6 @@ export function ThreadPeek({
           </div>
         )}
       </div>
-    </PeekDrawer>
+    </PeekSlideOver>
   );
 }

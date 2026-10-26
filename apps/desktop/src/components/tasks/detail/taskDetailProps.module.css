@@ -1,0 +1,21 @@
+/* The pieces the quick-look drawer (TaskDrawer) and the task page (page/TaskPageView)
+   both put into @dispatch/ui's TaskDetail (components/tasks/detail/useTaskDetailProps.tsx).
+   Colours and type come from @dispatch/ui's tokens; this sheet only places them. */
+
+/* A read-only body (the description, the acceptance criteria) rendered as markdown. */
+.markdown {
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+}
+
+/* The read-only link value of a property (the Linear issue). */
+.link {
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link:hover,
+.link:focus-visible {
+  color: var(--accent-ink-hover);
+}

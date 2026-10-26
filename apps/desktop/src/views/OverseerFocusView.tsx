@@ -3,7 +3,7 @@ import { useState } from 'react';
 
 import { ConversationTimeline } from '../components/conversation/ConversationTimeline';
 import { RoomHome } from '../components/conversation/Homes';
-import { TaskPage } from '../components/tasks/page/TaskPage';
+import { TaskPageView } from '../components/tasks/page/TaskPageView';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { TaskTab } from '../lib/appNav';
 import type { RefAction } from '../lib/threadSources';
@@ -12,7 +12,13 @@ import { IconButton } from '@/ui/ai/icon-button';
 import { Kbd } from '@/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
-/** A task in the middle; a message about it opens on its conversation. */
+/**
+ * A task in the middle: the same task page as Tasks (TaskPageView), embedded at heading
+ * level 2 under the Overseer's own heading, with Close back to the talk and Expand out
+ * to Tasks. TaskDetail's page layout stacks the property rail under the content while
+ * the column is narrower than 760px, so the column needs no layout of its own. A message
+ * about the task opens on its conversation.
+ */
 function FocusedTask({
   taskId,
   conversation,
@@ -28,12 +34,13 @@ function FocusedTask({
 }) {
   const [mode, setMode] = useState<TaskTab>(conversation ? 'thread' : 'auto');
   return (
-    <TaskPage
-      layout="split"
+    <TaskPageView
+      embedded
+      headingLevel={2}
       taskId={taskId}
       mode={mode}
       onModeChange={setMode}
-      onClose={onClose}
+      onBack={onClose}
       onExpand={onExpand}
       conversationCount={conversationCount}
     />

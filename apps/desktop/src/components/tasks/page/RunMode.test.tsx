@@ -21,7 +21,7 @@ void mock.module('@/components/runs/PierreWorkerPool', () => ({
   PierreWorkerPool: ({ children }: { children: ReactNode }) => children,
 }));
 
-const { TaskPage } = await import('./TaskPage');
+const { TaskPageView } = await import('./TaskPageView');
 
 const QUESTION: RunQuestion = {
   id: 'q-1',
@@ -97,7 +97,7 @@ function mountRun(
   };
   return render(
     <PageProviders host={host} shell={shell}>
-      <TaskPage taskId="t-1" layout="full" mode="run" runId={selected.id} />
+      <TaskPageView taskId="t-1" mode="run" runId={selected.id} />
     </PageProviders>
   );
 }

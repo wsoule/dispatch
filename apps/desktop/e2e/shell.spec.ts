@@ -218,13 +218,23 @@ test('a row click quick-looks its task in the slide-over; Enter opens the page',
   await expect(drawer).toHaveCount(0);
   await expect(page.getByTestId('issues-table')).toBeVisible();
 
-  // Enter on the row opens the full page, whose crumb ends on the task.
+  // Enter on the row opens the full page: TaskDetail's page layout, the task's title as
+  // the page heading, its lifecycle tabs under it, and the crumb ending on the task.
   await row.focus();
   await page.keyboard.press('Enter');
-  await expect(page.getByTestId('tasks-view')).toContainText('about t-6c40de');
+  const view = page.getByTestId('tasks-view');
   await expect(
-    page.getByRole('navigation', { name: 'Breadcrumb' })
-  ).toContainText('Persist the cart across devices');
+    view.getByRole('heading', {
+      level: 1,
+      name: 'Persist the cart across devices',
+    })
+  ).toBeVisible();
+  await expect(
+    view.getByRole('navigation', { name: 'Lifecycle' }).getByRole('link')
+  ).toHaveText([/^Spec/, /^Run/, /^Review/, /^Summary/]);
+  await expect(
+    view.getByRole('navigation', { name: 'Breadcrumb' })
+  ).toContainText('t-6c40de');
 });
 
 test('a task’s conversation is one flat timeline with a composer locked to it', async ({

@@ -1,31 +1,4 @@
-import type { ReactNode } from 'react';
-
 import { cn } from '@/lib/utils';
-
-// A titled group of rows in the properties rail (Properties, Labels, Blocked by): the
-// 13px/500 muted heading Linear stacks its property groups under, with no dividers doing
-// the separating.
-export function RailSection({
-  title,
-  children,
-  className,
-}: {
-  title: string;
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <div
-      data-slot="rail-section"
-      className={cn('flex flex-col gap-0.5', className)}
-    >
-      <div className="text-muted-foreground flex h-7 items-center px-2 text-[13px] font-medium">
-        {title}
-      </div>
-      {children}
-    </div>
-  );
-}
 
 /** The 32px ghost row every rail property sits on — the same recipe as `PropertyControls`'
  * row variant, so a picker this file's editors open and a status picker read as one. An

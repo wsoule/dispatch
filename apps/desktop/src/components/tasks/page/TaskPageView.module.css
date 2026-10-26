@@ -1,0 +1,148 @@
+/* Layout of the task page (components/tasks/page/TaskPageView.tsx): @dispatch/ui's
+   TaskDetail in its page layout, scrolling inside AppShell's main like every other view,
+   and the modes that fill the pane instead. Colours and type come from @dispatch/ui's
+   components and tokens; this sheet only places them. */
+
+/* The page's frame: the shell's main is sized to the window, so the page fills it and
+   scrolls inside `.pane`. The frame is its own container, so the fill rules below can
+   read the width TaskDetail's two-column layout reads (760px on the card: 792px here,
+   with the pane's 16px gutters). The scrolling pane is a child, not the frame itself,
+   because a container query never matches the element that is its container: only
+   descendants of `.root` can switch on its width. */
+.root {
+  container: task-page / inline-size;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* The scroll container, with the panel's gutter around TaskDetail's bordered card. */
+.pane {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 16px 16px;
+  overflow-y: auto;
+}
+
+.detail {
+  flex: 0 0 auto;
+}
+
+/* Run, Review, Plan and the side views fill the pane and scroll inside themselves (the
+   transcript with its message box at the foot, the diff, the Flight Plan's canvas). Only
+   with the rail beside the main column: stacked under 792px the rail would push the
+   body off the page, so there the whole page scrolls as in Spec and Summary. The rules
+   reach into TaskDetail's page grid by position (its header bar, then the grid of head,
+   rail and body cells), which is the one structure its page layout has. */
+@container task-page (width >= 792px) {
+  .fill > .pane {
+    overflow: hidden;
+  }
+
+  .fill > .pane > .detail {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .fill > .pane > .detail > :last-child {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .fill > .pane > .detail > :last-child > :nth-child(2) {
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .fill > .pane > .detail > :last-child > :nth-child(3) {
+    min-height: 0;
+    overflow: hidden;
+  }
+}
+
+/* A mode's body in the main column: a column that takes the room the fill rules give. */
+.mode {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The conversation toggle's unread count, in the accent (unread is the accent's job). */
+.count {
+  margin-left: 4px;
+  color: var(--accent-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A rail section's stack: the dispatch card, the run strip, the attachments. */
+.work {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+/* A legacy block (the sub-issues, the docs, the stack) kept to the rail's width. */
+.legacy {
+  min-width: 0;
+}
+
+/* The mini Flight Plan over the sub-issues: a quiet button that opens the plan. */
+.miniPlan {
+  display: block;
+  width: 100%;
+  padding: 4px;
+  border-radius: var(--r-sm);
+  text-align: left;
+}
+
+.miniPlan:hover {
+  background: var(--surface-2);
+}
+
+.enrichError {
+  margin: 0;
+  color: var(--red);
+  font-size: var(--fs-xs);
+}
+
+/* The Links section: the pull request and the merge ladder's rung. */
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  margin-left: -8px;
+}
+
+/* The spec's declared writes, read-only: mono paths one per line. */
+.writes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.amendments {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-long);
+  white-space: pre-wrap;
+}
+
+/* The page while its task has not come back from the list yet, or has left it. */
+.loading,
+.gone {
+  padding: 24px;
+}

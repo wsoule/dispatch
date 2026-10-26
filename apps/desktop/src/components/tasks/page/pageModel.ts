@@ -11,9 +11,6 @@ import type { DispatchReadiness } from '../../../lib/dispatchReadiness';
 import type { TaskPageMode } from '../../../lib/taskPageMode';
 import type { TaskPageHost, TaskPageProject } from './TaskPageHost';
 
-/** Where the page is mounted: beside a list, in a dialog, or as the whole window. */
-export type TaskPageLayout = 'split' | 'peek' | 'full';
-
 /**
  * Everything a mode of the task page draws from, resolved once by the page: the task's
  * cached metadata (instant), its body sections (null until fetched), its runs, and the
@@ -22,7 +19,10 @@ export type TaskPageLayout = 'split' | 'peek' | 'full';
 export interface TaskPageModel {
   host: TaskPageHost;
   project: TaskPageProject;
-  layout: TaskPageLayout;
+  /** Mounted inside another view (the Overseer's focus column) rather than as the Tasks
+   * page: a dispatch stays in place instead of opening the run, and the plan does not
+   * take keyboard focus when it mounts. */
+  embedded: boolean;
   item: TaskListItem;
   /** False until the task's body has loaded. */
   bodyLoaded: boolean;

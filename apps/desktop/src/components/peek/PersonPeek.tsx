@@ -5,9 +5,13 @@ import { threadListsKey } from '../../hooks/useThreads';
 import { subjectOf } from '../../lib/conversationScope';
 import type { RefAction } from '../../lib/threadSources';
 import { ConversationTimeline } from '../conversation/ConversationTimeline';
-import { PeekChip, PeekDrawer, PresenceLine } from './PeekDrawer';
-import { InitialsAvatar } from '@/ui/ai/initials-avatar';
-import { SectionLabel } from '@/ui/chrome/SectionLabel';
+import {
+  PeekChip,
+  PeekSlideOver,
+  PeekTitle,
+  PresenceLine,
+} from './PeekSlideOver';
+import styles from './PeekSlideOver.module.css';
 
 function clock(iso: string): string {
   const date = new Date(iso);
@@ -56,11 +60,10 @@ export function PersonPeek({
   ].slice(0, 6);
 
   return (
-    <PeekDrawer
-      label={`Conversation with ${name}`}
+    <PeekSlideOver
       testId="person-peek"
-      title={name}
-      leading={<InitialsAvatar name={name} className="size-7 text-[11px]" />}
+      contentKey={address}
+      title={<PeekTitle name={name} />}
       subtitle={`${address} · teammate`}
       onClose={onClose}
       summary={
@@ -74,13 +77,13 @@ export function PersonPeek({
                   ...(here.viewing === null ? [] : [`viewing ${here.viewing}`]),
                 ].join(' · ')}
             {here !== undefined && (
-              <span className="text-muted-foreground"> · this daemon only</span>
+              <span className={styles.aside}> · this daemon only</span>
             )}
           </PresenceLine>
           {elsewhere.length > 0 && (
             <>
-              <SectionLabel>Elsewhere with {name}</SectionLabel>
-              <div className="flex flex-wrap items-center gap-1">
+              <span className={styles.sectionLabel}>Elsewhere with {name}</span>
+              <div className={styles.chips}>
                 {elsewhere.map((subject) => {
                   const taskId = subject.slice('task:'.length);
                   return (
@@ -98,16 +101,14 @@ export function PersonPeek({
         </>
       }
     >
-      <div className="min-h-0 flex-1">
-        <ConversationTimeline
-          data={data}
-          query={query}
-          composerTo={address}
-          composerLabel={name}
-          onOpenRef={onOpenRef}
-          emptyText={`Nothing between you and ${name} yet.`}
-        />
-      </div>
-    </PeekDrawer>
+      <ConversationTimeline
+        data={data}
+        query={query}
+        composerTo={address}
+        composerLabel={name}
+        onOpenRef={onOpenRef}
+        emptyText={`Nothing between you and ${name} yet.`}
+      />
+    </PeekSlideOver>
   );
 }
