@@ -45,6 +45,8 @@ export type ProjectView =
   | 'docs'
   /** Shells on the repo or a run's worktree, split any number of ways. */
   | 'terminals'
+  /** The Gantt of every project's milestones, grouped by initiative (Phase 4). */
+  | 'timeline'
   /** retired — normalized to 'cockpit' */
   | 'plans'
   /** A single AI task draft's review page — `activeDraftId` says which one. */

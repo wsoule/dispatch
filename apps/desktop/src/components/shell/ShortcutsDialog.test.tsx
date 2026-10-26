@@ -14,6 +14,7 @@ test('lists only the places the app has', () => {
     'Moving',
     'Review',
     'Threads',
+    'Timeline',
     'Settings',
   ]) {
     expect(screen.getByText(label)).toBeDefined();

@@ -47,6 +47,7 @@ const SHELL_GROUPS: ShortcutGroup[] = [
       { label: 'Moving', keys: ['G', 'F'], chord: true },
       { label: 'Review', keys: ['G', 'R'], chord: true },
       { label: 'Threads', keys: ['G', 'M'], chord: true },
+      { label: 'Timeline', keys: ['G', 'L'], chord: true },
       { label: 'Settings', keys: ['G', 'S'], chord: true },
       { label: 'Overseer / Tasks', keys: ['⌘1', '⌘2'] },
       { label: 'Presets, in chip order', keys: ['⌘3–9'] },

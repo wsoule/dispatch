@@ -1,0 +1,71 @@
+/* Layout of the Timeline's missing-input banners (components/timeline/
+   TimelineBanners.tsx): one bordered panel, a row per banner split by soft
+   dividers, each row's alert and Show / Hide on one line with the expanded
+   item list under them. Colours and type come from @dispatch/ui's
+   components and tokens; this sheet only places them. */
+
+.panel {
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  padding: var(--s-2) var(--s-3);
+}
+
+.row + .row {
+  border-top: 1px solid var(--divider);
+}
+
+/* The alert takes the width; the quiet Show / Hide sits at the row's end. */
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2) var(--s-3);
+}
+
+.strip {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
+/* The expanded list, indented under the alert's icon. */
+.items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding: var(--s-1) 0 var(--s-1) var(--s-6);
+}
+
+.items[hidden] {
+  display: none;
+}
+
+.item {
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.itemLink {
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.itemLink:hover,
+.itemLink:focus-visible {
+  color: var(--accent-ink-hover);
+}

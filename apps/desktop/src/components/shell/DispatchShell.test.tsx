@@ -89,6 +89,7 @@ describe('DispatchShell', () => {
       '#/overseer',
       '#/issues',
       '#/needs-you',
+      '#/timeline',
       '#/threads',
       '#/docs',
       '#/runs',

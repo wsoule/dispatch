@@ -79,6 +79,8 @@ export interface DispatchShellProps {
   onOpenTask: (taskId: string) => void;
   /** The Projects section's "All". */
   onOpenProjects: () => void;
+  /** A `#/timeline?project=` link: the Timeline with that project's lane in view. */
+  onOpenTimeline?: (projectId: string) => void;
   /** The topbar's search trigger: the command palette. */
   onSearch: () => void;
   /** Controls right of the search trigger (the project menu, who is here). */
@@ -181,6 +183,7 @@ export function DispatchShell({
   onNavigate,
   onOpenTask,
   onOpenProjects,
+  onOpenTimeline,
   onSearch,
   topbarActions,
   banner,
@@ -203,7 +206,12 @@ export function DispatchShell({
     if (target === null) return false;
     if (target.kind === 'task') onOpenTask(target.taskId);
     else if (target.kind === 'projects') onOpenProjects();
-    else onNavigate(shellRoute(target.id).action);
+    else if (target.kind === 'timeline') {
+      // Without a lane handler the link still opens the Timeline.
+      if (onOpenTimeline === undefined) {
+        onNavigate(shellRoute('timeline').action);
+      } else onOpenTimeline(target.projectId);
+    } else onNavigate(shellRoute(target.id).action);
     return true;
   };
   const follow = useCallback<FollowHref>((href) => followRef.current(href), []);

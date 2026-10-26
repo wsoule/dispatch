@@ -2,6 +2,7 @@ import type { ShellIcon } from '@dispatch/ui';
 import {
   BookText,
   Bot,
+  CalendarRange,
   History,
   Inbox,
   ListTodo,
@@ -22,6 +23,7 @@ export type ShellDestination =
   | 'overseer'
   | 'issues'
   | 'needs-you'
+  | 'timeline'
   | 'threads'
   | 'docs'
   | 'runs'
@@ -70,6 +72,15 @@ export const SHELL_ROUTES: readonly ShellRoute[] = [
     shortcut: ['G', 'I'],
     href: hrefFor('needs-you'),
     action: { type: 'tv/showTasks', preset: 'needs-you' },
+  },
+  {
+    id: 'timeline',
+    label: 'Timeline',
+    icon: CalendarRange,
+    // `g t` is Tasks, so the timeline takes the L of its last syllable.
+    shortcut: ['G', 'L'],
+    href: hrefFor('timeline'),
+    action: { type: 'setProjectView', view: 'timeline' },
   },
   {
     id: 'threads',
@@ -139,12 +150,20 @@ export const PROJECTS_HREF = '#/projects';
 
 const TASK_HREF = /^#\/task\/([^/]+)$/;
 
+/** The Timeline opened on one project's lane (brought into view and marked). */
+export function timelineHref(projectId: string): string {
+  return `${hrefFor('timeline')}?project=${encodeURIComponent(projectId)}`;
+}
+
+const TIMELINE_PROJECT_HREF = /^#\/timeline\?project=([^&]+)$/;
+
 /** What a shell link leads to; null for links the browser should follow itself
  * (the skip link, an external URL). */
 export type ShellLinkTarget =
   | { kind: 'destination'; id: ShellDestination }
   | { kind: 'task'; taskId: string }
-  | { kind: 'projects' };
+  | { kind: 'projects' }
+  | { kind: 'timeline'; projectId: string };
 
 export function resolveShellHref(href: string): ShellLinkTarget | null {
   const destination = parseShellHref(href);
@@ -154,14 +173,18 @@ export function resolveShellHref(href: string): ShellLinkTarget | null {
   if (task !== null) {
     return { kind: 'task', taskId: decodeURIComponent(task[1]) };
   }
+  const lane = TIMELINE_PROJECT_HREF.exec(href);
+  if (lane !== null) {
+    return { kind: 'timeline', projectId: decodeURIComponent(lane[1]) };
+  }
   return null;
 }
 
 /**
  * Which destination the sidebar marks current. Settings is a dialog over the
  * views, so while it is open it (or Runs, its page with a row of its own) is
- * the place; under Tasks the Docs and Threads pages are their own rows, the
- * Needs you preset is its row, and everything else is Issues.
+ * the place; under Tasks the Docs, Threads and Timeline pages are their own
+ * rows, the Needs you preset is its row, and everything else is Issues.
  */
 export function currentShellDestination(
   state: TwoViewsState
@@ -173,5 +196,6 @@ export function currentShellDestination(
   const page = state.tasksPage;
   if (page.kind === 'docs') return 'docs';
   if (page.kind === 'view' && page.view === 'threads') return 'threads';
+  if (page.kind === 'view' && page.view === 'timeline') return 'timeline';
   return state.tasksPreset === 'needs-you' ? 'needs-you' : 'issues';
 }

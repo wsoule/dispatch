@@ -191,6 +191,7 @@ describe('navigation rows', () => {
       ['Go to Overseer', '⌘1'],
       ['Go to Tasks', '⌘2'],
       ['Go to Settings', '⌘,'],
+      ['Go to Timeline', 'G L'],
       ['Open Files', undefined],
       ['Open Terminals', undefined],
     ]);
@@ -200,6 +201,7 @@ describe('navigation rows', () => {
       'global:overseer',
       'project:board',
       'global:settings',
+      'project:timeline',
       'project:files',
       'project:terminals',
     ]);

@@ -19,3 +19,43 @@
 .link:focus-visible {
   color: var(--accent-ink-hover);
 }
+
+/* The planning sections of a container (the Milestone and Milestones
+   sections): the status mark, its note, the progress rule and the rubric,
+   stacked. */
+.planning {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-3);
+}
+
+/* A quiet note under a planning fact (risk reasons, the next milestone). */
+.planningNote {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+/* The same note when it asks for action: the tone's text colour (data-tone). */
+.planningToneNote {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--tone-ink);
+}
+
+/* "Next" beside the quiet button naming the project's next milestone. */
+.planningNext {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+}
+
+/* A register row's subject: the status mark, then the name. */
+.planningName {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}

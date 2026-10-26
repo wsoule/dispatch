@@ -10,6 +10,9 @@ import {
 } from '@testing-library/react';
 import { afterEach, describe, expect, test } from 'bun:test';
 
+import { PlanningProvider } from '../../../hooks/usePlanning';
+import { dayFromNow } from '../../../lib/taskDates';
+import { taskDoc } from '../../../lib/taskDoc.test-helper';
 import {
   fakeHost,
   type HostLog,
@@ -346,5 +349,163 @@ describe('TaskDrawer', () => {
     cleanup();
     const { container } = mount(null);
     expect(container.textContent).toBe('');
+  });
+});
+
+// A project with two milestones, as the planning reads them: Schema (due in
+// 5 days, one open issue) is the project's next milestone; Beta (due in 10
+// days) has one issue moving and one unowned, and waits on Schema because
+// its moving issue is blocked by Schema's.
+const DONE_MEANS = '## Description\n\nDone means: it ships.\n';
+const CONTAINERS = [
+  taskDoc({
+    id: 'p-1',
+    title: 'Storefront',
+    kind: 'project',
+    status: 'working',
+    assignee: 'human:wyat',
+  }),
+  taskDoc(
+    {
+      id: 'ms-0',
+      title: 'Schema',
+      kind: 'milestone',
+      parent: 'p-1',
+      dueDate: dayFromNow(5),
+    },
+    DONE_MEANS
+  ),
+  taskDoc({
+    id: 't-z',
+    title: 'Cart schema',
+    parent: 'ms-0',
+    status: 'ready',
+    assignee: 'human:wyat',
+  }),
+  taskDoc(
+    {
+      id: 'ms-1',
+      title: 'Beta',
+      kind: 'milestone',
+      parent: 'p-1',
+      dueDate: dayFromNow(10),
+    },
+    DONE_MEANS
+  ),
+  taskDoc({
+    id: 't-a',
+    title: 'Persist the cart',
+    parent: 'ms-1',
+    status: 'working',
+    assignee: 'human:wyat',
+    blockedBy: ['t-z'],
+    updated: new Date().toISOString(),
+  }),
+  taskDoc({
+    id: 't-b',
+    title: 'Cart on every device',
+    parent: 'ms-1',
+    status: 'ready',
+    assignee: 'none',
+  }),
+];
+
+function mountContainer(taskId: string, log: HostLog) {
+  const host = fakeHost(log, { tasks: CONTAINERS, body: DONE_MEANS });
+  return render(
+    <PageProviders host={host}>
+      <PlanningProvider
+        data={{
+          tasks: CONTAINERS,
+          config: null,
+          people: [{ ref: 'human:wyat', name: 'Wyat' }],
+          executors: null,
+          me: 'human:wyat',
+          linearLinks: {},
+          latestRunByTaskId: new Map(),
+          epicProgressById: new Map(),
+        }}
+      >
+        <TaskDrawer taskId={taskId} onClose={() => {}} />
+      </PlanningProvider>
+    </PageProviders>
+  );
+}
+
+describe('the planning sections of a container', () => {
+  test('a milestone gets its status, progress, next, rubric, waits-on and open issues', () => {
+    const log = newLog();
+    mountContainer('ms-1', log);
+    const dialog = screen.getByRole('dialog', { name: 'Beta' });
+    const section = within(dialog).getByRole('region', { name: 'Milestone' });
+    expect(within(section).getByRole('img', { name: 'On track' })).toBeTruthy();
+    // In the rail: after the properties and before the description, so the
+    // quick look reads the status first.
+    const description = within(dialog).getByRole('region', {
+      name: 'Description',
+    });
+    expect(
+      section.compareDocumentPosition(description) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(
+      within(section)
+        .getByRole('progressbar', { name: 'Milestone progress' })
+        .getAttribute('aria-valuetext')
+    ).toBe('0 of 2 done');
+    // Every rubric item is met, each with what is there.
+    const rubric = within(section).getByRole('list', { name: 'Rubric' });
+    expect(within(rubric).getAllByRole('listitem')).toHaveLength(4);
+    expect(rubric.querySelectorAll('[data-met="true"]')).toHaveLength(4);
+    expect(within(rubric).getByText('Wyat')).toBeTruthy();
+    expect(within(rubric).getByText('From the description')).toBeTruthy();
+    expect(within(rubric).getByText('2 issues')).toBeTruthy();
+    // Schema is the project's next milestone; its button quick-looks it.
+    fireEvent.click(within(section).getByRole('button', { name: 'Schema' }));
+    expect(log.peeks).toEqual(['ms-0']);
+
+    const waits = within(dialog).getByRole('region', { name: /^Waits on/ });
+    fireEvent.click(
+      within(waits).getByRole('button', { name: /^Schema, At risk/ })
+    );
+    expect(log.peeks).toEqual(['ms-0', 'ms-0']);
+    const open = within(dialog).getByRole('region', { name: /^Open issues/ });
+    expect(within(open).getAllByRole('listitem')).toHaveLength(2);
+    expect(
+      within(open).getByRole('button', {
+        name: 'Cart on every device, Ready, unassigned',
+      })
+    ).toBeTruthy();
+    expect(within(open).getByText('Ready, unassigned')).toBeTruthy();
+  });
+
+  test('a project gets its milestones, marked by the next one', () => {
+    const log = newLog();
+    mountContainer('p-1', log);
+    const dialog = screen.getByRole('dialog', { name: 'Storefront' });
+    const section = within(dialog).getByRole('region', { name: /^Milestones/ });
+    expect(within(section).getByRole('img', { name: 'On track' })).toBeTruthy();
+    expect(
+      within(section)
+        .getByRole('progressbar', { name: 'Progress across milestones' })
+        .getAttribute('aria-valuetext')
+    ).toBe('0 of 3 done');
+    expect(within(section).getByText('Next: Schema')).toBeTruthy();
+    const rows = within(section).getByRole('list', { name: 'Milestones' });
+    expect(within(rows).getAllByRole('listitem')).toHaveLength(2);
+    fireEvent.click(within(rows).getByRole('button', { name: /^Beta, / }));
+    expect(log.peeks).toEqual(['ms-1']);
+  });
+
+  test('an issue, and any task outside a planning, gets no planning section', () => {
+    const log = newLog();
+    mount(hostWith(log));
+    const dialog = drawer();
+    expect(
+      within(dialog).queryByRole('region', { name: 'Milestone' })
+    ).toBeNull();
+    expect(
+      within(dialog).queryByRole('region', { name: /^Milestones/ })
+    ).toBeNull();
   });
 });

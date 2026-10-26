@@ -34,7 +34,7 @@ type TwoViewsSettingsPage = SettingsPage | 'usage' | 'runs';
 /** Project views shown as a page under Tasks, led by "‹ tasks". */
 export type HostedView = Extract<
   ProjectView,
-  'files' | 'terminals' | 'threads'
+  'files' | 'terminals' | 'threads' | 'timeline'
 >;
 
 /** What the Tasks view shows instead of its list. A task here is always the
@@ -138,6 +138,7 @@ export function projectViewDestination(view: ProjectView): TwoViewsDestination {
     case 'files':
     case 'terminals':
     case 'threads':
+    case 'timeline':
       return { kind: 'page', page: { kind: 'view', view } };
     // Retired pages: plans and notes live in the Overseer now; the rest had no successor.
     case 'plans':
@@ -203,6 +204,8 @@ export function twoViewsKeyAction(
       return { type: 'tv/showTasks', preset: 'review' };
     case 'goto-threads':
       return { type: 'setProjectView', view: 'threads' };
+    case 'goto-timeline':
+      return { type: 'setProjectView', view: 'timeline' };
     case 'goto-settings':
       return { type: 'tv/openSettings' };
     // ⌘3–⌘9 walk the status presets, in chip order.

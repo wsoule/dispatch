@@ -173,6 +173,16 @@ export function buildPaletteEntries(
     }
   );
   if (ctx.hasProject) {
+    entries.push({
+      id: 'go-timeline',
+      label: 'Go to Timeline',
+      kind: 'go to',
+      section: 'navigation',
+      shortcut: 'G L',
+      run: () => actions.setProjectView('timeline'),
+    });
+  }
+  if (ctx.hasProject) {
     for (const page of TASKS_PAGES) {
       if (ctx.hideHostViews === true && HOST_VIEWS.has(page.id)) continue;
       entries.push({

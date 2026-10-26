@@ -52,6 +52,7 @@ test('the app opens on Overseer inside the shell, with one set of numbers', asyn
     'Overseer',
     'Issues',
     'Needs you',
+    'Timeline',
     'Threads',
     'Docs',
     'Runs',
@@ -118,6 +119,14 @@ test('sidebar rows open their destinations and mark the current one', async ({
 
   await openDestination(page, 'Threads');
   await expect(navLink(page, 'Threads')).toHaveAttribute(
+    'aria-current',
+    'page'
+  );
+  await expect(nav.locator('[aria-current="page"]')).toHaveCount(1);
+
+  await openDestination(page, 'Timeline');
+  await expect(page.getByTestId('timeline-view')).toBeVisible();
+  await expect(navLink(page, 'Timeline')).toHaveAttribute(
     'aria-current',
     'page'
   );

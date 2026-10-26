@@ -1,6 +1,9 @@
-import { parseLinearExternal } from '@dispatch-foo/core/browser';
+import { canonicalKind, parseLinearExternal } from '@dispatch-foo/core/browser';
+import type { MilestoneAssessment } from '@dispatch/planning';
 import {
   AssigneePicker,
+  Button,
+  Checklist,
   DateField,
   EstimatePicker,
   InlineTextField,
@@ -10,9 +13,14 @@ import {
   type PickerOption,
   PickerPopover,
   PriorityPicker,
+  ProgressRule,
   ProjectPicker,
   type PropertyListItem,
+  Register,
+  RegisterCell,
+  RegisterRow,
   StatePicker,
+  StatusMark,
   Switch,
   type TaskActivityItem,
   type TaskComment,
@@ -28,16 +36,32 @@ import {
   TaskRelationPicker,
   type TaskRelations,
   TextAreaEditor,
+  type UiTone,
 } from '@dispatch/ui';
 import { Bot, Ellipsis } from 'lucide-react';
 import { type ReactNode, useMemo, useState } from 'react';
 
 import { AGENTS_GROUP } from '../../../adapters/people';
+import { dueLabel } from '../../../adapters/planningFormat';
+import {
+  assessmentMark,
+  type StatusMarkModel,
+} from '../../../adapters/planningStatus';
+import { planningProjectMark } from '../../../adapters/shell';
 import type {
   DetailComment,
   DetailFact,
   RelationModel,
 } from '../../../adapters/taskDetail';
+import {
+  buildMilestoneSection,
+  type MilestoneSection,
+} from '../../../adapters/timeline';
+import {
+  milestoneDetailOf,
+  type Planning,
+  usePlanningContext,
+} from '../../../hooks/usePlanning';
 import { describeError } from '../../../lib/actionFeedback';
 import {
   isLinearConfigured,
@@ -112,6 +136,11 @@ export interface TaskDetailViewProps extends Pick<
   activityLimit: number;
   /** The acceptance criteria and the related tasks, as sections at the sections' level. */
   sections: ReactNode;
+  /** The planning's reading of a container (the Milestone section of a
+   * milestone, the Milestones section of a project), for TaskDetail's rail:
+   * right after the properties in the drawer, above the description, where
+   * a quick look reads it first. Null for an issue or outside a planning. */
+  planning: ReactNode | null;
   /** The "⋯" menu's entries and what a pick does. */
   menu: PickerOption[];
   onMenu: (value: string) => void;
@@ -326,6 +355,232 @@ function markdownView(text: string): ReactNode {
   );
 }
 
+/** A quiet note under a planning fact: the warning tone when it asks for
+ * action (a risk reason, a missing input), else the quiet grey. */
+function PlanningNote({
+  tone = 'default',
+  children,
+}: {
+  tone?: UiTone;
+  children: ReactNode;
+}) {
+  const toned = tone !== 'default' && tone !== 'muted';
+  return (
+    <p
+      className={toned ? styles.planningToneNote : styles.planningNote}
+      data-tone={toned ? tone : undefined}
+    >
+      {children}
+    </p>
+  );
+}
+
+/** One row of a planning register: a status mark, the row's name and a
+ * quiet fact beside it; the whole row quick-looks the task. */
+function PlanningRow({
+  mark,
+  name,
+  fact,
+  onOpen,
+}: {
+  mark: StatusMarkModel;
+  name: string;
+  fact: string;
+  onOpen: () => void;
+}) {
+  return (
+    <RegisterRow onActivate={onOpen} rowLabel={`${name}, ${mark.label}`}>
+      <RegisterCell variant="name">
+        <span className={styles.planningName}>
+          <StatusMark status={mark.status} label={mark.label} />
+          <span>{name}</span>
+        </span>
+      </RegisterCell>
+      <RegisterCell variant="mono" align="end">
+        {fact}
+      </RegisterCell>
+    </RegisterRow>
+  );
+}
+
+/**
+ * The Milestone section of a milestone container (the planner's drawer
+ * order: status with its reasons, progress, the project's next milestone,
+ * the rubric), then what it waits on and its open issues as their own
+ * sections. The drawer's property sheet already shows the due date and the
+ * project's lead as facts, so neither is repeated here.
+ */
+function MilestoneSections({
+  section,
+  peek,
+}: {
+  section: MilestoneSection;
+  peek: (taskId: string) => void;
+}) {
+  const { status, progress, next, muted } = section;
+  return (
+    <>
+      <TaskDetailSection title="Milestone">
+        <div className={styles.planning}>
+          <StatusMark
+            status={status.status}
+            label={status.label}
+            showLabel
+            muted={muted}
+          />
+          {status.lines.length > 0 && (
+            <PlanningNote tone={muted ? 'default' : 'warning'}>
+              {status.lines.join(' · ')}
+            </PlanningNote>
+          )}
+          <ProgressRule
+            done={progress.done}
+            total={progress.total}
+            tone={progress.tone}
+            aria-label="Milestone progress"
+          />
+          {section.isNext ? (
+            <PlanningNote>The project's next milestone.</PlanningNote>
+          ) : next !== null ? (
+            <p className={styles.planningNext}>
+              <span className={styles.planningNote}>Next</span>
+              <Button variant="quiet" size="sm" onClick={() => peek(next.id)}>
+                {next.name}
+              </Button>
+            </p>
+          ) : null}
+          <Checklist label="Rubric" items={section.rubric} />
+        </div>
+      </TaskDetailSection>
+      {section.waitsOn.length > 0 && (
+        <TaskDetailSection title="Waits on" count={section.waitsOn.length}>
+          <Register columns="minmax(0, 1fr) auto" label="Waits on">
+            {section.waitsOn.map((other) => (
+              <PlanningRow
+                key={other.id}
+                mark={other}
+                name={other.name}
+                fact={other.project}
+                onOpen={() => peek(other.id)}
+              />
+            ))}
+          </Register>
+        </TaskDetailSection>
+      )}
+      {section.openIssues.length > 0 && (
+        <TaskDetailSection
+          title="Open issues"
+          count={section.openIssues.length}
+        >
+          <Register columns="minmax(0, 1fr) auto" label="Open issues">
+            {section.openIssues.map((issue) => (
+              <PlanningRow
+                key={issue.id}
+                mark={issue}
+                name={issue.title}
+                fact={issue.label}
+                onOpen={() => peek(issue.id)}
+              />
+            ))}
+          </Register>
+        </TaskDetailSection>
+      )}
+    </>
+  );
+}
+
+/** What the Project section draws: the next milestone's mark, progress
+ * across every milestone, and the milestones themselves. */
+interface ProjectPlanning {
+  mark: StatusMarkModel;
+  next: { id: string; name: string } | null;
+  done: number;
+  total: number;
+  rows: { id: string; name: string; mark: StatusMarkModel; due: string }[];
+}
+
+/** The project's milestones as the planning reads them; null for a project
+ * with none (the Work section's sub-issues already say what is under it). */
+function projectPlanning(
+  planning: Planning,
+  projectId: string
+): ProjectPlanning | null {
+  const mark = planningProjectMark(
+    planning.snapshot,
+    planning.assessments,
+    projectId
+  );
+  if (mark === null) return null;
+  const { today } = planning.ctx;
+  let done = 0;
+  let total = 0;
+  let next: ProjectPlanning['next'] = null;
+  const rows: ProjectPlanning['rows'] = [];
+  for (const milestone of planning.snapshot.milestonesByProject.get(
+    projectId
+  ) ?? []) {
+    const assessment: MilestoneAssessment | undefined =
+      planning.assessments.get(milestone.id);
+    if (assessment === undefined) continue;
+    done += assessment.progress.completed;
+    total += assessment.progress.scope;
+    if (assessment.isNext) next = { id: milestone.id, name: milestone.name };
+    rows.push({
+      id: milestone.id,
+      name: milestone.name,
+      mark: assessmentMark(assessment),
+      due: dueLabel(
+        milestone.targetDate,
+        assessment.daysLeft,
+        today,
+        assessment.status
+      ),
+    });
+  }
+  return { mark, next, done, total, rows };
+}
+
+/** The reduced Project section: where the project stands by its next
+ * milestone, progress across its milestones, and each milestone as a row. */
+function ProjectSection({
+  project,
+  peek,
+}: {
+  project: ProjectPlanning;
+  peek: (taskId: string) => void;
+}) {
+  return (
+    <TaskDetailSection title="Milestones" count={project.rows.length}>
+      <div className={styles.planning}>
+        <StatusMark
+          status={project.mark.status}
+          label={project.mark.label}
+          showLabel
+        />
+        <ProgressRule
+          done={project.done}
+          total={project.total}
+          aria-label="Progress across milestones"
+        />
+        {project.next !== null && (
+          <PlanningNote>Next: {project.next.name}</PlanningNote>
+        )}
+        <Register columns="minmax(0, 1fr) auto" label="Milestones">
+          {project.rows.map((row) => (
+            <PlanningRow
+              key={row.id}
+              mark={row.mark}
+              name={row.name}
+              fact={row.due}
+              onOpen={() => peek(row.id)}
+            />
+          ))}
+        </Register>
+      </div>
+    </TaskDetailSection>
+  );
+}
+
 /**
  * Builds TaskDetail's props for `state` (useTaskDetail's), with every control wired to
  * the state's writes. The comment boxes (a reply, an edit) are this hook's state, so the
@@ -342,6 +597,7 @@ export function useTaskDetailProps(
   const taskId = item.meta.id;
   const { project } = host;
   const toasts = useToasts();
+  const planning = usePlanningContext();
   const [commentBox, setCommentBox] = useState<CommentBox>(null);
   const dispatch = options.dispatch ?? state.dispatch;
   const dispatching = options.dispatching ?? state.dispatching;
@@ -575,8 +831,39 @@ export function useTaskDetailProps(
     ) : undefined,
   };
 
+  // The planning's reading of a container: the Milestone section for a
+  // milestone, the Milestones section for a project; nothing for an issue or
+  // outside App (no planning). Handed back as `planning` for the rail slot
+  // rather than put among `sections`, which TaskDetail draws after Comments
+  // and Activity.
+  const kind = canonicalKind(item.meta.kind);
+  const milestoneSection = useMemo(() => {
+    if (planning === null || kind !== 'milestone') return null;
+    const detail = milestoneDetailOf(planning, taskId);
+    if (detail === null) return null;
+    return buildMilestoneSection(
+      detail,
+      detail.assessment,
+      planning.ctx.today,
+      { view: planning.timeline, assessments: planning.assessments }
+    );
+  }, [planning, kind, taskId]);
+  const projectSection = useMemo(
+    () =>
+      planning === null || kind !== 'project'
+        ? null
+        : projectPlanning(planning, taskId),
+    [planning, kind, taskId]
+  );
+
   const related = state.relations.related;
   const duplicateOf = state.relations.duplicateOf;
+  const planningSections =
+    milestoneSection !== null ? (
+      <MilestoneSections section={milestoneSection} peek={peek} />
+    ) : projectSection !== null ? (
+      <ProjectSection project={projectSection} peek={peek} />
+    ) : null;
   const sections = (
     <>
       {body !== null && (
@@ -659,6 +946,7 @@ export function useTaskDetailProps(
     activity: state.activity ?? undefined,
     activityLimit: ACTIVITY_LIMIT,
     sections,
+    planning: planningSections,
     menu,
     onMenu,
     run,

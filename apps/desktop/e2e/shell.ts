@@ -10,6 +10,7 @@ export type ShellDestinationLabel =
   | 'Overseer'
   | 'Issues'
   | 'Needs you'
+  | 'Timeline'
   | 'Threads'
   | 'Docs'
   | 'Runs';

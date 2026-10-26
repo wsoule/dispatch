@@ -6,11 +6,16 @@ layer: 'application'
 # ui-legacy is consumed via the Vite '@/ui' source alias, not the package specifier;
 # build scope keeps the edge on the moon graph without manifest syncing. ui
 # (@dispatch/ui) is a real workspace dependency consumed as source, with no
-# build of its own; build scope keeps it on the graph the same way.
+# build of its own; build scope keeps it on the graph the same way. planning
+# (@dispatch/planning) is a workspace dependency the desktop imports through
+# its tsdown dist, so its build must run before this project's typecheck,
+# test and build (`^:build` reaches it through this edge).
 dependsOn:
   - id: 'ui-legacy'
     scope: 'build'
   - id: 'ui'
+    scope: 'build'
+  - id: 'planning'
     scope: 'build'
 
 tasks:

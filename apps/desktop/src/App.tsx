@@ -19,7 +19,7 @@ import {
   useState,
 } from 'react';
 
-import { buildProjectsSection } from './adapters/shell';
+import { buildProjectsSection, planningProjectMark } from './adapters/shell';
 import { AwayDigest, useNarratorSince } from './components/chat/AwayDigest';
 import { CapturedNotes } from './components/chat/CapturedNotes';
 import { ForYouPosts } from './components/chat/ForYouPosts';
@@ -98,6 +98,11 @@ import {
 } from './hooks/useFirstTaskGuide';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
 import { useOverseerSession } from './hooks/useOverseerSession';
+import {
+  type Planning,
+  PlanningContext,
+  usePlanning,
+} from './hooks/usePlanning';
 import { useSavedViews } from './hooks/useSavedViews';
 import { tasksKey } from './hooks/useTaskDoc';
 import {
@@ -196,6 +201,7 @@ import type { HostedSettingsPage } from './views/SettingsView';
 import { SetupView } from './views/SetupView';
 import { TerminalsView } from './views/TerminalsView';
 import { ThreadsView } from './views/ThreadsView';
+import { TimelineView } from './views/TimelineView';
 import { type OverseerFocus, TwoViewOverseer } from './views/TwoViewOverseer';
 import { PageHeaderShellContext } from '@/ui/ai/page-header';
 import { EmptyState, SectionLabel } from '@/ui/chrome';
@@ -207,16 +213,22 @@ import { TooltipProvider } from '@/ui/tooltip';
 function SurfaceHosts({
   taskPage,
   flightPlan,
+  planning,
   children,
 }: {
   taskPage: TaskPageHost | null;
   flightPlan: FlightPlanHost;
+  /** The planning over the open project, computed once for the timeline,
+   * the sidebar's project marks and the drawer's Milestone section. */
+  planning: Planning;
   children: ReactNode;
 }) {
   return (
     <TaskPageHostContext.Provider value={taskPage}>
       <FlightPlanHostContext.Provider value={flightPlan}>
-        {children}
+        <PlanningContext.Provider value={planning}>
+          {children}
+        </PlanningContext.Provider>
       </FlightPlanHostContext.Provider>
     </TaskPageHostContext.Provider>
   );
@@ -840,8 +852,14 @@ function App() {
     () => ({ bucketOf, starred: starredTaskIds, me: data.me }),
     [bucketOf, starredTaskIds, data.me]
   );
-  // The sidebar's Projects section: every project with the rolled-up status of
-  // the issues under its milestones, in the top bar's old units (asks, failures).
+  // The planning chain over the open project (milestone assessments, the
+  // timeline, the connectors), once for every surface that reads it.
+  const planning = usePlanning(data);
+  const { snapshot: planningSnapshot, assessments: planningAssessments } =
+    planning;
+  // The sidebar's Projects section: every project marked by the planning's
+  // reading of its next milestone, else the rolled-up status of the issues
+  // under it, in the top bar's old units (asks, failures).
   const projectsSection = useMemo(() => {
     const childrenOf = new Map<string, TaskListItem[]>();
     for (const doc of data.tasks) {
@@ -857,8 +875,17 @@ function App() {
           fanoutScope(id, (parent) => childrenOf.get(parent) ?? []),
           { bucketOf, asksByTask: needs.byTask, model: statusModel }
         ),
+      statusOf: (projectId) =>
+        planningProjectMark(planningSnapshot, planningAssessments, projectId),
     });
-  }, [data.tasks, bucketOf, needs.byTask, statusModel]);
+  }, [
+    data.tasks,
+    bucketOf,
+    needs.byTask,
+    statusModel,
+    planningSnapshot,
+    planningAssessments,
+  ]);
   const admin = useAdminItems(data.client, data.port);
   const daemonDown = data.portLoading || data.portError || data.client === null;
   const orb = orbState({
@@ -1666,6 +1693,20 @@ function App() {
             onBack={closeTwoViewsPage}
           />
         );
+      case 'timeline':
+        return (
+          <TimelineView
+            // A request-tier token cannot write: no re-date handles.
+            readOnly={data.myTier === 'request'}
+            selectedId={peekTaskId}
+            focusProjectId={timelineFocus}
+            // Raw, so a refusal reaches the chart, which announces it and
+            // rolls the bar back (the toasting wrapper never rejects).
+            onRedate={(milestoneId, dueDate) =>
+              rawHandleUpdate(milestoneId, { dueDate })
+            }
+          />
+        );
     }
   };
 
@@ -1953,6 +1994,8 @@ function App() {
   };
   // The thread open on the Threads page.
   const [threadsFocus, setThreadsFocus] = useState<string | null>(null);
+  // The project lane a `#/timeline?project=` link asked the Timeline to show.
+  const [timelineFocus, setTimelineFocus] = useState<string | null>(null);
   // What a side column of the Overseer opened in its middle.
   const [overseerFocus, setOverseerFocus] = useState<OverseerFocus | null>(
     null
@@ -2046,6 +2089,10 @@ function App() {
         onOpenProjects={() => {
           dispatchNav({ type: 'tv/showTasks' });
           dispatchNav({ type: 'tv/setTasksMode', mode: 'graph' });
+        }}
+        onOpenTimeline={(projectId) => {
+          setTimelineFocus(projectId);
+          dispatchNav({ type: 'setProjectView', view: 'timeline' });
         }}
         onSearch={() => dispatchNav({ type: 'openPalette' })}
         topbarActions={
@@ -2327,6 +2374,7 @@ function App() {
                 <SurfaceHosts
                   taskPage={taskPageHost}
                   flightPlan={flightPlanHost}
+                  planning={planning}
                 >
                   <div className="bg-frame relative flex h-screen flex-col overflow-hidden">
                     {twoViewsFrame}

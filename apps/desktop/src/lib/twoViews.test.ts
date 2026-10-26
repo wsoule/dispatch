@@ -36,6 +36,7 @@ const EVERY_PROJECT_VIEW: Record<ProjectView, true> = {
   review: true,
   inbox: true,
   threads: true,
+  timeline: true,
   'brain-dump': true,
   design: true,
   files: true,
@@ -76,7 +77,7 @@ describe('projectViewDestination', () => {
     expect(projectViewDestination('docs')).toEqual({ kind: 'docs' });
   });
 
-  test.each(['files', 'terminals'] as const)(
+  test.each(['files', 'terminals', 'timeline'] as const)(
     '%p is a page under Tasks',
     (view) => {
       expect(projectViewDestination(view)).toEqual({
@@ -489,6 +490,7 @@ describe('twoViewsKeyAction', () => {
     ['goto-live', { type: 'tv/showTasks', preset: 'moving' }],
     ['goto-projects', { type: 'tv/showTasks', preset: 'review' }],
     ['goto-threads', { type: 'setProjectView', view: 'threads' }],
+    ['goto-timeline', { type: 'setProjectView', view: 'timeline' }],
     ['goto-settings', { type: 'tv/openSettings' }],
   ] as const)('%p', (command, action) => {
     expect(twoViewsKeyAction(command)).toEqual(action);

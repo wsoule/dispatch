@@ -299,6 +299,9 @@ importers:
       '@dispatch/client':
         specifier: workspace:*
         version: link:../../packages/client
+      '@dispatch/planning':
+        specifier: workspace:*
+        version: link:../../packages/planning
       '@dispatch/ui':
         specifier: workspace:*
         version: link:../../packages/ui

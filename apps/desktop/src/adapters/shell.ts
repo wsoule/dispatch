@@ -1,4 +1,5 @@
 import { canonicalKind, type TaskListItem } from '@dispatch-foo/core/browser';
+import type { MilestoneAssessment, Snapshot } from '@dispatch/planning';
 import type {
   ShellCrumb,
   ShellNavItem,
@@ -22,6 +23,7 @@ import {
   taskHref,
 } from '../lib/shellRoutes';
 import { dueDateInfo } from '../lib/taskDates';
+import { assessmentMark } from './planningStatus';
 
 // The desktop's app-state → @dispatch/ui shell mapping: the sidebar's primary
 // nav with its counts, the Projects section with a status diamond per project,
@@ -69,6 +71,7 @@ const NAV_DESTINATIONS: readonly ShellDestination[] = [
   'overseer',
   'issues',
   'needs-you',
+  'timeline',
   'threads',
   'docs',
   'runs',
@@ -142,20 +145,35 @@ export function buildShellTabs(destination: ShellDestination): ShellTab[] {
 /** How many projects the sidebar lists before "All" is the way to the rest. */
 const PROJECTS_SECTION_LIMIT = 12;
 
+/** A project's sidebar diamond and the words assistive tech reads for it. */
+export interface ProjectMark {
+  status: UiStatus;
+  label: string;
+}
+
 export interface ProjectsSectionInput {
   tasks: readonly TaskListItem[];
   /** A container's rolled-up status, or null when nothing is known about it. */
   containerStatusOf: (id: string) => ContainerStatus | null;
+  /**
+   * The planning's reading of a project, when the window has one: the mark
+   * of its next milestone's assessment, as the planner's sidebar drew it (a
+   * red or amber diamond only for an overdue or at-risk next milestone, the
+   * dotted mark for a missing input, done once every milestone is complete).
+   * Null, or no function at all, falls back to `containerStatusOf`.
+   */
+  statusOf?: (projectId: string) => ProjectMark | null;
   now?: Date;
   limit?: number;
 }
 
-/** A project's sidebar diamond and the words assistive tech reads for it. */
+/** A project's sidebar diamond from its rolled-up container status: the
+ * fallback while no planning reading is at hand. */
 export function projectMark(
   status: ContainerStatus | null,
   dueDate: string | null,
   now: Date
-): { status: UiStatus; label: string } {
+): ProjectMark {
   if (status === null || status.total === 0) {
     return { status: 'missing', label: 'No issues yet' };
   }
@@ -174,9 +192,34 @@ export function projectMark(
 }
 
 /**
+ * The planning's mark for a project, as the planner's sidebar drew it: the
+ * assessed mark of its next milestone (red overdue, amber at risk, the dotted
+ * mark for a missing input, green on track), or done once every milestone is
+ * complete. Null for a project with no milestones (the planning has nothing
+ * to say about it), so the caller falls back to the rolled-up status of the
+ * issues under it.
+ */
+export function planningProjectMark(
+  snapshot: Snapshot,
+  assessments: ReadonlyMap<string, MilestoneAssessment>,
+  projectId: string
+): ProjectMark | null {
+  const milestones = snapshot.milestonesByProject.get(projectId);
+  if (milestones === undefined || milestones.length === 0) return null;
+  // Milestones come in date order (undated last): the first still open is next.
+  for (const milestone of milestones) {
+    const assessment = assessments.get(milestone.id);
+    if (assessment === undefined || assessment.status === 'complete') continue;
+    return assessmentMark(assessment);
+  }
+  return { status: 'done', label: 'All milestones complete' };
+}
+
+/**
  * The sidebar's Projects section: one row per project-kind container, in
  * list order, each opening the project's own page; "All" opens the Issues
- * graph, where every project is drawn.
+ * graph, where every project is drawn. A project's mark is the planning's
+ * (`statusOf`) when it has one, else its rolled-up container status.
  */
 export function buildProjectsSection(
   input: ProjectsSectionInput
@@ -187,11 +230,9 @@ export function buildProjectsSection(
   for (const doc of input.tasks) {
     if (canonicalKind(doc.meta.kind) !== 'project') continue;
     if (items.length >= limit) break;
-    const mark = projectMark(
-      input.containerStatusOf(doc.meta.id),
-      doc.meta.dueDate,
-      now
-    );
+    const mark =
+      input.statusOf?.(doc.meta.id) ??
+      projectMark(input.containerStatusOf(doc.meta.id), doc.meta.dueDate, now);
     items.push({
       id: doc.meta.id,
       label: doc.meta.title,

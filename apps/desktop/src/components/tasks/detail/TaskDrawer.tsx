@@ -201,7 +201,16 @@ function TaskDrawerLoaded({
       status={detail.status}
       alerts={detail.alerts}
       properties={detail.properties}
-      rail={hasWork ? work : undefined}
+      // The rail: a container's planning section first (where a milestone's
+      // quick look reads its status), then Dispatch's Work block.
+      rail={
+        detail.planning !== null || hasWork ? (
+          <>
+            {detail.planning}
+            {hasWork ? work : null}
+          </>
+        ) : undefined
+      }
       description={detail.description}
       relations={detail.relations}
       sectionMeta={detail.sectionMeta}

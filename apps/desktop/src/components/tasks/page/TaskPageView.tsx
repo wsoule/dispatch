@@ -509,12 +509,15 @@ function TaskPageLoaded({
           tabs={<NavTabs label="Lifecycle" size="sm" items={tabs} />}
           properties={detail.properties}
           rail={
-            <TaskPageRail
-              page={page}
-              state={state}
-              view={view}
-              onAddWrites={focusWrites}
-            />
+            <>
+              {detail.planning}
+              <TaskPageRail
+                page={page}
+                state={state}
+                view={view}
+                onAddWrites={focusWrites}
+              />
+            </>
           }
           description={spec ? detail.description : undefined}
           relations={spec ? detail.relations : undefined}

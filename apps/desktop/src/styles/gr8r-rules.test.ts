@@ -38,6 +38,10 @@ const GR8R_FILES = [
   'components/tasks/page/TaskPageView.module.css',
   'components/tasks/page/TaskPageView.test.tsx',
   'components/tasks/page/useTaskPageModel.ts',
+  'components/timeline/TimelineBanners.tsx',
+  'components/timeline/TimelineBanners.module.css',
+  'components/timeline/TimelineBanners.test.tsx',
+  'hooks/usePlanning.ts',
   'lib/shellRoutes.ts',
   'lib/fanoutVerbs.ts',
   'lib/issueSearch.ts',
@@ -45,6 +49,9 @@ const GR8R_FILES = [
   'views/IssuesView.module.css',
   'views/IssuesViewMenus.tsx',
   'views/IssuesViewTable.tsx',
+  'views/TimelineView.tsx',
+  'views/TimelineView.module.css',
+  'views/TimelineView.test.tsx',
 ].map((name) => path.join(srcDir, name));
 
 /** The transitional sheets: the legacy alias layer and the host's global sheet. */

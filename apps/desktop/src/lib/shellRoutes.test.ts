@@ -13,6 +13,7 @@ import {
   shellRoute,
   shellShortcut,
   taskHref,
+  timelineHref,
 } from './shellRoutes';
 import {
   initialTwoViewsState,
@@ -25,6 +26,7 @@ const EVERY_DESTINATION: readonly ShellDestination[] = [
   'overseer',
   'issues',
   'needs-you',
+  'timeline',
   'threads',
   'docs',
   'runs',
@@ -54,6 +56,8 @@ describe('the route table', () => {
     expect(shellShortcut(shellRoute('issues'), 'Ctrl')).toEqual(['Ctrl', '2']);
     expect(shellShortcut(shellRoute('needs-you'), '⌘')).toEqual(['G', 'I']);
     expect(shellShortcut(shellRoute('threads'), '⌘')).toEqual(['G', 'M']);
+    // `g t` is Tasks, so the Timeline takes `g l`.
+    expect(shellShortcut(shellRoute('timeline'), '⌘')).toEqual(['G', 'L']);
     expect(shellShortcut(shellRoute('settings'), '⌘')).toEqual(['G', 'S']);
     expect(shellShortcut(shellRoute('docs'), '⌘')).toBeUndefined();
     expect(shellShortcut(shellRoute('runs'), '⌘')).toBeUndefined();
@@ -71,6 +75,10 @@ describe('the route table', () => {
     expect(shellRoute('threads').action).toEqual({
       type: 'setProjectView',
       view: 'threads',
+    });
+    expect(shellRoute('timeline').action).toEqual({
+      type: 'setProjectView',
+      view: 'timeline',
     });
     expect(shellRoute('docs').action).toEqual({
       type: 'setProjectView',
@@ -93,6 +101,7 @@ describe('parseShellHref', () => {
       '#/issues/',
       '#/task/t-1',
       '#/projects',
+      '#/timeline?project=p-1',
       'https://example.com/#/issues',
       '',
     ]) {
@@ -122,6 +131,25 @@ describe('resolveShellHref', () => {
       kind: 'task',
       taskId: id,
     });
+  });
+
+  test('a timeline link naming a project focuses its lane', () => {
+    expect(timelineHref('p-1')).toBe('#/timeline?project=p-1');
+    expect(resolveShellHref(timelineHref('p-1'))).toEqual({
+      kind: 'timeline',
+      projectId: 'p-1',
+    });
+    const id = 'weird id/with:chars&more';
+    expect(resolveShellHref(timelineHref(id))).toEqual({
+      kind: 'timeline',
+      projectId: id,
+    });
+    // The bare destination stays a destination; a stray query is nothing.
+    expect(resolveShellHref('#/timeline')).toEqual({
+      kind: 'destination',
+      id: 'timeline',
+    });
+    expect(resolveShellHref('#/timeline?lane=p-1')).toBeNull();
   });
 });
 
@@ -163,6 +191,21 @@ describe('currentShellDestination', () => {
         after([{ type: 'tv/setTasksPreset', preset: 'needs-you' }], open)
       )
     ).toBe('needs-you');
+  });
+
+  test('the timeline page is its own row', () => {
+    const timeline = after([{ type: 'setProjectView', view: 'timeline' }]);
+    expect(timeline.tasksPage).toEqual({ kind: 'view', view: 'timeline' });
+    expect(currentShellDestination(timeline)).toBe('timeline');
+    // A milestone quick-looked over the chart keeps the row.
+    expect(
+      currentShellDestination(
+        after([{ type: 'openPeek', taskId: 'm-1' }], timeline)
+      )
+    ).toBe('timeline');
+    expect(
+      currentShellDestination(after([{ type: 'tv/closePage' }], timeline))
+    ).toBe('issues');
   });
 
   test('the docs and threads pages are their own rows', () => {

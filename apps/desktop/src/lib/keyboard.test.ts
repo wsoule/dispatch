@@ -139,6 +139,7 @@ describe('resolveGlobalKeyCommand', () => {
     expect(resolveGlobalKeyCommand(key('c'), armed)).toBe('goto-control-room');
     expect(resolveGlobalKeyCommand(key('a'), armed)).toBe('goto-overseer');
     expect(resolveGlobalKeyCommand(key('m'), armed)).toBe('goto-threads');
+    expect(resolveGlobalKeyCommand(key('l'), armed)).toBe('goto-timeline');
     // A miss is nothing — not the key's own bare meaning.
     expect(resolveGlobalKeyCommand(key('['), armed)).toBeNull();
     expect(resolveGlobalKeyCommand(key('z'), armed)).toBeNull();

@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@dispatch/client": "workspace:*",
+    "@dispatch/planning": "workspace:*",
     "@dispatch/ui": "workspace:*",
     "@dnd-kit/core": "catalog:",
     "@dnd-kit/utilities": "catalog:",
