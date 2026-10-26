@@ -115,65 +115,6 @@ function defaultCollapsedGroups(
   return keys;
 }
 
-/** Rows the first paint carries. TaskGroupTable draws every row it is given
- * (no windowing), and 2000 rows with their cell pickers take about three
- * seconds to mount, so the first frame draws whole groups up to this many
- * rows and the rest follow a frame at a time. */
-const FIRST_PAINT_ROWS = 200;
-
-/** The leading groups of `sections` that fit `budget` rows (always at least
- * one group, whole groups only, so no header shows an empty list); a section
- * left with no groups is dropped. */
-function leadingSections(
-  sections: readonly TaskSectionData[],
-  budget: number
-): TaskSectionData[] {
-  const out: TaskSectionData[] = [];
-  let drawn = 0;
-  for (const section of sections) {
-    const groups: TaskGroupData[] = [];
-    for (const group of section.groups) {
-      if (drawn > 0 && drawn + group.rows.length > budget) {
-        if (groups.length > 0) out.push({ ...section, groups });
-        return out;
-      }
-      groups.push(group);
-      drawn += group.rows.length;
-    }
-    if (groups.length > 0) out.push({ ...section, groups });
-  }
-  return out;
-}
-
-/**
- * The sections to draw this frame: the first paint stops after
- * FIRST_PAINT_ROWS rows and the budget then grows fourfold a frame until every
- * row is drawn; it never shrinks, so a later regroup (a preset, a WS patch)
- * draws in full. A large list is on screen at once and fills in behind the
- * first screenful.
- */
-function useProgressiveSections(
-  sections: TaskSectionData[]
-): TaskSectionData[] {
-  const total = sections.reduce(
-    (sum, section) =>
-      sum + section.groups.reduce((n, group) => n + group.rows.length, 0),
-    0
-  );
-  const [budget, setBudget] = useState(FIRST_PAINT_ROWS);
-  useEffect(() => {
-    if (budget >= total) return;
-    const frame = requestAnimationFrame(() =>
-      setBudget((prev) => Math.min(prev * 4, total))
-    );
-    return () => cancelAnimationFrame(frame);
-  }, [budget, total]);
-  return useMemo(
-    () => (budget >= total ? sections : leadingSections(sections, budget)),
-    [sections, budget, total]
-  );
-}
-
 /** The dialog over the list: Send agents at a set of tasks, or at a
  * container's children (the group menu's Send agents…). */
 type Dialog =
@@ -262,6 +203,10 @@ export function IssuesTable({
   const editable = data.myTier !== 'request';
   const controls = useControlStore();
   const scrollRef = useRef<HTMLDivElement>(null);
+  // The list's own scroll column (the view scrolls inside AppShell's main,
+  // which does not), for the table's row windowing; stable, as the table
+  // reads it when windowing starts.
+  const scrollParentOf = useCallback(() => scrollRef.current, []);
 
   const [selected, setSelected] = useState<ReadonlySet<string>>(NO_SELECTION);
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -384,7 +329,7 @@ export function IssuesTable({
   const columns = useMemo(() => columnsForPrefs(prefs), [prefs]);
   // The "+" on every live group header pre-fills the creator with the group's
   // status or container, as the old header's did.
-  const allSections = useMemo<TaskSectionData[]>(() => {
+  const sections = useMemo<TaskSectionData[]>(() => {
     const built = toTaskSections(groups, ctx, { columns });
     for (const section of built) {
       for (const group of section.groups) {
@@ -396,8 +341,6 @@ export function IssuesTable({
     }
     return built;
   }, [groups, ctx, columns, groupByKey, shell]);
-  // What this frame draws: the whole list once the first paint has filled in.
-  const sections = useProgressiveSections(allSections);
   const defaultCollapsed = useMemo(
     () =>
       defaultCollapsedGroups(groups, (status) => isDoneStatus(status, model)),
@@ -892,6 +835,7 @@ export function IssuesTable({
     >
       <TaskGroupTable
         sections={sections}
+        scrollParent={scrollParentOf}
         columns={columns}
         columnLabels={COLUMN_LABELS}
         dropColumns={DROP_COLUMNS}

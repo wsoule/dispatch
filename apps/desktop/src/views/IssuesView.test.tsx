@@ -896,19 +896,3 @@ test('an open task beside the list marks its row current and the pane is a regio
   expect(rowOf('Loose card').getAttribute('aria-current')).toBe('true');
   expect(screen.getByRole('region', { name: 'Task' })).not.toBeNull();
 });
-
-test('a large list paints whole groups up to 200 rows first and the rest a frame later', async () => {
-  // Three milestones of 100 tasks: the first frame draws two whole groups.
-  const epics = [1, 2, 3].map((n) =>
-    task(`e-${n}`, `Milestone ${n}`, 'todo', null, 'milestone')
-  );
-  const tasks = [...epics];
-  for (let i = 0; i < 300; i++) {
-    tasks.push(task(`t-${i}`, `Task ${i}`, 'todo', `e-${(i % 3) + 1}`));
-  }
-  mount({ data: { tasks, epics } });
-  expect(rowIds()).toHaveLength(200);
-  expect(groupNames()).toEqual(['Milestone 1', 'Milestone 2']);
-  await waitFor(() => expect(rowIds()).toHaveLength(300));
-  expect(groupNames()).toEqual(['Milestone 1', 'Milestone 2', 'Milestone 3']);
-});
