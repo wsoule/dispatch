@@ -213,6 +213,21 @@ describe('renderSharePage', () => {
     expect(html).not.toContain('10:05:00');
   });
 
+  test('leaves out a message entry the daemon redacted', () => {
+    const html = renderSharePage(
+      packet({
+        entries: [
+          { ts: '2026-09-22T10:04:00.000Z', kind: 'message', redacted: true },
+          { ts: '2026-09-22T10:05:00.000Z', kind: 'assistant', text: 'done' },
+        ],
+      })
+    );
+
+    expect(html).toContain('done');
+    expect(html).not.toContain('kind-message');
+    expect(html).not.toContain('10:04:00');
+  });
+
   test('marks a failed command distinctly from a passing one', () => {
     const html = renderSharePage(
       packet({
