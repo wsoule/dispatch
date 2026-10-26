@@ -75,8 +75,43 @@ describe('buildOverseerThread', () => {
       makeRecord([{ role: 'tool', tool: 'list_runs', text: '3 runs', at }])
     );
     expect(items).toEqual([
-      { kind: 'tool', key: 'w-1-msg-0', tool: 'list_runs', text: '3 runs', at },
+      {
+        kind: 'tool',
+        key: 'w-1-msg-0',
+        tool: 'list_runs',
+        text: '3 runs',
+        at,
+        state: 'done',
+      },
     ]);
+  });
+
+  test("a tool row's state follows its status, and running only while the turn runs", () => {
+    const rows: OverseerMessage[] = [
+      { role: 'tool', tool: 'Bash', text: 'Bash: ls', at, status: 'running' },
+      { role: 'tool', tool: 'Edit', text: 'Edit: a.ts', at, status: 'done' },
+      { role: 'tool', tool: 'Read', text: 'Read: b.ts', at, status: 'error' },
+      // A status decides: the text rule is only for rows without one.
+      { role: 'tool', tool: 'list_runs', text: 'error: x', at, status: 'done' },
+      // Rows from before `status`: the text rule.
+      { role: 'tool', tool: 'merge_queue', text: 'error: boom', at },
+      { role: 'tool', tool: 'list_runs', text: '{"runs":[]}', at },
+    ];
+    const states = (state: OverseerRecord['state']) =>
+      buildOverseerThread(makeRecord(rows, { state })).flatMap((i) =>
+        i.kind === 'tool' ? [i.state] : []
+      );
+    expect(states('running')).toEqual([
+      'running',
+      'done',
+      'failed',
+      'done',
+      'failed',
+      'done',
+    ]);
+    // A stopped or failed turn's call never got its result: it ended.
+    expect(states('ready')[0]).toBe('done');
+    expect(states('failed')[0]).toBe('done');
   });
 
   test('a still-pending action renders as one confirm card, not a transcript row', () => {
@@ -588,8 +623,8 @@ describe('groupToolRows', () => {
     expect(grouped.map((i) => i.kind)).toEqual(['message', 'tools', 'message']);
     expect(grouped[1]).toMatchObject({
       calls: [
-        { tool: 'list_runs', failed: false },
-        { tool: 'merge_queue', failed: true },
+        { tool: 'list_runs', state: 'done' },
+        { tool: 'merge_queue', state: 'failed' },
       ],
     });
   });

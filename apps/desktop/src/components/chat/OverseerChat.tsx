@@ -35,6 +35,7 @@ import {
   groupToolRows,
   type OverseerDoor,
   type OverseerStreamItem,
+  type ToolCallState,
 } from '../../lib/overseerThread';
 import { slashSuggestions } from '../../lib/slashCommands';
 import { askAgentToFix, FailureNotice } from '../failure/FailureNotice';
@@ -676,7 +677,7 @@ const FOLLOW_SLACK_PX = 48;
 function ToolRun({
   calls,
 }: {
-  calls: { tool: string; text: string; failed: boolean }[];
+  calls: { tool: string; text: string; state: ToolCallState }[];
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -693,7 +694,7 @@ function ToolRun({
               key={`${call.tool}-${i}`}
               icon={Wrench}
               label={call.tool}
-              state={call.failed ? 'failed' : 'done'}
+              state={call.state}
             />
           ))}
         </ToolChipGroup>

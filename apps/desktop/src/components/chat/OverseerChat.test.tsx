@@ -1461,3 +1461,61 @@ test('a pasted screenshot alone can be sent, and the sent line shows it', async 
     [shot.path, shot.path.replace('image', 'earlier')].sort()
   );
 });
+
+// A tool chip's state as ToolChip draws it: a failed chip washes red, a
+// running one shimmers its label (the same reading RunLogView.test.tsx makes).
+function chipState(label: string): 'running' | 'done' | 'failed' {
+  const chip = screen.getByText(label).closest('[class*="rounded-chip"]');
+  if (chip === null) throw new Error(`no chip shows ${label}`);
+  if (chip.className.includes('text-red')) return 'failed';
+  return chip.querySelector('[class*="shimmer-text"]') === null
+    ? 'done'
+    : 'running';
+}
+
+test('tool chips say how each call went, and a call left running ends with its turn', () => {
+  const at = '2026-08-10T00:00:01Z';
+  const messages = [
+    { role: 'user' as const, text: 'look around', at },
+    {
+      role: 'tool' as const,
+      tool: 'Bash',
+      text: 'Bash: ls',
+      toolUseId: 'toolu_1',
+      status: 'running' as const,
+      at,
+    },
+    {
+      role: 'tool' as const,
+      tool: 'Edit',
+      text: 'Edit: a.ts',
+      status: 'error' as const,
+      at,
+    },
+    {
+      role: 'tool' as const,
+      tool: 'list_runs',
+      text: '{"runs":[]}',
+      status: 'done' as const,
+      at,
+    },
+  ];
+  const chat = (state: OverseerRecord['state']) => (
+    <OverseerChat
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: overseerRecord({ state, messages }),
+      })}
+      compact
+    />
+  );
+  const { rerender } = render(chat('running'));
+  expect(chipState('Bash')).toBe('running');
+  expect(chipState('Edit')).toBe('failed');
+  expect(chipState('list_runs')).toBe('done');
+
+  // Stopped before the result came: no spinner, and no failure either.
+  rerender(chat('ready'));
+  expect(chipState('Bash')).toBe('done');
+  expect(chipState('Edit')).toBe('failed');
+});

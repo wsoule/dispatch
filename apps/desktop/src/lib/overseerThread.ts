@@ -37,7 +37,15 @@ export type OverseerThreadItem =
   /** A running turn's text as the model writes it, one row per segment. It
    *  becomes a `narration` or `message` row once the record holds it. */
   | { kind: 'live'; key: string; segmentId: string; text: string }
-  | { kind: 'tool'; key: string; tool: string; text: string; at: string }
+  | {
+      kind: 'tool';
+      key: string;
+      tool: string;
+      text: string;
+      at: string;
+      /** How the call reads on its chip (see toolCallState). */
+      state: ToolCallState;
+    }
   | {
       kind: 'outcome';
       key: string;
@@ -69,6 +77,9 @@ export type OverseerThreadItem =
   | { kind: 'queued'; key: string; id: string; text: string; waiting: boolean }
   /** The agent's show_tasks: a door the human opens, never a jump. */
   | { kind: 'door'; key: string; door: OverseerDoor; at: string };
+
+/** A tool call's chip: still running, ended, or failed. */
+export type ToolCallState = 'running' | 'done' | 'failed';
 
 /** Where a show_tasks door opens Tasks. */
 export interface OverseerDoor {
@@ -281,6 +292,7 @@ function buildRow(
       tool: message.tool ?? 'tool',
       text: message.text,
       at: message.at,
+      state: toolCallState(record, message),
     };
   }
 
@@ -345,6 +357,22 @@ function buildRow(
   return null;
 }
 
+// How a tool row reads: its `status` once the call ended. A call still
+// `running` is running only while its turn is: one on a record whose turn is
+// over never got its result (a Stop, a failed turn) and reads as ended, with
+// no spinner. A row from before `status` failed when its text says so.
+function toolCallState(
+  record: OverseerRecord,
+  message: OverseerMessage
+): ToolCallState {
+  if (message.status === 'error') return 'failed';
+  if (message.status === 'done') return 'done';
+  if (message.status === 'running') {
+    return record.state === 'running' ? 'running' : 'done';
+  }
+  return message.text.startsWith('error:') ? 'failed' : 'done';
+}
+
 // The words a row can be found by; cards and spinners have none of their own.
 function searchableText(item: OverseerThreadItem): string | null {
   switch (item.kind) {
@@ -390,7 +418,7 @@ export type OverseerStreamItem =
   | {
       kind: 'tools';
       key: string;
-      calls: { tool: string; text: string; failed: boolean }[];
+      calls: { tool: string; text: string; state: ToolCallState }[];
     }
   /** Two or more actions queued together, answered on one card. */
   | {
@@ -434,11 +462,7 @@ export function groupToolRows(
       continue;
     }
     if (HIDDEN_TOOLS.has(item.tool)) continue;
-    const call = {
-      tool: item.tool,
-      text: item.text,
-      failed: item.text.startsWith('error:'),
-    };
+    const call = { tool: item.tool, text: item.text, state: item.state };
     const last = out.at(-1);
     if (last?.kind === 'tools') last.calls.push(call);
     else out.push({ kind: 'tools', key: item.key, calls: [call] });
