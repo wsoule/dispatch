@@ -11,8 +11,9 @@ holds what a user upgrading needs to know.
   text streams into the chat, the Overseer keeps what it says between tool calls
   as narration, and tool chips in both chats end done or failed. The Overseer's
   approval card takes a reason when you deny, as a run's does. To stop
-  streaming, set `overseer.stream` (`live`, `narration` or `off`) or
-  `runs.stream` (`live` or `off`) in `.dispatch/config.yml`.
+  streaming, use Settings → Agents → Streaming, or set `overseer.stream`
+  (`live`, `narration` or `off`) or `runs.stream` (`live` or `off`) in
+  `.dispatch/config.yml`.
 - **Update the desktop app and the `dispatch` CLI together with the daemon.**
   Claude runs now log how each tool call ended as an entry of its own. A desktop
   or CLI older than this release, attached to a newer daemon, shows each of
@@ -23,6 +24,11 @@ holds what a user upgrading needs to know.
 
 ### Changed
 
+- **Saving a setting leaves the rest of `.dispatch/config.yml` as you wrote
+  it.** A long line, such as a verify or preview command, is no longer wrapped
+  onto a second line, a file with CRLF line ends keeps them, and a block whose
+  keys are all commented out takes a save instead of refusing it with "Expected
+  YAML collection".
 - **A run's messages stay between the people in them.** A message delivered to a
   run, a channel digest and a run's own message to a person now show in the
   run's chat only for the people the message is between and for teammates who

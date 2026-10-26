@@ -75,6 +75,12 @@ team-server work has to cross.
 | `notes.json`      | Triage notes and follow-ups                                 |
 | `inbox/`          | Per-actor inbox (per-actor files, so merges don't collide)  |
 
+`config.yml` is hand-written and reviewed, so Settings (`PATCH /api/config`,
+core's `updateConfig`) edits it in place. Only the keys a save names change:
+comments, key order and keys Dispatch does not know stay as they are, a long
+line is not wrapped and CRLF line ends are kept. The loader checks the whole
+patched file before it is written.
+
 **Outside the repo, machine-local, never committed** —
 `$DISPATCH_HOME/.dispatch/runs/<sha256(rootDir)[:12]>/`:
 
@@ -368,8 +374,11 @@ and the CLI, which uses the shared agent token, gets every bus message's entry
 redacted.
 
 **Switches.** Two `.dispatch/config.yml` blocks, read when a turn or a run
-starts. They are rollback switches, so both default to `live`; YAML `true` and
-`false` read as `live` and `off`. Neither is in Settings yet.
+starts, so a change applies from the Overseer's next turn and to runs started
+after it. They are rollback switches, so both default to `live`; YAML `true` and
+`false` read as `live` and `off`. Settings → Agents → Streaming sets them
+through `PATCH /api/config` (`overseer: { stream }`, `runs: { stream }`; `null`
+removes the key), at the decide tier every config save needs.
 
 ```yaml
 overseer:
