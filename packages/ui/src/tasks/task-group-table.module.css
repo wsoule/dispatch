@@ -30,6 +30,12 @@
   --task-check-col: 30px;
   --task-actions-col: 40px;
   --task-lead: 0px;
+  /* A nested sub-issue (TaskRowData.indent): one step per level, added to
+     the title cell's left padding only (the key moves in with the title;
+     the grid columns stay). --task-nest-pad is the row's own total, set by
+     its data-indent below; 0 for a top-level row. */
+  --task-nest: 20px;
+  --task-nest-pad: 0px;
 
   position: relative;
   /* clip, not hidden: the panel keeps its rounded corners without
@@ -303,6 +309,23 @@
   margin: -4px -6px -4px 0;
 }
 
+/* The group's "+" (TaskGroupData.onAdd): a 26px quiet icon Button before
+   the "…", above the toggle target like it; the Button brings its own
+   quiet voice, hover fill and focus ring. The negative margins keep the
+   header at its height. */
+.groupAdd {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  margin: -4px 0;
+}
+
+.groupAdd:last-child {
+  margin-right: -6px;
+}
+
 /* Why a dragged row cannot land here ("Already there."): a tooltip does
    not show during a drag, so the header says it. */
 .dropReason {
@@ -413,7 +436,18 @@
   align-items: baseline;
   column-gap: 8px;
   min-width: 0;
-  padding: 0 10px 0 var(--task-indent);
+  padding: 0 10px 0 calc(var(--task-indent) + var(--task-nest-pad));
+}
+
+/* A sub-issue's row (data-indent, from TaskRowData.indent): the title cell
+   moves in one step per level; nothing else about the row changes, so the
+   nesting shows in forced colours too (it is layout, not colour). */
+.row[data-indent='1'] {
+  --task-nest-pad: var(--task-nest);
+}
+
+.row[data-indent='2'] {
+  --task-nest-pad: calc(2 * var(--task-nest));
 }
 
 /* Issue keys are ids: Geist Mono, small and quiet. */
@@ -1050,8 +1084,9 @@
     padding-left: calc(30px + var(--task-lead));
   }
 
-  /* The "…" stays on the title's line, at its end. */
-  .groupActions {
+  /* The "…" (and the "+") stay on the title's line, at its end. */
+  .groupActions,
+  .groupAdd {
     align-self: flex-start;
     margin-top: -2px;
   }
@@ -1072,7 +1107,9 @@
     align-items: center;
     gap: 6px 14px;
     min-height: 0;
-    padding: 9px var(--task-pad-x) 10px var(--task-indent);
+    /* A nested row's whole card moves in (its meta wraps under its title). */
+    padding: 9px var(--task-pad-x) 10px
+      calc(var(--task-indent) + var(--task-nest-pad));
   }
 
   .titleCell {
@@ -1125,7 +1162,9 @@
 
   /* Rows start after the checkbox gutter, under the group's mark. */
   .root[data-select] .row {
-    padding-left: calc(var(--task-indent) + var(--task-lead));
+    padding-left: calc(
+      var(--task-indent) + var(--task-lead) + var(--task-nest-pad)
+    );
   }
 
   .row > .checkCell {
@@ -1146,11 +1185,12 @@
   }
 }
 
-/* Touch: the row's checkbox and "…" are 40px targets (the box itself
-   stays 16px; its label takes the taps). */
+/* Touch: the row's checkbox, "…" and the group's "+" are 40px targets (the
+   box itself stays 16px; its label takes the taps). */
 @media (pointer: coarse) {
   .checkCell label,
-  .actionsCell button {
+  .actionsCell button,
+  .groupAdd button {
     justify-content: center;
     min-width: 40px;
     min-height: 40px;

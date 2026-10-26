@@ -416,8 +416,16 @@ changes).
 `TaskGroupTable` takes optional props for a list people act on (the planner's
 Issues page). With none of them it renders exactly what it rendered before (a
 DOM snapshot of My week's props guards that). Its groups and rows are memoized,
-so a selection, a fold or a host render redraws only the rows it touches: the
-event callbacks (`onOpenRow`, `onOpenGroup`, `onRowContextMenu`, `selection`'s
+so a selection, a fold or a host render redraws only the rows it touches. A
+group is compared by identity (its header is one cheap draw); a row by value:
+every field of its `TaskRowData`, `chips` (label, tone, filled) and `note`
+(text, tone) by their contents, and of its group only the `id` and `eyebrow` it
+draws. So an adapter that maps its store to fresh sections, groups and rows on
+every event (Dispatch patching one task on a WS message) needs no per-row
+memoisation: only the rows whose data changed redraw, and a group whose object
+changed redraws its header alone. A row that skipped a redraw still fires its
+callbacks with the group as it is now (the table looks it up by id). The event
+callbacks (`onOpenRow`, `onOpenGroup`, `onRowContextMenu`, `selection`'s
 `onChange`, `drag`'s) are read when they run and may change every render, but
 the render slots (`renderCell`, `rowActions`, `groupActions`), `columns` and
 `columnLabels` redraw every row or group when their identity changes: keep them
@@ -499,6 +507,41 @@ stable in a host with many rows.
   host's single-key commands should yield while
   `useCommandPalette().isSequencePending()` is true, so G S and G P still reach
   the palette.
+- **Row keys a host binds** (what reaches `onRowKeyDown`, exactly). The table
+  consumes, on a row, ↑/↓, `j`/`k`, Home/End and ← (to the group), plus with
+  `selection` `x`, Shift+↑/↓ and ⌘/Ctrl+A; it never calls `preventDefault` on
+  anything else. So Enter, Space (`event.key === ' '`), `o`, →, every other
+  letter (`s`, `p`, `a`, `m`, `d`, and `x` without `selection`) and every
+  modified key (⌘C) reach `onRowKeyDown` first. The table opens a row on its
+  click, not in keydown: Enter's default action activates the row's link or
+  button and so calls `onOpenRow` _after_ the host's handler unless the host
+  calls `event.preventDefault()` there (Dispatch: Enter and `o` open the page
+  itself, Space the quick look; prevent both, since Space's default scrolls the
+  page, or presses a callback-only row's button). Keys typed into a host control
+  inside a row (a cell picker's field, an open popover) never arrive.
+- **`indent`** (`TaskRowData.indent`, `0 | 1 | 2`): a sub-issue nested under the
+  row before it. The row carries `data-indent` and its title cell (the key and
+  the title together) moves in one 20px step per level (`--task-nest`), on the
+  card too; the grid columns, the row's accessible name and its words are
+  unchanged, so the nesting is layout and holds in forced colours. Dispatch
+  nests sub-tasks one level under their parent.
+- **`addLabel` / `onAdd`** (`TaskGroupData`, both or neither): a "+" icon button
+  (a quiet 26px `Button`, named and titled by `addLabel`: "New task in
+  Dual-write") at the end of the group header, before the `groupActions` slot,
+  above the header's fold target (a click adds, never folds), 40px on a coarse
+  pointer; ↑/↓ skip it (it is not a nav item). Verbs that act on the group
+  (Dispatch's Send agents…, Pause, Resume, Land; the planner's weight) stay in
+  `groupActions(group)` as the host's "…" menu (a `PickerPopover` with
+  `action`), so every header keeps one quiet control however many verbs apply
+  and the menu brings its own keyboard, Esc and focus return; a row of inline
+  verb buttons per header was considered and declined as clutter.
+- **Live.** A running agent is a row chip in the `info` tone,
+  `{ label: 'Working', tone: 'info' }` (Gr8r's status pill: a 6px blue dot and
+  the words), or `filled` for the stronger claim ("Live"). There is no pulsing
+  dot and no `live` prop: motion is never a cue here (the words say the state,
+  as `UiTone` rules: "in progress, running, live" are blue), so the table's
+  sheet has no animation and reduced motion has nothing to switch off beyond its
+  transitions.
 
 `ViewToolbar` lays out Gr8r's list toolbar, one 44px row over a `--border` rule:
 a 26px search field with a leading magnifier (a `--control-border` edge and the

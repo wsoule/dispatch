@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowUpRight, ChevronRight, GripVertical } from 'lucide-react';
+import { ArrowUpRight, ChevronRight, GripVertical, Plus } from 'lucide-react';
 import {
   type CSSProperties,
   type DragEvent,
@@ -23,6 +23,7 @@ import { useLatest } from '../edit/save-state';
 import { Link } from '../lib/link';
 import { isTypingTarget, useMediaQuery } from '../shell/dom';
 import type { UiTone } from '../types';
+import { Button } from './button';
 import { Checkbox } from './checkbox';
 import { Chip } from './chip';
 import { cx } from './class-names';
@@ -38,6 +39,7 @@ import { PriorityGlyph, StateGlyph } from './task-glyphs';
 import styles from './task-group-table.module.css';
 import { pruneSelection, rangeIds, setIds, toggleId } from './task-selection';
 import type {
+  TaskChipData,
   TaskColumnId,
   TaskDragProps,
   TaskGroupData,
@@ -230,12 +232,17 @@ interface RowSlots {
 
    Groups and rows are memoized: a selection, a fold or a host render
    that changes nothing of theirs leaves them as they are, so a click on
-   a 300-row list redraws the rows it touches, not all of them. The
-   callbacks a row calls on an event (onOpenRow, onOpenGroup,
-   onRowContextMenu) are read at call time and need not be stable; the
-   render slots (renderCell, rowActions, groupActions) redraw every row
-   or group when their identity changes, so a host with many rows keeps
-   them stable (useCallback). */
+   a 300-row list redraws the rows it touches, not all of them. A group
+   is compared by identity (its header is one cheap draw); a row by value
+   (rowPropsEqual: every field of its TaskRowData, chips and note
+   included, and of its group only the id and eyebrow it draws), so a
+   host that rebuilds its sections, groups and rows from scratch on every
+   event redraws only the rows whose data changed. The callbacks a row
+   calls on an event (onOpenRow, onOpenGroup, onRowContextMenu) are read
+   at call time, get the current group object, and need not be stable;
+   the render slots (renderCell, rowActions, groupActions) redraw every
+   row or group when their identity changes, so a host with many rows
+   keeps them stable (useCallback). */
 export function TaskGroupTable({
   sections,
   columns = DEFAULT_COLUMNS,
@@ -403,6 +410,7 @@ export function TaskGroupTable({
     drag,
     shownOrder,
     collapsed,
+    groupById,
     setGroupCollapsed,
     onOpenRow,
     onOpenGroup,
@@ -561,19 +569,27 @@ export function TaskGroupTable({
 
   // The event callbacks rows and groups get: stable while the host's
   // handler is there (read at call time), undefined while it is not, as
-  // the rows and groups draw differently without one.
+  // the rows and groups draw differently without one. A row that skipped
+  // a redraw (rowPropsEqual: its group object changed, its data did not)
+  // still holds the group it last drew, so the host gets the group as it
+  // is now, found by id.
   const stable = useMemo(
     () => ({
       toggleGroup: (group: TaskGroupData, shut: boolean) =>
         latest.current.setGroupCollapsed(group, shut),
       openRow: (row: TaskRowData, group: TaskGroupData) =>
-        latest.current.onOpenRow?.(row, group),
+        latest.current.onOpenRow?.(row, currentGroup(latest.current, group)),
       openGroup: (group: TaskGroupData) => latest.current.onOpenGroup?.(group),
       contextMenu: (
         event: MouseEvent<HTMLElement>,
         row: TaskRowData,
         group: TaskGroupData
-      ) => latest.current.onRowContextMenu?.(event, row, group),
+      ) =>
+        latest.current.onRowContextMenu?.(
+          event,
+          row,
+          currentGroup(latest.current, group)
+        ),
     }),
     [latest]
   );
@@ -805,6 +821,16 @@ export function TaskGroupTable({
       ))}
     </div>
   );
+}
+
+/** The group as the latest render has it, for a callback a row fires with
+    the group object it last drew (the row itself when the group is gone,
+    which a refresh between the draw and the click can do). */
+function currentGroup(
+  latest: { groupById: Map<string, TaskGroupData> },
+  group: TaskGroupData
+): TaskGroupData {
+  return latest.groupById.get(group.id) ?? group;
 }
 
 /** Draws the drag image: a small inverted card naming how many rows move
@@ -1156,6 +1182,18 @@ const Group = memo(function Group({
             </span>
           ) : null}
         </div>
+        {group.onAdd !== undefined && group.addLabel !== undefined ? (
+          <span className={styles.groupAdd}>
+            <Button
+              variant="quiet"
+              size="sm"
+              icon={<Plus size={14} strokeWidth={1.8} />}
+              aria-label={group.addLabel}
+              title={group.addLabel}
+              onClick={group.onAdd}
+            />
+          </span>
+        ) : null}
         {groupActions !== undefined ? (
           <span className={styles.groupActions}>{groupActions(group)}</span>
         ) : null}
@@ -1233,7 +1271,82 @@ interface RowProps {
   slots: RowSlots;
 }
 
-/** One row; memoized, so it redraws only when its own props change. */
+/** Whether two rows' chips say the same things (label, tone, filled), so a
+    chips array an adapter rebuilds on every event counts as unchanged. */
+function sameChips(
+  a: readonly TaskChipData[] | undefined,
+  b: readonly TaskChipData[] | undefined
+): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined || a.length !== b.length) return false;
+  return a.every((chip, i) => {
+    const other = b[i];
+    return (
+      other !== undefined &&
+      chip.label === other.label &&
+      chip.tone === other.tone &&
+      chip.filled === other.filled
+    );
+  });
+}
+
+/** A row's field by name (TaskRowData is an interface, so it has no index
+    signature of its own). */
+function fieldOf(row: TaskRowData, key: string): unknown {
+  return (row as unknown as Record<string, unknown>)[key];
+}
+
+/** Whether two TaskRowData say the same things: every field by identity
+    except `chips` (sameChips) and `note` (text and tone), the two an
+    adapter builds fresh each time. A field present on one side only is
+    compared as undefined. About twenty comparisons per row, run only when
+    the row's group redraws (its object changed). */
+function sameRow(a: TaskRowData, b: TaskRowData): boolean {
+  if (a === b) return true;
+  const keys = new Set<string>([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) {
+    if (key === 'chips') {
+      if (!sameChips(a.chips, b.chips)) return false;
+    } else if (key === 'note') {
+      if (
+        a.note !== b.note &&
+        (a.note === undefined ||
+          b.note === undefined ||
+          a.note.text !== b.note.text ||
+          a.note.tone !== b.note.tone)
+      ) {
+        return false;
+      }
+    } else if (fieldOf(a, key) !== fieldOf(b, key)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * React.memo's test for a row: its data by value (sameRow), its group by
+ * the two fields the row draws (id, and the eyebrow the project cell is
+ * checked against), every other prop by identity. A host that rebuilds
+ * its sections from scratch on each event (new groups, new row objects)
+ * so redraws only the rows whose data changed; the callbacks it fires get
+ * the current group through the table (currentGroup), never the one the
+ * row last drew.
+ */
+function rowPropsEqual(prev: RowProps, next: RowProps): boolean {
+  for (const key of Object.keys(next) as (keyof RowProps)[]) {
+    if (key === 'row' || key === 'group') continue;
+    if (prev[key] !== next[key]) return false;
+  }
+  return (
+    prev.group.id === next.group.id &&
+    prev.group.eyebrow === next.group.eyebrow &&
+    sameRow(prev.row, next.row)
+  );
+}
+
+/** One row; memoized, so it redraws only when its own props change
+    (rowPropsEqual). */
 const Row = memo(function Row({
   row,
   group,
@@ -1329,6 +1442,9 @@ const Row = memo(function Row({
       data-pending={row.pending === true ? 'true' : undefined}
       data-done={row.done === true ? 'true' : undefined}
       data-dragged={isDragged ? 'true' : undefined}
+      data-indent={
+        row.indent !== undefined && row.indent > 0 ? row.indent : undefined
+      }
       onContextMenu={
         onContextMenu === undefined
           ? undefined
@@ -1450,7 +1566,7 @@ const Row = memo(function Row({
       ) : null}
     </li>
   );
-});
+}, rowPropsEqual);
 
 /** The longest last word a title glues to its ↗ (a longer one wraps
     on its own rather than overflow the row). */

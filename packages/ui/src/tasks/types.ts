@@ -365,6 +365,13 @@ export interface TaskRowData {
       saved"). Any tone but default and muted draws the line in its TEXT
       colour. */
   note?: { text: string; tone?: UiTone };
+  /** A sub-issue nested under the row before it: its title cell (key and
+      title) moves in by one 20px step per level (`data-indent` on the
+      row), the grid columns stay where they are, and the row's name and
+      words are unchanged (the nesting is layout, kept in forced colours).
+      Dispatch nests sub-tasks one level under their parent. 0 and absent
+      are the same. */
+  indent?: 0 | 1 | 2;
 }
 
 export interface TaskGroupProgress {
@@ -424,6 +431,14 @@ export interface TaskGroupData {
    * does not ask drag.canDrop and shows nothing while a row is dragged
    * over it). Default: every group is asked. */
   droppable?: boolean;
+  /** A "+" icon button at the end of the header (before the groupActions
+   * slot) that adds a row here ("New task in Dual-write"): `addLabel` is
+   * its accessible name and tooltip, `onAdd` what a click does. Both or
+   * neither. Verbs that act on the group (Send agents…, Pause, Land) go
+   * through TaskGroupTableProps.groupActions as the host's "…" menu, so
+   * every header keeps one quiet control however many verbs apply. */
+  addLabel?: string;
+  onAdd?: () => void;
 }
 
 export interface TaskSectionData {
@@ -474,10 +489,16 @@ export interface TaskGroupTableProps {
   /** The row the host has open (in a drawer, a detail pane): it takes the
    * accent tint and bar (Gr8r's selected row) and is marked aria-current. */
   activeRowId?: string;
-  /** Keys on a focused row that the table's own model (arrows, j/k,
-   * Home/End) leaves alone, modified keys included: lets a host layer
-   * single-key commands (Dispatch's x / s / p, ⌘C) without owning focus.
-   * Call event.preventDefault() for keys it handles. */
+  /** Keys on a focused row that the table's own model leaves alone,
+   * modified keys included: lets a host layer single-key commands
+   * (Dispatch's s / p / a / m / d, Space, o, ⌘C) without owning focus.
+   * The table keeps ↑/↓, j/k, Home/End and ← (and with `selection` x,
+   * Shift+↑/↓ and ⌘/Ctrl+A); everything else reaches this first, Enter
+   * and Space included: Enter then activates the row's link or button
+   * (onOpenRow) unless the host calls event.preventDefault(), and Space
+   * would scroll the page (or press a callback-only row's button), so a
+   * host that binds it prevents it too. Keys typed into a host control in
+   * a row (a cell picker) never arrive. */
   onRowKeyDown?: (
     event: KeyboardEvent<HTMLElement>,
     row: TaskRowData,

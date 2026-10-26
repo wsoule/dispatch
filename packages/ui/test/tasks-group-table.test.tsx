@@ -1749,3 +1749,335 @@ describe('TaskGroupTable status colours on the issue list', () => {
     );
   });
 });
+
+/* ---- Dispatch's list: nesting, the group "+", row keys, live, rebuilds --- */
+
+const TABLE_CSS = readFileSync(
+  path.join(
+    import.meta.dir,
+    '..',
+    'src',
+    'tasks',
+    'task-group-table.module.css'
+  ),
+  'utf8'
+);
+
+describe('TaskGroupTable nested rows (indent)', () => {
+  test('a sub-issue row carries its level; its name, words and the grid are unchanged', () => {
+    const view = renderTable({
+      sections: [
+        {
+          id: 's',
+          groups: [
+            {
+              id: 'g',
+              title: 'Cutover',
+              rows: [
+                row('p-1'),
+                row('c-1', { indent: 1 }),
+                row('c-2', { indent: 2 }),
+                row('z-1', { indent: 0 }),
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const item = (name: string) =>
+      view.getByRole('link', { name }).closest('li') as HTMLElement;
+    expect(item('Issue p-1').hasAttribute('data-indent')).toBe(false);
+    expect(item('Issue z-1').hasAttribute('data-indent')).toBe(false);
+    expect(item('Issue c-1').getAttribute('data-indent')).toBe('1');
+    expect(item('Issue c-2').getAttribute('data-indent')).toBe('2');
+    // The nesting is layout: no words join the name, the row carries no
+    // inline style and the table's grid is the one every row shares.
+    expect(view.getByRole('link', { name: 'Issue c-1' }).textContent).toBe(
+      'Issue c-1'
+    );
+    expect(item('Issue c-1').textContent).toBe(
+      item('Issue p-1').textContent?.replace(/P-1|p-1/g, (m) =>
+        m === 'P-1' ? 'C-1' : 'c-1'
+      )
+    );
+    expect(item('Issue c-2').hasAttribute('style')).toBe(false);
+    expect(
+      view
+        .getByRole('group', { name: 'My issues' })
+        .style.getPropertyValue('--task-cols')
+    ).toBe('minmax(0, 1fr) 156px 136px 128px 88px');
+    // One 20px step per level, on the title cell's padding (desktop) and
+    // the card's (stacked); the key moves in with the title.
+    expect(TABLE_CSS).toMatch(
+      /\.row\[data-indent='1'\] \{\s*--task-nest-pad: var\(--task-nest\);\s*\}/
+    );
+    expect(TABLE_CSS).toMatch(
+      /\.row\[data-indent='2'\] \{\s*--task-nest-pad: calc\(2 \* var\(--task-nest\)\);\s*\}/
+    );
+    expect(TABLE_CSS).toContain('--task-nest: 20px;');
+    expect(TABLE_CSS).toContain(
+      'padding: 0 10px 0 calc(var(--task-indent) + var(--task-nest-pad));'
+    );
+    // Never colour: no hue, tone or fill keys on the level.
+    expect(TABLE_CSS).not.toMatch(
+      /data-indent[^{]*\{[^}]*(color|background|--tone|border)/
+    );
+  });
+});
+
+describe('TaskGroupTable group "+" (addLabel / onAdd)', () => {
+  test('an icon button named by addLabel sits at the header’s end before the groupActions slot', () => {
+    const onAdd = mock(() => {});
+    const onToggleGroup = mock((_id: string, _c: boolean) => {});
+    const view = renderTable({
+      sections: [
+        {
+          id: 's',
+          groups: [
+            {
+              id: 'g1',
+              title: 'Cutover',
+              addLabel: 'New issue in Cutover',
+              onAdd,
+              rows: [row('a-1')],
+            },
+            {
+              id: 'g2',
+              title: 'Public beta',
+              // One without the other draws nothing.
+              addLabel: 'New issue in Public beta',
+              rows: [row('b-1')],
+            },
+          ],
+        },
+      ],
+      groupActions: (g) => (
+        <button type="button" aria-label={`Actions for ${g.title}`}>
+          …
+        </button>
+      ),
+      onToggleGroup,
+    });
+    const add = view.getByRole('button', { name: 'New issue in Cutover' });
+    expect(add.getAttribute('title')).toBe('New issue in Cutover');
+    expect(add.getAttribute('data-variant')).toBe('quiet');
+    fireEvent.click(add);
+    expect(onAdd).toHaveBeenCalledTimes(1);
+    // A click adds; it never folds the group under it.
+    expect(onToggleGroup).not.toHaveBeenCalled();
+    const toggle = toggleOf('Cutover')(view);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    const names = (groupId: string) =>
+      within(
+        view.container.querySelector(
+          `[data-group-id="${groupId}"] [data-nav-item="group"]`
+        ) as HTMLElement
+      )
+        .getAllByRole('button')
+        .map((b) => b.getAttribute('aria-label'));
+    expect(names('g1')).toEqual([
+      'Cutover',
+      'New issue in Cutover',
+      'Actions for Cutover',
+    ]);
+    expect(names('g2')).toEqual(['Public beta', 'Actions for Public beta']);
+    // Not a nav item: ↓ from the toggle lands on the first row.
+    toggle.focus();
+    fireEvent.keyDown(toggle, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(
+      view.getByRole('link', { name: 'Issue a-1' })
+    );
+    // It sits above the header's toggle target, as the "…" does.
+    expect(TABLE_CSS).toMatch(/\.groupAdd \{[^}]*z-index: 1;/);
+    expect(TABLE_CSS).toMatch(
+      /\.groupActions,\s*\.groupAdd \{\s*align-self: flex-start;/
+    );
+    expect(TABLE_CSS).toMatch(/\.actionsCell button,\s*\.groupAdd button \{/);
+  });
+});
+
+describe('TaskGroupTable row keys a host binds', () => {
+  test('Enter, Space, o and → reach onRowKeyDown unconsumed; the host takes Enter over by preventing it', () => {
+    const seen: string[] = [];
+    let take = false;
+    const view = renderTable({
+      onOpenRow: () => undefined,
+      onRowKeyDown: (event, r) => {
+        seen.push(`${event.key}:${r.id}`);
+        if (take) event.preventDefault();
+      },
+    });
+    const link = view.getByRole('link', { name: 'Issue a-1' });
+    link.focus();
+    // true = not prevented: the key's default (Enter activating the link,
+    // Space scrolling) still follows unless the host prevents it.
+    expect(fireEvent.keyDown(link, { key: 'Enter' })).toBe(true);
+    expect(fireEvent.keyDown(link, { key: ' ' })).toBe(true);
+    expect(fireEvent.keyDown(link, { key: 'o' })).toBe(true);
+    expect(fireEvent.keyDown(link, { key: 'ArrowRight' })).toBe(true);
+    // Without `selection`, x is the host's too.
+    expect(fireEvent.keyDown(link, { key: 'x' })).toBe(true);
+    expect(seen).toEqual([
+      'Enter:a-1',
+      ' :a-1',
+      'o:a-1',
+      'ArrowRight:a-1',
+      'x:a-1',
+    ]);
+    expect(document.activeElement).toBe(link);
+    take = true;
+    expect(fireEvent.keyDown(link, { key: 'Enter' })).toBe(false);
+    expect(fireEvent.keyDown(link, { key: ' ' })).toBe(false);
+    // ← stays the table's (it goes to the group) and never arrives.
+    seen.length = 0;
+    fireEvent.keyDown(link, { key: 'ArrowLeft' });
+    expect(document.activeElement).toBe(toggleOf('Atlas, Cutover')(view));
+    expect(seen).toEqual([]);
+  });
+});
+
+describe('TaskGroupTable live rows', () => {
+  test('a running agent is a chip in the info tone (the dot pill); the table animates nothing', () => {
+    const view = renderTable({
+      sections: [
+        {
+          id: 's',
+          groups: [
+            {
+              id: 'g',
+              title: 'Cutover',
+              rows: [
+                row('a-1', {
+                  chips: [
+                    { label: 'Agent working', tone: 'info' },
+                    { label: 'Live', tone: 'info', filled: true },
+                  ],
+                }),
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const item = view.getByRole('link', { name: 'Issue a-1' }).closest('li');
+    const working = within(item as HTMLElement)
+      .getByText('Agent working')
+      .closest('[data-tone]');
+    expect(working?.getAttribute('data-tone')).toBe('info');
+    expect(working?.hasAttribute('data-filled')).toBe(false);
+    // The pill's 6px dot (decorative: the words say the state).
+    expect(working?.querySelector('[aria-hidden="true"]')).not.toBeNull();
+    const live = within(item as HTMLElement)
+      .getByText('Live')
+      .closest('[data-tone]');
+    expect(live?.hasAttribute('data-filled')).toBe(true);
+    // No pulse: motion is never a cue here, so reduced motion has nothing
+    // to switch off beyond the transitions.
+    expect(TABLE_CSS).not.toMatch(/@keyframes|animation/);
+  });
+});
+
+// Dispatch patches one task on a WS event and its adapter maps the store
+// to fresh sections, groups and rows each time: only the rows whose data
+// changed may redraw. Counted through renderCell, as above.
+describe('TaskGroupTable redraws on a rebuilt model', () => {
+  const COLUMNS: TaskColumnId[] = ['state'];
+  function RebuildHost({
+    drawn,
+    opened,
+  }: {
+    drawn: string[];
+    opened: TaskGroupData[];
+  }) {
+    const [version, setVersion] = useState(0);
+    const [renderCell] = useState(
+      () =>
+        (column: string, r: TaskRowData): undefined => {
+          if (column === 'state') drawn.push(r.id);
+          return undefined;
+        }
+    );
+    // New arrays and objects every render; what they say changes one
+    // thing per version: a-2's state (1), the group's count (2), a-1's
+    // chip (3), the group's eyebrow (4).
+    const sections: TaskSectionData[] = [
+      {
+        id: 'week',
+        label: 'This week',
+        groups: [
+          {
+            id: 'g1',
+            eyebrow: version >= 4 ? 'Beacon' : 'Atlas',
+            title: 'Cutover',
+            count: version >= 2 ? 3 : 2,
+            rows: [
+              row('a-1', {
+                chips: [
+                  {
+                    label: version >= 3 ? 'Blocked by 2' : 'Blocked',
+                    tone: 'warning',
+                    filled: true,
+                  },
+                ],
+                note: { text: 'Moving…' },
+              }),
+              row('a-2', { state: version >= 1 ? 'Done' : 'Todo' }),
+              row('a-3', { indent: 1 }),
+            ],
+          },
+        ],
+      },
+    ];
+    return (
+      <UiLinkProvider link={HostLink}>
+        <button type="button" onClick={() => setVersion(version + 1)}>
+          {`Version ${version}`}
+        </button>
+        <TaskGroupTable
+          sections={sections}
+          label="Issues"
+          columns={COLUMNS}
+          renderCell={renderCell}
+          onOpenRow={(_r, g) => {
+            opened.push(g);
+          }}
+        />
+      </UiLinkProvider>
+    );
+  }
+
+  test('only the rows whose data changed redraw; a callback gets the group as it is now', () => {
+    const drawn: string[] = [];
+    const opened: TaskGroupData[] = [];
+    const view = render(<RebuildHost drawn={drawn} opened={opened} />);
+    expect(drawn.sort()).toEqual(['a-1', 'a-2', 'a-3']);
+    const next = (version: number) =>
+      fireEvent.click(view.getByRole('button', { name: `Version ${version}` }));
+
+    drawn.length = 0;
+    next(0); // a-2's state
+    expect(drawn).toEqual(['a-2']);
+    expect(
+      view.getByRole('link', { name: 'Issue a-2' }).closest('li')?.textContent
+    ).toContain('State: Done');
+
+    drawn.length = 0;
+    next(1); // the group's count only: its header redraws, no row does
+    expect(drawn).toEqual([]);
+    expect(
+      view.container.querySelector('[data-group-id="g1"]')?.textContent
+    ).toContain('3 issues');
+    // a-1 kept its draw, yet a click on it reports the current group.
+    fireEvent.click(view.getByRole('link', { name: 'Issue a-1' }));
+    expect(opened).toHaveLength(1);
+    expect(opened[0]?.count).toBe(3);
+
+    drawn.length = 0;
+    next(2); // a-1's chip, rebuilt as a new array each time
+    expect(drawn).toEqual(['a-1']);
+
+    drawn.length = 0;
+    next(3); // the eyebrow: the project cell is checked against it
+    expect(drawn.sort()).toEqual(['a-1', 'a-2', 'a-3']);
+  });
+});
