@@ -16,9 +16,9 @@ export type ChatPanelProps = {
   composer: ReactNode;
 };
 
-/** Card-framed chat panel: a segmented tab strip up top (matching ui/tabs.tsx's
- * lifted-active treatment — `bg-card` + `shadow-btn` on the active tab, a dot for
- * tabs with unread activity), a scrollable message area for `children` (typically
+/** Card-framed chat panel: a segmented tab strip up top (a lifted active tab —
+ * `bg-card` + `shadow-btn` — and a dot for tabs with unread activity), a
+ * scrollable message area for `children` (typically
  * `ChatMessage` rows), and a `composer` slot pinned to the bottom. Fully controlled:
  * tab selection lives with the caller. Matches the showcase's "Chat" primitive. */
 export function ChatPanel({

@@ -11,9 +11,9 @@ import {
   deriveTaskFeedState,
   FEED_STATE_LABEL,
   FEED_STATE_ORDER,
+  feedStateToTaskRowState,
   isInFlightState,
   isUrgentState,
-  tintForState,
 } from './feedState';
 
 // Only the fields deriveFeedState reads, matching the fixture style in runState.test.ts.
@@ -186,16 +186,50 @@ describe('state metadata', () => {
       'landing',
     ]);
   });
+
+  // Pinned word for word: the labels are the asks a person reads, and the order is what the
+  // feed groups render in, so moving this vocabulary between modules must not change either.
+  test('the labels and the full order are the shipped ones', () => {
+    expect(
+      FEED_STATE_ORDER.map((state) => [state, FEED_STATE_LABEL[state]])
+    ).toEqual([
+      ['answer', 'Answer'],
+      ['approve', 'Approve'],
+      ['review', 'Review'],
+      ['ruling', 'Ruling'],
+      ['unblock', 'Unblock'],
+      ['failed', 'Failed'],
+      ['working', 'Working'],
+      ['fixing', 'Fixing'],
+      ['checking', 'AI review'],
+      ['landing', 'Landing'],
+      ['ready', 'Ready'],
+      ['blocked', 'Blocked'],
+    ]);
+  });
 });
 
-describe('tintForState', () => {
-  test('every state of one tier shares its tint, and tiers differ', () => {
-    expect(tintForState('answer')).toBe(tintForState('review'));
-    expect(tintForState('working')).toBe(tintForState('landing'));
-    expect(tintForState('failed')).not.toBe(tintForState('working'));
-    expect(tintForState('ready')).not.toBe(tintForState('answer'));
-    for (const state of FEED_STATE_ORDER) {
-      expect(tintForState(state)).toMatch(/^var\(--state-[a-z]+-fg\)$/);
-    }
+describe('feedStateToTaskRowState', () => {
+  // AllAgentsView draws its rows through the legacy TaskRow, which has five states of its
+  // own; this is the re-bucketing those rows' marks come from.
+  test('maps every feed state onto the TaskRow state its row shows', () => {
+    expect(
+      Object.fromEntries(
+        FEED_STATE_ORDER.map((state) => [state, feedStateToTaskRowState(state)])
+      )
+    ).toEqual({
+      answer: 'waiting',
+      approve: 'waiting',
+      review: 'done',
+      ruling: 'waiting',
+      unblock: 'waiting',
+      failed: 'failed',
+      working: 'running',
+      fixing: 'running',
+      checking: 'running',
+      landing: 'done',
+      ready: 'queued',
+      blocked: 'queued',
+    });
   });
 });

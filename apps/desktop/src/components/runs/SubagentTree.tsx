@@ -6,6 +6,7 @@ import { flattenSubagentTree, nestSubagents } from '@dispatch-foo/core/browser';
 import { Bot, ChevronDown, ChevronRight } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
+import type { FeedState } from '@/lib/feedState';
 import { cn } from '@/lib/utils';
 import { formatElapsed } from '@/ui/ai/use-elapsed';
 import { StateDot } from '@/ui/chrome/StateDot';
@@ -14,7 +15,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/ui/collapsible';
-import type { FeedState } from '@/ui/lib/feedState';
 
 /** How a sub-agent's status reads as a feed state, so its dot matches every other run's. */
 function dotState(status: SubagentNode['status']): FeedState {

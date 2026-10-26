@@ -26,9 +26,9 @@ const TAG_PREFIX: Record<string, string> = {
   equal: ' ',
 };
 
-// Same row-tint language as `DiffTable`'s add/remove rows: a wash of the green/red
-// background tokens rather than the run-state palette, since these lines are a literal
-// insert/delete diff, not a run's health.
+// Added and removed rows get a wash of the green/red background tokens rather than the
+// run-state palette, since these lines are a literal insert/delete diff, not a run's
+// health.
 const TAG_LINE_CLASS: Record<string, string> = {
   insert: 'bg-[var(--green-bg)]',
   delete: 'bg-[var(--red-bg)]',

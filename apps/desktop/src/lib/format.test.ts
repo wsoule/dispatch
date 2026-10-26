@@ -6,11 +6,11 @@ import {
   formatTokenCount,
   sessionDisplayName,
 } from './format.ts';
-import { colorForProject } from './projectColor.ts';
 
 // Placeholder coverage for the vendored lib helpers (R1 vendor slice). Exercises the pure
-// display-name/time/color helpers so `bun test` has a non-empty desktop suite; richer
-// coverage of the Tauri-backed views lands with R2's Tasks work.
+// display-name, time and token-count helpers so `bun test` has a non-empty desktop suite;
+// richer coverage of the Tauri-backed views lands with R2's Tasks work. colorForProject is
+// covered in projectColor.test.ts.
 describe('sessionDisplayName', () => {
   test('prefers the session title', () => {
     expect(sessionDisplayName('My session', 'A summary')).toBe('My session');
@@ -55,15 +55,5 @@ describe('formatTokenCount', () => {
   test('compacts thousands to one decimal', () => {
     expect(formatTokenCount(1000)).toBe('1.0k tok');
     expect(formatTokenCount(12345)).toBe('12.3k tok');
-  });
-});
-
-describe('colorForProject', () => {
-  test('is deterministic for the same project id', () => {
-    expect(colorForProject('proj-a')).toBe(colorForProject('proj-a'));
-  });
-
-  test('returns one of the 8 project color tokens', () => {
-    expect(colorForProject('proj-a')).toMatch(/^var\(--project-color-[1-8]\)$/);
   });
 });

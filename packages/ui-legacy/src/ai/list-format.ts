@@ -1,6 +1,7 @@
 // The two presentation helpers a Linear-style row shares with the app: the label pill's dot
-// colour and the far-right absolute date. One home so `ui` records and app tasks wear the
-// same hue for the same label and the same `Sep 13` for the same day.
+// colour and the far-right absolute date. The label colour has one home here, so `ui` records
+// and app tasks wear the same hue for the same label. The day formatter now also has an app
+// copy in apps/desktop's lib/taskDates.ts; this one stays until ai/records-table.tsx goes.
 
 const LABEL_COLOR_COUNT = 8;
 

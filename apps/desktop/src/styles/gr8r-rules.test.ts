@@ -9,17 +9,26 @@ import path from 'node:path';
 // focus outline (Gr8r's `:focus-visible` ring is the focus indicator), no uppercase (the
 // `.eyebrow` class is the one uppercase voice), and no Tailwind utilities in Gr8r code (it is
 // styled by CSS modules; Tailwind leaves with packages/ui-legacy). The planner had the same
-// scan (apps/planner/test/gr8r-tokens.test.ts in Better-Tracker).
+// scan (apps/planner/test/gr8r-tokens.test.ts in Better-Tracker). The Gr8r code (GR8R_SCOPE,
+// not the sheets) is also held to the Phase 7 ratchet: it imports neither the legacy library
+// nor `cn`; every `var(--name)` it reads resolves to tokens.css, an app stylesheet other than
+// the bridge and the Tailwind entry (legacy-bridge.css, tailwind.css), a property the file
+// sets itself, or a runtime `--label-color-<hash>` property; and it never builds a name from
+// the bridge's `--project-color-`, `--state-` or `--status-` families, nor any name from a
+// template expression (`var(--${tone}-ink)`), which no static scan can resolve.
 
 const srcDir = path.join(import.meta.dir, '..');
 
-/** The directories of Dispatch's own Gr8r code. Either may not exist yet: an absent one scans
-    as empty, so this passes before the first shell file lands. */
-const GR8R_DIRS = ['shell', 'adapters'].map((name) => path.join(srcDir, name));
-
-/** Gr8r files that sit in directories the legacy views share (components/shell holds the
-    Tailwind-styled palette and dialogs too, lib/ the reducers), listed one by one. */
-const GR8R_FILES = [
+/** Dispatch's Gr8r code, named relative to src/: the ratchet. An entry with a .css, .ts or
+    .tsx extension is one file and must exist; any other entry is a directory, scanned
+    recursively for those extensions, and an absent one scans as empty (`shell` does not exist
+    yet; it stays listed so the first shell file is covered the day it lands). Files that sit
+    in directories the legacy views share (components/shell holds the Tailwind-styled palette
+    and dialogs too, lib/ the reducers) are listed one by one. Every Phase 7 batch appends the
+    files it converts; B16 replaces the list with a scan of all of src/. */
+const GR8R_SCOPE: readonly string[] = [
+  'shell',
+  'adapters',
   'components/graph/GraphTooLarge.tsx',
   'components/graph/GraphTooLarge.module.css',
   'components/peek/PeekSlideOver.tsx',
@@ -70,7 +79,24 @@ const GR8R_FILES = [
   'views/TimelineView.tsx',
   'views/TimelineView.module.css',
   'views/TimelineView.test.tsx',
-].map((name) => path.join(srcDir, name));
+  'lib/format.ts',
+  'lib/format.test.ts',
+  'lib/taskDates.ts',
+  'lib/taskDates.test.ts',
+  'lib/feedState.ts',
+  'lib/feedState.test.ts',
+];
+
+/** GR8R_SCOPE directory entries allowed to be absent. Every other directory entry must exist
+    and hold at least one scanned file, so a misspelt or renamed entry fails instead of
+    silently scanning nothing. `shell` is the one placeholder (see GR8R_SCOPE). */
+const PENDING_DIRS: ReadonlySet<string> = new Set(['shell']);
+
+/** True when a GR8R_SCOPE entry names one file (it carries a scanned extension) rather than a
+    directory. */
+function isFileEntry(entry: string): boolean {
+  return /\.(css|tsx?)$/.test(entry);
+}
 
 /** The transitional sheets: the legacy alias layer and the host's global sheet. */
 const SHEETS = ['legacy-bridge.css', 'global.css'].map((name) =>
@@ -139,13 +165,15 @@ function sources(dir: string): Source[] {
   });
 }
 
-const code = [
-  ...GR8R_DIRS.flatMap(sources),
-  ...GR8R_FILES.map((file) => ({
-    file: path.relative(srcDir, file),
-    text: uncommented(readFileSync(file, 'utf8')),
-  })),
-];
+/** The sources of one GR8R_SCOPE entry: the file itself, or every scanned file under the
+    directory (none when an absent directory is listed). */
+function scopeSources(entry: string): Source[] {
+  const full = path.join(srcDir, entry);
+  if (!isFileEntry(entry)) return sources(full);
+  return [{ file: entry, text: uncommented(readFileSync(full, 'utf8')) }];
+}
+
+const code = GR8R_SCOPE.flatMap(scopeSources);
 const sheets: Source[] = SHEETS.map((file) => ({
   file: path.relative(srcDir, file),
   text: uncommented(readFileSync(file, 'utf8')),
@@ -180,10 +208,120 @@ function classWords(text: string): string[] {
   return words;
 }
 
-/** A Tailwind-shaped utility: an optional variant chain, then one of the common prefixes and a
-    token (`bg-surface`, `hover:text-red`, `px-2`, `flex`, `grid-cols-2`, `outline-none`). */
+/** A Tailwind-shaped utility: an optional variant chain, then either a prefixed token
+    (`bg-surface`, `hover:text-red`, `px-2`, `size-4`, `items-center`, `min-w-0`, `z-10`,
+    `outline-none`) or one of the bare utilities (`flex`, `grid-cols-2`, `truncate`, `hidden`,
+    `shrink-0`, `tabular-nums`, `sr-only`, `uppercase`). The same list as the Phase 7 scratch
+    scan, made permanent here. */
 const TAILWIND_WORD =
-  /^(?:[a-z-]+:)*(?:(?:bg|text|border|rounded|shadow|gap|p[xy]?|m[xy]?|w|h|outline)-[\w[\]()/.%-]+|flex|grid|flex-[\w-]+|grid-[\w-]+)$/;
+  /^(?:[a-z-]+:)*(?:(?:bg|text|border|rounded|shadow|gap|p[xy]?|m[xy]?|w|h|outline|size|min-w|min-h|max-w|max-h|items|justify|font|leading|tracking|ring|fill|stroke|top|left|right|bottom|inset|z|opacity|cursor|overflow|whitespace|line-clamp|animate|duration|ease|space-[xy])-[\w[\]()/.%-]+|flex|grid|flex-[\w-]+|grid-[\w-]+|truncate|hidden|block|inline-flex|relative|absolute|sticky|fixed|shrink-0|grow|uppercase|italic|tabular-nums|sr-only|contents|underline)$/;
+
+/** Every module specifier a TypeScript source names: `from '...'` (imports and re-exports),
+    a bare `import '...'`, a dynamic `import('...')`, a `require('...')` and a test's
+    `mock.module('...')` (mocking a legacy module is still depending on it). */
+function specifiers(text: string): string[] {
+  return [
+    ...text.matchAll(
+      /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*|\bmock\.module\s*\(\s*)(['"])([^'"]+)\1/g
+    ),
+  ].map((match) => match[2] ?? '');
+}
+
+/** True when a specifier reaches code a Gr8r file may not use: the legacy library (through
+    the `@/ui` alias or by package name) or the Tailwind class joiner `cn` in src/lib/utils.ts
+    (through the alias or a relative path, resolved against the importing file's directory so
+    another file named `utils` does not trip it). */
+function isBannedImport(file: string, specifier: string): boolean {
+  if (specifier.startsWith('@/ui/')) return true;
+  if (specifier.startsWith('@dispatch/ui-legacy')) return true;
+  const bare = specifier.replace(/\.(?:ts|js)$/, '');
+  if (bare === '@/lib/utils') return true;
+  if (!bare.startsWith('.')) return false;
+  const target = path.posix.normalize(
+    path.posix.join(path.posix.dirname(file), bare)
+  );
+  return target === 'lib/utils';
+}
+
+/** "file: specifier" for every banned import in the .ts and .tsx sources. */
+function bannedImports(files: Source[]): string[] {
+  return files
+    .filter(({ file }) => /\.tsx?$/.test(file))
+    .flatMap(({ file, text }) =>
+      specifiers(text)
+        .filter((specifier) => isBannedImport(file, specifier))
+        .map((specifier) => `${file}: ${specifier}`)
+    );
+}
+
+/** Every custom property a CSS text declares (`--x:` on the left of a declaration). */
+function declaredIn(text: string): string[] {
+  return [...text.matchAll(/(--[\w-]+)\s*:/g)].map((match) => match[1] ?? '');
+}
+
+/** The custom properties a source sets for itself, which its own `var()` reads may use: a CSS
+    declaration, a quoted style-object key (`'--x': value`) or `setProperty('--x', value)`. */
+function selfSet(text: string): Set<string> {
+  return new Set([
+    ...declaredIn(text),
+    ...[...text.matchAll(/['"](--[\w-]+)['"]\s*:/g)].map((m) => m[1] ?? ''),
+    ...[...text.matchAll(/setProperty\(\s*['"](--[\w-]+)/g)].map(
+      (m) => m[1] ?? ''
+    ),
+  ]);
+}
+
+/** "file: name" for every `var(--name` read that resolves nowhere: not among the declared
+    names (tokens.css plus the app stylesheets), not set by the file itself, and not one of the
+    runtime `--label-color-<hash>` properties lib/labelColor.ts registers. */
+function unresolvedVars(
+  files: Source[],
+  declared: ReadonlySet<string>
+): string[] {
+  return files.flatMap(({ file, text }) => {
+    const own = selfSet(text);
+    const reads = new Set(
+      [...text.matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1] ?? '')
+    );
+    return [...reads]
+      .filter(
+        (name) =>
+          !declared.has(name) &&
+          !own.has(name) &&
+          !name.startsWith('--label-color-')
+      )
+      .map((name) => `${file}: ${name}`);
+  });
+}
+
+/** The bridge's generated families, banned as prefixes: a static resolver cannot expand
+    `var(--project-color-${n})`, and tokens.css declares none of these names. */
+const BRIDGE_PREFIX = /var\(\s*--(?:project-color|state|status)-/g;
+
+/** A custom property whose name starts with a template expression (`var(--${tone}-ink)`):
+    neither the resolver nor BRIDGE_PREFIX can see which name it reads, so it is banned. Pick
+    the whole name from a typed map instead. */
+const DYNAMIC_VAR = /var\(\s*--\$\{/g;
+
+/** Every custom property the scoped code may read without setting it: tokens.css (found
+    through the dependency, as the retired-list test below does) and every app stylesheet
+    except the bridge and the Tailwind entry, CSS modules included. */
+function declaredNames(): Set<string> {
+  const tokens = path.join(
+    path.dirname(Bun.resolveSync('@dispatch/ui/styles.css', import.meta.dir)),
+    'tokens.css'
+  );
+  const appSheets = sources(srcDir).filter(
+    ({ file }) =>
+      file.endsWith('.css') &&
+      file !== 'styles/legacy-bridge.css' &&
+      file !== 'styles/tailwind.css'
+  );
+  return new Set([
+    ...declaredIn(uncommented(readFileSync(tokens, 'utf8'))),
+    ...appSheets.flatMap(({ text }) => declaredIn(text)),
+  ]);
+}
 
 describe('the Gr8r code and the transitional sheets follow the design system', () => {
   test('the sheets and the shell files are found', () => {
@@ -198,11 +336,27 @@ describe('the Gr8r code and the transitional sheets follow the design system', (
         'components/shell/DispatchShell.module.css',
         'components/tasks/detail/TaskDrawer.tsx',
         'components/tasks/detail/useTaskDetail.ts',
+        'lib/feedState.ts',
+        'lib/format.ts',
         'lib/shellRoutes.ts',
+        'lib/taskDates.ts',
         'views/IssuesView.tsx',
         'views/IssuesViewTable.tsx',
       ])
     );
+  });
+
+  test('every scope directory exists and holds files, except the pending ones', () => {
+    const empty = GR8R_SCOPE.filter(
+      (entry) =>
+        !isFileEntry(entry) &&
+        !PENDING_DIRS.has(entry) &&
+        scopeSources(entry).length === 0
+    );
+    expect(empty).toEqual([]);
+    expect(
+      [...PENDING_DIRS].filter((entry) => !GR8R_SCOPE.includes(entry))
+    ).toEqual([]);
   });
 
   test('no file writes a hex colour of its own', () => {
@@ -253,6 +407,134 @@ describe('the Gr8r code and the transitional sheets follow the design system', (
           .map((word) => `${file}: ${word}`)
       );
     expect(found).toEqual([]);
+  });
+
+  test('no scoped file imports the legacy library or cn', () => {
+    expect(bannedImports(code)).toEqual([]);
+  });
+
+  test('every var() read in a scoped file resolves', () => {
+    expect(unresolvedVars(code, declaredNames())).toEqual([]);
+  });
+
+  test('no scoped file reads a bridge status or project colour family', () => {
+    expect(findings(code, BRIDGE_PREFIX)).toEqual([]);
+  });
+
+  test('no scoped file builds a custom property name from an expression', () => {
+    expect(findings(code, DYNAMIC_VAR)).toEqual([]);
+  });
+
+  test('the Tailwind scan catches layout and type utilities, not module classes', () => {
+    const flagged = (text: string) =>
+      classWords(text).filter((word) => TAILWIND_WORD.test(word));
+    expect(
+      flagged(
+        'const a = <span className="truncate items-center size-4 uppercase sr-only" />;'
+      )
+    ).toEqual(['truncate', 'items-center', 'size-4', 'uppercase', 'sr-only']);
+    expect(
+      flagged(
+        "const a = <div className={cx(styles.row, open && 'is-open')} />;"
+      )
+    ).toEqual([]);
+  });
+
+  test('the import ban catches the legacy alias and cn, not the library', () => {
+    const fixture = (text: string): Source[] => [
+      { file: 'views/Fixture.tsx', text },
+    ];
+    expect(
+      bannedImports(fixture("import { Button } from '@/ui/button';"))
+    ).toEqual(['views/Fixture.tsx: @/ui/button']);
+    expect(bannedImports(fixture("import { cn } from '@/lib/utils';"))).toEqual(
+      ['views/Fixture.tsx: @/lib/utils']
+    );
+    expect(bannedImports(fixture("import('../lib/utils');"))).toEqual([
+      'views/Fixture.tsx: ../lib/utils',
+    ]);
+    expect(
+      bannedImports(fixture("import { cn } from '@/lib/utils.ts';"))
+    ).toEqual(['views/Fixture.tsx: @/lib/utils.ts']);
+    expect(
+      bannedImports(
+        fixture(
+          "void mock.module('@/ui/button', () => ({}));\nrequire('@/ui/kbd');"
+        )
+      )
+    ).toEqual([
+      'views/Fixture.tsx: @/ui/button',
+      'views/Fixture.tsx: @/ui/kbd',
+    ]);
+    expect(bannedImports(fixture("import './utils';"))).toEqual([]);
+    expect(
+      bannedImports(fixture("import { cx } from '@dispatch/ui';"))
+    ).toEqual([]);
+  });
+
+  test('the resolver passes tokens and self-set names, and fails a bridge name', () => {
+    const declared = new Set(['--accent']);
+    const fixture = (text: string): Source[] => [
+      { file: 'views/Fixture.module.css', text },
+    ];
+    expect(
+      unresolvedVars(fixture('.a { color: var(--accent); }'), declared)
+    ).toEqual([]);
+    expect(
+      unresolvedVars(fixture('.a { --x: 1px; width: var(--x); }'), declared)
+    ).toEqual([]);
+    expect(
+      unresolvedVars(
+        [
+          {
+            file: 'views/Fixture.tsx',
+            text: "const style = { '--x': '1px', width: 'var(--x)' };",
+          },
+        ],
+        declared
+      )
+    ).toEqual([]);
+    expect(
+      unresolvedVars(
+        fixture('.a { background: var(--surface-panel); }'),
+        declared
+      )
+    ).toEqual(['views/Fixture.module.css: --surface-panel']);
+  });
+
+  test('the prefix ban fails a generated project colour', () => {
+    const files: Source[] = [
+      {
+        file: 'views/Fixture.tsx',
+        text: 'const color = (n: number) => `var(--project-color-${n})`;',
+      },
+    ];
+    expect(findings(files, BRIDGE_PREFIX)).toEqual([
+      'views/Fixture.tsx: var(--project-color-',
+    ]);
+  });
+
+  test('the expression ban fails a name built from a template', () => {
+    const files: Source[] = [
+      {
+        file: 'views/Fixture.tsx',
+        text: 'const ink = (tone: string) => `var(--${tone}-ink)`;',
+      },
+    ];
+    expect(findings(files, DYNAMIC_VAR)).toEqual([
+      'views/Fixture.tsx: var(--${',
+    ]);
+    expect(
+      findings(
+        [
+          {
+            file: 'views/Fixture.tsx',
+            text: "const ink = 'var(--accent-ink)';",
+          },
+        ],
+        DYNAMIC_VAR
+      )
+    ).toEqual([]);
   });
 
   test('the retired list is the one packages/ui tests with', () => {

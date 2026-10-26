@@ -1003,7 +1003,7 @@ words), and its rail tooltip reads "Acme · Switch workspace".
   or the palette's shortcuts.
 
 The palette has no switcher of its own: give `CommandPaletteProvider` plain
-items in a section of your own (the planner's "Workspaces": "Switch to <name>"
+items in a section of your own (the planner's "Workspaces": "Switch to `<name>`"
 with `onSelect`, "Connect another workspace" with `href`) and place it with
 `sectionOrder`.
 

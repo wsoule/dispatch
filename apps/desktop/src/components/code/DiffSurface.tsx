@@ -221,9 +221,9 @@ export function DiffSurface<T = undefined>({
   // parent is a flex column, in which a percentage height can resolve to zero.
   const stateClass =
     'text-muted-foreground flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4';
-  // The icon sits inside an inset chip — same "quiet centered glyph" frame `SearchPanel`'s
-  // empty state and `ContextCard`'s header use, so an empty/error diff pane reads as the
-  // same language as the rest of the reskin rather than a bare floating icon.
+  // The icon sits inside an inset chip — a "quiet centered glyph" frame, so an empty/error
+  // diff pane reads as the same language as the rest of the reskin rather than a bare
+  // floating icon.
   const iconChipClass =
     'bg-surface-inset text-muted-foreground shadow-hairline rounded-control flex size-8 items-center justify-center';
 
