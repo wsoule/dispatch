@@ -18,10 +18,20 @@ holds what a user upgrading needs to know.
   or CLI older than this release, attached to a newer daemon, shows each of
   those as an extra generic "tool" chip, or an extra `[tool ✓] unknown` line in
   `dispatch run --watch`, `run show` and `run watch`, for every Claude run the
-  newer daemon logged.
+  newer daemon logged. An older desktop also shows an empty message card where
+  the newer daemon withholds a run's message from you.
 
 ### Changed
 
+- **A run's messages stay between the people in them.** A message delivered to a
+  run, a channel digest and a run's own message to a person now show in the
+  run's chat only for the people the message is between and for teammates who
+  can decide. Anyone else sees nothing in its place, live and in
+  `GET /api/runs/:id`, and so does the shared agent token: `dispatch run show`,
+  `run watch`, `dispatch run --watch` and `dispatch share` no longer print those
+  messages. Whoever may read one still finds it in the desktop's Threads view.
+- **A Codex run's command output is cut at 2,000 characters** in its chat, with
+  "… (truncated)" at the cut, as an Overseer tool row already was.
 - **`dispatch team invite` now makes a team invite link.** It prints one
   `dispatch-team:` link that a teammate pastes into `dispatch team join` (or
   Settings → Team) to join your signed team. The old behaviour, a sign-in token

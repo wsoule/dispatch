@@ -344,9 +344,28 @@ conversation's live audience (`overseerLiveAudience` in
 `decide` tier or above, the reach the bus mirror of the conversation's lines
 already has through `messageAudience` in `messaging/service.ts`), the
 conversation's owner at any tier, and operator-tier sockets. Never a socket
-opened with the shared agent token. `run.delta` goes to exactly the sockets
-`run.log` reaches, which today is every socket; that is parity on purpose, and
-scoping both is separate work.
+opened with the shared agent token.
+
+**Run audience (decided 2026-10-26).** A run's transcript entry for a bus
+message (`kind: 'message'` with a `messageId`: a message delivered to the run, a
+channel digest, the run's own message to a person) follows that message's
+audience. Its `run.log` frame reaches the sockets `messageAudience` accepts
+whole and every other socket as
+`{ ts, kind: 'message', messageId, redacted: true }` at the same `index`, so
+every window counts the same entries. `GET /api/runs/:id` redacts the same way
+by caller, under the bus's read rule (`DeliveryEngine.canRead`): a run's own
+token reads as that run (the messages delivered to it and its own), the shared
+agent token reads none, and a person reads the messages they take part in, or
+every one at the `decide` tier. Every other entry (the agent's own work, the
+Session composer's turns, a daemon notice from docs or memory, which carries no
+`messageId`) and `run.delta`, the agent's own text as it writes it, reach every
+socket and every request-tier caller: run detail already returns the agent's
+entries to all of them once they are written. Redaction happens on the way out;
+the stored transcript is whole, and the daemon's own readers (review summaries,
+judgments, memory) read it as stored. The desktop, `dispatch run show`,
+`--watch`, `run watch` and `dispatch share` show nothing for a redacted entry,
+and the CLI, which uses the shared agent token, gets every bus message's entry
+redacted.
 
 **Switches.** Two `.dispatch/config.yml` blocks, read when a turn or a run
 starts. They are rollback switches, so both default to `live`; YAML `true` and
@@ -385,15 +404,18 @@ those rows, so a newer daemon is safe with it.
 **Run tool results.** A run's transcript is append-only, so a tool call's
 outcome is an entry of its own. The Claude executor logs each top-level
 `tool_result` for a call the agent itself made as a `tool` entry with the call's
-`toolUseId`, no `toolName`, `status` `done` or `error`, and no output: the
-transcript and its run.log frames reach every request-tier client, and a result
+`toolUseId`, no `toolName`, `status` `done` or `error`, and no output: tool
+entries and their run.log frames reach every request-tier client, and a result
 can carry what the call read (the operator's exported memory, a personal doc, an
-MCP answer). Showing output means scoping run.log first. A sub-agent's results
-are not logged. The Codex executor logs a tool item when it starts and again
-when it completes, both under the item id. The desktop folds each result into
-its call by `toolUseId` (`lib/runLog.ts`), so a chip ends done or failed. In a
-log that reports results, a call shows as running until its result lands; for an
-older daemon, a scripted run, or a sub-agent's call, only the live edge does.
+MCP answer). Showing output means scoping tool entries the way message entries
+are. A sub-agent's results are not logged. The Codex executor logs a tool item
+when it starts and again when it completes, both under the item id. A completed
+command keeps its output, cut at `MAX_TOOL_RESULT_TEXT` characters with
+`… (truncated)` as an Overseer tool row is, because the run chat has always
+shown a Codex command's output. The desktop folds each result into its call by
+`toolUseId` (`lib/runLog.ts`), so a chip ends done or failed. In a log that
+reports results, a call shows as running until its result lands; for an older
+daemon, a scripted run, or a sub-agent's call, only the live edge does.
 `dispatch run show` folds each result into its call's line (✓ or ✗);
 `dispatch run --watch` and `run watch` skip result entries, since the call's own
 line already printed.
