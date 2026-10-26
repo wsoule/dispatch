@@ -5,29 +5,12 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
-import type {
-  ExecutorEvents,
-  ExecutorRun,
-  ExecutorStartOptions,
-  RunMeta,
-} from '../src/orchestrator/types.js';
+import type { RunMeta } from '../src/orchestrator/types.js';
 import { initGitRepo, StallingExecutor } from './orchestrator/helpers.js';
 import { rawFetch, useTestAuth } from './testAuth.js';
 
 // MEM-R8: who an epic session and its auto-fill runs act for, and who may
 // message a live run acting for someone else.
-
-// Keeps each start's events so a test can finish a run by hand.
-class RecordingExecutor extends StallingExecutor {
-  readonly events: ExecutorEvents[] = [];
-  override start(
-    opts: ExecutorStartOptions,
-    events: ExecutorEvents
-  ): ExecutorRun {
-    this.events.push(events);
-    return super.start(opts, events);
-  }
-}
 
 function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
@@ -53,14 +36,14 @@ let fakeHome: string;
 let root: string;
 let handle: ServerHandle;
 let base: string;
-let executor: RecordingExecutor;
+let executor: StallingExecutor;
 const originalHome = process.env.DISPATCH_HOME;
 
 beforeEach(async () => {
   fakeHome = realpathSync(mkdtempSync(join(tmpdir(), 'dispatch-home-')));
   process.env.DISPATCH_HOME = fakeHome;
   root = realpathSync(initGitRepo('dispatch-operator-guards-'));
-  executor = new RecordingExecutor();
+  executor = new StallingExecutor();
   handle = await startServer({
     rootDir: root,
     port: 0,

@@ -9,7 +9,6 @@ import { replayTranscript } from '../../src/orchestrator/transcript.js';
 import { DEFAULT_EXECUTOR_PROFILE } from '../../src/orchestrator/types.js';
 import type {
   ExecutorEvents,
-  ExecutorRun,
   ExecutorStartOptions,
   MemoryPromptPort,
   PreparedMemory,
@@ -67,18 +66,9 @@ class NoToolsExecutor extends StallingExecutor {
   readonly profile = { ...DEFAULT_EXECUTOR_PROFILE, dispatchMcp: false };
 }
 
-// A stalling executor that honours Claude auto memory and keeps each run's events.
+// A stalling executor that honours Claude auto memory.
 class AutoMemoryExecutor extends StallingExecutor {
   readonly profile = { ...DEFAULT_EXECUTOR_PROFILE, autoMemory: true };
-  readonly events: ExecutorEvents[] = [];
-
-  override start(
-    opts: ExecutorStartOptions,
-    events: ExecutorEvents
-  ): ExecutorRun {
-    this.events.push(events);
-    return super.start(opts, events);
-  }
 }
 
 // A scripted executor that honours Claude auto memory and records each start.

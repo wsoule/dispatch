@@ -125,6 +125,7 @@ import {
   runLineage,
   runOperator,
   TERMINAL_RUN_STATES,
+  withoutMessageContent,
 } from './types.js';
 import type { RunUsage } from './usage.js';
 import type { DiffResult, FollowResult } from './worktree.js';
@@ -5176,7 +5177,10 @@ export class Orchestrator {
   private makeEvents(runId: string, streams: boolean): ExecutorEvents {
     const turnId = streams ? this.live.begin(runId) : null;
     return {
-      onEntry: (entry) => {
+      onEntry: (logged) => {
+        // A msg_send / msg_reply call keeps only where it went: what it said
+        // follows the message's audience, which a tool entry cannot.
+        const entry = withoutMessageContent(logged);
         // The entry holds the text its segment streamed, so the segment
         // leaves the live text before anyone hears of the entry: a read
         // after run.log never shows that text twice.

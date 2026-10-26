@@ -199,6 +199,90 @@ describe("a run transcript's message entries", () => {
     }
   });
 
+  // A run reaches a person only through msg_send / msg_reply, and its
+  // executor logs the call before the message posts: as Claude names the
+  // tool for the DM, as Codex does for a reply.
+  it("leave out what a run's msg_send and msg_reply calls said", async () => {
+    const w = world();
+    const outsider = await invite(w, 'out@x.io', 'request');
+    const exchange = await privateExchange(w);
+    const frames = async (token: string) => {
+      const heard: string[] = [];
+      const ws = new WebSocket(
+        `ws://127.0.0.1:${w.handle.port}/ws?token=${token}`
+      );
+      await new Promise((r) => (ws.onopen = r));
+      ws.onmessage = (e) => {
+        const frame = String(e.data);
+        if (frame.includes('"run.log"')) heard.push(frame);
+      };
+      return { heard, close: () => ws.close() };
+    };
+    const sockets = {
+      participant: await frames(exchange.req.token),
+      outsider: await frames(outsider.token),
+      agent: await frames(w.agent),
+    };
+    const events = w.executor.events.at(-1);
+    if (events === undefined) throw new Error('no run events');
+    const ts = new Date().toISOString();
+    events.onEntry({
+      ts,
+      kind: 'tool',
+      toolName: 'mcp__dispatch__msg_send',
+      toolInput: {
+        to: [`human:${exchange.req.handle}`],
+        kind: 'message',
+        body: 'PRIVATE-OUT: rotated it',
+        data: { note: 'PRIVATE-DATA' },
+        choices: ['PRIVATE-CHOICE'],
+      },
+      status: 'running',
+      toolUseId: 'toolu_1',
+    });
+    events.onEntry({
+      ts,
+      kind: 'tool',
+      toolName: 'mcp.dispatch.msg_reply',
+      toolInput: {
+        messageId: 'm-01J00000000000000000000000',
+        body: 'PRIVATE-REPLY',
+        choice: 'PRIVATE-PICK',
+      },
+      status: 'running',
+      toolUseId: 'item_1',
+    });
+    await exchange.send();
+    await waitFor(() =>
+      Object.values(sockets).every((s) => s.heard.length === 4)
+    );
+
+    for (const s of [sockets.outsider, sockets.agent]) {
+      expect(secrets(s.heard.join('\n'))).toEqual([]);
+    }
+    const path = `/api/runs/${exchange.run.runId}`;
+    for (const token of [outsider.token, w.agent]) {
+      const detail = await call(w, token, 'GET', path);
+      expect(detail.status).toBe(200);
+      expect(secrets(detail.text)).toEqual([]);
+    }
+    // Whoever may read the DM reads it on its message entry; the calls keep
+    // where each message went, for every reader.
+    const detail = await call(w, exchange.req.token, 'GET', path);
+    const entries = detail.json.entries as {
+      kind: string;
+      toolInput?: unknown;
+    }[];
+    expect(
+      entries.filter((e) => e.kind === 'tool').map((e) => e.toolInput)
+    ).toEqual([
+      { to: [`human:${exchange.req.handle}`], kind: 'message' },
+      { messageId: 'm-01J00000000000000000000000' },
+    ]);
+    expect(secrets(detail.text).sort()).toEqual(['PRIVATE-IN', 'PRIVATE-OUT']);
+    for (const s of Object.values(sockets)) s.close();
+  });
+
   it('GET /api/runs/:id redacts the ones its caller may not read', async () => {
     const w = world();
     const outsider = await invite(w, 'out@x.io', 'request');

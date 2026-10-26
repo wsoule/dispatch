@@ -37,6 +37,8 @@ holds what a user upgrading needs to know.
   `GET /api/runs/:id`, and so does the shared agent token: `dispatch run show`,
   `run watch`, `dispatch run --watch` and `dispatch share` no longer print those
   messages. Whoever may read one still finds it in the desktop's Threads view.
+  The run's `msg_send` and `msg_reply` calls in its chat now show only whom the
+  message was for, not what it said.
 - **A Codex run's command output is cut at 2,000 characters** in its chat, with
   "… (truncated)" at the cut, as an Overseer tool row already was.
 - **An Overseer action you had not confirmed ends with a restart.** It used to

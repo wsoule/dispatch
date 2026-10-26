@@ -379,16 +379,23 @@ every one at the `decide` tier. Every other entry (the agent's own work, the
 Session composer's turns, a daemon notice from docs or memory, which carries no
 `messageId`) and `run.delta`, the agent's own text as it writes it, reach every
 socket and every request-tier caller: run detail already returns the agent's
-entries to all of them once they are written. Redaction happens on the way out;
-the stored transcript is whole, and the daemon's own readers (review summaries,
-judgments, memory) read it as stored. The two sides reuse the bus's own two
-rules, so a run's chat shows a message where the bus does, and they differ at
-the edges as the bus's do: the socket rule also counts a message's `to`
-addresses and its recipients on a teammate's machine, and the read rule lets a
-run's token read for its whole task (its task's address and other runs). The
-desktop, `dispatch run show`, `--watch`, `run watch` and `dispatch share` show
-nothing for a redacted entry, and the CLI, which uses the shared agent token,
-gets every bus message's entry redacted.
+entries to all of them once they are written. A run reaches anyone only through
+`msg_send` / `msg_reply`, and the agent's tool entry for that call carries no
+`messageId` to redact by, so the daemon keeps only where the message went (`to`,
+`kind`, `messageId`, `blocking`, `urgent`, `wake`; `withoutMessageContent` in
+`orchestrator/types.ts`) before it writes any executor's entry; the text reaches
+a reader through the message's own entry, and a message to another agent, which
+gets none on the sender's transcript, through the bus thread. Redaction of
+message entries happens on the way out; the stored transcript keeps them whole,
+and the daemon's own readers (review summaries, judgments, memory) read it as
+stored. The two sides reuse the bus's own two rules, so a run's chat shows a
+message where the bus does, and they differ at the edges as the bus's do: the
+socket rule also counts a message's `to` addresses and its recipients on a
+teammate's machine, and the read rule lets a run's token read for its whole task
+(its task's address and other runs). The desktop, `dispatch run show`,
+`--watch`, `run watch` and `dispatch share` show nothing for a redacted entry,
+and the CLI, which uses the shared agent token, gets every bus message's entry
+redacted.
 
 **Switches.** Two `.dispatch/config.yml` blocks, read when a turn or a run
 starts, so a change applies from the Overseer's next turn and to runs started

@@ -81,6 +81,53 @@ export function redactMessageEntry(
   return { ts: entry.ts, kind: 'message', messageId, redacted: true };
 }
 
+// Dispatch's own messaging tools as each executor names a call to them:
+// Claude's `mcp__dispatch__<tool>`, Codex's `mcp.dispatch.<tool>`.
+const MESSAGING_TOOL_NAMES: ReadonlySet<string> = new Set(
+  ['msg_send', 'msg_reply'].flatMap((tool) => [
+    `mcp__dispatch__${tool}`,
+    `mcp.dispatch.${tool}`,
+  ])
+);
+
+// The input fields of such a call a transcript keeps: where the message went
+// and how it was sent.
+const MESSAGING_ROUTING_FIELDS = [
+  'to',
+  'kind',
+  'messageId',
+  'blocking',
+  'urgent',
+  'wake',
+] as const;
+
+// A run's msg_send / msg_reply call as its transcript keeps it: the routing
+// fields alone, without the message's body, data, choices, choice or refs.
+// What the call sends is a bus message only its audience may read, but a
+// tool entry carries no messageId to redact it by and reaches every
+// request-tier reader, so the text goes no further than the executor. A
+// message to a human still lands whole as its logOutgoing message entry,
+// which follows the message's audience.
+export function withoutMessageContent(entry: NormalizedEntry): NormalizedEntry {
+  if (
+    entry.kind !== 'tool' ||
+    entry.toolName === undefined ||
+    !MESSAGING_TOOL_NAMES.has(entry.toolName) ||
+    entry.toolInput === undefined
+  ) {
+    return entry;
+  }
+  const input =
+    typeof entry.toolInput === 'object' && entry.toolInput !== null
+      ? (entry.toolInput as Record<string, unknown>)
+      : {};
+  const routing: Record<string, unknown> = {};
+  for (const field of MESSAGING_ROUTING_FIELDS) {
+    if (input[field] !== undefined) routing[field] = input[field];
+  }
+  return { ...entry, toolInput: routing };
+}
+
 // How much of a tool's result a transcript keeps: a Codex command's output,
 // an Overseer status tool's row. The model gets the whole payload; this copy
 // exists so the human can see what the agent went on, and a whole file or a
