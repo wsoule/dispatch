@@ -273,8 +273,10 @@ function screenArea(): {
   let top = view?.offsetTop ?? 0;
   const right = left + (view?.width ?? window.innerWidth);
   let bottom = top + (view?.height ?? window.innerHeight);
-  for (const bar of document.querySelectorAll<HTMLElement>(
-    '[data-ui-edge-bar]'
+  // Array.from: a host compiling this source with lib DOM alone (Dispatch)
+  // cannot iterate a NodeList directly.
+  for (const bar of Array.from(
+    document.querySelectorAll<HTMLElement>('[data-ui-edge-bar]')
   )) {
     const rect = bar.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) continue;
@@ -791,8 +793,8 @@ function LockStrip({
     const band = strip.offsetHeight + LOCK_RING * 2;
     const bandTop = box.y * zoom - band;
     const bandBottom = (box.y + box.height) * zoom + band;
-    for (const el of canvas.querySelectorAll(
-      '[data-graph-words], [data-graph-cluster-title]'
+    for (const el of Array.from(
+      canvas.querySelectorAll('[data-graph-words], [data-graph-cluster-title]')
     )) {
       const r = el.getBoundingClientRect();
       const y = r.top - origin.top;
