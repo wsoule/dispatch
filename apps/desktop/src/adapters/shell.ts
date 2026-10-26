@@ -164,6 +164,9 @@ export interface ProjectsSectionInput {
    * Null, or no function at all, falls back to `containerStatusOf`.
    */
   statusOf?: (projectId: string) => ProjectMark | null;
+  /** The project marked current: the one whose lane the Timeline is focused
+   * on (`#/timeline?project=`), or null for none. */
+  currentId?: string | null;
   now?: Date;
   limit?: number;
 }
@@ -221,7 +224,7 @@ export function planningProjectMark(
  * list order, each opening the project's own page; "All" opens the Projects
  * page under Tasks, where every project is listed in its initiative's tree.
  * A project's mark is the planning's (`statusOf`) when it has one, else its
- * rolled-up container status.
+ * rolled-up container status. `currentId`'s row is marked current.
  */
 export function buildProjectsSection(
   input: ProjectsSectionInput
@@ -241,6 +244,7 @@ export function buildProjectsSection(
       href: taskHref(doc.meta.id),
       status: mark.status,
       statusLabel: mark.label,
+      ...(input.currentId === doc.meta.id ? { current: true } : {}),
     });
   }
   return {

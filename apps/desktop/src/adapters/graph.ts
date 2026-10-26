@@ -110,9 +110,11 @@ export interface GraphHrefs {
   task(id: string): string;
   /** Another graph: a scope, with the box to select on arrival. */
   graph(scope: GraphScope, options?: { node?: string | null }): string;
-  /** The Issues list (a filtered list once Phase 6 adds query routes). */
+  /** The Issues list (`#/issues`; lib/routes.ts issuesHref(preset) narrows
+   * it to a preset, and no route narrows it to a project yet). */
   issues(): string;
-  /** The Timeline (a focused lane once Phase 6 adds query routes). */
+  /** The Timeline (`#/timeline`; lib/routes.ts timelineHref(projectId)
+   * opens it on one lane). */
   timeline(): string;
 }
 

@@ -21,19 +21,18 @@ import type { NavTabItem, ShellCrumb } from '@dispatch/ui';
 // and reading it back, the drill-up trail, the level tabs and the highlight
 // words. Pure functions over @dispatch/planning's GraphScope.
 //
-// What changed in the port: there is no route yet (hash routes land in
-// Phase 6), so a graph href is an in-memory scope descriptor the view parses
-// with `parseGraphScope`: `#/graph` plus the planner's query vocabulary
-// (?initiative=, ?project=, ?milestone=, ?chain=, ?level=, ?node=), kept so
-// the Phase 6 route reads the same links. The highlight and the locked box
-// are the view's own state, not URL parameters or a cookie, so their
+// What changed in the port: a graph href is the Graph page's route
+// (lib/routes.ts reads `#/graph` plus the planner's query vocabulary
+// (?initiative=, ?project=, ?milestone=, ?chain=, ?level=, ?node=) through
+// `parseGraphParams` and writes it with `graphHref`), so every link written
+// here is a real href the nav reducer lands on. The highlight and the locked
+// box are the view's own state, not URL parameters or a cookie, so their
 // read/write helpers (withHighlightParam, carryLock, highlightCookie…) are
-// gone; `parseHighlight` stays for the day a link carries one. Every
-// function that writes a graph link takes the writer (`GraphScopeHref`,
-// `graphHref` by default in tests) so the view hands in its own once the
-// route exists.
+// gone; `parseHighlight` stays for the day a link carries one. Every function
+// that writes a graph link takes the writer (`GraphScopeHref`, `graphHref` by
+// default) so a caller can hand in another.
 
-/** Where the graph lives until Phase 6's route. */
+/** The Graph page's route path (lib/routes.ts). */
 export const GRAPH_PATH = '#/graph';
 
 /** At most this many characters of an id from a link reach the planning core. */

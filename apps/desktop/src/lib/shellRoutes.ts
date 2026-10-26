@@ -11,14 +11,21 @@ import {
   Settings,
 } from 'lucide-react';
 
-import type { NavAction } from './appNav';
-import type { HostedView, TwoViewsAction, TwoViewsState } from './twoViews';
+import {
+  DEFAULT_GRAPH_SCOPE,
+  type HostedView,
+  type NavAction,
+  type NavState,
+} from './appNav';
 
-// The shell's top-level destinations: what the sidebar lists, which Two views
-// place each one is, and the hash href that stands for it. The hrefs exist so
-// AppShell's links are real (middle-click, copy link) and a later phase can
-// grow them into routes; today a plain click dispatches the destination's
-// action and the hash never changes.
+// The shell's top-level destinations: what the sidebar lists, the hash href
+// that stands for each (a real route, see lib/routes.ts) and the action a
+// plain click dispatches, which is what `parseHref(href)` reads back
+// (shellRoutes.test.ts holds the two together). The hrefs are real: a
+// middle-click or a copied link opens the same place, and `useHashRoute`
+// mirrors the place into `location.hash`.
+
+export { PROJECTS_HREF, taskHref, timelineHref } from './routes';
 
 export type ShellDestination =
   | 'overseer'
@@ -41,8 +48,8 @@ export interface ShellRoute {
   /** Display-only keys: `MOD_KEY` then a digit, or a G chord's two letters. */
   shortcut?: readonly string[];
   href: string;
-  /** What selecting it dispatches: the action the old top bar sent. */
-  action: NavAction | TwoViewsAction;
+  /** What selecting it dispatches: `parseHref(href)`'s one action. */
+  action: NavAction;
 }
 
 export function hrefFor(id: ShellDestination): string {
@@ -57,7 +64,7 @@ export const SHELL_ROUTES: readonly ShellRoute[] = [
     icon: Bot,
     shortcut: [MOD_KEY, '1'],
     href: hrefFor('overseer'),
-    action: { type: 'tv/showOverseer' },
+    action: { type: 'showOverseer' },
   },
   {
     id: 'issues',
@@ -65,7 +72,7 @@ export const SHELL_ROUTES: readonly ShellRoute[] = [
     icon: ListTodo,
     shortcut: [MOD_KEY, '2'],
     href: hrefFor('issues'),
-    action: { type: 'tv/showTasks' },
+    action: { type: 'showTasks' },
   },
   {
     id: 'needs-you',
@@ -73,7 +80,7 @@ export const SHELL_ROUTES: readonly ShellRoute[] = [
     icon: Inbox,
     shortcut: ['G', 'I'],
     href: hrefFor('needs-you'),
-    action: { type: 'tv/showTasks', preset: 'needs-you' },
+    action: { type: 'showTasks', preset: 'needs-you' },
   },
   {
     id: 'timeline',
@@ -82,7 +89,7 @@ export const SHELL_ROUTES: readonly ShellRoute[] = [
     // `g t` is Tasks, so the timeline takes the L of its last syllable.
     shortcut: ['G', 'L'],
     href: hrefFor('timeline'),
-    action: { type: 'setProjectView', view: 'timeline' },
+    action: { type: 'openTimeline', project: null },
   },
   {
     id: 'graph',
@@ -92,7 +99,7 @@ export const SHELL_ROUTES: readonly ShellRoute[] = [
     // chord rather than re-arming it (lib/keyboard.ts).
     shortcut: ['G', 'G'],
     href: hrefFor('graph'),
-    action: { type: 'setProjectView', view: 'graph' },
+    action: { type: 'openGraph', scope: DEFAULT_GRAPH_SCOPE, nodeId: null },
   },
   {
     id: 'threads',
@@ -114,7 +121,7 @@ export const SHELL_ROUTES: readonly ShellRoute[] = [
     label: 'Runs',
     icon: History,
     href: hrefFor('runs'),
-    action: { type: 'tv/openSettings', page: 'runs' },
+    action: { type: 'openSettings', page: 'runs' },
   },
   {
     id: 'settings',
@@ -122,7 +129,7 @@ export const SHELL_ROUTES: readonly ShellRoute[] = [
     icon: Settings,
     shortcut: ['G', 'S'],
     href: hrefFor('settings'),
-    action: { type: 'tv/openSettings' },
+    action: { type: 'openSettings' },
   },
 ];
 
@@ -142,57 +149,6 @@ export function shellShortcut(
   return route.shortcut?.map((key) => (key === MOD_KEY ? modLabel : key));
 }
 
-const DESTINATION_HREF = /^#\/([a-z-]+)$/;
-
-/** The destination an href stands for, or null for any other link. */
-export function parseShellHref(href: string): ShellDestination | null {
-  const match = DESTINATION_HREF.exec(href);
-  if (match === null) return null;
-  const id = match[1] as ShellDestination;
-  return ROUTE_BY_ID.has(id) ? id : null;
-}
-
-/** A project row's link: the project's own page under Issues. */
-export function taskHref(taskId: string): string {
-  return `#/task/${encodeURIComponent(taskId)}`;
-}
-
-/** The Projects section's "All": the Projects page under Tasks (the
- * initiative › project › milestone › issue tree), which has no sidebar row. */
-export const PROJECTS_HREF = '#/projects';
-
-const TASK_HREF = /^#\/task\/([^/]+)$/;
-
-/** The Timeline opened on one project's lane (brought into view and marked). */
-export function timelineHref(projectId: string): string {
-  return `${hrefFor('timeline')}?project=${encodeURIComponent(projectId)}`;
-}
-
-const TIMELINE_PROJECT_HREF = /^#\/timeline\?project=([^&]+)$/;
-
-/** What a shell link leads to; null for links the browser should follow itself
- * (the skip link, an external URL). */
-export type ShellLinkTarget =
-  | { kind: 'destination'; id: ShellDestination }
-  | { kind: 'task'; taskId: string }
-  | { kind: 'projects' }
-  | { kind: 'timeline'; projectId: string };
-
-export function resolveShellHref(href: string): ShellLinkTarget | null {
-  const destination = parseShellHref(href);
-  if (destination !== null) return { kind: 'destination', id: destination };
-  if (href === PROJECTS_HREF) return { kind: 'projects' };
-  const task = TASK_HREF.exec(href);
-  if (task !== null) {
-    return { kind: 'task', taskId: decodeURIComponent(task[1]) };
-  }
-  const lane = TIMELINE_PROJECT_HREF.exec(href);
-  if (lane !== null) {
-    return { kind: 'timeline', projectId: decodeURIComponent(lane[1]) };
-  }
-  return null;
-}
-
 /**
  * Which destination the sidebar marks current. Settings is a dialog over the
  * views, so while it is open it (or Runs, its page with a row of its own) is
@@ -200,9 +156,7 @@ export function resolveShellHref(href: string): ShellLinkTarget | null {
  * own rows, the Needs you preset is its row, and everything else (the list, a
  * task page, Files, Terminals, Projects, Live) is Issues.
  */
-export function currentShellDestination(
-  state: TwoViewsState
-): ShellDestination {
+export function currentShellDestination(state: NavState): ShellDestination {
   if (state.settings !== null) {
     return state.settings === 'runs' ? 'runs' : 'settings';
   }

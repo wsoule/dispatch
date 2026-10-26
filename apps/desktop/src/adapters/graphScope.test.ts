@@ -25,7 +25,7 @@ import {
 } from './graphScope';
 
 // The graph's scope vocabulary: writing a scope as a link and reading it
-// back (the view parses the in-memory descriptors until Phase 6's route),
+// back (the Graph page's route, lib/routes.ts, reads the same parameters),
 // the drill-up trail, the level tabs and the highlight words. The trail
 // reads the demo workspace, with and without initiatives.
 

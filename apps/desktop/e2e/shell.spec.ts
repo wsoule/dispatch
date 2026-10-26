@@ -264,3 +264,45 @@ test('a task’s conversation is one flat timeline with a composer locked to it'
   ).toBeVisible();
   await expectNoConversationLists(page);
 });
+
+test('a route survives a reload: the Timeline row stays current, a task page shows its task', async ({
+  page,
+  baseURL,
+}) => {
+  await page.goto(authedUrl(baseURL));
+  await waitForShell(page);
+  // Opening the Timeline writes its route into the hash, beside the daemon's
+  // ?root=&port= (which stay in the search part).
+  await openDestination(page, 'Timeline');
+  await expect(page.getByTestId('timeline-view')).toBeVisible();
+  await expect(page).toHaveURL(/\?root=.*#\/timeline$/);
+  await page.reload();
+  await waitForShell(page);
+  await expect(page.getByTestId('timeline-view')).toBeVisible();
+  await expect(navLink(page, 'Timeline')).toHaveAttribute(
+    'aria-current',
+    'page'
+  );
+
+  // A task page's route names the task; the reloaded window shows it.
+  await openDestination(page, 'Issues');
+  await page.getByText('Persist the cart across devices').first().focus();
+  await page.keyboard.press('Enter');
+  const view = page.getByTestId('tasks-view');
+  await expect(
+    view.getByRole('heading', {
+      level: 1,
+      name: 'Persist the cart across devices',
+    })
+  ).toBeVisible();
+  await expect(page).toHaveURL(/#\/task\/t-6c40de/);
+  await page.reload();
+  await waitForShell(page);
+  await expect(
+    page.getByTestId('tasks-view').getByRole('heading', {
+      level: 1,
+      name: 'Persist the cart across devices',
+    })
+  ).toBeVisible();
+  await expect(navLink(page, 'Issues')).toHaveAttribute('aria-current', 'page');
+});

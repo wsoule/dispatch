@@ -250,6 +250,29 @@ describe('buildProjectsSection', () => {
     ]);
   });
 
+  test('the project whose lane the Timeline is focused on is marked current', () => {
+    const tasks = [project('p-1'), project('p-2')];
+    const section = buildProjectsSection({
+      tasks,
+      containerStatusOf: () => health('idle'),
+      currentId: 'p-2',
+      now: NOW,
+    });
+    expect(section.items.map((item) => [item.id, item.current])).toEqual([
+      ['p-1', undefined],
+      ['p-2', true],
+    ]);
+    // No lane in focus: no row is current.
+    expect(
+      buildProjectsSection({
+        tasks,
+        containerStatusOf: () => health('idle'),
+        currentId: null,
+        now: NOW,
+      }).items.every((item) => item.current === undefined)
+    ).toBe(true);
+  });
+
   test('the planning mark wins over the container status, per project', () => {
     const tasks = [
       project('p-1', { dueDate: '2026-09-30' }),

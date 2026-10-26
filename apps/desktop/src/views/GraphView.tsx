@@ -41,9 +41,7 @@ import {
   DEFAULT_GRAPH_HIGHLIGHT,
   GRAPH_HIGHLIGHT_LABEL,
   GRAPH_HIGHLIGHTS,
-  GRAPH_PATH,
   graphHref,
-  parseGraphScope,
   parseHighlight,
 } from '../adapters/graphScope';
 import { GraphTooLarge } from '../components/graph/GraphTooLarge';
@@ -51,7 +49,9 @@ import { useShellActions } from '../components/shell/ShellActionsContext';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { isAnyModalOpen, isTypingTarget } from '../hooks/useGlobalKeyboard';
 import { type Planning, usePlanningContext } from '../hooks/usePlanning';
-import { hrefFor, resolveShellHref, taskHref } from '../lib/shellRoutes';
+import type { NavAction } from '../lib/appNav';
+import { parseHref } from '../lib/routes';
+import { hrefFor, taskHref } from '../lib/shellRoutes';
 import type { TaskBucket } from '../lib/taskStatus';
 import styles from './GraphView.module.css';
 
@@ -65,20 +65,21 @@ import styles from './GraphView.module.css';
 // the layout, the trail, the level tabs, the legends, the readouts, the
 // Mermaid text, the too-large state) and adapters/graphOverlay lays
 // Dispatch's live facts over the issue boxes (Needs you, Failed, Agent
-// working; readiness from the ready set). This view keeps the page's state:
-// the scope (a link's in-memory `#/graph?…` descriptor, read back with
-// parseGraphScope: the planner's query vocabulary until Phase 6's route), the
-// highlight (remembered per window), the locked box and the Mermaid toggle.
-// Every box is a task: a second press on the locked box, or Open on its
-// strip, quick-looks it in the shell's task drawer, which is the graph's
-// selection; a double-click (Shift + Enter) drills into the box's own graph
-// one level down. The graph is read-only by nature.
+// working; readiness from the ready set). Where the view is (the scope drawn
+// and a link's box to select on arrival) is the nav reducer's: the page's
+// `#/graph?…` route (lib/routes.ts, the planner's query vocabulary), so every
+// graph link the view renders is a real href, and a plain click dispatches
+// the actions it parses to through `onNavigate`. The view keeps only what is
+// not a place: the highlight (remembered per window), the locked box and the
+// Mermaid toggle. Every box is a task: a second press on the locked box, or
+// Open on its strip, quick-looks it in the shell's task drawer, which is the
+// graph's selection; a double-click (Shift + Enter) drills into the box's own
+// graph one level down. The graph is read-only by nature.
 
 const HIGHLIGHT_KEY = 'dispatch:graph-highlight';
 
-/** Where the graph's links go: every box is a task, another graph is a scope
- * descriptor this view follows itself, and the Issues list and the Timeline
- * are the unfiltered destinations until Phase 6 adds query routes. */
+/** Where the graph's links go: every box is a task, another graph is its
+ * route, and the Issues list and the Timeline are their unfiltered rows. */
 const HREFS: GraphHrefs = {
   task: taskHref,
   graph: graphHref,
@@ -112,15 +113,6 @@ function writeHighlight(value: GraphHighlight): void {
   }
 }
 
-/** Where the graph opens: a project's milestones when a link named one
- * (`#/graph?project=`), else the workspace's milestones. */
-function initialScope(focus: GraphViewProps['focus']): GraphScope {
-  const projectId = focus?.projectId;
-  return projectId === undefined
-    ? { level: 'milestone' }
-    : { level: 'milestone', projectId };
-}
-
 /** Handles a link's href in this view; true when it did, so the click is kept. */
 type FollowHref = (href: string) => boolean;
 
@@ -129,9 +121,9 @@ const FollowContext = createContext<FollowHref>(() => false);
 // The link every component inside the view renders (the trail's crumbs, the
 // level tabs' hrefs, the lock strip's "Open graph", the too-large rows): a
 // real anchor, so a middle or modified click still opens the hash as the
-// browser would, while a plain left click on a graph link moves this view's
-// scope and on a task link opens the task; the shell's own link component
-// (DispatchShell) does not know the graph's scope parameters.
+// browser would, while a plain left click dispatches the route's actions (a
+// graph link moves the scope, a task link opens the task) and, for a graph
+// link that names a box, quick-looks that box on arrival.
 function GraphLink({ href, onClick, children, ...rest }: UiLinkProps) {
   const follow = useContext(FollowContext);
   return (
@@ -163,8 +155,13 @@ export interface GraphViewProps {
   bucketOf: (task: TaskListItem) => TaskBucket | null;
   /** The task quick-looked in the drawer right now: the graph's selection. */
   selectedId: string | null;
-  /** What the graph opens scoped to, when a link names it (`#/graph?project=`). */
-  focus?: { projectId?: string };
+  /** The scope drawn: the page's route (`#/graph?project=…&level=…`). */
+  scope: GraphScope;
+  /** The box a link selected on arrival, when it named one (`?node=`). */
+  nodeId: string | null;
+  /** Dispatches a nav action: where the level tabs, the trail, a drill and
+   * every other graph link go. */
+  onNavigate: (action: NavAction) => void;
 }
 
 /**
@@ -183,24 +180,16 @@ export function GraphView(props: GraphViewProps) {
   return <GraphLoaded planning={planning} {...props} />;
 }
 
-/** Where the view is: the scope drawn, and a link's box to open on arrival. */
-interface Place {
-  scope: GraphScope;
-  nodeId: string | null;
-}
-
 function GraphLoaded({
   planning,
   data,
   bucketOf,
   selectedId,
-  focus,
+  scope,
+  nodeId,
+  onNavigate,
 }: GraphViewProps & { planning: Planning }) {
   const { peekTask, openTask } = useShellActions();
-  const [place, setPlace] = useState<Place>(() => ({
-    scope: initialScope(focus),
-    nodeId: null,
-  }));
   const [highlight, setHighlight] = useState<GraphHighlight>(readHighlight);
   const [lockedId, setLockedId] = useState<string | null>(null);
   const [showMermaid, setShowMermaid] = useState(false);
@@ -240,7 +229,7 @@ function GraphLoaded({
   // rebuilt only when the graph, the arrival box or the overlay's facts
   // change: opening the drawer or switching the highlight re-renders the
   // view with the same model, so dagre never runs on a render.
-  const graph = planning.graph(place.scope);
+  const graph = planning.graph(scope);
   const page: GraphPageModel = useMemo(
     () =>
       buildGraphPage({
@@ -250,10 +239,10 @@ function GraphLoaded({
         allocationPlan: planning.allocation,
         today: planning.ctx.today,
         hrefs: HREFS,
-        nodeId: place.nodeId,
+        nodeId,
         overlay,
       }),
-    [graph, planning, place.nodeId, overlay]
+    [graph, planning, nodeId, overlay]
   );
   // A lock on a box that is not drawn (the scope moved, the task went) is
   // no lock.
@@ -269,32 +258,39 @@ function GraphLoaded({
     [tasksById, peekTask]
   );
 
-  /** Follows a graph link: the scope it names, with its box opened on
-   * arrival when the link selects one. The lock is dropped: the box drilled
-   * into is the next graph's subject, not a box in it. */
-  const go = useCallback(
-    (href: string) => {
-      const { scope, nodeId } = parseGraphScope(href);
-      setPlace({ scope, nodeId });
-      setLockedId(null);
-      if (nodeId !== null) open(nodeId);
-    },
-    [open]
-  );
+  // Follows a link's href: its route's actions, dispatched in order. A task
+  // link goes through the shell's own verb, which also picks the task's latest
+  // run. A graph link moves the scope and drops the lock (the box drilled into
+  // is the next graph's subject, not a box in it); when it names a box, that
+  // box is quick-looked on arrival.
   const followRef = useRef<FollowHref>(() => false);
   followRef.current = (href) => {
-    if (href === GRAPH_PATH || href.startsWith(`${GRAPH_PATH}?`)) {
-      go(href);
+    const actions = parseHref(href);
+    if (actions === null) return false;
+    const [only] = actions;
+    if (actions.length === 1 && only?.type === 'openTask') {
+      openTask(only.taskId, only.tab, only.runId ?? undefined);
       return true;
     }
-    const target = resolveShellHref(href);
-    if (target?.kind === 'task') {
-      openTask(target.taskId);
-      return true;
+    for (const action of actions) onNavigate(action);
+    const arrival = actions.find(
+      (action): action is Extract<NavAction, { type: 'openGraph' }> =>
+        action.type === 'openGraph'
+    );
+    if (arrival !== undefined) {
+      setLockedId(null);
+      if (arrival.nodeId !== null) open(arrival.nodeId);
     }
-    return false;
+    return true;
   };
   const follow = useCallback<FollowHref>((href) => followRef.current(href), []);
+  /** A graph link followed from the canvas (a drill) or the level tabs. */
+  const go = useCallback(
+    (href: string) => {
+      follow(href);
+    },
+    [follow]
+  );
 
   // Escape while a box is locked drops the lock and nothing else. The graph
   // hears Escape on the window after every nearer handler; the shell's own

@@ -26,14 +26,9 @@ import {
   type OverseerBadge,
 } from '../../adapters/shell';
 import type { AdminItem } from '../../lib/adminItems';
-import type { NavAction } from '../../lib/appNav';
-import {
-  hrefFor,
-  resolveShellHref,
-  type ShellDestination,
-  shellRoute,
-} from '../../lib/shellRoutes';
-import type { MainView, TwoViewsAction } from '../../lib/twoViews';
+import type { MainView, NavAction } from '../../lib/appNav';
+import { parseHref } from '../../lib/routes';
+import { hrefFor, type ShellDestination } from '../../lib/shellRoutes';
 import { usePeople } from '../people/PeopleContext';
 import styles from './DispatchShell.module.css';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -73,14 +68,10 @@ export interface DispatchShellProps {
   /** Set on a team-local page: who is signed in, and how to stop. */
   teamSession?: { handle: string; onSignOut: () => void };
   windowChrome?: WindowChrome;
-  /** Every sidebar row and crumb dispatches here, as the old top bar did. */
-  onNavigate: (action: NavAction | TwoViewsAction) => void;
-  /** A project row: the project's own page. */
-  onOpenTask: (taskId: string) => void;
-  /** The Projects section's "All". */
-  onOpenProjects: () => void;
-  /** A `#/timeline?project=` link: the Timeline with that project's lane in view. */
-  onOpenTimeline?: (projectId: string) => void;
+  /** Every link in the shell (a sidebar row, a project row, a crumb, the
+   * Projects section's "All") dispatches the actions its href parses to
+   * (lib/routes.ts), one at a time, in order. */
+  onNavigate: (action: NavAction) => void;
   /** The topbar's search trigger: the command palette. */
   onSearch: () => void;
   /** Controls right of the search trigger (the project menu, who is here). */
@@ -128,9 +119,11 @@ type FollowHref = (href: string) => boolean;
 
 const FollowContext = createContext<FollowHref>(() => false);
 
-// The link AppShell renders: a real anchor (middle-click and modified clicks open
-// the hash as the browser would), while a plain left click stays in the app and
-// dispatches the destination. Hrefs the app does not know (the skip link) fall through.
+// The link AppShell renders: a real anchor (a middle or modified click is left
+// to the browser, which opens the hash as it would any link; in one window that
+// is a hashchange `useHashRoute` applies), while a plain left click stays in the
+// app and dispatches the route's actions. Hrefs the app does not know (the skip
+// link) fall through.
 function DispatchLink({ href, onClick, children, ...rest }: UiLinkProps) {
   const follow = useContext(FollowContext);
   return (
@@ -163,9 +156,9 @@ function displayName(
  * The desktop's frame: @dispatch/ui's AppShell (sidebar with the destinations
  * and the Projects section, topbar with crumbs, search and the project menu)
  * around the two views, both mounted so each keeps its place, with the peek
- * drawer and the guide card floating over them. Navigation stays in the Two
- * views reducer: the sidebar reads it for the current row and dispatches the
- * same actions the retired top bar did.
+ * drawer and the guide card floating over them. Navigation stays in App's nav
+ * reducer: the sidebar reads it for the current row, and every link's href is
+ * a route whose actions a plain click dispatches.
  */
 export function DispatchShell({
   projectName,
@@ -181,9 +174,6 @@ export function DispatchShell({
   teamSession,
   windowChrome,
   onNavigate,
-  onOpenTask,
-  onOpenProjects,
-  onOpenTimeline,
   onSearch,
   topbarActions,
   banner,
@@ -202,16 +192,9 @@ export function DispatchShell({
   // sidebar link would remount (and lose focus) on each app render.
   const followRef = useRef<FollowHref>(() => false);
   followRef.current = (href) => {
-    const target = resolveShellHref(href);
-    if (target === null) return false;
-    if (target.kind === 'task') onOpenTask(target.taskId);
-    else if (target.kind === 'projects') onOpenProjects();
-    else if (target.kind === 'timeline') {
-      // Without a lane handler the link still opens the Timeline.
-      if (onOpenTimeline === undefined) {
-        onNavigate(shellRoute('timeline').action);
-      } else onOpenTimeline(target.projectId);
-    } else onNavigate(shellRoute(target.id).action);
+    const actions = parseHref(href);
+    if (actions === null) return false;
+    for (const action of actions) onNavigate(action);
     return true;
   };
   const follow = useCallback<FollowHref>((href) => followRef.current(href), []);

@@ -6,7 +6,7 @@
  * the flat status-only board and the epic swim lanes were the same board grouped two ways, and
  * one layout that collapses does both jobs. `list` is the dense grouped list. The former
  * `milestones` layout (the milestone map, later the Graph mode) is a page of its own now
- * (`HostedView` 'graph' in lib/twoViews.ts), not a layout of the list.
+ * (`HostedView` 'graph' in lib/appNav.ts), not a layout of the list.
  */
 export type TasksViewMode = 'board' | 'list';
 

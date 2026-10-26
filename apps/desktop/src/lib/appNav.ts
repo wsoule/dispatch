@@ -1,21 +1,39 @@
+import type { GraphScope } from '@dispatch/planning';
+import { graphScopeFor } from '@dispatch/planning';
+
+import type { GlobalKeyCommand } from './keyboard';
 import type { TaskPageMode } from './taskPageMode';
+import type { TasksPreset } from './tasksPresets';
 
-// The whole app's navigation state, modeled as one pure reducer so routing decisions (what
-// the sidebar highlights, what the main pane renders, whether the task peek/run
-// split/command palette are open) are unit-testable without mounting React. App.tsx is the
-// only place that owns a `useReducer(navReducer, initialNavState)` — every view/shell
-// component below it receives plain props derived from this state plus dispatch callbacks,
-// the same "dumb view, smart root" split TasksPanel used for the old dispatch-only pane.
+// The whole app's navigation, modeled as one pure reducer so routing decisions
+// (what the sidebar highlights, what the main pane renders, whether the peek
+// drawer, Settings, the composer, the palette or the shortcuts sheet is open)
+// are unit-testable without mounting React. App.tsx is the only place that
+// owns a `useReducer(navReducer, initialNavState)`; every view and shell
+// component below it receives plain props derived from this state plus
+// dispatch callbacks. `lib/routes.ts` writes a state as a hash href and reads
+// one back as actions, so every place here is also a URL.
+//
+// The model is the Two views one: the main pane is the Overseer or Tasks, and
+// Tasks shows its list or one page (a task, a doc, a PR, a draft, a room, a
+// file, or a hosted view: Files, Terminals, Threads, Timeline, Graph, Projects,
+// Live). A peek is a drawer over either view and never a place; Settings is a
+// dialog over the views. The legacy project/global view vocabulary survives
+// as `ProjectView` and `GlobalView`, mapped onto places by
+// `projectViewDestination` and `globalViewDestination`, so the palette, the
+// inbox and the key chords keep naming pages the old way.
 
-/** The primary views for whichever project is active. `new-task` never renders
- * — App.tsx reads it as "open the AI composer" and hands the old view back. */
+/** The primary views for whichever project is active, as the palette, the
+ * inbox and the key chords name them. Each maps to a place through
+ * `projectViewDestination`. */
 export type ProjectView =
   /** Home: Ready for you, In flight and Needs you — where a project opens. */
   | 'cockpit'
   | 'overview'
   | 'board'
-  /** Initiatives → projects → milestones → issues, as one tree to browse; a
-   * page under Tasks, reached from the Projects section's "All". */
+  /** The projects register: every open project with its status, next
+   * milestone, lead and allocation, grouped by initiative; a page under
+   * Tasks, reached from the Projects section's "All". */
   | 'projects'
   /** Everything in motion at once: a Flight Plan band per container with work
    * moving; a page under Tasks, reached from the palette and the Runs page. */
@@ -34,8 +52,7 @@ export type ProjectView =
   /** Slim list of everything waiting on a human — the surface that replaced
    * both retired pages. */
   | 'inbox'
-  /** Conversations on the message bus: Needs you, Channels, Direct.
-   * `threadFocus` says which thread is open. */
+  /** Conversations on the message bus: Needs you, Channels, Direct. */
   | 'threads'
   /** retired — normalized to 'cockpit' */
   | 'brain-dump'
@@ -54,14 +71,15 @@ export type ProjectView =
   | 'graph'
   /** retired — normalized to 'cockpit' */
   | 'plans'
-  /** A single AI task draft's review page — `activeDraftId` says which one. */
+  /** A single AI task draft's review page; it needs a draft id (`openDraft`). */
   | 'draft'
-  /** One repo pull request, full-window — `activePrNumber` says which. */
+  /** One repo pull request, full-window; it needs a number (`openPr`). */
   | 'pr'
   /** retired — normalized to 'cockpit' */
   | 'impact'
-  /** One task, full-window, on a mode that follows its state — `activeTaskId` says which. */
+  /** One task, full-window, on a mode that follows its state (`openTask`). */
   | 'task'
+  /** The AI composer dialog (`openNewTask`); never a page. */
   | 'new-task';
 
 /** Views that act on the host machine as the person running the daemon — a
@@ -79,6 +97,26 @@ export type TaskTab =
   | 'preview'
   | 'files'
   | 'terminal';
+
+// Every TaskTab once, so a route's `?tab=` is checked against the type: adding
+// a tab without listing it here fails in tsc.
+const TASK_TAB_IDS = {
+  auto: true,
+  spec: true,
+  run: true,
+  review: true,
+  summary: true,
+  plan: true,
+  thread: true,
+  preview: true,
+  files: true,
+  terminal: true,
+} satisfies Record<TaskTab, true>;
+
+/** Every task page tab, for a route reading `?tab=`. */
+export const TASK_TABS: readonly TaskTab[] = Object.keys(
+  TASK_TAB_IDS
+) as TaskTab[];
 
 /** Global, not-project-scoped views living below the primary nav in the sidebar.
  * `overseer` is the chat assistant for the active project — it lives in this section
@@ -108,44 +146,128 @@ export type SettingsPage =
   | 'diffs'
   | 'setup';
 
-export interface NavState {
-  /** Which side of the sidebar's split is active — a project's own work, or one of the
-   * global views. Kept separate from `activeProjectId` so switching to a global view
-   * doesn't lose track of which project to snap back to. */
-  section: 'project' | 'global';
+/** Settings' own pages plus the two global views that fold into it: Sessions
+ * is the Usage page, All agents the Runs page. */
+export type NavSettingsPage = SettingsPage | 'usage' | 'runs';
+
+// Every NavSettingsPage once, so a route's `#/settings/<page>` is checked
+// against the type: adding a page without listing it here fails in tsc.
+const SETTINGS_PAGE_IDS = {
+  general: true,
+  agents: true,
+  checks: true,
+  autonomy: true,
+  memory: true,
+  previews: true,
+  notifications: true,
+  team: true,
+  'connected-agents': true,
+  sync: true,
+  integrations: true,
+  a2a: true,
+  license: true,
+  remotes: true,
+  daemon: true,
+  diffs: true,
+  setup: true,
+  usage: true,
+  runs: true,
+} satisfies Record<NavSettingsPage, true>;
+
+/** Every Settings page a route may open, for `#/settings/<page>`. */
+export const NAV_SETTINGS_PAGES: readonly NavSettingsPage[] = Object.keys(
+  SETTINGS_PAGE_IDS
+) as NavSettingsPage[];
+
+/** Which side of the main pane shows: the Overseer, or Tasks. */
+export type MainView = 'overseer' | 'tasks';
+
+/** The Issues list's layouts. The dependency graph is a page of its own
+ * (`HostedView` 'graph'), not a layout of the list. */
+export type TasksMode = 'list' | 'board';
+
+/** Project views shown as a page under Tasks, led by "‹ tasks". Timeline,
+ * Graph and Threads have sidebar rows of their own; Projects (the register)
+ * opens from the Projects section's "All", Live from the palette and the Runs
+ * page. */
+export type HostedView = Extract<
+  ProjectView,
+  'files' | 'terminals' | 'threads' | 'timeline' | 'graph' | 'projects' | 'live'
+>;
+
+/** A hosted view as a page, with the parameters its route carries: the
+ * Timeline's focused project lane (`#/timeline?project=`) and the Graph's
+ * scope and arrival box (`#/graph?project=…&node=…`). */
+export type HostedPage =
+  | {
+      kind: 'view';
+      view: Exclude<HostedView, 'timeline' | 'graph'>;
+    }
+  | {
+      kind: 'view';
+      view: 'timeline';
+      /** The project whose lane is brought into view and marked, or null. */
+      project: string | null;
+    }
+  | {
+      kind: 'view';
+      view: 'graph';
+      scope: GraphScope;
+      /** The box to select on arrival, when the link named one. */
+      nodeId: string | null;
+    };
+
+/** What the Tasks view shows instead of its list. A task here is always the
+ * full page: a quick look at a task is a `Peek`, over whichever view shows. */
+export type TasksPage =
+  | { kind: 'list' }
+  | {
+      kind: 'task';
+      taskId: string;
+      tab: TaskTab;
+      runId: string | null;
+    }
+  | {
+      kind: 'docs';
+      docId: string | null;
+      anchor: string | null;
+      merge: string | null;
+    }
+  | { kind: 'pr'; number: number }
+  | { kind: 'draft'; draftId: string }
+  /** A named room, reached by name, never listed. */
+  | { kind: 'room'; room: string }
+  | HostedPage
+  /** The Files page opened on one file, e.g. from a file link in a thread. */
+  | { kind: 'file'; path: string };
+
+/** A drawer over either view; it never changes the view underneath. A task
+ * peek is the quick-look slide-over (a row click, Space, "Quick look"). */
+type Peek =
+  | { kind: 'thread'; messageId: string }
+  | { kind: 'task'; taskId: string }
+  | { kind: 'person'; address: string }
+  | { kind: 'outside'; address: string };
+
+/** One visited destination: the view, and the page under Tasks. */
+export interface Place {
+  mainView: MainView;
+  tasksPage: TasksPage;
+}
+
+export interface NavState extends Place {
   /** The last project selected via the project switcher, or `null` before any project has
    * ever resolved as dispatch-enabled (the get-started/first-run state). */
   activeProjectId: string | null;
-  projectView: ProjectView;
-  globalView: GlobalView;
-  /** The Settings page the last `setGlobalView('settings', { page })` asked for, or `null`
-   * when none has — Settings then opens on General. Kept across other views so a return
-   * to Settings lands where it was asked to. */
-  settingsPage: SettingsPage | null;
-  /** Task id shown in the side peek panel, or `null` when it's closed. */
-  peekTaskId: string | null;
-  /** Run id the task view's Chat/Diff tabs are pinned to, or `null` when none is selected. */
-  activeRunId: string | null;
-  /** Draft id shown by the draft view, or `null` when none is selected. */
-  activeDraftId: string | null;
-  /** Repo PR number shown by the PR review view, or `null` when none is open. */
-  activePrNumber: number | null;
-  /** A message id whose thread the Threads view opens (a root id opens its own
-   * thread), or `null`. Not kept in history: the view keeps its own selection. */
-  threadFocus: string | null;
-  /** The doc the Docs view opens and the section it scrolls to, or `null`.
-   * Not kept in history, like `threadFocus`: the view keeps its own selection. */
-  activeDocId: string | null;
-  activeDocAnchor: string | null;
-  /** A conflicting proposal whose marked merge the open doc starts on, or `null`. */
-  activeDocMerge: string | null;
-  /** Task id shown in the task full-window view, or `null` when it's not the current view. */
-  activeTaskId: string | null;
-  /** The current tab within the task view. */
-  taskTab: TaskTab;
-  /** Which view to snap `projectView` back to once the AI composer dialog opens — a board
-   * column's "+" returns to the board, rather than one fixed view. */
-  newTaskReturnView: ProjectView;
+  tasksMode: TasksMode;
+  /** What the list and board show: All, or one question like Needs you or Failed. */
+  tasksPreset: TasksPreset;
+  peek: Peek | null;
+  /** The open Settings page, or `null` while Settings is closed. */
+  settings: NavSettingsPage | null;
+  /** Whether the AI task composer dialog is open. A dialog over whatever
+   * shows, never a place: history and the hash ignore it. */
+  composerOpen: boolean;
   paletteOpen: boolean;
   /** Whether the keyboard-shortcuts reference (`?`) is open. */
   shortcutsOpen: boolean;
@@ -153,109 +275,24 @@ export interface NavState {
    * Where you have been, newest last, and how far back you have stepped.
    *
    * Without this every "back" affordance had to name one fixed destination, so
-   * closing a review always went to the same place regardless of where you
-   * opened it from — which is only right for whoever happened to arrive that
-   * way. An index rather than popping, so forward still works after going back.
+   * closing a page always went to the same place regardless of where you
+   * opened it from. An index rather than popping, so forward still works after
+   * going back.
    */
-  history: NavEntry[];
+  history: Place[];
   historyIndex: number;
-}
-
-/** One visited destination. Every id a page renders from travels with the
- * entry — going back to a review you had open should reopen it. */
-interface NavEntry {
-  section: 'project' | 'global';
-  projectView: ProjectView;
-  globalView: GlobalView;
-  activeRunId: string | null;
-  activeDraftId: string | null;
-  activePrNumber: number | null;
-  activeTaskId: string | null;
-  taskTab: TaskTab;
-}
-
-/** Retired page ids survive so stored nav state and deep links land somewhere
- * real: Runs/Review folded into the Inbox, Landed into the Landing table, and
- * the pruned pages (Plans, Notes, Git, Impact, Design) onto the cockpit. */
-const RETIRED_TO_COCKPIT: ReadonlySet<ProjectView> = new Set([
-  'plans',
-  'brain-dump',
-  'branches',
-  'impact',
-  'design',
-]);
-
-function normalizeProjectView(view: ProjectView): ProjectView {
-  if (view === 'runs' || view === 'review') return 'inbox';
-  if (RETIRED_TO_COCKPIT.has(view)) return 'cockpit';
-  return view === 'landed' ? 'landing' : view;
-}
-
-export const initialNavState: NavState = {
-  section: 'project',
-  activeProjectId: null,
-  projectView: 'cockpit',
-  globalView: 'sessions',
-  settingsPage: null,
-  peekTaskId: null,
-  activeRunId: null,
-  activeDraftId: null,
-  activePrNumber: null,
-  threadFocus: null,
-  activeDocId: null,
-  activeDocAnchor: null,
-  activeDocMerge: null,
-  activeTaskId: null,
-  taskTab: 'auto',
-  newTaskReturnView: 'board',
-  paletteOpen: false,
-  shortcutsOpen: false,
-  history: [
-    {
-      section: 'project',
-      projectView: 'cockpit',
-      globalView: 'sessions',
-      activeRunId: null,
-      activeDraftId: null,
-      activePrNumber: null,
-      activeTaskId: null,
-      taskTab: 'auto',
-    },
-  ],
-  historyIndex: 0,
-};
-
-/** Truncates any forward entries and appends — the browser rule: navigating
- * somewhere new after going back discards what you had gone back from. */
-function pushHistory(state: NavState, next: NavEntry): NavState {
-  const kept = state.history.slice(0, state.historyIndex + 1);
-  const last = kept[kept.length - 1];
-  // Re-selecting the view you are already on is not a new destination.
-  if (
-    last !== undefined &&
-    last.section === next.section &&
-    last.projectView === next.projectView &&
-    last.globalView === next.globalView &&
-    last.activeRunId === next.activeRunId &&
-    last.activeDraftId === next.activeDraftId &&
-    last.activePrNumber === next.activePrNumber &&
-    last.activeTaskId === next.activeTaskId &&
-    last.taskTab === next.taskTab
-  ) {
-    return state;
-  }
-  const history = [...kept, next].slice(-50);
-  return { ...state, history, historyIndex: history.length - 1 };
 }
 
 export type NavAction =
   | { type: 'selectProject'; projectId: string }
+  /** A legacy page name: lands where `projectViewDestination` says. */
   | { type: 'setProjectView'; view: ProjectView }
   /** `page` lands Settings on one of its pages; without it Settings keeps the last page
    * asked for. Ignored for every other global view. */
   | { type: 'setGlobalView'; view: GlobalView; page?: SettingsPage }
   | { type: 'openPeek'; taskId: string }
   | { type: 'closePeek' }
+  /** Pins the open task page's Run and Review modes to one run. */
   | { type: 'openRun'; runId: string }
   | { type: 'closeRun' }
   /** Routes to the draft review page for one draft — the drafts tray's row click. */
@@ -263,18 +300,17 @@ export type NavAction =
   /** Routes to the PR review page for one repo pull request — the Inbox's PR
    * rows and a run's "Review PR" button. */
   | { type: 'openPr'; number: number }
-  /** Routes to Threads with the thread holding `messageId` open — a run chat's
-   * message link, a ref chip, or a rail row. */
+  /** Quick-looks the thread holding `messageId` in the peek drawer; `null`
+   * (no thread) is the Overseer, where the talk lives. */
   | { type: 'openThread'; messageId: string | null }
   /** Routes to Docs with one doc open, scrolled to `anchor`'s section when set —
    * a task page's Docs row, a `doc:` ref chip, or a palette hit. */
   | { type: 'openDoc'; docId: string; anchor: string | null; merge?: string }
-  /** Routes to the task full-window view with a specific task, tab, and optional run. */
+  /** Routes to the task's full page with a specific tab and optional run. */
   | { type: 'openTask'; taskId: string; tab?: TaskTab; runId?: string | null }
-  /** Switches the tab within the task view without adding a history entry. */
+  /** Switches the tab within the task page without adding a history entry. */
   | { type: 'setTaskTab'; tab: TaskTab }
-  /** Routes to `new-task`, remembering the view to come back to — App.tsx reads reaching this
-   * state as "open the AI composer dialog". */
+  /** Opens the AI composer dialog over whatever shows. */
   | { type: 'openNewTask' }
   | { type: 'closeNewTask' }
   | { type: 'openPalette' }
@@ -285,262 +321,435 @@ export type NavAction =
   | { type: 'closeShortcuts' }
   | { type: 'back' }
   | { type: 'forward' }
-  /** Context-sensitive close: the command palette wins over the task peek, and each one open
-   * swallows the Escape rather than also clearing the next layer. */
-  | { type: 'escape' };
+  /** Context-sensitive close: the dialogs (shortcuts, palette, composer) win
+   * over Settings, Settings over the peek, the peek over a page under Tasks,
+   * and each one open swallows the Escape rather than also clearing the next
+   * layer. */
+  | { type: 'escape' }
+  | { type: 'showOverseer' }
+  /** Tasks on its list, narrowed to `preset`; without one, back to where Tasks
+   * was left (or to the list, when already there) with the filter cleared. */
+  | { type: 'showTasks'; preset?: TasksPreset }
+  | { type: 'setTasksPreset'; preset: TasksPreset }
+  | { type: 'setTasksMode'; mode: TasksMode }
+  | { type: 'openSettings'; page?: NavSettingsPage }
+  | { type: 'closeSettings' }
+  /** Closes the page under Tasks: back to the list. */
+  | { type: 'closePage' }
+  /** The Files page opened on one file. */
+  | { type: 'openFile'; path: string }
+  /** Opens a person, an outside agent, a room or a task by address. */
+  | { type: 'openAddress'; address: string }
+  /** The Timeline, with one project's lane in view when `project` names it. */
+  | { type: 'openTimeline'; project: string | null }
+  /** The Graph on one scope, with `nodeId`'s box selected on arrival. */
+  | { type: 'openGraph'; scope: GraphScope; nodeId: string | null };
+
+/** Where a legacy view name lands: the Overseer, Tasks' list, a page under
+ * Tasks, a Settings page, or nowhere (a record page without its id). */
+export type NavDestination =
+  | { kind: 'overseer' }
+  | { kind: 'tasks' }
+  | { kind: 'docs' }
+  | { kind: 'settings'; page: NavSettingsPage }
+  | { kind: 'page'; page: TasksPage }
+  | { kind: 'none' };
+
+const LIST: TasksPage = { kind: 'list' };
+
+/** Where the Graph opens with nothing named: the workspace's milestones. */
+export const DEFAULT_GRAPH_SCOPE: GraphScope = graphScopeFor({
+  kind: 'workspace',
+});
+
+export const initialNavState: NavState = {
+  activeProjectId: null,
+  mainView: 'overseer',
+  tasksPage: LIST,
+  tasksMode: 'list',
+  tasksPreset: 'all',
+  peek: null,
+  settings: null,
+  composerOpen: false,
+  paletteOpen: false,
+  shortcutsOpen: false,
+  history: [{ mainView: 'overseer', tasksPage: LIST }],
+  historyIndex: 0,
+};
+
+/** Where a project view lives: Overseer, Tasks, or a page under Tasks. */
+export function projectViewDestination(view: ProjectView): NavDestination {
+  switch (view) {
+    case 'cockpit':
+    case 'overview':
+    case 'board':
+    case 'inbox':
+    case 'landing':
+    case 'runs':
+    case 'review':
+    case 'landed':
+      return { kind: 'tasks' };
+    case 'docs':
+      return { kind: 'docs' };
+    case 'files':
+    case 'terminals':
+    case 'threads':
+    case 'projects':
+    case 'live':
+      return { kind: 'page', page: { kind: 'view', view } };
+    case 'timeline':
+      return {
+        kind: 'page',
+        page: { kind: 'view', view: 'timeline', project: null },
+      };
+    case 'graph':
+      return {
+        kind: 'page',
+        page: {
+          kind: 'view',
+          view: 'graph',
+          scope: DEFAULT_GRAPH_SCOPE,
+          nodeId: null,
+        },
+      };
+    // Retired pages: plans and notes live in the Overseer now; the rest had no successor.
+    case 'plans':
+    case 'brain-dump':
+      return { kind: 'overseer' };
+    case 'branches':
+    case 'impact':
+    case 'design':
+      return { kind: 'tasks' };
+    // These name a record; without its id there is nowhere to go.
+    case 'task':
+    case 'pr':
+    case 'draft':
+    case 'new-task':
+      return { kind: 'none' };
+    default: {
+      const unhandled: never = view;
+      return unhandled;
+    }
+  }
+}
+
+/** Where a global view lives: Overseer, or a Settings page. */
+export function globalViewDestination(
+  view: GlobalView,
+  page?: SettingsPage
+): NavDestination {
+  switch (view) {
+    case 'overseer':
+      return { kind: 'overseer' };
+    case 'settings':
+      return { kind: 'settings', page: page ?? 'general' };
+    case 'sessions':
+      return { kind: 'settings', page: 'usage' };
+    case 'all-agents':
+      return { kind: 'settings', page: 'runs' };
+    default: {
+      const unhandled: never = view;
+      return unhandled;
+    }
+  }
+}
+
+// ⌘3–⌘9: the status chips' presets, in strip order. Listed rather than
+// sliced from TASKS_PRESETS so a new preset (Mine, Starred) never shifts a key.
+const DIGIT_PRESETS: readonly TasksPreset[] = [
+  'needs-you',
+  'failed',
+  'moving',
+  'review',
+  'ready',
+  'landing',
+  'landed',
+];
+
+/** What a global key does: a navigation, `'swallow'` for a key with nothing
+ * to do here, or `null` to fall through to the shared handling in App. */
+export function keyAction(
+  command: GlobalKeyCommand
+): NavAction | 'swallow' | null {
+  switch (command) {
+    case 'goto-1':
+    case 'goto-overseer':
+    case 'goto-home':
+    case 'goto-control-room':
+      return { type: 'showOverseer' };
+    case 'goto-2':
+    case 'goto-tasks':
+      return { type: 'showTasks' };
+    case 'goto-inbox':
+      return { type: 'showTasks', preset: 'needs-you' };
+    case 'goto-live':
+      return { type: 'showTasks', preset: 'moving' };
+    case 'goto-projects':
+      return { type: 'showTasks', preset: 'review' };
+    case 'goto-threads':
+      return { type: 'setProjectView', view: 'threads' };
+    case 'goto-timeline':
+      return { type: 'openTimeline', project: null };
+    case 'goto-graph':
+      return { type: 'openGraph', scope: DEFAULT_GRAPH_SCOPE, nodeId: null };
+    case 'goto-settings':
+      return { type: 'openSettings' };
+    // ⌘3–⌘9 walk the status presets, in chip order.
+    case 'goto-3':
+    case 'goto-4':
+    case 'goto-5':
+    case 'goto-6':
+    case 'goto-7':
+    case 'goto-8':
+    case 'goto-9': {
+      const preset = DIGIT_PRESETS[Number(command.slice(5)) - 3];
+      return preset === undefined ? 'swallow' : { type: 'showTasks', preset };
+    }
+    // `toggle-sidebar` is the shell's: App collapses the rail itself.
+    default:
+      return null;
+  }
+}
+
+/** A page's identity as a string, keys in a fixed order, so two pages built
+ * by different callers (a link's parsed scope, a reducer default) compare
+ * equal when they name the same place. */
+function pageKey(page: TasksPage): string {
+  return JSON.stringify(page, (_key, value: unknown) =>
+    value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+            a < b ? -1 : a > b ? 1 : 0
+          )
+        )
+      : value
+  );
+}
+
+export function samePlace(a: Place, b: Place): boolean {
+  return (
+    a.mainView === b.mainView && pageKey(a.tasksPage) === pageKey(b.tasksPage)
+  );
+}
+
+// Moves to a place, records it, and closes Settings: any navigation leaves
+// Settings. Re-selecting the place you are already on is not a new
+// destination; navigating somewhere new after going back discards what you
+// had gone back from (the browser rule).
+function go(state: NavState, place: Place): NavState {
+  const moved = { ...state, ...place, settings: null };
+  const kept = state.history.slice(0, state.historyIndex + 1);
+  const last = kept[kept.length - 1];
+  if (last !== undefined && samePlace(last, place)) return moved;
+  const history = [...kept, place].slice(-50);
+  return { ...moved, history, historyIndex: history.length - 1 };
+}
+
+function toTasks(state: NavState, page: TasksPage): NavState {
+  return go(state, { mainView: 'tasks', tasksPage: page });
+}
+
+function applyDestination(
+  state: NavState,
+  destination: NavDestination
+): NavState {
+  switch (destination.kind) {
+    case 'overseer':
+      return go(state, { mainView: 'overseer', tasksPage: state.tasksPage });
+    case 'tasks':
+      return toTasks(state, LIST);
+    case 'docs':
+      return toTasks(state, {
+        kind: 'docs',
+        docId: null,
+        anchor: null,
+        merge: null,
+      });
+    case 'settings':
+      return { ...state, settings: destination.page };
+    case 'page':
+      return toTasks(state, destination.page);
+    case 'none':
+      return state;
+  }
+}
+
+// Patches the open task page in place (a tab flip, a run pick): not a
+// destination, so history keeps the page as it was opened. Off the page it
+// does nothing.
+function withTaskPage(
+  state: NavState,
+  patch: Partial<Extract<TasksPage, { kind: 'task' }>>
+): NavState {
+  const page = state.tasksPage;
+  if (page.kind !== 'task') return state;
+  return { ...state, tasksPage: { ...page, ...patch } };
+}
+
+// Where an address leads: people, outside agents and tasks peek (a task by
+// address is a quick look); rooms open under Tasks.
+function openAddress(state: NavState, address: string): NavState {
+  const colon = address.indexOf(':');
+  const kind = address.slice(0, colon);
+  const rest = address.slice(colon + 1);
+  switch (kind) {
+    case 'human':
+      return { ...state, peek: { kind: 'person', address } };
+    case 'a2a':
+      return { ...state, peek: { kind: 'outside', address } };
+    case 'channel':
+      return toTasks(state, { kind: 'room', room: rest });
+    case 'task':
+      return { ...state, peek: { kind: 'task', taskId: rest } };
+    default:
+      return state;
+  }
+}
+
+// Moving through history is navigation, not a modal action: anything layered
+// on top (a peek, Settings, the palette, the shortcuts sheet) closes rather
+// than following you to the new screen. Cmd+[ and Cmd+] are modifier chords,
+// so they fire with those open (lib/keyboard.ts resolves them before the
+// modal check). The AI composer stays: it holds text the person typed.
+function step(state: NavState, delta: -1 | 1): NavState {
+  const index = state.historyIndex + delta;
+  const entry = state.history[index];
+  if (entry === undefined) return state;
+  return {
+    ...state,
+    ...entry,
+    historyIndex: index,
+    peek: null,
+    settings: null,
+    paletteOpen: false,
+    shortcutsOpen: false,
+  };
+}
 
 export function navReducer(state: NavState, action: NavAction): NavState {
   switch (action.type) {
     case 'selectProject':
-      // Switching projects always lands on the Cockpit home and drops any
-      // peek/run selection scoped to the previous project rather than carrying over an id
-      // that belongs to a different project's task/run list.
+      // Switching projects drops every page, peek, dialog and Settings scoped
+      // to the previous project rather than carrying over an id that belongs
+      // to a different project's task list; the view (Overseer or Tasks) and
+      // the list's layout are the person's choice and stay.
       return {
-        ...state,
-        section: 'project',
+        ...initialNavState,
         activeProjectId: action.projectId,
-        projectView: 'cockpit',
-        peekTaskId: null,
-        activeRunId: null,
-        activeDraftId: null,
-        activePrNumber: null,
-        activeTaskId: null,
-        threadFocus: null,
-        activeDocId: null,
-        activeDocAnchor: null,
-        activeDocMerge: null,
+        mainView: state.mainView,
+        tasksMode: state.tasksMode,
+        history: [{ mainView: state.mainView, tasksPage: LIST }],
       };
-    case 'setProjectView': {
-      const view = normalizeProjectView(action.view);
-      // The task view is the only page that renders a selected run now, so
-      // every other destination clears it rather than reopening a stale one.
-      const activeRunId = view === 'task' ? state.activeRunId : null;
-      // Only the draft view itself renders a selected draft, so any other
-      // destination drops it rather than reopening a stale one on return.
-      const activeDraftId = view === 'draft' ? state.activeDraftId : null;
-      // Same rule for the open pull request: only the PR view renders one.
-      const activePrNumber = view === 'pr' ? state.activePrNumber : null;
-      const activeTaskId = view === 'task' ? state.activeTaskId : null;
-      const next: NavState = {
-        ...state,
-        section: 'project',
-        projectView: view,
-        activeRunId,
-        activeDraftId,
-        activePrNumber,
-        activeTaskId,
-        taskTab: state.taskTab,
-      };
-      return pushHistory(next, {
-        section: 'project',
-        projectView: view,
-        globalView: state.globalView,
-        activeRunId,
-        activeDraftId,
-        activePrNumber,
-        activeTaskId,
-        taskTab: state.taskTab,
-      });
-    }
+    case 'setProjectView':
+      return applyDestination(state, projectViewDestination(action.view));
     case 'setGlobalView':
-      // A global view (Settings, Sessions, All Agents) isn't showing any project's task
-      // list at all, so a task peek left open from whatever project view preceded it has
-      // nothing left to sit "over" — drop it rather than let it render on top of an
-      // unrelated global screen.
-      return {
-        ...state,
-        section: 'global',
-        globalView: action.view,
-        settingsPage:
-          action.view === 'settings'
-            ? (action.page ?? state.settingsPage)
-            : state.settingsPage,
-        peekTaskId: null,
-      };
+      return applyDestination(
+        state,
+        globalViewDestination(action.view, action.page)
+      );
     case 'openPeek':
-      return { ...state, peekTaskId: action.taskId };
+      // The quick-look slide-over, over whichever view is showing (owner
+      // decision, Phase 3a: no split pane beside the list any more).
+      return { ...state, peek: { kind: 'task', taskId: action.taskId } };
     case 'closePeek':
-      return { ...state, peekTaskId: null };
+      return state.peek === null ? state : { ...state, peek: null };
     case 'openRun':
-      // Opening a different run is a destination in its own right, so back
-      // returns to the one you were looking at rather than skipping the view.
-      return pushHistory(
-        { ...state, activeRunId: action.runId },
-        {
-          section: state.section,
-          projectView: state.projectView,
-          globalView: state.globalView,
-          activeRunId: action.runId,
-          activeDraftId: state.activeDraftId,
-          activePrNumber: state.activePrNumber,
-          activeTaskId: state.activeTaskId,
-          taskTab: state.taskTab,
-        }
-      );
+      return withTaskPage(state, { runId: action.runId });
     case 'closeRun':
-      return { ...state, activeRunId: null };
-    case 'openDraft':
-      // Opening a different draft is a destination in its own right, so back
-      // returns to the one you were looking at rather than skipping the view.
-      return pushHistory(
-        {
-          ...state,
-          section: 'project',
-          projectView: 'draft',
-          activeDraftId: action.draftId,
-        },
-        {
-          section: 'project',
-          projectView: 'draft',
-          globalView: state.globalView,
-          activeRunId: state.activeRunId,
-          activeDraftId: action.draftId,
-          activePrNumber: state.activePrNumber,
-          activeTaskId: state.activeTaskId,
-          taskTab: state.taskTab,
-        }
-      );
-    case 'openPr':
-      // Same rule as `openDraft`: one PR is a destination, so back returns to
-      // the pull request you had open rather than skipping past the view.
-      return pushHistory(
-        {
-          ...state,
-          section: 'project',
-          projectView: 'pr',
-          activePrNumber: action.number,
-        },
-        {
-          section: 'project',
-          projectView: 'pr',
-          globalView: state.globalView,
-          activeRunId: state.activeRunId,
-          activeDraftId: state.activeDraftId,
-          activePrNumber: action.number,
-          activeTaskId: state.activeTaskId,
-          taskTab: state.taskTab,
-        }
-      );
-    case 'openThread':
-      // One history entry per visit: entries carry no focus, so switching
-      // threads inside the view dedupes against the entry already there.
-      return pushHistory(
-        {
-          ...state,
-          section: 'project',
-          projectView: 'threads',
-          threadFocus: action.messageId,
-          peekTaskId: null,
-        },
-        {
-          section: 'project',
-          projectView: 'threads',
-          globalView: state.globalView,
-          activeRunId: state.activeRunId,
-          activeDraftId: state.activeDraftId,
-          activePrNumber: state.activePrNumber,
-          activeTaskId: state.activeTaskId,
-          taskTab: state.taskTab,
-        }
-      );
-    case 'openDoc':
-      // Same rule as `openThread`: entries carry no doc, so back returns to
-      // the page the doc was opened from.
-      return pushHistory(
-        {
-          ...state,
-          section: 'project',
-          projectView: 'docs',
-          activeDocId: action.docId,
-          activeDocAnchor: action.anchor,
-          activeDocMerge: action.merge ?? null,
-          peekTaskId: null,
-        },
-        {
-          section: 'project',
-          projectView: 'docs',
-          globalView: state.globalView,
-          activeRunId: state.activeRunId,
-          activeDraftId: state.activeDraftId,
-          activePrNumber: state.activePrNumber,
-          activeTaskId: state.activeTaskId,
-          taskTab: state.taskTab,
-        }
-      );
-    case 'back':
-    case 'forward': {
-      const delta = action.type === 'back' ? -1 : 1;
-      const index = state.historyIndex + delta;
-      const entry = state.history[index];
-      if (entry === undefined) return state;
+      return withTaskPage(state, { runId: null });
+    case 'openTask':
+      // The full page replaces a quick look of any task, so the drawer closes.
       return {
-        ...state,
-        historyIndex: index,
-        section: entry.section,
-        projectView: entry.projectView,
-        globalView: entry.globalView,
-        activeRunId: entry.activeRunId,
-        activeDraftId: entry.activeDraftId,
-        activePrNumber: entry.activePrNumber,
-        activeTaskId: entry.activeTaskId,
-        taskTab: entry.taskTab,
-        // Moving through history is navigation, not a modal action — anything
-        // layered on top closes rather than following you to the new screen.
-        peekTaskId: null,
-        paletteOpen: false,
+        ...toTasks(state, {
+          kind: 'task',
+          taskId: action.taskId,
+          tab: action.tab ?? 'auto',
+          runId: action.runId ?? null,
+        }),
+        peek: null,
       };
-    }
-    case 'openTask': {
-      // The full task view is a destination (unlike the peek): it replaces the
-      // main pane and participates in history, so back returns to where you were.
-      const next: NavState = {
-        ...state,
-        section: 'project',
-        projectView: 'task',
-        activeTaskId: action.taskId,
-        taskTab: action.tab ?? 'auto',
-        activeRunId: action.runId ?? null,
-        peekTaskId: null,
-      };
-      return pushHistory(next, {
-        section: 'project',
-        projectView: 'task',
-        globalView: state.globalView,
-        activeRunId: next.activeRunId,
-        activeDraftId: state.activeDraftId,
-        activePrNumber: state.activePrNumber,
-        activeTaskId: action.taskId,
-        taskTab: next.taskTab,
-      });
-    }
     case 'setTaskTab':
-      // Tab flips are in-place, not destinations — history keeps the tab the
-      // view was opened on.
-      return state.projectView === 'task'
-        ? { ...state, taskTab: action.tab }
-        : state;
+      return withTaskPage(state, { tab: action.tab });
+    case 'openThread':
+      return action.messageId === null
+        ? applyDestination(state, { kind: 'overseer' })
+        : { ...state, peek: { kind: 'thread', messageId: action.messageId } };
+    case 'openDoc':
+      return toTasks(state, {
+        kind: 'docs',
+        docId: action.docId,
+        anchor: action.anchor,
+        merge: action.merge ?? null,
+      });
+    case 'openPr':
+      return toTasks(state, { kind: 'pr', number: action.number });
+    case 'openDraft':
+      return toTasks(state, { kind: 'draft', draftId: action.draftId });
+    case 'openFile':
+      return toTasks(state, { kind: 'file', path: action.path });
+    case 'openTimeline':
+      return toTasks(state, {
+        kind: 'view',
+        view: 'timeline',
+        project: action.project,
+      });
+    case 'openGraph':
+      return toTasks(state, {
+        kind: 'view',
+        view: 'graph',
+        scope: action.scope,
+        nodeId: action.nodeId,
+      });
+    case 'back':
+      // A peek is the nearest thing to leave: back closes it rather than
+      // leaving it over another page.
+      if (state.peek !== null) return { ...state, peek: null };
+      return step(state, -1);
+    case 'forward':
+      return step(state, 1);
+    case 'escape':
+      if (state.shortcutsOpen) return { ...state, shortcutsOpen: false };
+      if (state.paletteOpen) return { ...state, paletteOpen: false };
+      if (state.composerOpen) return { ...state, composerOpen: false };
+      if (state.settings !== null) return { ...state, settings: null };
+      if (state.peek !== null) return { ...state, peek: null };
+      // A page you arrive at from a row leaves the way you came in, rather
+      // than stranding you with only a Back button.
+      if (state.mainView === 'tasks' && state.tasksPage.kind !== 'list') {
+        return toTasks(state, LIST);
+      }
+      return state;
+    case 'showOverseer':
+      return applyDestination(state, { kind: 'overseer' });
+    case 'showTasks':
+      if (action.preset !== undefined)
+        return { ...toTasks(state, LIST), tasksPreset: action.preset };
+      // Coming from Overseer returns to where Tasks was left; pressing Tasks
+      // while already there goes back to the list, like any tab pressed twice.
+      return state.mainView === 'tasks'
+        ? { ...toTasks(state, LIST), tasksPreset: 'all' }
+        : {
+            ...go(state, { mainView: 'tasks', tasksPage: state.tasksPage }),
+            tasksPreset: 'all',
+          };
+    case 'setTasksPreset':
+      return { ...state, tasksPreset: action.preset };
+    case 'setTasksMode':
+      return { ...state, tasksMode: action.mode };
+    case 'openSettings':
+      return { ...state, settings: action.page ?? 'general' };
+    case 'closeSettings':
+      return state.settings === null ? state : { ...state, settings: null };
+    case 'closePage':
+      return toTasks(state, LIST);
+    case 'openAddress':
+      return openAddress(state, action.address);
     case 'openNewTask':
-      // The creator is a project-section destination, so opening it from a global view
-      // (Settings/Sessions/All Agents) also moves back into the project section and returns to
-      // that project's last view on close — `projectView` still holds it, since `setGlobalView`
-      // never overwrites it. `new-task` itself is never recorded as the return target, so a
-      // second "New task" while it's already open can't turn Escape into a no-op that just
-      // reopens the same page.
-      return {
-        ...state,
-        section: 'project',
-        projectView: 'new-task',
-        activeRunId: null,
-        // Normalized on capture, so a return view read out of stored state can
-        // never send you back to a page that no longer exists.
-        newTaskReturnView:
-          state.projectView !== 'new-task'
-            ? normalizeProjectView(state.projectView)
-            : normalizeProjectView(state.newTaskReturnView),
-      };
+      // A dialog over whatever shows, so it never records a place: closing it
+      // leaves you exactly where you were.
+      return state.composerOpen ? state : { ...state, composerOpen: true };
     case 'closeNewTask':
-      if (state.projectView !== 'new-task') return state;
-      return { ...state, projectView: state.newTaskReturnView };
+      return state.composerOpen ? { ...state, composerOpen: false } : state;
     case 'openPalette':
       return { ...state, paletteOpen: true };
     case 'closePalette':
@@ -553,22 +762,9 @@ export function navReducer(state: NavState, action: NavAction): NavState {
       return { ...state, shortcutsOpen: true };
     case 'closeShortcuts':
       return { ...state, shortcutsOpen: false };
-    case 'escape':
-      if (state.shortcutsOpen) return { ...state, shortcutsOpen: false };
-      if (state.paletteOpen) return { ...state, paletteOpen: false };
-      if (state.peekTaskId !== null) return { ...state, peekTaskId: null };
-      if (state.projectView === 'new-task')
-        return { ...state, projectView: state.newTaskReturnView };
-      // The full-window destinations you arrive at from a row click leave the
-      // way you came in, rather than stranding you with only a Back button.
-      if (
-        state.section === 'project' &&
-        (state.projectView === 'task' || state.projectView === 'pr')
-      ) {
-        return navReducer(state, { type: 'back' });
-      }
-      return state;
-    default:
-      return state;
+    default: {
+      const unhandled: never = action;
+      return unhandled;
+    }
   }
 }

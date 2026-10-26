@@ -1,13 +1,14 @@
 // The command menu's rows, built as plain data so the sections and their shortcut hints are
-// testable without React. `CommandPalette` accepts these structurally (it needs `id`,
-// `label`, `sublabel?`, `kind`, `run`); the extra `section`/`icon`/`shortcut` fields are for
-// the grouped Linear-style menu that replaces the flat list.
+// testable without React. `adapters/palette.ts` turns them into @dispatch/ui PaletteItems
+// (section headings, default icons, keycaps) for the Gr8r palette hosted by
+// `components/shell/CommandPalette.tsx`.
 
 import type { DocHit } from '@dispatch/client';
 import type { ReactNode } from 'react';
 
 import { type GlobalView, HOST_VIEWS, type ProjectView } from './appNav';
-import type { PaletteItem } from './paletteMatch';
+import { docHref, PROJECTS_HREF } from './routes';
+import { hrefFor } from './shellRoutes';
 
 export type PaletteSection =
   | 'tasks'
@@ -17,13 +18,21 @@ export type PaletteSection =
   | 'inbox'
   | 'views';
 
-export interface PaletteEntry extends PaletteItem {
-  /** A short tag shown at the entry's right edge — "task", "go to", "action". */
+export interface PaletteEntry {
+  id: string;
+  label: string;
+  /** Matched too: a task's id, a doc's handle. */
+  sublabel?: string;
+  /** What the row is — "task", "go to", "action"; kept as data, never printed. */
   kind: string;
   section: PaletteSection;
   icon?: ReactNode;
-  /** The keycap hint, as it is printed: `⌘1`, `C`, `G A`. */
+  /** The keycap hint, as it is printed: `⌘1`, `C`, `G A` (`⌘` stands for the
+   * platform's modifier; the palette prints its label). */
   shortcut?: string;
+  /** The place the row opens, as a `lib/routes.ts` href, when it is a place: a
+   * navigation row, a doc hit. `run` still does the opening. */
+  href?: string;
   run: () => void;
 }
 
@@ -63,12 +72,14 @@ export interface PaletteEntriesContext {
 }
 
 // The pages under Tasks with no sidebar row: Files, Terminals, the Projects
-// tree (also the Projects section's "All") and Live (also the Runs page's link).
-const TASKS_PAGES: PaletteView[] = [
-  { id: 'files', label: 'Files' },
-  { id: 'terminals', label: 'Terminals' },
-  { id: 'projects', label: 'Projects' },
-  { id: 'live', label: 'Live' },
+// register (also the Projects section's "All") and Live (also the Runs page's
+// link). Each page's route head is its view name (`#/files`, `#/live`: the
+// `pageRoute`s of lib/routes.ts), which the test checks through parseHref.
+const TASKS_PAGES: (PaletteView & { href: string })[] = [
+  { id: 'files', label: 'Files', href: '#/files' },
+  { id: 'terminals', label: 'Terminals', href: '#/terminals' },
+  { id: 'projects', label: 'Projects', href: PROJECTS_HREF },
+  { id: 'live', label: 'Live', href: '#/live' },
 ];
 
 /** The rows the command menu offers right now: actions (a `Copy link` when a task is up),
@@ -156,6 +167,7 @@ export function buildPaletteEntries(
       kind: 'go to',
       section: 'navigation',
       shortcut: '⌘1',
+      href: hrefFor('overseer'),
       run: () => actions.setGlobalView('overseer'),
     },
     {
@@ -164,6 +176,7 @@ export function buildPaletteEntries(
       kind: 'go to',
       section: 'navigation',
       shortcut: '⌘2',
+      href: hrefFor('issues'),
       run: () => actions.setProjectView('board'),
     },
     {
@@ -172,6 +185,7 @@ export function buildPaletteEntries(
       kind: 'go to',
       section: 'navigation',
       shortcut: '⌘,',
+      href: hrefFor('settings'),
       run: () => actions.setGlobalView('settings'),
     }
   );
@@ -183,6 +197,7 @@ export function buildPaletteEntries(
         kind: 'go to',
         section: 'navigation',
         shortcut: 'G L',
+        href: hrefFor('timeline'),
         run: () => actions.setProjectView('timeline'),
       },
       {
@@ -191,6 +206,7 @@ export function buildPaletteEntries(
         kind: 'go to',
         section: 'navigation',
         shortcut: 'G G',
+        href: hrefFor('graph'),
         run: () => actions.setProjectView('graph'),
       }
     );
@@ -203,6 +219,7 @@ export function buildPaletteEntries(
         label: `Open ${page.label}`,
         kind: 'go to',
         section: 'navigation',
+        href: page.href,
         run: () => actions.setProjectView(page.id),
       });
     }
@@ -252,14 +269,18 @@ export function docHitEntries(
   hits: readonly DocHit[],
   openDoc: (docId: string, anchor: string | null) => void
 ): PaletteEntry[] {
-  return hits.map((hit) => ({
-    id: `doc:${hit.doc}#${hit.anchor}`,
-    label: hit.heading === '' ? hit.title : `${hit.title} › ${hit.heading}`,
-    sublabel: hit.handle,
-    kind: 'doc',
-    section: 'docs',
-    run: () => openDoc(hit.doc, hit.anchor === '' ? null : hit.anchor),
-  }));
+  return hits.map((hit) => {
+    const anchor = hit.anchor === '' ? null : hit.anchor;
+    return {
+      id: `doc:${hit.doc}#${hit.anchor}`,
+      label: hit.heading === '' ? hit.title : `${hit.title} › ${hit.heading}`,
+      sublabel: hit.handle,
+      kind: 'doc',
+      section: 'docs',
+      href: docHref(hit.doc, anchor),
+      run: () => openDoc(hit.doc, anchor),
+    };
+  });
 }
 
 /** The rows for talking to someone or opening a room; homes are never listed elsewhere. */

@@ -32,10 +32,11 @@ export function isTypingTarget(target: EventTarget | null): boolean {
  * (CreateTaskModal, SessionDetailModal, DiffModal, CommandPalette, …) only renders into the DOM
  * while open, so the query is always exactly as current as the state would be, without App.tsx
  * needing to know about every modal that exists anywhere in the component tree (including ones
- * mounted deep inside the Sessions hub). CommandPalette is one of these too, so a keydown
- * reaching this listener while the palette is open resolves `Escape` to `null` here — Base UI's
- * own dismiss handling on `Dialog` already owns it, and `CommandPalette`'s `onClose` prop is the
- * only thing that closes it (see `appNav.ts`'s `closePalette` case). Exported for a view whose own
+ * mounted deep inside the Sessions hub). CommandPalette is one of these too (`@dispatch/ui`'s
+ * aria-modal dialog), so a keydown reaching this listener while the palette is open resolves
+ * `Escape` to `null` here — the library's own Escape handling owns it, and its `onClose`
+ * dispatching `closePalette` through `onNavigate` is the only thing that closes it (see
+ * `appNav.ts`'s `closePalette` case). Exported for a view whose own
  * document-level Escape must let an open panel's go first (the Graph's lock, `views/GraphView.tsx`). */
 export function isAnyModalOpen(): boolean {
   return (

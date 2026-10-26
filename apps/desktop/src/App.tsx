@@ -5,20 +5,24 @@ import {
   type TaskListItem,
 } from '@dispatch-foo/core/browser';
 import type { DraftRecord } from '@dispatch/client';
-import { toggleShellCollapsed } from '@dispatch/ui';
+import {
+  ShortcutSheet,
+  toggleShellCollapsed,
+  useModKeyLabel,
+} from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bot, Coins, TriangleAlert } from 'lucide-react';
 import {
   type ReactNode,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
   useState,
 } from 'react';
 
+import { PALETTE_DOCS_LIMIT } from './adapters/palette';
 import { buildProjectsSection, planningProjectMark } from './adapters/shell';
 import { AwayDigest, useNarratorSince } from './components/chat/AwayDigest';
 import { CapturedNotes } from './components/chat/CapturedNotes';
@@ -72,7 +76,6 @@ import {
   type ShellActions,
   ShellActionsProvider,
 } from './components/shell/ShellActionsContext';
-import { ShortcutsDialog } from './components/shell/ShortcutsDialog';
 import {
   taskToastDescription,
   viewTaskLink,
@@ -97,6 +100,7 @@ import {
   useFreshEmptyProject,
 } from './hooks/useFirstTaskGuide';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
+import { useHashRoute } from './hooks/useHashRoute';
 import { useOverseerSession } from './hooks/useOverseerSession';
 import {
   type Planning,
@@ -122,6 +126,11 @@ import { overseerOf } from './lib/agentRoster';
 import {
   type GlobalView,
   HOST_VIEWS,
+  type HostedPage,
+  initialNavState,
+  keyAction,
+  type NavAction,
+  navReducer,
   type ProjectView,
   type SettingsPage,
   type TaskTab,
@@ -148,7 +157,6 @@ import {
   buildPaletteEntries,
   docHitEntries,
 } from './lib/paletteEntries';
-import { PALETTE_SECTION_CAPS } from './lib/paletteSections';
 import { buildPosts, type Post } from './lib/posts';
 import { basename } from './lib/projectName';
 import { prNumberFromUrl } from './lib/reviewTarget';
@@ -161,6 +169,7 @@ import {
   writeSetupComplete,
 } from './lib/setupState';
 import { currentShellDestination } from './lib/shellRoutes';
+import { buildShortcutGroups } from './lib/shortcutGroups';
 import { useStatusModelOf } from './lib/statusModel';
 import { computeBlockedIds } from './lib/taskGraph';
 import { itemBucket, queuedTaskIds, taskStatusCounts } from './lib/taskStatus';
@@ -180,12 +189,6 @@ import {
   signOutOfTeam,
 } from './lib/teamLocal';
 import { openRefWith, type RefAction } from './lib/threadSources';
-import {
-  appNavReducer,
-  type HostedView,
-  initialAppNavState,
-  twoViewsKeyAction,
-} from './lib/twoViews';
 import { checkForUpdate, installUpdateAndRelaunch } from './lib/updater';
 import { applyZoomFactor, loadZoomFactor, stepZoomFactor } from './lib/zoom';
 import { AllAgentsView } from './views/AllAgentsView';
@@ -247,20 +250,13 @@ const TWO_VIEWS_PAGE_HEADER = {
 
 function App() {
   const queryClient = useQueryClient();
-  const [{ nav: navState, twoViews: twoViewsState }, dispatchNav] = useReducer(
-    appNavReducer,
-    initialAppNavState
-  );
+  const [navState, dispatchNav] = useReducer(navReducer, initialNavState);
   const [showCreate, setShowCreate] = useState(false);
   // What a board column's or list group's "+" pre-fills into the creator (status today;
   // epic/milestone once the creator reads them); `null` leaves every field to its default.
   const [createPreset, setCreatePreset] = useState<CreateTaskPreset | null>(
     null
   );
-  // The AI task composer, a dialog rather than a screen — open state lives here (not in
-  // `navState`) so it renders on top of whatever view is underneath instead of replacing it.
-  const [aiComposerOpen, setAiComposerOpen] = useState(false);
-
   // Whether the shell's brand row clears the macOS traffic lights.
   const trafficLightInset = useTrafficLightInset();
 
@@ -299,14 +295,6 @@ function App() {
   }, []);
 
   useDataChangedEvents();
-
-  // Reaching `new-task` only opens the AI composer dialog and hands the view back to
-  // `newTaskReturnView` — `useLayoutEffect` so this happens before paint, with no blank frame.
-  useLayoutEffect(() => {
-    if (navState.projectView !== 'new-task') return;
-    setAiComposerOpen(true);
-    dispatchNav({ type: 'closeNewTask' });
-  }, [navState.projectView]);
 
   // The app is scoped to a single project — the one it was launched from (see
   // `commands::current_project_root`'s doc comment for the `tauri dev`-vs-packaged-app
@@ -483,7 +471,6 @@ function App() {
   }, []);
 
   const closeCreateTask = useCallback(() => {
-    setAiComposerOpen(false);
     setShowCreate(false);
     dispatchNav({ type: 'closeNewTask' });
   }, []);
@@ -499,13 +486,13 @@ function App() {
   // Moves nav state to the newly (re-)dispatched run. The task view is the only run surface
   // now, and a run that has just been created is live, so it opens on Run.
   // Two views' page right now; read by callbacks made before it is computed below.
-  const twoViewsPageRef = useRef<{ on: boolean; taskId: string | null }>({
+  const taskPageRef = useRef<{ on: boolean; taskId: string | null }>({
     on: false,
     taskId: null,
   });
   const onRunDispatched = useCallback((runId: string, taskId: string) => {
     // A run started from a task already open (split or full) stays on that page.
-    const page = twoViewsPageRef.current;
+    const page = taskPageRef.current;
     if (page.on && page.taskId === taskId) {
       dispatchNav({ type: 'setTaskTab', tab: 'run' });
       dispatchNav({ type: 'openRun', runId });
@@ -514,8 +501,11 @@ function App() {
     dispatchNav({ type: 'openTask', taskId, tab: 'run', runId });
   }, []);
 
+  // The run the task page is pinned to: the only surface that shows one.
+  const selectedRunId =
+    navState.tasksPage.kind === 'task' ? navState.tasksPage.runId : null;
   const rawData = useDispatchProject(activeProject?.path ?? null, {
-    selectedRunId: navState.activeRunId,
+    selectedRunId,
     onRunDispatched,
   });
 
@@ -531,24 +521,23 @@ function App() {
   // Tells whoever else is on this daemon which task this window has open —
   // the full page or the quick-look drawer, whichever is showing. Best effort:
   // a failed report costs a teammate one stale "viewing", never an error here.
-  const twoViewsTaskId =
-    twoViewsState.tasksPage.kind === 'task'
-      ? twoViewsState.tasksPage.taskId
-      : twoViewsState.peek?.kind === 'task'
-        ? twoViewsState.peek.taskId
+  const shownTaskId =
+    navState.tasksPage.kind === 'task'
+      ? navState.tasksPage.taskId
+      : navState.peek?.kind === 'task'
+        ? navState.peek.taskId
         : null;
-  const twoViewsOpenTaskId =
-    twoViewsState.mainView === 'tasks' &&
-    twoViewsState.tasksPage.kind === 'task'
-      ? twoViewsState.tasksPage.taskId
+  const openTaskPageId =
+    navState.mainView === 'tasks' && navState.tasksPage.kind === 'task'
+      ? navState.tasksPage.taskId
       : null;
   useEffect(() => {
-    twoViewsPageRef.current = {
-      on: twoViewsOpenTaskId !== null,
-      taskId: twoViewsOpenTaskId,
+    taskPageRef.current = {
+      on: openTaskPageId !== null,
+      taskId: openTaskPageId,
     };
-  }, [twoViewsOpenTaskId]);
-  const focusedTaskId = twoViewsTaskId;
+  }, [openTaskPageId]);
+  const focusedTaskId = shownTaskId;
   const presenceClient = rawData.client;
   useEffect(() => {
     if (presenceClient === null) return;
@@ -640,6 +629,24 @@ function App() {
     [rawData.latestRunByTaskId]
   );
 
+  // A route's actions, as the shell's links, the graph's links and the hash
+  // deliver them. An `openTask` naming no run gets the task's latest, as
+  // `openTaskView` does for every other way in, so Run and Review have
+  // something to show and the hash then names the run.
+  const navigate = useCallback(
+    (action: NavAction) => {
+      if (action.type === 'openTask' && (action.runId ?? null) === null) {
+        openTaskView(action.taskId, action.tab);
+        return;
+      }
+      dispatchNav(action);
+    },
+    [openTaskView]
+  );
+  // `location.hash` mirrors the place, and a hash the window opens on (or a
+  // link the browser followed itself) is applied as a route.
+  useHashRoute({ state: navState, dispatch: navigate });
+
   // A Tasks-page row or card click: a phase drill from the milestones layout names
   // its tab and opens the full page; a plain click is the quick-look drawer
   // (owner decision: click and Space peek, Enter and o open). Stable, so memo'd
@@ -666,7 +673,7 @@ function App() {
         openTask: (taskId, tab, runId) => openTaskView(taskId, tab, runId),
         openThread: (messageId) =>
           dispatchNav({ type: 'openThread', messageId }),
-        openFile: (path) => dispatchNav({ type: 'tv/openFile', path }),
+        openFile: (path) => dispatchNav({ type: 'openFile', path }),
         openDoc,
       }),
     [openTaskView, openDoc]
@@ -860,6 +867,12 @@ function App() {
   const planning = usePlanning(data);
   const { snapshot: planningSnapshot, assessments: planningAssessments } =
     planning;
+  // The project whose lane the Timeline is focused on, marked current in the
+  // sidebar's Projects section while that page shows.
+  const focusedProjectId =
+    navState.tasksPage.kind === 'view' && navState.tasksPage.view === 'timeline'
+      ? navState.tasksPage.project
+      : null;
   // The sidebar's Projects section: every project marked by the planning's
   // reading of its next milestone, else the rolled-up status of the issues
   // under it, in the top bar's old units (asks, failures).
@@ -880,6 +893,7 @@ function App() {
         ),
       statusOf: (projectId) =>
         planningProjectMark(planningSnapshot, planningAssessments, projectId),
+      currentId: focusedProjectId,
     });
   }, [
     data.tasks,
@@ -888,6 +902,7 @@ function App() {
     statusModel,
     planningSnapshot,
     planningAssessments,
+    focusedProjectId,
   ]);
   const admin = useAdminItems(data.client, data.port);
   const daemonDown = data.portLoading || data.portError || data.client === null;
@@ -920,14 +935,21 @@ function App() {
     () => dispatchNav({ type: 'openShortcuts' }),
     []
   );
+  // The "?" sheet's rows, with the platform's modifier label in every
+  // modified shortcut (⌘ on a Mac, Ctrl elsewhere).
+  const modLabel = useModKeyLabel();
+  const shortcutGroups = useMemo(
+    () => buildShortcutGroups(modLabel),
+    [modLabel]
+  );
 
   useGlobalKeyboard({
     // `modalOpen` is computed inside the hook itself, via a live DOM check for any open
     // dialog — so SessionDetailModal/DiffModal mounted deep inside the Sessions hub also
     // suppress the global commands while open, the same as CreateTaskModal always did.
     onCommand: (command) => {
-      // The `goto-*` keys resolve through `twoViewsKeyAction`.
-      const action = twoViewsKeyAction(command);
+      // The `goto-*` keys resolve through `keyAction`.
+      const action = keyAction(command);
       if (action !== null) {
         if (action !== 'swallow') dispatchNav(action);
         return;
@@ -1084,7 +1106,7 @@ function App() {
         return;
       }
       if (target.kind === 'plan') {
-        dispatchNav({ type: 'tv/showOverseer' });
+        dispatchNav({ type: 'showOverseer' });
         markNotificationInboxRead();
         return;
       }
@@ -1203,7 +1225,7 @@ function App() {
         ? undefined
         : (query: string) =>
             docsClient
-              .searchDocs(query, { limit: PALETTE_SECTION_CAPS.docs })
+              .searchDocs(query, { limit: PALETTE_DOCS_LIMIT })
               .then((r) => docHitEntries(r.hits, openDoc)),
     [docsClient, openDoc]
   );
@@ -1226,7 +1248,7 @@ function App() {
         tasks: paletteTasks,
         readyIds: paletteReadyIds,
         savedViews: savedViews.views,
-        currentTaskId: twoViewsTaskId,
+        currentTaskId: shownTaskId,
         hideHostViews,
         actions: {
           openCreateTask: () => openCreateTask(),
@@ -1249,7 +1271,7 @@ function App() {
         rooms: paletteRooms.map((room) => room.name),
         peers: palettePeers,
         me: data.me,
-        open: (address) => dispatchNav({ type: 'tv/openAddress', address }),
+        open: (address) => dispatchNav({ type: 'openAddress', address }),
       }),
     ],
     [
@@ -1265,7 +1287,7 @@ function App() {
       openQuickCapture,
       openShortcuts,
       savedViews.views,
-      twoViewsTaskId,
+      shownTaskId,
       openSavedView,
       copyTaskLink,
       hideHostViews,
@@ -1548,7 +1570,7 @@ function App() {
   };
   const showFirstRunBox = () => {
     setFirstRunSetAsideFor(null);
-    dispatchNav({ type: 'tv/showOverseer' });
+    dispatchNav({ type: 'showOverseer' });
   };
   const restartGuide = () => {
     guide.restart();
@@ -1606,11 +1628,11 @@ function App() {
           closeCompletion: guide.closeCompletion,
           openBoard: () => {
             guide.closeCompletion();
-            dispatchNav({ type: 'tv/showTasks' });
+            dispatchNav({ type: 'showTasks' });
           },
           openOverseer: () => {
             guide.closeCompletion();
-            dispatchNav({ type: 'tv/showOverseer' });
+            dispatchNav({ type: 'showOverseer' });
           },
           inviteTeammate: () => {
             guide.closeCompletion();
@@ -1640,12 +1662,13 @@ function App() {
   );
 
   const peekTaskId =
-    twoViewsState.peek?.kind === 'task' ? twoViewsState.peek.taskId : null;
+    navState.peek?.kind === 'task' ? navState.peek.taskId : null;
 
-  const closeTwoViewsPage = () => dispatchNav({ type: 'tv/closePage' });
+  const closeTwoViewsPage = () => dispatchNav({ type: 'closePage' });
 
   // A project view shown as a page under Tasks, its own header leading back.
-  const renderHostedView = (view: HostedView): ReactNode => {
+  const renderHostedView = (page: HostedPage): ReactNode => {
+    const { view } = page;
     if (data.portLoading || data.portError || data.client === null) {
       return (
         <div className="flex h-full min-h-0 flex-col">
@@ -1674,7 +1697,7 @@ function App() {
         </div>
       );
     }
-    switch (view) {
+    switch (page.view) {
       case 'files':
         return <FilesView data={data} onBack={closeTwoViewsPage} />;
       case 'terminals':
@@ -1702,7 +1725,7 @@ function App() {
             // A request-tier token cannot write: no re-date handles.
             readOnly={data.myTier === 'request'}
             selectedId={peekTaskId}
-            focusProjectId={timelineFocus}
+            focusProjectId={page.project}
             // Raw, so a refusal reaches the chart, which announces it and
             // rolls the bar back (the toasting wrapper never rejects).
             onRedate={(milestoneId, dueDate) =>
@@ -1711,21 +1734,23 @@ function App() {
           />
         );
       case 'graph':
-        // Every box is a task; the peeked one is the graph's selection.
+        // Every box is a task; the peeked one is the graph's selection. The
+        // scope is the page's route; the view's links dispatch through `navigate`.
         return (
-          <GraphView data={data} bucketOf={bucketOf} selectedId={peekTaskId} />
-        );
-      case 'projects':
-        // The initiative › project › milestone › issue tree, once the Issues
-        // graph's Projects layout; a row's page is the quick look.
-        return (
-          <ProjectsView
-            projectName={activeProject?.name ?? null}
+          <GraphView
             data={data}
-            onOpenTask={selectBoardTask}
-            onBack={closeTwoViewsPage}
+            bucketOf={bucketOf}
+            selectedId={peekTaskId}
+            scope={page.scope}
+            nodeId={page.nodeId}
+            onNavigate={navigate}
           />
         );
+      case 'projects':
+        // The projects register: every open project with its status, next
+        // milestone, lead and allocation, grouped by initiative. Its rows and
+        // cells are real hrefs the shell's link provider resolves.
+        return <ProjectsView data={data} onBack={closeTwoViewsPage} />;
       case 'live':
         // Every container with work moving, once the Issues graph's Live
         // layout: dispatches in place, a node's page on `o`, its quick look
@@ -1851,7 +1876,7 @@ function App() {
           />
         );
       case 'view':
-        return renderHostedView(page.view);
+        return renderHostedView(page);
       case 'file':
         return (
           <FilesView
@@ -1876,9 +1901,9 @@ function App() {
     }
   };
 
-  const tasksPage = twoViewsState.tasksPage;
+  const tasksPage = navState.tasksPage;
   // Which sidebar row is current, read off the same state the views render from.
-  const shellDestination = currentShellDestination(twoViewsState);
+  const shellDestination = currentShellDestination(navState);
   const aboutTask =
     tasksPage.kind === 'task'
       ? {
@@ -1931,11 +1956,11 @@ function App() {
 
   // A link inside a peek closes it, so the peek never sits over where it led.
   const openRefFromPeek = (action: RefAction) => {
-    dispatchNav({ type: 'tv/closePeek' });
+    dispatchNav({ type: 'closePeek' });
     openRef(action);
   };
-  const closePeek = () => dispatchNav({ type: 'tv/closePeek' });
-  const peek = twoViewsState.peek;
+  const closePeek = () => dispatchNav({ type: 'closePeek' });
+  const peek = navState.peek;
   const peekView: ReactNode =
     peek?.kind === 'task' ? (
       // The quick-look slide-over, remounted per task so per-task state (an
@@ -1949,10 +1974,8 @@ function App() {
         overseer={overseer}
         messageId={peek.messageId}
         onOpenRef={openRefFromPeek}
-        onOpenHome={(address) =>
-          dispatchNav({ type: 'tv/openAddress', address })
-        }
-        onShowOverseer={() => dispatchNav({ type: 'tv/showOverseer' })}
+        onOpenHome={(address) => dispatchNav({ type: 'openAddress', address })}
+        onShowOverseer={() => dispatchNav({ type: 'showOverseer' })}
         onClose={closePeek}
       />
     ) : peek?.kind === 'person' ? (
@@ -1970,7 +1993,7 @@ function App() {
         address={peek.address}
         onOpenRef={openRefFromPeek}
         onOpenA2ASettings={() =>
-          dispatchNav({ type: 'tv/openSettings', page: 'a2a' })
+          dispatchNav({ type: 'openSettings', page: 'a2a' })
         }
         onClose={closePeek}
       />
@@ -2027,13 +2050,11 @@ function App() {
     dispatchNav(
       taskId !== undefined
         ? { type: 'openTask', taskId }
-        : { type: 'tv/showTasks', preset: door.preset }
+        : { type: 'showTasks', preset: door.preset }
     );
   };
   // The thread open on the Threads page.
   const [threadsFocus, setThreadsFocus] = useState<string | null>(null);
-  // The project lane a `#/timeline?project=` link asked the Timeline to show.
-  const [timelineFocus, setTimelineFocus] = useState<string | null>(null);
   // What a side column of the Overseer opened in its middle.
   const [overseerFocus, setOverseerFocus] = useState<OverseerFocus | null>(
     null
@@ -2109,7 +2130,7 @@ function App() {
     <>
       <DispatchShell
         projectName={activeProject?.name ?? null}
-        view={twoViewsState.mainView}
+        view={navState.mainView}
         destination={shellDestination}
         taskTitle={aboutTask?.title ?? null}
         overseerBadge={{ count: orb.count, tone: orb.tone, label: orbTitle }}
@@ -2120,17 +2141,7 @@ function App() {
         tier={data.myTier}
         teamSession={teamSession}
         windowChrome={{ dragRegion: isTauri(), trafficLightInset }}
-        onNavigate={dispatchNav}
-        // A project row opens the project's own page, on its Flight Plan.
-        onOpenTask={(taskId) => openTaskView(taskId, 'plan')}
-        // "All": the Projects page under Tasks, where every project is listed.
-        onOpenProjects={() =>
-          dispatchNav({ type: 'setProjectView', view: 'projects' })
-        }
-        onOpenTimeline={(projectId) => {
-          setTimelineFocus(projectId);
-          dispatchNav({ type: 'setProjectView', view: 'timeline' });
-        }}
+        onNavigate={navigate}
         onSearch={() => dispatchNav({ type: 'openPalette' })}
         topbarActions={
           <>
@@ -2139,7 +2150,7 @@ function App() {
               <PresenceStack
                 presence={data.presence}
                 onOpenPerson={(ref) =>
-                  dispatchNav({ type: 'tv/openAddress', address: ref })
+                  dispatchNav({ type: 'openAddress', address: ref })
                 }
                 taskTitle={(id) =>
                   data.tasksIncludingArchived.find((t) => t.meta.id === id)
@@ -2158,7 +2169,7 @@ function App() {
             <SetupBanner
               report={setupBannerReport}
               onOpen={() =>
-                dispatchNav({ type: 'tv/openSettings', page: 'setup' })
+                dispatchNav({ type: 'openSettings', page: 'setup' })
               }
             />
           ) : undefined
@@ -2240,7 +2251,7 @@ function App() {
               />
             }
             revoked={overseer.revoked}
-            onShowAsks={() => dispatchNav({ type: 'tv/showTasks' })}
+            onShowAsks={() => dispatchNav({ type: 'showTasks' })}
             onOpenDoor={openDoor}
             firstRun={
               showFirstRun ? (
@@ -2290,7 +2301,7 @@ function App() {
                           onRetry: () => retryDraft(failedFirstRun),
                         }
                   }
-                  onBrowseBoard={() => dispatchNav({ type: 'tv/showTasks' })}
+                  onBrowseBoard={() => dispatchNav({ type: 'showTasks' })}
                   onTalkToAgent={() =>
                     setFirstRunSetAsideFor(activeProject?.path ?? null)
                   }
@@ -2299,7 +2310,7 @@ function App() {
             }
             onOpenConnectedAgents={() =>
               dispatchNav({
-                type: 'tv/openSettings',
+                type: 'openSettings',
                 page: 'connected-agents',
               })
             }
@@ -2334,13 +2345,11 @@ function App() {
             decided={recentlyDecided}
             counts={statusCounts}
             page={tasksPage}
-            mode={twoViewsState.tasksMode}
-            onModeChange={(mode) =>
-              dispatchNav({ type: 'tv/setTasksMode', mode })
-            }
-            preset={twoViewsState.tasksPreset}
+            mode={navState.tasksMode}
+            onModeChange={(mode) => dispatchNav({ type: 'setTasksMode', mode })}
+            preset={navState.tasksPreset}
             onPreset={(preset) =>
-              dispatchNav({ type: 'tv/setTasksPreset', preset })
+              dispatchNav({ type: 'setTasksPreset', preset })
             }
             presetContext={presetContext}
             onSelectTask={selectBoardTask}
@@ -2361,7 +2370,7 @@ function App() {
               <TasksComposer
                 overseer={overseer}
                 about={aboutTask}
-                onOpenOverseer={() => dispatchNav({ type: 'tv/showOverseer' })}
+                onOpenOverseer={() => dispatchNav({ type: 'showOverseer' })}
                 disabled={overseer.revoked}
               />
             }
@@ -2369,11 +2378,11 @@ function App() {
         }
         peek={peekView}
       />
-      {twoViewsState.settings !== null && (
+      {navState.settings !== null && (
         <SettingsPanel
           activeProject={activeProject}
           data={settingsData}
-          initialPage={twoViewsState.settings}
+          initialPage={navState.settings}
           onOpenTask={(taskId) => openTaskView(taskId, 'auto')}
           hostedPages={hostedSettingsPages}
           pageExtras={{
@@ -2390,7 +2399,7 @@ function App() {
                 <MemoryRecent client={data.client} port={data.port} />
               ),
           }}
-          onClose={() => dispatchNav({ type: 'tv/closeSettings' })}
+          onClose={() => dispatchNav({ type: 'closeSettings' })}
         />
       )}
     </>
@@ -2417,13 +2426,6 @@ function App() {
                       onCapture={rawData.handleCaptureInbox}
                     />
 
-                    <ShortcutsDialog
-                      open={navState.shortcutsOpen}
-                      onOpenChange={(open) => {
-                        if (!open) dispatchNav({ type: 'closeShortcuts' });
-                      }}
-                    />
-
                     {showCreate && data.config !== null && (
                       <CreateTaskModal
                         projectName={activeProject?.name}
@@ -2437,16 +2439,16 @@ function App() {
                       />
                     )}
 
-                    {aiComposerOpen && (
+                    {navState.composerOpen && (
                       <AiTaskComposer
                         projectName={activeProject?.name}
                         data={data}
                         onStartDraft={startDraftAndOpen}
                         onQuickAdd={(preset) => {
-                          setAiComposerOpen(false);
+                          dispatchNav({ type: 'closeNewTask' });
                           openQuickAddTask(preset);
                         }}
-                        onClose={() => setAiComposerOpen(false)}
+                        onClose={() => dispatchNav({ type: 'closeNewTask' })}
                       />
                     )}
 
@@ -2462,9 +2464,21 @@ function App() {
                     <CommandPalette
                       isOpen={navState.paletteOpen}
                       entries={paletteEntries}
-                      onClose={() => dispatchNav({ type: 'closePalette' })}
+                      timeline={
+                        activeProject === null ? null : planning.timeline
+                      }
+                      onNavigate={navigate}
                       searchDocs={searchDocs}
                     />
+
+                    {/* After the palette in the tree, so the sheet the
+                        reducer stacks over it draws on top. */}
+                    {navState.shortcutsOpen && (
+                      <ShortcutSheet
+                        groups={shortcutGroups}
+                        onClose={() => dispatchNav({ type: 'closeShortcuts' })}
+                      />
+                    )}
                   </div>
                 </SurfaceHosts>
               </PeopleProvider>

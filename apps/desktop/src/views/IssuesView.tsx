@@ -37,10 +37,17 @@ import { TasksBackButton } from '../components/tasks/TasksPageHeader';
 import { TasksViewMenu } from '../components/tasks/TasksViewMenu';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { useTaskFilterMenu } from '../hooks/useTaskFilterMenu';
-import type { TaskTab } from '../lib/appNav';
+import type { TasksMode, TasksPage, TaskTab } from '../lib/appNav';
 import type { DecisionItem } from '../lib/decisionFeed';
+import {
+  ISSUES_DISPLAY,
+  readIssuesDisplay,
+  readIssuesFilters,
+  writeIssuesDisplay,
+  writeIssuesFilters,
+} from '../lib/issuesPrefs';
 import type { NeedsYou } from '../lib/needsYou';
-import { hrefFor } from '../lib/shellRoutes';
+import { issuesHref } from '../lib/routes';
 import { useStatusModelOf } from '../lib/statusModel';
 import {
   EMPTY_TASK_FILTER_SET,
@@ -61,14 +68,6 @@ import {
 } from '../lib/tasksPresets';
 import type { TaskStatusCounts } from '../lib/taskStatus';
 import type { RefAction } from '../lib/threadSources';
-import type { TasksMode, TasksPage } from '../lib/twoViews';
-import {
-  readTwoViewsDisplay,
-  readTwoViewsFilters,
-  TWO_VIEWS_TASKS_DISPLAY,
-  writeTwoViewsDisplay,
-  writeTwoViewsFilters,
-} from '../lib/twoViewsTasksPrefs';
 import styles from './IssuesView.module.css';
 import { assigneeChoices } from './IssuesViewMenus';
 import { IssuesTable } from './IssuesViewTable';
@@ -131,9 +130,7 @@ function toggleGroupByPerson(
   return {
     ...prefs,
     grouping:
-      prefs.grouping === 'assignee'
-        ? TWO_VIEWS_TASKS_DISPLAY.grouping
-        : 'assignee',
+      prefs.grouping === 'assignee' ? ISSUES_DISPLAY.grouping : 'assignee',
   };
 }
 
@@ -239,15 +236,15 @@ export function IssuesView({
   speechByTask,
   composer,
 }: IssuesViewProps) {
-  const [filters, setFilters] = useState<TaskFilterSet>(readTwoViewsFilters);
-  const [prefs, setPrefs] = useState<TasksDisplayPrefs>(readTwoViewsDisplay);
+  const [filters, setFilters] = useState<TaskFilterSet>(readIssuesFilters);
+  const [prefs, setPrefs] = useState<TasksDisplayPrefs>(readIssuesDisplay);
   const [search, setSearch] = useState('');
   const searchInput = useRef<HTMLInputElement>(null);
   // Open state lives here so `f` and `⇧V` on the list or board can open the menus.
   const [filterOpen, setFilterOpen] = useState(false);
   const [displayOpen, setDisplayOpen] = useState(false);
-  useEffect(() => writeTwoViewsFilters(filters), [filters]);
-  useEffect(() => writeTwoViewsDisplay(prefs), [prefs]);
+  useEffect(() => writeIssuesFilters(filters), [filters]);
+  useEffect(() => writeIssuesDisplay(prefs), [prefs]);
   // The model as a saved view stores it: the layout is the toggle's.
   const display = useMemo(() => ({ ...prefs, layout: mode }), [prefs, mode]);
   const full = page.kind !== 'list';
@@ -301,19 +298,20 @@ export function IssuesView({
     const mine = presetMatcher('mine', presetContext);
     return mine === undefined ? 0 : data.tasks.filter(mine).length;
   }, [data.tasks, presetContext]);
-  const issuesHref = hrefFor('issues');
+  // Each tab's href is the list's route on its preset (a real link); a plain
+  // click narrows in place.
   const tabs = useMemo(
     () =>
       presetTabs(counts, {
         current: preset,
         mine: mineCount,
         starred: presetContext.starred.size,
-        hrefFor: () => issuesHref,
+        hrefFor: issuesHref,
       }).map((tab) => ({
         ...tab,
         onFollow: () => onPreset(tab.id as TasksPreset),
       })),
-    [counts, preset, mineCount, presetContext.starred, issuesHref, onPreset]
+    [counts, preset, mineCount, presetContext.starred, onPreset]
   );
 
   // ---- the filter chips ---------------------------------------------------

@@ -18,7 +18,6 @@
     "cmdk": "catalog:",
     "lucide-react": "catalog:",
     "react": "catalog:",
-    "sonner": "catalog:",
     "tailwind-merge": "catalog:"
   },
   "devDependencies": {

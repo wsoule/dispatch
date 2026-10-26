@@ -1,43 +1,39 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
-  sonnerActionsFor,
-  sonnerOptionsFor,
   taskToastDescription,
+  toastActionFor,
+  toastDurationFor,
   viewTaskLink,
 } from './toastContract';
 
-describe('sonnerOptionsFor', () => {
+describe('toastDurationFor', () => {
   test('errors never auto-dismiss', () => {
-    expect(sonnerOptionsFor('error').duration).toBe(Infinity);
+    expect(toastDurationFor('error')).toBe(Infinity);
   });
-  test('success and info keep their current timings', () => {
-    expect(sonnerOptionsFor('success').duration).toBe(3500);
-    expect(sonnerOptionsFor('info').duration).toBe(4500);
+  test('success and info keep their timings', () => {
+    expect(toastDurationFor('success')).toBe(3500);
+    expect(toastDurationFor('info')).toBe(4500);
   });
 });
 
-describe('sonnerActionsFor', () => {
+describe('toastActionFor', () => {
   const noop = () => {};
 
-  test('a link lands in the action slot and a secondary in cancel', () => {
+  test('a link fills the one slot', () => {
     const link = { label: 'View task', onClick: noop };
-    const secondary = { label: 'Undo', onClick: noop };
-    expect(sonnerActionsFor({ link, secondary })).toEqual({
-      action: link,
-      cancel: secondary,
-    });
+    expect(toastActionFor({ link })).toBe(link);
   });
 
   test('a plain action fills the same slot; the link wins when both are given', () => {
     const action = { label: 'Restart', onClick: noop };
     const link = { label: 'View task', onClick: noop };
-    expect(sonnerActionsFor({ action })).toEqual({ action });
-    expect(sonnerActionsFor({ action, link })).toEqual({ action: link });
+    expect(toastActionFor({ action })).toBe(action);
+    expect(toastActionFor({ action, link })).toBe(link);
   });
 
-  test('nothing given means no slots at all, not undefined-valued keys', () => {
-    expect(sonnerActionsFor({})).toEqual({});
+  test('nothing given means no action', () => {
+    expect(toastActionFor({})).toBeUndefined();
   });
 });
 

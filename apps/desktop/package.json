@@ -38,8 +38,7 @@
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-markdown": "catalog:",
-    "remark-gfm": "catalog:",
-    "sonner": "catalog:"
+    "remark-gfm": "catalog:"
   },
   "devDependencies": {
     "@dispatch-foo/core": "workspace:*",

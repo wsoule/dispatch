@@ -1,13 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { NavAction } from './appNav';
+import {
+  initialNavState,
+  type NavAction,
+  navReducer,
+  type NavState,
+} from './appNav';
+import { parseHref } from './routes';
 import {
   currentShellDestination,
   hrefFor,
   MOD_KEY,
-  parseShellHref,
   PROJECTS_HREF,
-  resolveShellHref,
   SHELL_ROUTES,
   type ShellDestination,
   shellRoute,
@@ -15,12 +19,6 @@ import {
   taskHref,
   timelineHref,
 } from './shellRoutes';
-import {
-  initialTwoViewsState,
-  type TwoViewsAction,
-  twoViewsReducer,
-  type TwoViewsState,
-} from './twoViews';
 
 const EVERY_DESTINATION: readonly ShellDestination[] = [
   'overseer',
@@ -35,10 +33,10 @@ const EVERY_DESTINATION: readonly ShellDestination[] = [
 ];
 
 function after(
-  actions: (NavAction | TwoViewsAction)[],
-  from: TwoViewsState = initialTwoViewsState
-): TwoViewsState {
-  return actions.reduce(twoViewsReducer, from);
+  actions: NavAction[],
+  from: NavState = initialNavState
+): NavState {
+  return actions.reduce(navReducer, from);
 }
 
 describe('the route table', () => {
@@ -48,7 +46,7 @@ describe('the route table', () => {
     ]);
     for (const id of EVERY_DESTINATION) {
       expect(shellRoute(id).href).toBe(`#/${id}`);
-      expect(parseShellHref(hrefFor(id))).toBe(id);
+      expect(hrefFor(id)).toBe(`#/${id}`);
     }
   });
 
@@ -68,10 +66,10 @@ describe('the route table', () => {
   });
 
   test('each action is what the top bar dispatched for that word', () => {
-    expect(shellRoute('overseer').action).toEqual({ type: 'tv/showOverseer' });
-    expect(shellRoute('issues').action).toEqual({ type: 'tv/showTasks' });
+    expect(shellRoute('overseer').action).toEqual({ type: 'showOverseer' });
+    expect(shellRoute('issues').action).toEqual({ type: 'showTasks' });
     expect(shellRoute('needs-you').action).toEqual({
-      type: 'tv/showTasks',
+      type: 'showTasks',
       preset: 'needs-you',
     });
     expect(shellRoute('threads').action).toEqual({
@@ -79,130 +77,89 @@ describe('the route table', () => {
       view: 'threads',
     });
     expect(shellRoute('timeline').action).toEqual({
-      type: 'setProjectView',
-      view: 'timeline',
+      type: 'openTimeline',
+      project: null,
     });
     expect(shellRoute('graph').action).toEqual({
-      type: 'setProjectView',
-      view: 'graph',
+      type: 'openGraph',
+      scope: { level: 'milestone' },
+      nodeId: null,
     });
     expect(shellRoute('docs').action).toEqual({
       type: 'setProjectView',
       view: 'docs',
     });
     expect(shellRoute('runs').action).toEqual({
-      type: 'tv/openSettings',
+      type: 'openSettings',
       page: 'runs',
     });
-    expect(shellRoute('settings').action).toEqual({ type: 'tv/openSettings' });
+    expect(shellRoute('settings').action).toEqual({ type: 'openSettings' });
   });
-});
 
-describe('parseShellHref', () => {
-  test('rejects what is not a destination', () => {
-    for (const href of [
-      '#main',
-      '#dispatch-main',
-      '/issues',
-      '#/issues/',
-      '#/task/t-1',
-      '#/projects',
-      '#/timeline?project=p-1',
-      'https://example.com/#/issues',
-      '',
-    ]) {
-      expect(parseShellHref(href)).toBeNull();
+  test('each action is exactly what its href parses to', () => {
+    for (const route of SHELL_ROUTES) {
+      expect(parseHref(route.href)).toEqual([route.action]);
     }
   });
-});
 
-describe('resolveShellHref', () => {
-  test('a destination, a task, the projects list, or nothing', () => {
-    expect(resolveShellHref('#/threads')).toEqual({
-      kind: 'destination',
-      id: 'threads',
-    });
-    expect(resolveShellHref(taskHref('t-9b2d14'))).toEqual({
-      kind: 'task',
-      taskId: 't-9b2d14',
-    });
-    expect(resolveShellHref(PROJECTS_HREF)).toEqual({ kind: 'projects' });
-    expect(resolveShellHref('#main')).toBeNull();
-    expect(resolveShellHref('#/task/')).toBeNull();
-  });
-
-  test('task ids survive the href round trip', () => {
-    const id = 'weird id/with:chars';
-    expect(resolveShellHref(taskHref(id))).toEqual({
-      kind: 'task',
-      taskId: id,
-    });
-  });
-
-  test('a timeline link naming a project focuses its lane', () => {
+  test('re-exports the hrefs the shell adapters link with', () => {
+    expect(taskHref('t-9b2d14')).toBe('#/task/t-9b2d14');
     expect(timelineHref('p-1')).toBe('#/timeline?project=p-1');
-    expect(resolveShellHref(timelineHref('p-1'))).toEqual({
-      kind: 'timeline',
-      projectId: 'p-1',
-    });
-    const id = 'weird id/with:chars&more';
-    expect(resolveShellHref(timelineHref(id))).toEqual({
-      kind: 'timeline',
-      projectId: id,
-    });
-    // The bare destination stays a destination; a stray query is nothing.
-    expect(resolveShellHref('#/timeline')).toEqual({
-      kind: 'destination',
-      id: 'timeline',
-    });
-    expect(resolveShellHref('#/timeline?lane=p-1')).toBeNull();
+    expect(PROJECTS_HREF).toBe('#/projects');
   });
 });
 
 describe('currentShellDestination', () => {
   test('the app opens on Overseer', () => {
-    expect(currentShellDestination(initialTwoViewsState)).toBe('overseer');
+    expect(currentShellDestination(initialNavState)).toBe('overseer');
   });
 
   test('the Tasks list is Issues under any preset but Needs you', () => {
-    const tasks = after([{ type: 'tv/showTasks' }]);
+    const tasks = after([{ type: 'showTasks' }]);
     expect(currentShellDestination(tasks)).toBe('issues');
     expect(
       currentShellDestination(
-        after([{ type: 'tv/setTasksPreset', preset: 'failed' }], tasks)
+        after([{ type: 'setTasksPreset', preset: 'failed' }], tasks)
       )
     ).toBe('issues');
     expect(
       currentShellDestination(
-        after([{ type: 'tv/showTasks', preset: 'needs-you' }])
+        after([{ type: 'showTasks', preset: 'needs-you' }])
       )
     ).toBe('needs-you');
   });
 
   test('a task quick-looked over the list, or open as its page, keeps the list row current', () => {
     const peeked = after([
-      { type: 'tv/showTasks' },
+      { type: 'showTasks' },
       { type: 'openPeek', taskId: 't-1' },
     ]);
     expect(peeked.peek).toEqual({ kind: 'task', taskId: 't-1' });
     expect(currentShellDestination(peeked)).toBe('issues');
     const open = after([
-      { type: 'tv/showTasks' },
+      { type: 'showTasks' },
       { type: 'openTask', taskId: 't-1' },
     ]);
     expect(open.tasksPage.kind).toBe('task');
     expect(currentShellDestination(open)).toBe('issues');
     expect(
       currentShellDestination(
-        after([{ type: 'tv/setTasksPreset', preset: 'needs-you' }], open)
+        after([{ type: 'setTasksPreset', preset: 'needs-you' }], open)
       )
     ).toBe('needs-you');
   });
 
-  test('the timeline page is its own row', () => {
-    const timeline = after([{ type: 'setProjectView', view: 'timeline' }]);
-    expect(timeline.tasksPage).toEqual({ kind: 'view', view: 'timeline' });
+  test('the timeline page is its own row, focused on a lane or not', () => {
+    const timeline = after([{ type: 'openTimeline', project: null }]);
+    expect(timeline.tasksPage).toEqual({
+      kind: 'view',
+      view: 'timeline',
+      project: null,
+    });
     expect(currentShellDestination(timeline)).toBe('timeline');
+    expect(
+      currentShellDestination(after([{ type: 'openTimeline', project: 'p-1' }]))
+    ).toBe('timeline');
     // A milestone quick-looked over the chart keeps the row.
     expect(
       currentShellDestination(
@@ -210,23 +167,34 @@ describe('currentShellDestination', () => {
       )
     ).toBe('timeline');
     expect(
-      currentShellDestination(after([{ type: 'tv/closePage' }], timeline))
+      currentShellDestination(after([{ type: 'closePage' }], timeline))
     ).toBe('issues');
   });
 
-  test('the graph page is its own row', () => {
+  test('the graph page is its own row at any scope', () => {
     const graph = after([{ type: 'setProjectView', view: 'graph' }]);
-    expect(graph.tasksPage).toEqual({ kind: 'view', view: 'graph' });
+    expect(graph.tasksPage).toMatchObject({ kind: 'view', view: 'graph' });
     expect(currentShellDestination(graph)).toBe('graph');
+    expect(
+      currentShellDestination(
+        after([
+          {
+            type: 'openGraph',
+            scope: { level: 'issue', milestoneId: 'ms-1' },
+            nodeId: 't-1',
+          },
+        ])
+      )
+    ).toBe('graph');
     // A node quick-looked over the chart keeps the row.
     expect(
       currentShellDestination(
         after([{ type: 'openPeek', taskId: 'p-1' }], graph)
       )
     ).toBe('graph');
-    expect(
-      currentShellDestination(after([{ type: 'tv/closePage' }], graph))
-    ).toBe('issues');
+    expect(currentShellDestination(after([{ type: 'closePage' }], graph))).toBe(
+      'issues'
+    );
   });
 
   test('the projects tree and the live page have no row: Issues stays current', () => {
@@ -260,13 +228,13 @@ describe('currentShellDestination', () => {
   });
 
   test('Settings while open, Runs for its runs page, whatever view is under it', () => {
-    const tasks = after([{ type: 'tv/showTasks' }]);
+    const tasks = after([{ type: 'showTasks' }]);
     expect(
-      currentShellDestination(after([{ type: 'tv/openSettings' }], tasks))
+      currentShellDestination(after([{ type: 'openSettings' }], tasks))
     ).toBe('settings');
     expect(
       currentShellDestination(
-        after([{ type: 'tv/openSettings', page: 'a2a' }], tasks)
+        after([{ type: 'openSettings', page: 'a2a' }], tasks)
       )
     ).toBe('settings');
     expect(
@@ -277,7 +245,7 @@ describe('currentShellDestination', () => {
     // Closing Settings hands the row back to the view underneath.
     expect(
       currentShellDestination(
-        after([{ type: 'tv/openSettings' }, { type: 'escape' }], tasks)
+        after([{ type: 'openSettings' }, { type: 'escape' }], tasks)
       )
     ).toBe('issues');
   });

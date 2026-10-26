@@ -11,29 +11,32 @@ import {
   type TasksDisplayPrefs,
 } from './tasksPrefs';
 
-// Its own keys, so the retired board's by-status default never leaks in.
+// The Issues list's remembered Display model and filter clauses. The storage
+// keys keep their Two views names: they were the Two views beta's own keys (so
+// the retired board's by-status default never leaked in), and renaming them
+// would drop every person's remembered grouping and filters on upgrade.
 const DISPLAY_KEY = 'dispatch:two-views-tasks-display-v1';
 const FILTERS_KEY = 'dispatch:two-views-tasks-filters-v1';
 
-/** Two views' Tasks default: one list grouped by milestone, the No milestone group included. */
-export const TWO_VIEWS_TASKS_DISPLAY: TasksDisplayPrefs = {
+/** The Issues list's default: one list grouped by milestone, the No milestone group included. */
+export const ISSUES_DISPLAY: TasksDisplayPrefs = {
   ...DEFAULT_TASKS_DISPLAY,
   layout: 'list',
   grouping: 'milestone',
 };
 
-/** The Display model Two views' Tasks last used, or its milestone-grouped default.
+/** The Display model the Issues list last used, or its milestone-grouped default.
  * A model saved with the retired Graph layout reads as the list (`parseTasksDisplay`). */
-export function readTwoViewsDisplay(): TasksDisplayPrefs {
+export function readIssuesDisplay(): TasksDisplayPrefs {
   try {
     const raw = window.localStorage.getItem(DISPLAY_KEY);
-    return raw === null ? TWO_VIEWS_TASKS_DISPLAY : parseTasksDisplay(raw);
+    return raw === null ? ISSUES_DISPLAY : parseTasksDisplay(raw);
   } catch {
-    return TWO_VIEWS_TASKS_DISPLAY;
+    return ISSUES_DISPLAY;
   }
 }
 
-export function writeTwoViewsDisplay(prefs: TasksDisplayPrefs): void {
+export function writeIssuesDisplay(prefs: TasksDisplayPrefs): void {
   try {
     window.localStorage.setItem(DISPLAY_KEY, serializeTasksDisplay(prefs));
   } catch {
@@ -41,8 +44,8 @@ export function writeTwoViewsDisplay(prefs: TasksDisplayPrefs): void {
   }
 }
 
-/** The filter clauses Two views' Tasks last used, or none. */
-export function readTwoViewsFilters(): TaskFilterSet {
+/** The filter clauses the Issues list last used, or none. */
+export function readIssuesFilters(): TaskFilterSet {
   try {
     return parseTaskFilterSet(window.localStorage.getItem(FILTERS_KEY), null);
   } catch {
@@ -50,7 +53,7 @@ export function readTwoViewsFilters(): TaskFilterSet {
   }
 }
 
-export function writeTwoViewsFilters(filters: TaskFilterSet): void {
+export function writeIssuesFilters(filters: TaskFilterSet): void {
   try {
     window.localStorage.setItem(FILTERS_KEY, serializeTaskFilterSet(filters));
   } catch {

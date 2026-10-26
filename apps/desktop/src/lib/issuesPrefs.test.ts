@@ -1,25 +1,28 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 
 import {
-  readTwoViewsDisplay,
-  TWO_VIEWS_TASKS_DISPLAY,
-  writeTwoViewsDisplay,
-} from './twoViewsTasksPrefs';
+  ISSUES_DISPLAY,
+  readIssuesDisplay,
+  readIssuesFilters,
+  writeIssuesDisplay,
+  writeIssuesFilters,
+} from './issuesPrefs';
+import { EMPTY_TASK_FILTER_SET, type TaskFilterSet } from './taskFilters';
 
 beforeEach(() => {
   window.localStorage.clear();
 });
 
-describe('Two views Tasks display', () => {
+describe('the Issues list display', () => {
   test('defaults to the list grouped by milestone', () => {
-    const prefs = readTwoViewsDisplay();
-    expect(prefs).toBe(TWO_VIEWS_TASKS_DISPLAY);
+    const prefs = readIssuesDisplay();
+    expect(prefs).toBe(ISSUES_DISPLAY);
     expect(prefs.grouping).toBe('milestone');
   });
 
   test('round-trips a change through storage', () => {
-    writeTwoViewsDisplay({ ...TWO_VIEWS_TASKS_DISPLAY, grouping: 'assignee' });
-    expect(readTwoViewsDisplay().grouping).toBe('assignee');
+    writeIssuesDisplay({ ...ISSUES_DISPLAY, grouping: 'assignee' });
+    expect(readIssuesDisplay().grouping).toBe('assignee');
   });
 
   test('ignores Classic’s board display', () => {
@@ -27,7 +30,16 @@ describe('Two views Tasks display', () => {
       'dispatch:tasks-display-v1',
       JSON.stringify({ grouping: 'status' })
     );
-    expect(readTwoViewsDisplay().grouping).toBe('milestone');
+    expect(readIssuesDisplay().grouping).toBe('milestone');
+  });
+
+  // The keys keep their Two views names on purpose: renaming them would drop
+  // every person's remembered grouping on upgrade.
+  test('reads and writes the Two views key', () => {
+    writeIssuesDisplay({ ...ISSUES_DISPLAY, grouping: 'epic' });
+    expect(
+      window.localStorage.getItem('dispatch:two-views-tasks-display-v1')
+    ).toContain('"epic"');
   });
 
   // The Graph mode saved its layout as `milestones` (the milestone map); the
@@ -40,9 +52,24 @@ describe('Two views Tasks display', () => {
         'dispatch:two-views-tasks-display-v1',
         JSON.stringify({ version: 2, layout, grouping: 'milestone' })
       );
-      const prefs = readTwoViewsDisplay();
+      const prefs = readIssuesDisplay();
       expect(prefs.layout).toBe('list');
       expect(prefs.grouping).toBe('milestone');
     }
   );
+});
+
+describe('the Issues list filters', () => {
+  test('default to none, and round-trip through the Two views key', () => {
+    expect(readIssuesFilters()).toEqual(EMPTY_TASK_FILTER_SET);
+    const filters: TaskFilterSet = {
+      clauses: [{ facet: 'status', op: 'is', values: ['ready'] }],
+      join: 'and',
+    };
+    writeIssuesFilters(filters);
+    expect(
+      window.localStorage.getItem('dispatch:two-views-tasks-filters-v1')
+    ).not.toBeNull();
+    expect(readIssuesFilters()).toEqual(filters);
+  });
 });

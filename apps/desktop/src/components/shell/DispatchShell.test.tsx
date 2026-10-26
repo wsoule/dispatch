@@ -4,7 +4,6 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { type ReactNode, useState } from 'react';
 
 import type { NavAction } from '../../lib/appNav';
-import type { TwoViewsAction } from '../../lib/twoViews';
 import { FirstTaskGuide } from '../guide/FirstTaskGuide';
 import { PeopleProvider } from '../people/PeopleContext';
 import { DispatchShell, type DispatchShellProps } from './DispatchShell';
@@ -26,8 +25,7 @@ const PROJECTS: ShellSection = {
 };
 
 interface Harness {
-  actions: (NavAction | TwoViewsAction)[];
-  opened: string[];
+  actions: NavAction[];
   calls: string[];
 }
 
@@ -35,7 +33,7 @@ function shell(over: Partial<DispatchShellProps> = {}): {
   element: ReactNode;
   log: Harness;
 } {
-  const log: Harness = { actions: [], opened: [], calls: [] };
+  const log: Harness = { actions: [], calls: [] };
   const element = (
     <PeopleProvider
       people={[{ ref: 'human:ada', name: 'Ada Lovelace' }]}
@@ -57,8 +55,6 @@ function shell(over: Partial<DispatchShellProps> = {}): {
         projects={PROJECTS}
         tier="operator"
         onNavigate={(action) => log.actions.push(action)}
-        onOpenTask={(id) => log.opened.push(id)}
-        onOpenProjects={() => log.calls.push('projects')}
         onSearch={() => log.calls.push('search')}
         gate={null}
         overseer={<p>overseer</p>}
@@ -133,30 +129,68 @@ describe('DispatchShell', () => {
     expect(screen.queryByRole('button', { name: /Sign out/ })).toBeNull();
   });
 
-  test('a plain click on a row dispatches its action and stays in the app', () => {
+  test('a plain click on a row dispatches what its href parses to and stays in the app', () => {
     const { element, log } = shell();
     render(element);
     const issues = within(primaryNav()).getByRole('link', { name: 'Issues' });
     const click = fireEvent.click(issues);
     expect(click).toBe(false);
-    expect(log.actions).toEqual([{ type: 'tv/showTasks' }]);
+    expect(log.actions).toEqual([{ type: 'showTasks' }]);
     fireEvent.click(
       screen.getByRole('link', { name: /^Threads ?, 3 unread$/ })
     );
     expect(log.actions[1]).toEqual({ type: 'setProjectView', view: 'threads' });
     fireEvent.click(screen.getByRole('link', { name: 'Runs' }));
-    expect(log.actions[2]).toEqual({ type: 'tv/openSettings', page: 'runs' });
+    expect(log.actions[2]).toEqual({ type: 'openSettings', page: 'runs' });
     fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
-    expect(log.actions[3]).toEqual({ type: 'tv/openSettings' });
+    expect(log.actions[3]).toEqual({ type: 'openSettings' });
     fireEvent.click(within(primaryNav()).getByRole('link', { name: 'Graph' }));
-    expect(log.actions[4]).toEqual({ type: 'setProjectView', view: 'graph' });
+    expect(log.actions[4]).toEqual({
+      type: 'openGraph',
+      scope: { level: 'milestone' },
+      nodeId: null,
+    });
+    fireEvent.click(
+      within(primaryNav()).getByRole('link', { name: /^Timeline/ })
+    );
+    expect(log.actions[5]).toEqual({ type: 'openTimeline', project: null });
     // A project row opens its page; "All" opens the Projects page under Tasks.
     fireEvent.click(
       screen.getByRole('link', { name: 'Checkout, Needs attention' })
     );
-    expect(log.opened).toEqual(['p-1']);
+    expect(log.actions[6]).toEqual({ type: 'openTask', taskId: 'p-1' });
     fireEvent.click(screen.getByRole('link', { name: 'All Projects' }));
-    expect(log.calls).toEqual(['projects']);
+    expect(log.actions[7]).toEqual({
+      type: 'setProjectView',
+      view: 'projects',
+    });
+    // The brand row is the Overseer.
+    fireEvent.click(screen.getByRole('link', { name: 'Dispatch storefront' }));
+    expect(log.actions[8]).toEqual({ type: 'showOverseer' });
+    expect(log.calls).toEqual([]);
+  });
+
+  test('a link with parameters dispatches every action its route holds', () => {
+    const { element, log } = shell({
+      projects: {
+        ...PROJECTS,
+        items: [
+          {
+            id: 'p-1',
+            label: 'Checkout',
+            href: '#/timeline?project=p-1',
+            status: 'on_track',
+            statusLabel: 'On track',
+            current: true,
+          },
+        ],
+      },
+    });
+    render(element);
+    const row = screen.getByRole('link', { name: 'Checkout, On track' });
+    expect(row.getAttribute('aria-current')).toBe('page');
+    fireEvent.click(row);
+    expect(log.actions).toEqual([{ type: 'openTimeline', project: 'p-1' }]);
   });
 
   test('modified and middle clicks are left to the browser', () => {

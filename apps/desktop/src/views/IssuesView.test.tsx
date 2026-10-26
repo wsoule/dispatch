@@ -34,15 +34,12 @@ import {
 } from '../components/shell/ShellActionsContext';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { type SavedViewsApi, useSavedViews } from '../hooks/useSavedViews';
+import type { TasksMode, TasksPage } from '../lib/appNav';
+import { ISSUES_DISPLAY, writeIssuesDisplay } from '../lib/issuesPrefs';
 import { needsYou } from '../lib/needsYou';
 import { taskDoc } from '../lib/taskDoc.test-helper';
 import type { TasksPreset } from '../lib/tasksPresets';
 import type { TaskStatusCounts } from '../lib/taskStatus';
-import type { TasksMode, TasksPage } from '../lib/twoViews';
-import {
-  TWO_VIEWS_TASKS_DISPLAY,
-  writeTwoViewsDisplay,
-} from '../lib/twoViewsTasksPrefs';
 import { IssuesView } from './IssuesView';
 import { TooltipProvider } from '@/ui/tooltip';
 
@@ -487,8 +484,8 @@ test('the search box narrows by title, id and label before grouping', () => {
 });
 
 test('display prefs drive the grouping and which cells a row shows', () => {
-  writeTwoViewsDisplay({
-    ...TWO_VIEWS_TASKS_DISPLAY,
+  writeIssuesDisplay({
+    ...ISSUES_DISPLAY,
     grouping: 'epic',
     properties: new Set(['status']),
   });

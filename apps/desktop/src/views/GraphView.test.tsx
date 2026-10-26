@@ -1,5 +1,6 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
 import type { EpicProgress, RunMeta, RunState } from '@dispatch/client';
+import type { GraphScope } from '@dispatch/planning';
 import {
   cleanup,
   fireEvent,
@@ -8,11 +9,17 @@ import {
   within,
 } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { ReactNode } from 'react';
+import { type ReactNode, useReducer } from 'react';
 
 import { ShellActionsProvider } from '../components/shell/ShellActionsContext';
 import { SHELL } from '../components/tasks/page/pageHost.test-helper';
 import { type PlanningInput, PlanningProvider } from '../hooks/usePlanning';
+import {
+  DEFAULT_GRAPH_SCOPE,
+  initialNavState,
+  type NavAction,
+  navReducer,
+} from '../lib/appNav';
 import { dayFromNow } from '../lib/taskDates';
 import { taskDoc } from '../lib/taskDoc.test-helper';
 import type { TaskBucket } from '../lib/taskStatus';
@@ -22,7 +29,8 @@ import { GraphView, type GraphViewProps } from './GraphView';
 // over the task list below): two projects, three milestones and issues whose
 // blocking relations cross the milestones, so the milestone level has arrows
 // and a risk chain. Dates are relative to today so the overdue milestone
-// stays overdue.
+// stays overdue. Where the view is lives in App's nav reducer, so the harness
+// (GraphHost) runs one and hands the page's scope back to the view.
 
 afterEach(cleanup);
 
@@ -173,7 +181,42 @@ interface MountOptions {
   selectedId?: string | null;
   readyIds?: Set<string>;
   liveRunStateByTaskId?: Map<string, RunState>;
-  focus?: GraphViewProps['focus'];
+  /** The scope the page opens on; the workspace's milestones by default. */
+  scope?: GraphScope;
+  /** Every nav action the view dispatches, in order. */
+  log?: NavAction[];
+}
+
+type HostProps = Omit<GraphViewProps, 'scope' | 'nodeId' | 'onNavigate'> & {
+  scope: GraphScope;
+  log: NavAction[];
+};
+
+/** App's side of the view: the nav reducer, opened on the Graph page at
+ * `scope`, whose page the view draws and whose dispatch its links reach. */
+function GraphHost({ scope, log, ...rest }: HostProps) {
+  const [state, dispatch] = useReducer(navReducer, scope, (opening) =>
+    navReducer(initialNavState, {
+      type: 'openGraph',
+      scope: opening,
+      nodeId: null,
+    })
+  );
+  const page = state.tasksPage;
+  if (page.kind !== 'view' || page.view !== 'graph') {
+    return <p>left the graph</p>;
+  }
+  return (
+    <GraphView
+      {...rest}
+      scope={page.scope}
+      nodeId={page.nodeId}
+      onNavigate={(action) => {
+        log.push(action);
+        dispatch(action);
+      }}
+    />
+  );
 }
 
 function Providers({
@@ -200,7 +243,7 @@ function tree(
 ) {
   return (
     <Providers data={planning} peekTask={options.peekTask ?? (() => {})}>
-      <GraphView
+      <GraphHost
         data={{
           tasks,
           readyIds: options.readyIds ?? new Set(),
@@ -209,7 +252,8 @@ function tree(
         }}
         bucketOf={options.bucketOf ?? (() => null)}
         selectedId={options.selectedId ?? null}
-        focus={options.focus}
+        scope={options.scope ?? DEFAULT_GRAPH_SCOPE}
+        log={options.log ?? []}
       />
     </Providers>
   );
@@ -220,11 +264,14 @@ function tree(
 function mount(options: MountOptions = {}) {
   const tasks = options.tasks ?? fixture();
   const planning = input(tasks);
-  const utils = render(tree(options, tasks, planning));
+  const log = options.log ?? [];
+  const withLog = { ...options, log };
+  const utils = render(tree(withLog, tasks, planning));
   return {
     ...utils,
+    log,
     rerender: (next: MountOptions) =>
-      utils.rerender(tree({ ...options, ...next }, tasks, planning)),
+      utils.rerender(tree({ ...withLog, ...next }, tasks, planning)),
   };
 }
 
@@ -270,10 +317,18 @@ describe('GraphView', () => {
     ).toBe('page');
   });
 
-  test('the level tabs switch the scope in place', () => {
-    mount();
+  test('the level tabs are routes whose plain click moves the scope through the reducer', () => {
+    const { log } = mount();
     const tabs = screen.getByRole('navigation', { name: 'Graph level' });
-    fireEvent.click(within(tabs).getByRole('link', { name: 'Issues' }));
+    const issues = within(tabs).getByRole('link', { name: 'Issues' });
+    expect(issues.getAttribute('href')).toBe('#/graph?level=issue');
+    // A modified click is the browser's (a new tab on the same route).
+    expect(fireEvent.click(issues, { metaKey: true })).toBe(true);
+    expect(log).toEqual([]);
+    expect(fireEvent.click(issues)).toBe(false);
+    expect(log).toEqual([
+      { type: 'openGraph', scope: { level: 'issue' }, nodeId: null },
+    ]);
     expect(
       screen.getByRole('img', { name: /^Issue dependency graph/ })
     ).toBeTruthy();
@@ -445,8 +500,8 @@ describe('GraphView', () => {
     expect(box(/^Storefront\b/)).toBeTruthy();
   });
 
-  test('a scoped link opens on that project’s milestones', () => {
-    mount({ focus: { projectId: 'p-search' } });
+  test('a scoped route opens on that project’s milestones', () => {
+    mount({ scope: { level: 'milestone', projectId: 'p-search' } });
     expect(box(/^Index\b/).getAttribute('aria-label')).not.toContain(
       'outside this scope'
     );
@@ -488,7 +543,7 @@ describe('GraphView', () => {
   });
 
   test('past the draw limit the notice and the narrower graphs stand where the canvas would', () => {
-    mount({ tasks: oversized(701) });
+    const { log } = mount({ tasks: oversized(701) });
     fireEvent.click(
       within(screen.getByRole('navigation', { name: 'Graph level' })).getByRole(
         'link',
@@ -507,6 +562,11 @@ describe('GraphView', () => {
     const row = within(rows).getByRole('link', { name: 'Big: 701 on edges' });
     expect(row.getAttribute('href')).toBe('#/graph?project=p-big');
     fireEvent.click(row);
+    expect(log.at(-1)).toEqual({
+      type: 'openGraph',
+      scope: { level: 'issue', projectId: 'p-big' },
+      nodeId: null,
+    });
     expect(screen.getByRole('heading', { level: 1, name: /Big/ })).toBeTruthy();
     const inside = within(
       screen.getByRole('region', { name: 'Too many to draw' })
@@ -550,6 +610,9 @@ describe('GraphView', () => {
           }}
           bucketOf={() => null}
           selectedId={null}
+          scope={DEFAULT_GRAPH_SCOPE}
+          nodeId={null}
+          onNavigate={() => {}}
         />
       </ShellActionsProvider>
     );

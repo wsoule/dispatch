@@ -1,39 +1,44 @@
+import type { TimelineView } from '@dispatch/planning';
 import {
-  ArrowRightIcon,
-  BookTextIcon,
-  CircleDashedIcon,
-  InboxIcon,
-  LayersIcon,
-  PlayIcon,
-  ZapIcon,
-} from 'lucide-react';
-import type { KeyboardEvent, ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+  CommandPalette as PaletteDialog,
+  type PaletteItem,
+  useModKeyLabel,
+} from '@dispatch/ui';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import {
+  buildJumpToItems,
+  PALETTE_EMPTY_HINT,
+  PALETTE_SECTION_CAPS,
+  PALETTE_SECTION_ORDER,
+  toPaletteItems,
+} from '../../adapters/palette';
+import type { NavAction } from '../../lib/appNav';
 import type { PaletteEntry } from '../../lib/paletteEntries';
-import { rankPaletteItems } from '../../lib/paletteMatch';
-import {
-  groupPaletteSections,
-  rememberRecent,
-} from '../../lib/paletteSections';
+import { parseHref, taskHref, timelineHref } from '../../lib/routes';
 import { useShellActions } from './ShellActionsContext';
-import { EmptyState } from '@/ui/chrome/empty-state';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-  CommandShortcut,
-} from '@/ui/command';
-import { Dialog, DialogContent, DialogTitle } from '@/ui/dialog';
-import { Kbd } from '@/ui/kbd';
 
-interface CommandPaletteProps {
+// The ⌘K command menu: @dispatch/ui's CommandPalette (Gr8r's sections, ↑/↓,
+// ↵, Tab, Esc, the fuzzy match over label and hint) over Dispatch's rows: the
+// entries lib/paletteEntries.ts builds, the planning's "Jump to" index
+// (adapters/palette.ts) and the daemon's doc hits for the typed text,
+// searched after a short pause in typing and listed as matched items (the
+// daemon ranked them). Each section shows a few rows before "keep typing"
+// (adapters/palette.ts PALETTE_SECTION_CAPS). Every choice closes the menu
+// first, then acts: an entry runs, a Jump to row's href is parsed into nav
+// actions. Tab with a query hands the text to the Overseer; "?" in the
+// footer opens the shortcuts sheet, which the reducer stacks over the menu.
+
+export interface CommandPaletteProps {
   isOpen: boolean;
   entries: PaletteEntry[];
-  onClose: () => void;
+  /** The planning's timeline: its lanes and bars are the Jump to rows. Null
+   * when no project is open. */
+  timeline: TimelineView | null;
+  /** Dispatches a nav action: closing the menu, opening the sheet, the
+   * actions a Jump to row's href parses to (App's `navigate`, which gives an
+   * openTask without a run the task's latest). */
+  onNavigate: (action: NavAction) => void;
   /** The Docs rows for a non-empty query, searched on the daemon; omitted when
    * this caller cannot read docs. */
   searchDocs?: (query: string) => Promise<PaletteEntry[]>;
@@ -42,63 +47,99 @@ interface CommandPaletteProps {
 // How long typing must pause before the palette searches docs.
 const DOC_SEARCH_DEBOUNCE_MS = 150;
 
+/** How many recently run ids the menu remembers. */
+const RECENT_LIMIT = 8;
+
 const NO_DOC_HITS: { query: string; entries: PaletteEntry[] } = {
   query: '',
   entries: [],
 };
 
-/** The 14px glyph a row shows when its entry brings none: one per section, with the
- * "Dispatch …" task rows (`dispatch-<task id>` in `buildPaletteEntries`) getting a play
- * glyph so they read as verbs. */
-function defaultIcon(entry: PaletteEntry): ReactNode {
-  if (entry.id.startsWith('dispatch-')) return <PlayIcon />;
-  switch (entry.section) {
-    case 'inbox':
-      return <InboxIcon />;
-    case 'tasks':
-      return <CircleDashedIcon />;
-    case 'docs':
-      return <BookTextIcon />;
-    case 'views':
-      return <LayersIcon />;
-    case 'navigation':
-      return <ArrowRightIcon />;
-    case 'actions':
-      return <ZapIcon />;
-  }
+/** `recentIds` with `id` at the front (deduplicated), trimmed to RECENT_LIMIT. */
+function rememberRecent(recentIds: readonly string[], id: string): string[] {
+  return [id, ...recentIds.filter((other) => other !== id)].slice(
+    0,
+    RECENT_LIMIT
+  );
 }
 
 /**
- * The ⌘K command menu: a 720×450 dialog pinned 121px from the top, fuzzy-matching task
- * ids/titles and app actions against one query (docs are searched on the daemon, after
- * a short pause in typing) and listing the hits in Linear's sections
- * (Inbox, Tasks, Docs, Views, Navigation, Actions) with per-section caps from
- * `lib/paletteSections`. Ranking stays `rankPaletteItems` (cmdk's own filtering is off,
- * `shouldFilter={false}`); cmdk owns arrow-key selection, wraparound and Enter; `Dialog`
- * owns the backdrop, focus trap and Escape, which reaches `onClose` once through
- * `onOpenChange`. `Tab` with a non-empty query hands the text to the Overseer instead of
- * running a row. A long title truncates; the task id and keycaps keep their width.
+ * The items whose ids are in `recentIds` moved to the front, most recent
+ * first; the rest keep their order. The palette keeps an item's order within
+ * its section while the query is empty, so a recent row leads its section.
+ */
+function floatRecent(
+  items: PaletteItem[],
+  recentIds: readonly string[]
+): PaletteItem[] {
+  if (recentIds.length === 0) return items;
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const recent: PaletteItem[] = [];
+  for (const id of recentIds) {
+    const hit = byId.get(id);
+    if (hit !== undefined) recent.push(hit);
+  }
+  if (recent.length === 0) return items;
+  const lifted = new Set(recent.map((item) => item.id));
+  return [...recent, ...items.filter((item) => !lifted.has(item.id))];
+}
+
+/**
+ * Mounted by App for the life of the shell, so the recently run rows (which
+ * lead their section while the query is empty) survive closing; the menu
+ * itself mounts while `isOpen`, so its query and doc hits start clean on
+ * every open. Entries and Jump to rows are remembered (both show while the
+ * query is empty, so both float); doc hits are not: they exist only for a
+ * query, so a remembered hit could never lead its section and would only
+ * push a row that can out of the RECENT_LIMIT.
  */
 export function CommandPalette({
   isOpen,
   entries,
-  onClose,
+  timeline,
+  onNavigate,
   searchDocs,
 }: CommandPaletteProps) {
-  const { openOverseer } = useShellActions();
-  const [query, setQuery] = useState('');
-  // Ids of the rows run most recently, newest first; they lead their section while the
-  // query is empty. Kept for the life of the shell, not persisted.
+  // Ids of the rows run most recently, newest first. Kept for the life of
+  // the shell, not persisted.
   const [recentIds, setRecentIds] = useState<string[]>([]);
+  const remember = useCallback(
+    (id: string) => setRecentIds((ids) => rememberRecent(ids, id)),
+    []
+  );
+  if (!isOpen) return null;
+  return (
+    <OpenPalette
+      entries={entries}
+      timeline={timeline}
+      onNavigate={onNavigate}
+      searchDocs={searchDocs}
+      recentIds={recentIds}
+      onRan={remember}
+    />
+  );
+}
 
-  // Reset to a clean search every time the palette closes, so reopening it never shows a
-  // stale filter from the last time it was used.
-  useEffect(() => {
-    if (!isOpen) setQuery('');
-  }, [isOpen]);
+interface OpenPaletteProps extends Omit<CommandPaletteProps, 'isOpen'> {
+  recentIds: readonly string[];
+  onRan: (id: string) => void;
+}
 
-  // The daemon's doc hits and the query they answer; they keep their own rank
-  // after the local rows, and hits for an earlier query are never shown or run.
+function OpenPalette({
+  entries,
+  timeline,
+  onNavigate,
+  searchDocs,
+  recentIds,
+  onRan,
+}: OpenPaletteProps) {
+  const { openOverseer } = useShellActions();
+  const modLabel = useModKeyLabel();
+  const [query, setQuery] = useState('');
+
+  // The daemon's doc hits and the query they answer; they keep the daemon's
+  // rank after the local rows, and hits for an earlier query are never shown
+  // or run.
   const [docHits, setDocHits] = useState(NO_DOC_HITS);
   useEffect(() => {
     const q = query.trim();
@@ -115,87 +156,73 @@ export function CommandPalette({
       clearTimeout(timer);
     };
   }, [query, searchDocs]);
-  const docEntries =
-    searchDocs !== undefined && docHits.query === query.trim()
-      ? docHits.entries
-      : NO_DOC_HITS.entries;
 
-  const sections = useMemo(
+  const localItems = useMemo(
+    () => floatRecent(toPaletteItems(entries, { modLabel }), recentIds),
+    [entries, modLabel, recentIds]
+  );
+  const jumpItems = useMemo(
     () =>
-      groupPaletteSections(
-        [...rankPaletteItems(entries, query), ...docEntries],
-        { query, recentIds }
-      ),
-    [entries, docEntries, query, recentIds]
+      timeline === null
+        ? []
+        : floatRecent(
+            buildJumpToItems(timeline, {
+              task: taskHref,
+              timeline: timelineHref,
+            }),
+            recentIds
+          ),
+    [timeline, recentIds]
+  );
+  const docItems = useMemo(
+    () =>
+      searchDocs !== undefined && docHits.query === query.trim()
+        ? toPaletteItems(docHits.entries, { modLabel, matched: true })
+        : [],
+    [searchDocs, docHits, query, modLabel]
+  );
+  const items = useMemo(
+    () => [...localItems, ...jumpItems, ...docItems],
+    [localItems, jumpItems, docItems]
   );
 
-  function runEntry(entry: PaletteEntry) {
-    setRecentIds((ids) => rememberRecent(ids, entry.id));
-    onClose();
-    entry.run();
+  const close = useCallback(
+    () => onNavigate({ type: 'closePalette' }),
+    [onNavigate]
+  );
+
+  // Closes first, then acts: an entry runs itself; a Jump to row (href only)
+  // dispatches its route's actions, in order. Matched rows (doc hits) are
+  // not remembered: see CommandPalette.
+  function run(item: PaletteItem): void {
+    if (item.matched !== true) onRan(item.id);
+    close();
+    if (item.onSelect !== undefined) {
+      item.onSelect();
+      return;
+    }
+    if (item.href === undefined) return;
+    for (const action of parseHref(item.href) ?? []) onNavigate(action);
   }
 
-  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key !== 'Tab' || event.shiftKey) return;
-    const prompt = query.trim();
-    if (prompt === '') return;
-    event.preventDefault();
-    onClose();
-    openOverseer(prompt);
+  function askAgent(text: string): void {
+    close();
+    openOverseer(text);
   }
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent
-        className="rounded-popover top-[121px] h-[450px] max-h-[calc(100vh-121px-2rem)] w-[720px] max-w-[calc(100vw-2rem)] translate-y-0 overflow-hidden sm:max-w-[calc(100vw-2rem)]"
-        showCloseButton={false}
-      >
-        <DialogTitle className="sr-only">Command menu</DialogTitle>
-        <Command shouldFilter={false} onKeyDown={handleKeyDown}>
-          <CommandInput
-            value={query}
-            onValueChange={setQuery}
-            placeholder="Type a command or search…"
-            hint={
-              <>
-                <span>Ask your agent</span>
-                <Kbd>Tab</Kbd>
-              </>
-            }
-          />
-          <CommandList className="max-h-none flex-1">
-            <CommandEmpty className="p-0">
-              <EmptyState
-                heading="No results"
-                description="Try another task id or title, or press Tab to ask your agent."
-                className="py-6"
-              />
-            </CommandEmpty>
-            {sections.map((slice) => (
-              <CommandGroup key={slice.section} heading={slice.heading}>
-                {slice.items.map((entry) => (
-                  <CommandItem
-                    key={entry.id}
-                    value={entry.id}
-                    onSelect={() => runEntry(entry)}
-                  >
-                    {entry.icon ?? defaultIcon(entry)}
-                    <span className="min-w-0 truncate">{entry.label}</span>
-                    {entry.sublabel !== undefined && (
-                      <span className="text-muted-foreground shrink-0">
-                        {entry.sublabel}
-                      </span>
-                    )}
-                    {entry.shortcut !== undefined && (
-                      <CommandShortcut>{entry.shortcut}</CommandShortcut>
-                    )}
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            ))}
-          </CommandList>
-        </Command>
-      </DialogContent>
-    </Dialog>
+    <PaletteDialog
+      items={items}
+      onClose={close}
+      onRun={run}
+      onQueryChange={setQuery}
+      onSubmitFreeText={askAgent}
+      freeTextLabel="Ask your agent"
+      onShowShortcuts={() => onNavigate({ type: 'openShortcuts' })}
+      placeholder="Type a command or search…"
+      sectionOrder={PALETTE_SECTION_ORDER}
+      maxPerSection={PALETTE_SECTION_CAPS}
+      emptyHint={PALETTE_EMPTY_HINT}
+    />
   );
 }

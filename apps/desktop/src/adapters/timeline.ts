@@ -61,8 +61,9 @@ import {
 /**
  * Where the chart's links go. `task(id)` is shellRoutes' `taskHref`: a lane's
  * project name, a banner's project or milestone row and an unplanned issue
- * all open their task. `issues()` is the Issues list (a filtered list once
- * Phase 6 adds query routes; `#/issues` until then).
+ * all open their task. `issues()` is the Issues list (`#/issues`;
+ * lib/routes.ts issuesHref(preset) narrows it to a preset, and no route
+ * narrows it to a project yet).
  */
 export interface TimelineHrefs {
   task(id: string): string;

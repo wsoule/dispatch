@@ -1,36 +1,26 @@
-import type { ReactNode } from 'react';
-
 export type ToastTone = 'error' | 'success' | 'info';
 
-/** A toast's follow-up: the indigo text link under the description (`View task`), or a
- * quieter ghost beside it. Both dismiss the toast when clicked. */
+/** A toast's one follow-up: the `View task` link under a task toast, or an action such as
+ * `Restart`. Clicking it dismisses the toast. */
 export interface ToastLink {
-  label: ReactNode;
+  label: string;
   onClick: () => void;
 }
 
-/** Errors do not auto-dismiss: a failure you did not manage to read is the
- * same as a failure that was never reported. */
-export function sonnerOptionsFor(tone: ToastTone): { duration: number } {
+/** Milliseconds a toast stays. Errors do not auto-dismiss (Infinity): a failure you did not
+ * manage to read is the same as a failure that was never reported. */
+export function toastDurationFor(tone: ToastTone): number {
   const ms = { success: 3500, info: 4500, error: Infinity } as const;
-  return { duration: ms[tone] };
+  return ms[tone];
 }
 
-/**
- * Maps a toast's follow-ups onto sonner's two slots. `link` and `action` are the same slot —
- * sonner's `action`, which the Toaster styles as an indigo text link — with `link` winning
- * when a caller passes both; `secondary` is sonner's `cancel`, styled as a ghost.
- */
-export function sonnerActionsFor(input: {
+/** The library's toast has one action slot, so `link` and `action` share it, `link` winning
+ * when a caller passes both. */
+export function toastActionFor(input: {
   link?: ToastLink;
   action?: ToastLink;
-  secondary?: ToastLink;
-}): { action?: ToastLink; cancel?: ToastLink } {
-  const action = input.link ?? input.action;
-  return {
-    ...(action !== undefined && { action }),
-    ...(input.secondary !== undefined && { cancel: input.secondary }),
-  };
+}): ToastLink | undefined {
+  return input.link ?? input.action;
 }
 
 /** The `View task` link every toast about a task carries. */

@@ -7,6 +7,7 @@ import {
   buildPaletteEntries,
   docHitEntries,
 } from './paletteEntries';
+import { parseHref } from './routes';
 
 function context(over: Partial<PaletteEntriesContext> = {}) {
   const calls: string[] = [];
@@ -42,6 +43,33 @@ describe('buildPaletteEntries', () => {
     // No row sits outside its group.
     expect(sections.lastIndexOf('actions')).toBeLessThan(firstOf('navigation'));
     expect(sections.lastIndexOf('navigation')).toBeLessThan(firstOf('tasks'));
+  });
+
+  test('every navigation row carries the real route of the place it opens', () => {
+    const { ctx } = context();
+    const navigation = buildPaletteEntries(ctx).filter(
+      (e) => e.section === 'navigation'
+    );
+    expect(navigation.length).toBeGreaterThan(0);
+    const routes = Object.fromEntries(
+      navigation.map((e) => [
+        e.id,
+        e.href === undefined ? null : parseHref(e.href),
+      ])
+    );
+    expect(routes).toEqual({
+      'go-overseer': [{ type: 'showOverseer' }],
+      'go-board': [{ type: 'showTasks' }],
+      'go-settings': [{ type: 'openSettings' }],
+      'go-timeline': [{ type: 'openTimeline', project: null }],
+      'go-graph': [
+        { type: 'openGraph', scope: { level: 'milestone' }, nodeId: null },
+      ],
+      'go-files': [{ type: 'setProjectView', view: 'files' }],
+      'go-terminals': [{ type: 'setProjectView', view: 'terminals' }],
+      'go-projects': [{ type: 'setProjectView', view: 'projects' }],
+      'go-live': [{ type: 'setProjectView', view: 'live' }],
+    });
   });
 
   test('new task is C and the shortcuts sheet is ?', () => {

@@ -28,7 +28,7 @@ import { ICON, useTaskDetailProps } from './useTaskDetailProps';
 // pieces the page shares); Dispatch's legacy Work pieces (the dispatch card,
 // the run strip, the sub-issues, the attachments) sit inside it as children
 // until Phase 7 restyles them. It mounts in the shell's peek slot while
-// `twoViewsState.peek` is a task; Esc (SlideOver's) closes it.
+// `navState.peek` is a task; Esc (SlideOver's) closes it.
 
 export interface TaskDrawerProps {
   taskId: string;

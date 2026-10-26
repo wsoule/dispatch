@@ -1,232 +1,424 @@
-import type { TaskDoc } from '@dispatch-foo/core/browser';
+import type { TaskListItem } from '@dispatch-foo/core/browser';
+import type { EpicProgress, RunMeta } from '@dispatch/client';
 import {
-  cleanup as cleanupAll,
+  cleanup,
   fireEvent,
   render,
   screen,
+  within,
 } from '@testing-library/react';
-import { beforeEach, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 
 import {
   type CreateTaskPreset,
-  type ShellActions,
   ShellActionsProvider,
 } from '../components/shell/ShellActionsContext';
+import { SHELL } from '../components/tasks/page/pageHost.test-helper';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import {
-  ProjectsView,
-  TOGGLED_PROJECT_NODES_STORAGE_KEY,
-} from './ProjectsView';
+import { type PlanningInput, PlanningProvider } from '../hooks/usePlanning';
+import { dayFromNow } from '../lib/taskDates';
+import { taskDoc } from '../lib/taskDoc.test-helper';
+import { ProjectsView } from './ProjectsView';
 
-beforeEach(() => window.sessionStorage.clear());
+// The Projects register over a fixture planning (PlanningProvider runs the
+// chain over the task list below): an initiative with two projects, one
+// without an initiative and one inactive, so every filter has a row. Dates
+// are relative to today so the overdue milestone stays overdue.
 
-function task(
-  id: string,
-  title: string,
-  overrides: Partial<TaskDoc['meta']> = {}
-): TaskDoc {
-  return {
-    meta: {
-      id,
-      title,
-      status: 'ready',
-      kind: 'task',
-      priority: 'none',
-      parent: null,
-      milestone: null,
-      labels: [],
+afterEach(cleanup);
+
+const DONE_MEANS = '## Description\n\nDone means: it ships.\n';
+
+/**
+ * Growth: Storefront (lead Ana, Beta due in 20 days, on track) and Search
+ * (no lead, Index due 3 days ago with an unassigned issue: overdue and
+ * blocked). Outside any initiative: Loose ends (no milestone) and Archive
+ * (a draft project: inactive).
+ */
+function fixture(): TaskListItem[] {
+  return [
+    taskDoc({ id: 'i-growth', title: 'Growth', kind: 'initiative' }),
+    taskDoc({
+      id: 'p-store',
+      title: 'Storefront',
+      kind: 'project',
+      parent: 'i-growth',
+      status: 'working',
+      assignee: 'human:ana',
+    }),
+    taskDoc(
+      {
+        id: 'ms-beta',
+        title: 'Beta',
+        kind: 'milestone',
+        parent: 'p-store',
+        dueDate: dayFromNow(20),
+      },
+      DONE_MEANS
+    ),
+    taskDoc({
+      id: 't-cart',
+      title: 'Persist the cart',
+      parent: 'ms-beta',
+      status: 'working',
+      assignee: 'human:ana',
+    }),
+    taskDoc({
+      id: 't-pay',
+      title: 'Take payments',
+      parent: 'ms-beta',
+      status: 'landed',
+      assignee: 'human:ana',
+    }),
+    taskDoc({
+      id: 'p-search',
+      title: 'Search',
+      kind: 'project',
+      parent: 'i-growth',
+      status: 'working',
       assignee: 'none',
-      blockedBy: [],
-      writes: [],
-      initiatives: [],
-      dueDate: null,
-      color: null,
-      created: '2026-08-10T12:00:00.000Z',
-      updated: '2026-09-13T12:00:00.000Z',
-      ...overrides,
-    },
-    body: '',
-  } as unknown as TaskDoc;
+    }),
+    taskDoc(
+      {
+        id: 'ms-index',
+        title: 'Index',
+        kind: 'milestone',
+        parent: 'p-search',
+        dueDate: dayFromNow(-3),
+      },
+      DONE_MEANS
+    ),
+    taskDoc({
+      id: 't-rank',
+      title: 'Rank exact matches first',
+      parent: 'ms-index',
+      status: 'ready',
+      assignee: 'none',
+    }),
+    taskDoc({
+      id: 'p-loose',
+      title: 'Loose ends',
+      kind: 'project',
+      status: 'ready',
+      assignee: 'human:dev',
+    }),
+    taskDoc({
+      id: 'p-archive',
+      title: 'Archive',
+      kind: 'project',
+      status: 'draft',
+      assignee: 'human:dev',
+    }),
+  ];
 }
 
-function dataWith(
-  tasks: TaskDoc[],
-  attention: string[] = []
-): DispatchProjectData {
+/** `count` projects, each with one milestone and one issue, in one initiative. */
+function many(count: number): TaskListItem[] {
+  const tasks = [taskDoc({ id: 'i-big', title: 'Big', kind: 'initiative' })];
+  for (let i = 0; i < count; i += 1) {
+    tasks.push(
+      taskDoc({
+        id: `p-${i}`,
+        title: `Project ${i}`,
+        kind: 'project',
+        parent: 'i-big',
+        status: 'working',
+        assignee: 'human:ana',
+      }),
+      taskDoc(
+        {
+          id: `ms-${i}`,
+          title: `Milestone ${i}`,
+          kind: 'milestone',
+          parent: `p-${i}`,
+          dueDate: dayFromNow(30),
+        },
+        DONE_MEANS
+      ),
+      taskDoc({
+        id: `t-${i}`,
+        title: `Issue ${i}`,
+        parent: `ms-${i}`,
+        status: 'ready',
+        assignee: 'human:ana',
+      })
+    );
+  }
+  return tasks;
+}
+
+function run(id: string): RunMeta {
+  return { id, taskId: 't-cart', state: 'running' } as RunMeta;
+}
+
+/** Fan-out progress for one container with these runs live under it. */
+function progress(epicId: string, runIds: string[]): EpicProgress {
   return {
-    client: {},
-    portLoading: false,
-    portError: false,
-    tasks,
-    attentionByTaskId: new Map(attention.map((id) => [id, 'failed'])),
-  } as unknown as DispatchProjectData;
+    epicId,
+    active: true,
+    session: null,
+    spend: { usd: 0, runs: 0 },
+    children: [],
+    waves: [],
+    liveRuns: runIds.map(run),
+  } as unknown as EpicProgress;
 }
 
-function renderProjects(data: DispatchProjectData, onBack?: () => void) {
-  const opened: string[] = [];
+function planningInput(
+  tasks: TaskListItem[],
+  epicProgressById: Map<string, EpicProgress>
+): PlanningInput {
+  return {
+    tasks,
+    config: null,
+    people: [
+      { ref: 'human:ana', name: 'Ana' },
+      { ref: 'human:dev', name: 'Dev' },
+    ],
+    executors: null,
+    me: 'human:ana',
+    linearLinks: {},
+    latestRunByTaskId: new Map<string, RunMeta>(),
+    epicProgressById,
+  };
+}
+
+interface MountOptions {
+  tasks?: TaskListItem[];
+  epicProgressById?: Map<string, EpicProgress>;
+  onBack?: () => void;
+  daemon?: 'ready' | 'starting';
+}
+
+function mount(options: MountOptions = {}) {
+  const tasks = options.tasks ?? fixture();
+  const epicProgressById =
+    options.epicProgressById ?? new Map<string, EpicProgress>();
   const creates: (CreateTaskPreset | undefined)[] = [];
-  const actions = {
-    openCreateTask: (preset?: CreateTaskPreset) => creates.push(preset),
-  } as unknown as ShellActions;
-  const result = render(
-    <ShellActionsProvider value={actions}>
-      <ProjectsView
-        projectName="Acme"
-        data={data}
-        onOpenTask={(id) => opened.push(id)}
-        onBack={onBack}
-      />
+  const starting = options.daemon === 'starting';
+  const data = {
+    client: starting ? null : {},
+    portLoading: starting,
+    portError: false,
+    portErrorDetail: null,
+    retryEnsureDispatchd: () => {},
+    epicProgressById,
+  } as unknown as DispatchProjectData;
+  const utils = render(
+    <ShellActionsProvider
+      value={{ ...SHELL, openCreateTask: (preset) => creates.push(preset) }}
+    >
+      <PlanningProvider data={planningInput(tasks, epicProgressById)}>
+        <ProjectsView data={data} onBack={options.onBack} />
+      </PlanningProvider>
     </ShellActionsProvider>
   );
-  return { ...result, opened, creates };
+  return { ...utils, creates };
 }
 
-const growth = task('i-1', 'Growth', { kind: 'initiative' });
-const storefront = task('p-1', 'Storefront', {
-  kind: 'project',
-  parent: 'i-1',
-  assignee: 'human:maya',
-  dueDate: '2099-01-10',
-});
-const beta = task('m-1', 'Beta', { kind: 'milestone', parent: 'p-1' });
-const hierarchy = [
-  growth,
-  storefront,
-  beta,
-  task('t-1', 'Checkout', { parent: 'm-1', status: 'working' }),
-  task('t-2', 'Card form', { parent: 't-1', status: 'landed' }),
-  task('t-3', 'Receipt', { parent: 'm-1' }),
-];
-
-function rowKeys(container: HTMLElement): string[] {
-  return Array.from(
-    container.querySelectorAll<HTMLElement>('[data-row-key]')
-  ).map((row) => row.dataset.rowKey ?? '');
+/** The rows on screen, by their accessible row link name. */
+function rowNames(): string[] {
+  return screen
+    .getAllByRole('link', { name: / on the timeline$/ })
+    .map((link) => link.getAttribute('aria-label') ?? '');
 }
 
-test('initiatives and projects open onto their milestones, each with its progress', () => {
-  const { container } = renderProjects(dataWith(hierarchy));
-  expect(rowKeys(container)).toEqual(['i-1', 'i-1/p-1', 'i-1/p-1/m-1']);
-  const project = container.querySelector('[data-row-key="i-1/p-1"]');
-  expect(
-    project
-      ?.querySelector('[data-slot=container-progress]')
-      ?.getAttribute('aria-label')
-  ).toBe('1 of 3 done');
-  expect(project?.textContent).toContain('1/3');
-  expect(project?.textContent).toContain('33%');
-  expect(project?.textContent).toContain('On track');
-  expect(
-    project?.querySelector('[data-slot=container-target]')?.textContent
-  ).toContain('Jan 10');
-  // The lead's avatar.
-  expect(project?.querySelector('[data-kind=human]')).not.toBeNull();
-});
+function row(name: string): HTMLElement {
+  const link = screen.getByRole('link', { name: `${name} on the timeline` });
+  const item = link.closest('li');
+  if (item === null) throw new Error(`no row for ${name}`);
+  return item;
+}
 
-test('a failed run below a container marks it at risk', () => {
-  const { container } = renderProjects(dataWith(hierarchy, ['t-3']));
-  expect(
-    container.querySelector(
-      '[data-row-key="i-1/p-1/m-1"] [data-slot=container-health]'
-    )?.textContent
-  ).toBe('At risk');
-});
+describe('ProjectsView', () => {
+  test('groups the projects by initiative, "No initiative" last, with the receipts line', () => {
+    mount();
+    expect(screen.getByTestId('projects-view')).toBeTruthy();
+    const groups = screen
+      .getAllByRole('region')
+      .map((section) => section.getAttribute('aria-label'));
+    expect(groups).toEqual(['Growth', 'No initiative']);
+    expect(rowNames()).toEqual([
+      'Storefront on the timeline',
+      'Search on the timeline',
+      'Loose ends on the timeline',
+      'Archive on the timeline',
+    ]);
+    expect(
+      screen.getByText('4 projects in 1 initiative · 1 at risk')
+    ).toBeTruthy();
+    // Each group's Graph button opens the initiative's graph.
+    expect(
+      screen
+        .getByRole('link', { name: 'Dependency graph of Growth' })
+        .getAttribute('href')
+    ).toBe('#/graph?initiative=i-growth');
+    expect(
+      screen
+        .getByRole('link', { name: 'Dependency graph of No initiative' })
+        .getAttribute('href')
+    ).toBe('#/graph?initiative=none');
+  });
 
-test('j/k move, l opens and steps in, h closes and steps out, Enter opens the page', () => {
-  const { container, opened } = renderProjects(dataWith(hierarchy));
-  const grid = screen.getByRole('treegrid', { name: 'Projects' });
-  expect(document.activeElement).toBe(grid);
-  const cursor = () => grid.getAttribute('aria-activedescendant');
+  test('a row carries the status chip, next milestone, progress, lead and allocation', () => {
+    mount();
+    const store = row('Storefront');
+    expect(store.getAttribute('data-tone')).toBe('default');
+    // The project's own status name, in the info tone (started).
+    const status = within(store).getByText('Working');
+    expect(status.closest('[data-tone]')?.getAttribute('data-tone')).toBe(
+      'info'
+    );
+    expect(within(store).getByText('Growth')).toBeTruthy();
+    expect(within(store).getByText('Beta')).toBeTruthy();
+    expect(within(store).getByRole('img', { name: 'On track' })).toBeTruthy();
+    expect(
+      within(store)
+        .getByRole('progressbar', { name: 'Beta progress' })
+        .getAttribute('aria-valuetext')
+    ).toBe('1 of 2 done');
+    expect(within(store).getByText('Ana')).toBeTruthy();
+    expect(within(store).getByText('Nothing to do')).toBeTruthy();
 
-  expect(cursor()).toBe('project-row-i-1');
-  fireEvent.keyDown(grid, { key: 'j' });
-  fireEvent.keyDown(grid, { key: 'j' });
-  expect(cursor()).toBe('project-row-i-1--p-1--m-1');
+    // Search: no lead, its next milestone overdue, allocation blocked.
+    const search = row('Search');
+    expect(search.getAttribute('data-tone')).toBe('warning');
+    expect(within(search).getByRole('img', { name: 'Overdue' })).toBeTruthy();
+    expect(within(search).getByText(/days overdue$/)).toBeTruthy();
+    const noLead = within(search).getByText('No lead');
+    expect(noLead.closest('[data-tone]')?.getAttribute('data-tone')).toBe(
+      'warning'
+    );
+    expect(within(search).getByText('Blocked')).toBeTruthy();
+    expect(within(search).getByText('Project has no lead')).toBeTruthy();
 
-  // l on a folded milestone opens it; again steps onto its first issue.
-  fireEvent.keyDown(grid, { key: 'l' });
-  expect(rowKeys(container)).toContain('i-1/p-1/m-1/t-1');
-  expect(window.sessionStorage.getItem(TOGGLED_PROJECT_NODES_STORAGE_KEY)).toBe(
-    '["i-1/p-1/m-1"]'
-  );
-  fireEvent.keyDown(grid, { key: 'l' });
-  expect(cursor()).toBe('project-row-i-1--p-1--m-1--t-1');
+    // Loose ends: no milestone, so the next-milestone and the allocation
+    // cells both say so, and there is no progress to draw.
+    const loose = row('Loose ends');
+    expect(within(loose).getAllByText('No open milestone')).toHaveLength(2);
+    expect(within(loose).getByText('—')).toBeTruthy();
 
-  // h on a folded issue steps out to its milestone; h there folds it.
-  fireEvent.keyDown(grid, { key: 'h' });
-  expect(cursor()).toBe('project-row-i-1--p-1--m-1');
-  fireEvent.keyDown(grid, { key: 'h' });
-  expect(rowKeys(container)).not.toContain('i-1/p-1/m-1/t-1');
+    // Archive: a draft project is inactive; its row and chip step back.
+    const archive = row('Archive');
+    expect(archive.getAttribute('data-tone')).toBe('muted');
+    expect(
+      within(archive)
+        .getByText('Draft')
+        .closest('[data-tone]')
+        ?.getAttribute('data-tone')
+    ).toBe('muted');
+    expect(within(archive).getByText('Inactive')).toBeTruthy();
+  });
 
-  // Enter on a container opens its page — the Flight Plan.
-  fireEvent.keyDown(grid, { key: 'k' });
-  fireEvent.keyDown(grid, { key: 'Enter' });
-  expect(opened).toEqual(['p-1']);
-});
+  test('the row and its cells are real hrefs: the timeline lane, the graph, the page', () => {
+    mount();
+    const store = row('Storefront');
+    expect(
+      within(store)
+        .getByRole('link', { name: 'Storefront on the timeline' })
+        .getAttribute('href')
+    ).toBe('#/timeline?project=p-store');
+    expect(
+      within(store)
+        .getByRole('link', { name: 'Graph of Storefront' })
+        .getAttribute('href')
+    ).toBe('#/graph?project=p-store');
+    expect(
+      within(store)
+        .getByRole('link', { name: 'Open Storefront' })
+        .getAttribute('href')
+    ).toBe('#/task/p-store');
+  });
 
-test('the chevron folds a node without opening it; a click on the row opens it', () => {
-  const { container, opened } = renderProjects(dataWith(hierarchy));
-  const project = container.querySelector<HTMLElement>(
-    '[data-row-key="i-1/p-1"]'
-  );
-  const chevron = project?.querySelector<HTMLElement>(
-    'button[aria-label=Collapse]'
-  );
-  if (project === null || chevron === undefined || chevron === null) {
-    throw new Error('no project row');
-  }
-  fireEvent.click(chevron);
-  expect(rowKeys(container)).toEqual(['i-1', 'i-1/p-1']);
-  expect(opened).toEqual([]);
-  fireEvent.click(project);
-  expect(opened).toEqual(['p-1']);
-});
+  test('agents working under a project or its milestones fill the allocation cell', () => {
+    mount({
+      epicProgressById: new Map([
+        ['p-store', progress('p-store', ['r-1'])],
+        ['ms-beta', progress('ms-beta', ['r-1', 'r-2'])],
+      ]),
+    });
+    const cell = within(row('Storefront')).getByText('2 agents working');
+    expect(cell.closest('[data-tone]')?.getAttribute('data-tone')).toBe('info');
+  });
 
-test('with no containers the empty state says what the page is for', () => {
-  renderProjects(dataWith([task('t-1', 'Loose')]));
-  expect(screen.getByText('No projects yet')).not.toBeNull();
-});
+  test('the filter and the search narrow the rows and the count says so', () => {
+    mount();
+    const filters = screen.getByRole('radiogroup', { name: 'Project status' });
+    expect(
+      within(filters)
+        .getAllByRole('radio')
+        .map((option) => option.textContent)
+    ).toEqual(['All4', 'Blocked1', 'At risk1', 'Inactive1']);
+    expect(screen.getByText('4 projects')).toBeTruthy();
 
-test("the empty state's New project opens the creator on a project", () => {
-  const { creates } = renderProjects(dataWith([]));
-  fireEvent.click(screen.getByRole('button', { name: /New project/ }));
-  expect(creates).toEqual([{ kind: 'project' }]);
-});
+    fireEvent.click(within(filters).getByRole('radio', { name: /Blocked/ }));
+    expect(rowNames()).toEqual(['Search on the timeline']);
+    expect(screen.getByText('1 of 4 projects')).toBeTruthy();
+    // Groups left empty are gone with their rows.
+    expect(screen.queryByRole('region', { name: 'No initiative' })).toBeNull();
 
-test('2000 tasks mount only a window of rows', () => {
-  const tasks: TaskDoc[] = [task('p-0', 'Big', { kind: 'project' })];
-  for (let m = 0; m < 20; m++) {
-    tasks.push(task(`m-${m}`, `M${m}`, { kind: 'milestone', parent: 'p-0' }));
-    for (let i = 0; i < 99; i++) {
-      tasks.push(task(`t-${m}-${i}`, `Issue ${m}.${i}`, { parent: `m-${m}` }));
-    }
-  }
-  // Every milestone open: 2000 rows in the tree.
-  window.sessionStorage.setItem(
-    TOGGLED_PROJECT_NODES_STORAGE_KEY,
-    JSON.stringify(Array.from({ length: 20 }, (_, m) => `p-0/m-${m}`))
-  );
-  const { container } = renderProjects(dataWith(tasks));
-  const mounted = container.querySelectorAll('[data-row-key]').length;
-  expect(mounted).toBeGreaterThan(10);
-  expect(mounted).toBeLessThan(100);
-});
+    fireEvent.click(within(filters).getByRole('radio', { name: /Inactive/ }));
+    expect(rowNames()).toEqual(['Archive on the timeline']);
 
-test('hosted under Tasks, the header leads with "‹ tasks" and offers New project, tree intact', () => {
-  const backs: string[] = [];
-  const { container, creates } = renderProjects(dataWith(hierarchy), () =>
-    backs.push('back')
-  );
-  expect(container.querySelector('[data-slot=page-header]')).toBeTruthy();
-  fireEvent.click(screen.getByTestId('tasks-back'));
-  expect(backs).toEqual(['back']);
-  // The creator, set to make a project, as the graph's Projects layout offered.
-  fireEvent.click(screen.getByRole('button', { name: 'New project' }));
-  expect(creates).toEqual([{ kind: 'project' }]);
-  expect(rowKeys(container)).toEqual(['i-1', 'i-1/p-1', 'i-1/p-1/m-1']);
-  cleanupAll();
-  // On its own (no host) the header has no back chip.
-  const shown = renderProjects(dataWith(hierarchy));
-  expect(shown.container.querySelector('[data-slot=page-header]')).toBeTruthy();
-  expect(screen.queryByTestId('tasks-back')).toBeNull();
+    fireEvent.click(within(filters).getByRole('radio', { name: /All/ }));
+    const search = screen.getByRole('searchbox', { name: 'Search projects' });
+    fireEvent.change(search, { target: { value: 'dev' } });
+    expect(rowNames()).toEqual([
+      'Loose ends on the timeline',
+      'Archive on the timeline',
+    ]);
+    expect(screen.getByText('2 of 4 projects')).toBeTruthy();
+  });
+
+  test('no match offers Show all, which clears the search and the filter', () => {
+    mount();
+    const search = screen.getByRole('searchbox', { name: 'Search projects' });
+    fireEvent.change(search, { target: { value: 'nothing here' } });
+    expect(
+      screen.queryAllByRole('link', { name: / on the timeline$/ })
+    ).toEqual([]);
+    expect(screen.getByText('No projects match "nothing here"')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Show all projects' }));
+    expect(rowNames()).toHaveLength(4);
+    expect(document.activeElement).toBe(search);
+  });
+
+  test('with no projects the empty state offers New project, which opens the creator on a project', () => {
+    const { creates } = mount({
+      tasks: [taskDoc({ id: 't-1', title: 'Loose task' })],
+    });
+    expect(screen.getByText('No projects yet')).toBeTruthy();
+    expect(screen.queryByRole('searchbox')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+    expect(creates).toEqual([{ kind: 'project' }]);
+  });
+
+  test('hosted under Tasks, the header leads with "‹ tasks" and offers New project', () => {
+    const backs: string[] = [];
+    const { creates } = mount({ onBack: () => backs.push('back') });
+    fireEvent.click(screen.getByTestId('tasks-back'));
+    expect(backs).toEqual(['back']);
+    fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+    expect(creates).toEqual([{ kind: 'project' }]);
+    cleanup();
+    // On its own (no host) the header has no back chip.
+    mount();
+    expect(screen.queryByTestId('tasks-back')).toBeNull();
+  });
+
+  test('without a daemon it shows the daemon state instead of the register', () => {
+    mount({ daemon: 'starting' });
+    expect(screen.queryByTestId('projects-view')).toBeNull();
+    expect(screen.queryByRole('searchbox')).toBeNull();
+  });
+
+  test('300 projects render in under a second', () => {
+    const started = performance.now();
+    mount({ tasks: many(300) });
+    const elapsed = performance.now() - started;
+    expect(rowNames()).toHaveLength(300);
+    // eslint-disable-next-line no-console
+    console.log(`300 projects: planning + register in ${elapsed.toFixed(0)}ms`);
+    expect(elapsed).toBeLessThan(1000);
+  });
 });
