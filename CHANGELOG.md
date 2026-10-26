@@ -9,7 +9,7 @@ holds what a user upgrading needs to know.
 
 - **The Overseer and run chats show the agent as it writes.** A running turn's
   text streams into the chat, the Overseer keeps what it says between tool calls
-  as narration, and a run's tool chips end done or failed. The Overseer's
+  as narration, and tool chips in both chats end done or failed. The Overseer's
   approval card takes a reason when you deny, as a run's does. To stop
   streaming, set `overseer.stream` (`live`, `narration` or `off`) or
   `runs.stream` (`live` or `off`) in `.dispatch/config.yml`.
@@ -32,6 +32,11 @@ holds what a user upgrading needs to know.
   messages. Whoever may read one still finds it in the desktop's Threads view.
 - **A Codex run's command output is cut at 2,000 characters** in its chat, with
   "… (truncated)" at the cut, as an Overseer tool row already was.
+- **An Overseer action you had not confirmed ends with a restart.** It used to
+  stay on its confirm card after Dispatch restarted, where neither button could
+  work. The conversation now says "Denied: … — Dispatch restarted before anyone
+  decided", and the Overseer hears on its next turn that it did not happen; ask
+  it again to queue the action anew.
 - **`dispatch team invite` now makes a team invite link.** It prints one
   `dispatch-team:` link that a teammate pastes into `dispatch team join` (or
   Settings → Team) to join your signed team. The old behaviour, a sign-in token

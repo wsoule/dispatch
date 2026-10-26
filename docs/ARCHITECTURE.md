@@ -270,8 +270,8 @@ Notable modules:
 The Overseer chat and a task run's chat show an agent at work, not only what it
 settled on. Three pieces do that: **live text** (the words of a running turn,
 streamed and never stored), **narration** (the Overseer's prose between tool
-calls, stored as rows) and **tool results** (how each of a run's tool calls
-ended, stored as entries).
+calls, stored as rows) and **tool results** (how each tool call ended: a run's
+stored as entries, the Overseer's as a status on its tool row).
 
 **Segments.** Live text is cut into segments: one Claude text block, or one
 Codex `agentMessage` item. A Claude segment is `<apiMessageId>:<blockIndex>`,
@@ -420,6 +420,20 @@ daemon, a scripted run, or a sub-agent's call, only the live edge does.
 `dispatch run --watch` and `run watch` skip result entries, since the call's own
 line already printed.
 
+**Overseer tool status.** An Overseer `tool` row carries a `status` (`running`,
+`done` or `error`) and, for a built-in call, the backend's id for it as
+`toolUseId` (Claude's tool_use id, Codex's item id); never the call's output, by
+the same rule as a run's results. A built-in call the backend reports with an id
+(`onToolUse`) lands `running`, and `onToolResult` settles that row in place, in
+one `overseer.changed`: Claude reports each top-level `tool_result` for a call
+it reported (`is_error` is an error), Codex a tool item's `item/completed`
+status (`failed` or `declined` is an error). A registry call's row lands `done`
+or `error` once the call ran. A row still `running` when its turn ends (a Stop,
+a failed turn, a result that never came) stays as stored, and the desktop shows
+a `running` row on a record that is not `running` as ended: no spinner, a plain
+chip. Rows from before `status` keep the old reading, failed when the text
+starts with `error:`.
+
 **Rendering.** Both chats render live text through `StreamingText`
 (`packages/ui`) with the app's Markdown: text that grows continues its reveal
 from where it was, text that arrives whole shows at once, and a code fence still
@@ -445,7 +459,12 @@ Agents, runs and people talk over one persistent bus
   once, before its answer is published.
 - **Gates** are blocking questions to a human carrying typed `data`
   (`tool-approval`, `scope`, `wake`, `agent-registration`, `overseer-action`).
-  Only a human at the decide tier can answer one.
+  Only a human at the decide tier can answer one. An Overseer gate waits on
+  state the daemon holds in memory (a parked tool call, a queued action), so the
+  boot sweep closes it, and the Overseer's records drop what it asked about: a
+  parked call leaves `pendingApprovals` when its turn loads as restarted, and a
+  queued action leaves `pendingActions` with a denied row, the model told on its
+  next turn, so no card asks about something nothing can decide.
 - **Tables** (`messages.db`, machine-local): `messages`, `recipients`,
   `deliveries` (one per resolved recipient, each with its own state),
   `channels`, `members`, `agents`, `gate_effects`.
