@@ -159,6 +159,33 @@ const issueList = (
   </>
 );
 
+// A list over the windowing threshold: the server draws the first rows of
+// the first groups and an estimated gap for the rest, reading no layout.
+const windowedList = (
+  <TaskGroupTable
+    label="Issues"
+    sections={[
+      {
+        id: 'all',
+        groups: [0, 1, 2].map((g) => ({
+          id: `g${g}`,
+          title: `Group ${g}`,
+          rows: Array.from({ length: 100 }, (_, i) => ({
+            id: `r${g}-${i}`,
+            key: `ENG-${g}${i}`,
+            title: `Row ${g}-${i}`,
+            href: `/issues/r${g}-${i}`,
+            state: 'Todo',
+            stateKind: 'unstarted' as const,
+            priority: 3 as const,
+            priorityLabel: 'Medium',
+          })),
+        })),
+      },
+    ]}
+  />
+);
+
 console.log(
   JSON.stringify({
     hasWindow: typeof window !== 'undefined',
@@ -168,5 +195,6 @@ console.log(
       <TaskSlideOver {...props} open onClose={() => undefined} />
     ),
     issueList: renderToString(issueList),
+    windowedList: renderToString(windowedList),
   })
 );

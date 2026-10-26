@@ -419,6 +419,16 @@
   border-top: 1px solid var(--divider);
 }
 
+/* Row windowing (use-row-windows.ts): the rows of a group that are not
+   mounted stand as one gap of their measured height, divider included
+   (the first of them would have drawn it), so the scroll range and every
+   mounted row's place are as if they were. */
+.gap {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
 .row {
   position: relative;
   display: grid;

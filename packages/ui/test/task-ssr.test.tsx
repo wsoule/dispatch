@@ -11,6 +11,7 @@ interface SsrResult {
   page: string;
   drawer: string;
   issueList: string;
+  windowedList: string;
 }
 
 function serverRender(): SsrResult {
@@ -79,5 +80,24 @@ describe('task family server render', () => {
     expect(html).not.toContain('draggable');
     // No popover is open on the server.
     expect(html).not.toContain('role="listbox"');
+  });
+
+  test('a list over the windowing threshold renders its first rows and estimated gaps', () => {
+    const html = result.windowedList;
+    // The first 60 rows of the first group are drawn, with their place.
+    expect(html).toContain('Row 0-0');
+    expect(html).toContain('Row 0-59');
+    expect(html).not.toContain('Row 0-60');
+    expect(html).toContain('aria-posinset="1"');
+    expect(html).toContain('aria-setsize="100"');
+    // The rest stand as gaps of the default row height (55px).
+    expect(html).toContain('data-row-gap="40"');
+    expect(html).toContain('height:2200px');
+    expect(html).toContain('data-row-gap="100"');
+    expect(html).toContain('height:5500px');
+    expect(html).not.toContain('Row 1-0<');
+    expect(html).not.toContain('Row 2-0<');
+    // Every group header is there.
+    expect(html).toContain('aria-label="Group 2"');
   });
 });

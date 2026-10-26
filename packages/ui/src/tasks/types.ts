@@ -492,6 +492,8 @@ export interface TaskGroupTableProps {
   /** Keys on a focused row that the table's own model leaves alone,
    * modified keys included: lets a host layer single-key commands
    * (Dispatch's s / p / a / m / d, Space, o, ⌘C) without owning focus.
+   * Rows are mounted lazily above `windowAbove`: act on the `row` and
+   * `group` given, never on a row element kept from an earlier call.
    * The table keeps ↑/↓, j/k, Home/End and ← (and with `selection` x,
    * Shift+↑/↓ and ⌘/Ctrl+A); everything else reaches this first, Enter
    * and Space included: Enter then activates the row's link or button
@@ -531,7 +533,25 @@ export interface TaskGroupTableProps {
    * per row. Dragging a selected row drags the whole selection. There is
    * no reordering: a drop targets a group, never a position. */
   drag?: TaskDragProps;
+  /** The element the table scrolls in, for row windowing: an element, a
+   * function returning it (read when windowing starts; keep it stable), or
+   * 'window' for the document's own scroll. Default: the nearest ancestor
+   * with overflow-y auto or scroll, found in an effect, else the window. */
+  scrollParent?: TaskScrollParent;
+  /** Above this many rows in total (folded groups included) only the rows
+   * near the viewport are mounted, per group, with gaps of their measured
+   * height standing for the rest; at or below it every row is drawn.
+   * Default 150. Rows are then mounted lazily: a host must not cache row
+   * elements, and a key that lands on an unmounted row scrolls it into
+   * view and focuses it once it mounts. */
+  windowAbove?: number;
 }
+
+/** Where a windowed table scrolls (TaskGroupTableProps.scrollParent). */
+export type TaskScrollParent =
+  | HTMLElement
+  | (() => HTMLElement | null)
+  | 'window';
 
 export interface TaskSelectionProps {
   selected: ReadonlySet<string>;

@@ -4,10 +4,12 @@ import { ArrowUpRight, ChevronRight, GripVertical, Plus } from 'lucide-react';
 import {
   type CSSProperties,
   type DragEvent,
+  type FocusEvent,
   type KeyboardEvent,
   memo,
   type MouseEvent,
   type ReactNode,
+  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -35,6 +37,7 @@ import {
 } from './collapsed-groups';
 import { EmptyState } from './notice';
 import { ProgressRule } from './progress-rule';
+import { type RowSegment, sameSegments } from './row-window';
 import { PriorityGlyph, StateGlyph } from './task-glyphs';
 import styles from './task-group-table.module.css';
 import { pruneSelection, rangeIds, setIds, toggleId } from './task-selection';
@@ -48,6 +51,16 @@ import type {
   TaskSectionData,
   TaskSelectionProps,
 } from './types';
+import {
+  focusTargetOf,
+  type RowWindowGroup,
+  type RowWindows,
+  useRowWindows,
+} from './use-row-windows';
+
+/** Above this many rows (folded groups included) the table windows its
+    rows: only the rows near the viewport are mounted. */
+const DEFAULT_WINDOW_ABOVE = 150;
 
 const DEFAULT_COLUMNS: TaskColumnId[] = ['project', 'state', 'priority', 'due'];
 
@@ -149,13 +162,58 @@ function isPlainClick(event: MouseEvent): boolean {
   );
 }
 
-// The element a nav item hands focus to: a group's toggle button, or the
-// row's primary link/button (rendered by the host <Link>, so it is found
-// in the DOM rather than through a ref).
-function focusTargetOf(item: Element): HTMLElement | null {
-  return item.querySelector<HTMLElement>(
-    '[data-nav-target] > a, [data-nav-target] > button, [data-nav-target] > label > input, button[data-nav-target]'
-  );
+/** One stop of the keyboard model, in reading order: a group's toggle, or
+    a row (with its place in its group, for a row that is not mounted). */
+type NavTarget =
+  | { kind: 'group'; groupId: string }
+  | { kind: 'row'; groupId: string; rowId: string; index: number };
+
+/** What one render derives from the sections and the folds, in one pass. */
+interface TableModel {
+  groupById: Map<string, TaskGroupData>;
+  /** The rows drawn, in reading order: the order of shift ranges,
+      Shift+↑/↓ and ⌘A. Folded groups' rows are not drawn, so they are not
+      in it. */
+  shownOrder: string[];
+  /** Every group toggle and shown row, in reading order: what ↑/↓, j/k,
+      Home and End walk (never the DOM, whose rows may be unmounted). */
+  navOrder: NavTarget[];
+  /** `g:<id>` / `r:<id>` → index in navOrder. */
+  navIndex: Map<string, number>;
+  /** The unfolded groups with their row ids, for the row windows. */
+  shownGroups: RowWindowGroup[];
+  /** Every row, folded or not: what the windowing threshold counts. */
+  totalRows: number;
+}
+
+function buildModel(
+  sections: readonly TaskSectionData[],
+  collapsed: ReadonlySet<string>
+): TableModel {
+  const groupById = new Map<string, TaskGroupData>();
+  const shownOrder: string[] = [];
+  const navOrder: NavTarget[] = [];
+  const navIndex = new Map<string, number>();
+  const shownGroups: RowWindowGroup[] = [];
+  let totalRows = 0;
+  for (const section of sections) {
+    for (const group of section.groups) {
+      groupById.set(group.id, group);
+      totalRows += group.rows.length;
+      navIndex.set(`g:${group.id}`, navOrder.length);
+      navOrder.push({ kind: 'group', groupId: group.id });
+      if (collapsed.has(group.id)) continue;
+      const rowIds: string[] = [];
+      group.rows.forEach((row, index) => {
+        rowIds.push(row.id);
+        shownOrder.push(row.id);
+        navIndex.set(`r:${row.id}`, navOrder.length);
+        navOrder.push({ kind: 'row', groupId: group.id, rowId: row.id, index });
+      });
+      shownGroups.push({ id: group.id, rowIds });
+    }
+  }
+  return { groupById, shownOrder, navOrder, navIndex, shownGroups, totalRows };
 }
 
 // Events from a host control inside a row (a cell picker's search box, an
@@ -242,7 +300,17 @@ interface RowSlots {
    at call time, get the current group object, and need not be stable;
    the render slots (renderCell, rowActions, groupActions) redraw every
    row or group when their identity changes, so a host with many rows
-   keeps them stable (useCallback). */
+   keeps them stable (useCallback).
+
+   Above `windowAbove` rows (default 150) the rows are windowed, per group
+   (use-row-windows.ts): every group keeps its heading, header row and its
+   own <ul>, and inside the <ul> only the rows near the scroll viewport
+   are mounted, the rest standing as gaps of their measured (or estimated)
+   height, so document order, roles, drop targets and the sticky column
+   header are as in a small list. The keyboard model walks the model
+   (navOrder), not the DOM: a key that lands on an unmounted row scrolls
+   it into view and focuses it once it mounts. Below the threshold every
+   row is drawn, exactly as before windowing existed. */
 export function TaskGroupTable({
   sections,
   columns = DEFAULT_COLUMNS,
@@ -265,6 +333,8 @@ export function TaskGroupTable({
   groupActions,
   drag,
   dropColumns,
+  scrollParent,
+  windowAbove = DEFAULT_WINDOW_ABOVE,
 }: TaskGroupTableProps) {
   // Folds live in component state, mirrored to storage when storageKey is
   // set. The stored value is read through useSyncExternalStore: the server
@@ -284,6 +354,7 @@ export function TaskGroupTable({
     [stored, local]
   );
   const rootRef = useRef<HTMLDivElement>(null);
+  const headRef = useRef<HTMLDivElement>(null);
   const hintId = useId();
   const baseId = useId();
   const finePointer = useMediaQuery(FINE_POINTER_QUERY);
@@ -352,17 +423,8 @@ export function TaskGroupTable({
     onToggleGroup?.(group.id, shut);
   }
 
-  const groupById = new Map<string, TaskGroupData>();
-  // The rows drawn, in reading order: the order of shift ranges, Shift+↑/↓
-  // and ⌘A. Folded groups' rows are not drawn, so they are not in it.
-  const shownOrder: string[] = [];
-  for (const section of sections) {
-    for (const group of section.groups) {
-      groupById.set(group.id, group);
-      if (collapsed.has(group.id)) continue;
-      for (const row of group.rows) shownOrder.push(row.id);
-    }
-  }
+  const { groupById, shownOrder, navOrder, navIndex, shownGroups, totalRows } =
+    useMemo(() => buildModel(sections, collapsed), [sections, collapsed]);
 
   // ---- selection --------------------------------------------------------
 
@@ -403,19 +465,106 @@ export function TaskGroupTable({
     verdicts: Map<string, true | string>;
   } | null>(null);
 
+  // ---- row windows ------------------------------------------------------
+
+  // Above the threshold only the rows near the viewport are mounted; the
+  // hook finds the scroller, measures and hands each group its window.
+  const windowed = totalRows > windowAbove;
+  const rowWindows = useRowWindows({
+    rootRef,
+    headRef,
+    enabled: windowed,
+    scrollParent,
+    groups: shownGroups,
+    dragging,
+  });
+
   // What the stable models and event callbacks below read when they run:
   // this render's props and fold state, never a stale closure.
   const latest = useLatest({
     selection,
     drag,
     shownOrder,
+    navOrder,
+    navIndex,
     collapsed,
     groupById,
     setGroupCollapsed,
     onOpenRow,
     onOpenGroup,
     onRowContextMenu,
+    rowWindows,
   });
+
+  // Moves focus to a stop of the keyboard model. A group's toggle is always
+  // mounted; a row may not be (windowed): then its place is scrolled into
+  // view and it is focused once it mounts. In a windowed table the scroll
+  // also keeps the target clear of the sticky column header, which a
+  // browser's own focus scrolling does not know about.
+  function focusNav(target: NavTarget | undefined) {
+    const root = rootRef.current;
+    if (target === undefined || root === null) return;
+    if (target.kind === 'group') {
+      const header = root.querySelector<HTMLElement>(
+        `[data-group-id="${CSS.escape(target.groupId)}"] [data-nav-item="group"]`
+      );
+      if (header !== null) focusMounted(header);
+      return;
+    }
+    const item = root.querySelector<HTMLElement>(
+      `[data-nav-item="row"][data-row-id="${CSS.escape(target.rowId)}"]`
+    );
+    if (item !== null) focusMounted(item);
+    else if (windowed) {
+      rowWindows.focusUnmountedRow(target.groupId, target.index, target.rowId);
+    }
+  }
+
+  function focusMounted(item: HTMLElement) {
+    if (!windowed) {
+      focusTargetOf(item)?.focus();
+      return;
+    }
+    rowWindows.revealElement(item);
+    focusTargetOf(item)?.focus({ preventScroll: true });
+  }
+
+  // The open row (a drawer, a detail pane) comes into view when it changes,
+  // mounted or not; a small list leaves scrolling to the host as before.
+  // rowWindows is read through `latest`, not listed as a dependency: its
+  // identity changes with every scroll that moves a window, and the row
+  // must be revealed once per change of activeRowId, never on a scroll
+  // (that would pull the list back to the open row as the reader scrolls
+  // away from it).
+  useEffect(() => {
+    if (!windowed || activeRowId === undefined) return;
+    const {
+      navOrder: order,
+      navIndex: index,
+      rowWindows: windows,
+    } = latest.current;
+    const target = order[index.get(`r:${activeRowId}`) ?? -1];
+    if (target === undefined || target.kind !== 'row') return;
+    const item = rootRef.current?.querySelector<HTMLElement>(
+      `[data-nav-item="row"][data-row-id="${CSS.escape(activeRowId)}"]`
+    );
+    if (item !== null && item !== undefined) windows.revealElement(item);
+    else windows.revealRow(target.groupId, target.index);
+  }, [activeRowId, windowed, latest]);
+
+  // Which row has focus, for the windows to keep mounted while the list
+  // scrolls away from it (focus must never fall to the body).
+  function onFocus(event: FocusEvent<HTMLDivElement>) {
+    const item = (event.target as HTMLElement).closest<HTMLElement>(
+      '[data-nav-item="row"]'
+    );
+    rowWindows.setFocusedRow(item?.dataset.rowId ?? null);
+  }
+  function onBlur(event: FocusEvent<HTMLDivElement>) {
+    const into = event.relatedTarget;
+    if (into instanceof Node && event.currentTarget.contains(into)) return;
+    rowWindows.setFocusedRow(null);
+  }
 
   const hasSelection = selection !== undefined;
   const toggleOnClick = selection?.toggleOnClick === true;
@@ -479,10 +628,7 @@ export function TaskGroupTable({
       model,
       setIds(anchor.base, rangeIds(shownOrder, anchor.id, target), true)
     );
-    const item = rootRef.current?.querySelector(
-      `[data-nav-item="row"][data-row-id="${CSS.escape(target)}"]`
-    );
-    if (item !== null && item !== undefined) focusTargetOf(item)?.focus();
+    focusNav(navOrder[navIndex.get(`r:${target}`) ?? -1]);
     return true;
   }
 
@@ -604,18 +750,17 @@ export function TaskGroupTable({
 
   // ---- keys -------------------------------------------------------------
 
-  // The table's own navigation; returns false for keys it leaves alone.
+  // The table's own navigation over navOrder (the toggles and shown rows in
+  // reading order; `index` is the focused item's place in it); returns
+  // false for keys it leaves alone.
   function navigate(
     key: string,
-    items: HTMLElement[],
     index: number,
     group: TaskGroupData | undefined,
     isGroup: boolean
   ): boolean {
-    const root = rootRef.current;
     const focusAt = (i: number) => {
-      const next = items[Math.min(Math.max(i, 0), items.length - 1)];
-      if (next !== undefined) focusTargetOf(next)?.focus();
+      focusNav(navOrder[Math.min(Math.max(i, 0), navOrder.length - 1)]);
     };
     switch (key) {
       case 'ArrowDown':
@@ -630,7 +775,7 @@ export function TaskGroupTable({
         focusAt(0);
         return true;
       case 'End':
-        focusAt(items.length - 1);
+        focusAt(navOrder.length - 1);
         return true;
       case 'ArrowRight': {
         if (!isGroup || group === undefined) return false;
@@ -640,16 +785,8 @@ export function TaskGroupTable({
       }
       case 'ArrowLeft': {
         if (group === undefined) return false;
-        if (isGroup) {
-          setGroupCollapsed(group, true);
-        } else {
-          const header = root?.querySelector(
-            `[data-group-id="${CSS.escape(group.id)}"] [data-nav-item="group"]`
-          );
-          if (header !== null && header !== undefined) {
-            focusTargetOf(header)?.focus();
-          }
-        }
+        if (isGroup) setGroupCollapsed(group, true);
+        else focusAt(navIndex.get(`g:${group.id}`) ?? index);
         return true;
       }
       default:
@@ -699,12 +836,13 @@ export function TaskGroupTable({
     // browser): never navigation, but a host row command may want it.
     const modified = event.altKey || event.ctrlKey || event.metaKey;
     if (!modified) {
-      // Rendered items only, in reading order: collapsed groups' rows are
-      // not in the DOM, so they are skipped for free.
-      const items = Array.from(
-        root.querySelectorAll<HTMLElement>('[data-nav-item]')
+      // The item's place in the model (collapsed groups' rows are not in
+      // it, so they are skipped for free); an item the model no longer
+      // knows (a row gone in a refresh) navigates nowhere.
+      const index = navIndex.get(
+        isGroup ? `g:${item.dataset.groupId}` : `r:${item.dataset.rowId}`
       );
-      if (navigate(event.key, items, items.indexOf(item), group, isGroup)) {
+      if (index !== undefined && navigate(event.key, index, group, isGroup)) {
         event.preventDefault();
         return;
       }
@@ -735,6 +873,8 @@ export function TaskGroupTable({
       style={rootStyle}
       {...dropAttrs}
       onKeyDown={onKeyDown}
+      onFocus={onFocus}
+      onBlur={onBlur}
       role="group"
       aria-label={label}
       aria-describedby={hintId}
@@ -752,6 +892,7 @@ export function TaskGroupTable({
           : null}
       </p>
       <div
+        ref={headRef}
         className={styles.head}
         aria-hidden={selection === undefined ? 'true' : undefined}
       >
@@ -817,6 +958,7 @@ export function TaskGroupTable({
           drop={drop}
           slots={slots}
           groupActions={groupActions}
+          rowWindows={rowWindows}
         />
       ))}
     </div>
@@ -874,6 +1016,7 @@ interface SectionProps {
   drop: DropState | null;
   slots: RowSlots;
   groupActions: TaskGroupTableProps['groupActions'];
+  rowWindows: RowWindows;
 }
 
 function Section({
@@ -895,6 +1038,7 @@ function Section({
   drop,
   slots,
   groupActions,
+  rowWindows,
 }: SectionProps) {
   let count = 0;
   for (const group of section.groups) count += group.count ?? group.rows.length;
@@ -934,6 +1078,8 @@ function Section({
           }
           slots={slots}
           groupActions={groupActions}
+          rowWindow={rowWindows.segmentsOf(group.id)}
+          registerList={rowWindows.registerList}
         />
       ))}
     </div>
@@ -960,6 +1106,10 @@ interface GroupProps {
   drop: true | string | null;
   slots: RowSlots;
   groupActions: TaskGroupTableProps['groupActions'];
+  /** Which rows to mount and the gaps standing for the rest (windowed),
+      or null to draw every row. */
+  rowWindow: RowSegment[] | null;
+  registerList: RowWindows['registerList'];
 }
 
 /** Whether the rows of `rows` are in `a` exactly when they are in `b`
@@ -982,10 +1132,20 @@ function sameMembership(
  */
 function groupPropsEqual(prev: GroupProps, next: GroupProps): boolean {
   for (const key of Object.keys(next) as (keyof GroupProps)[]) {
-    if (key === 'selected' || key === 'dragging' || key === 'activeRowId') {
+    if (
+      key === 'selected' ||
+      key === 'dragging' ||
+      key === 'activeRowId' ||
+      key === 'rowWindow'
+    ) {
       continue;
     }
     if (prev[key] !== next[key]) return false;
+  }
+  // A scroll that crosses no row edge hands the group an equal window.
+  if (prev.rowWindow !== next.rowWindow) {
+    if (prev.rowWindow === null || next.rowWindow === null) return false;
+    if (!sameSegments(prev.rowWindow, next.rowWindow)) return false;
   }
   const rows = next.group.rows;
   const activeHere = (id: string | undefined) =>
@@ -1016,7 +1176,13 @@ const Group = memo(function Group({
   drop,
   slots,
   groupActions,
+  rowWindow,
+  registerList,
 }: GroupProps) {
+  const listRef = useCallback(
+    (el: HTMLUListElement | null) => registerList(group.id, el),
+    [registerList, group.id]
+  );
   // The spoken name: a comma, not the visible "/", which screen readers
   // read out as punctuation ("slash").
   const name =
@@ -1080,6 +1246,28 @@ const Group = memo(function Group({
   } else if (drag !== null) {
     groupCheck = <span className={styles.groupLead} aria-hidden="true" />;
   }
+
+  // A windowed row says its place among the group's rows (aria-posinset /
+  // aria-setsize), since assistive tech cannot count rows that are not
+  // mounted; a fully drawn list carries neither.
+  const drawRow = (row: TaskRowData, position?: number, size?: number) => (
+    <Row
+      key={row.id}
+      row={row}
+      group={group}
+      columns={columns}
+      labels={labels}
+      onOpenRow={onOpenRow}
+      active={row.id === activeRowId}
+      selection={selection}
+      selected={selected?.has(row.id) === true}
+      drag={drag}
+      dragged={dragging.has(row.id)}
+      slots={slots}
+      position={position}
+      size={size}
+    />
+  );
 
   return (
     <div
@@ -1202,6 +1390,7 @@ const Group = memo(function Group({
         <p className={styles.missing}>{group.missingLabel}</p>
       ) : null}
       <ul
+        ref={listRef}
         id={listId}
         className={styles.rows}
         hidden={collapsed}
@@ -1209,22 +1398,31 @@ const Group = memo(function Group({
       >
         {collapsed
           ? null
-          : group.rows.map((row) => (
-              <Row
-                key={row.id}
-                row={row}
-                group={group}
-                columns={columns}
-                labels={labels}
-                onOpenRow={onOpenRow}
-                active={row.id === activeRowId}
-                selection={selection}
-                selected={selected?.has(row.id) === true}
-                drag={drag}
-                dragged={dragging.has(row.id)}
-                slots={slots}
-              />
-            ))}
+          : rowWindow === null
+            ? group.rows.map((row) => drawRow(row))
+            : // One flat list keyed by row id (and a gap by its first row),
+              // so a window that moves keeps every row it still draws.
+              rowWindow.flatMap((segment) =>
+                segment.kind === 'gap'
+                  ? [
+                      // The rows not mounted: their height, so the scroll
+                      // range and every mounted row's place are as if they
+                      // were.
+                      <li
+                        key={`gap-${segment.start}`}
+                        className={styles.gap}
+                        role="presentation"
+                        aria-hidden="true"
+                        data-row-gap={segment.end - segment.start}
+                        style={{ height: segment.px }}
+                      />,
+                    ]
+                  : group.rows
+                      .slice(segment.start, segment.end)
+                      .map((row, i) =>
+                        drawRow(row, segment.start + i + 1, group.rows.length)
+                      )
+              )}
         {!collapsed && group.rows.length === 0 && group.footer === undefined ? (
           <li className={styles.emptyLine}>
             {group.emptyLabel ?? 'No open issues'}
@@ -1269,6 +1467,10 @@ interface RowProps {
   /** This row is being dragged. */
   dragged: boolean;
   slots: RowSlots;
+  /** The row's 1-based place among its group's rows and their number, set
+      only when the group is windowed (aria-posinset / aria-setsize). */
+  position?: number;
+  size?: number;
 }
 
 /** Whether two rows' chips say the same things (label, tone, filled), so a
@@ -1359,6 +1561,8 @@ const Row = memo(function Row({
   drag,
   dragged,
   slots,
+  position,
+  size,
 }: RowProps) {
   const external = row.external === true;
   // Under a Project / Milestone heading the project cell repeats the
@@ -1437,6 +1641,8 @@ const Row = memo(function Row({
       data-group-id={group.id}
       data-row-id={row.id}
       aria-current={active ? 'true' : undefined}
+      aria-posinset={position}
+      aria-setsize={size}
       aria-busy={row.pending === true ? 'true' : undefined}
       data-selected={isSelected ? 'true' : undefined}
       data-pending={row.pending === true ? 'true' : undefined}

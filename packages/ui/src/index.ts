@@ -50,6 +50,13 @@ export { SegmentedControl } from './tasks/segmented-control';
 export { StatsStrip } from './tasks/stats-strip';
 export { Switch } from './tasks/switch';
 export { PriorityGlyph, StateGlyph } from './tasks/task-glyphs';
+export {
+  initialSegments,
+  mountedCount,
+  type RowSegment,
+  sameSegments,
+  windowSegments,
+} from './tasks/row-window';
 export { TaskGroupTable } from './tasks/task-group-table';
 export {
   pruneSelection,
@@ -104,6 +111,7 @@ export type {
   TaskGroupTableProps,
   TaskPriority,
   TaskRowData,
+  TaskScrollParent,
   TaskSectionData,
   TaskSelectionProps,
   TaskStateKind,

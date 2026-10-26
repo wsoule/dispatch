@@ -431,6 +431,30 @@ the render slots (`renderCell`, `rowActions`, `groupActions`), `columns` and
 `columnLabels` redraw every row or group when their identity changes: keep them
 stable in a host with many rows.
 
+Above `windowAbove` rows in total (folded groups included; default 150) the rows
+are **windowed**, per group: every group keeps its heading, its header row and
+its own `<ul>`, and inside the `<ul>` only the rows near the scroll viewport
+(plus about eight rows of overscan each side, the focused row and the rows being
+dragged) are mounted; the rest stand as
+`<li role="presentation" aria-hidden data-row-gap="n">` gaps of their measured
+height (the running mean of the rows measured so far for rows never drawn), so
+the scroll range, document order, roles, the groups as drop targets and the
+sticky column header are as in a small list, and each mounted row carries
+`aria-posinset` / `aria-setsize`. At or below the threshold every row is drawn,
+exactly as before (the snapshot above covers that). The scroll container is
+`scrollParent`: an element, a function returning it (read when windowing starts
+and again after mount; keep it stable), or `'window'`; by default the nearest
+ancestor with `overflow-y: auto` or `scroll`, found in an effect, else the
+window. The server render (and the first client render, corrected in a layout
+effect before paint) draws the first ~60 rows of the first groups and an
+estimated gap for the rest, so a hydration agrees with the server. Rows are
+mounted lazily: a host must not keep row elements (query them when needed, as
+`rowTitleElement` does) and should act on the `row` and `group` a callback is
+given. Measured on Dispatch's 2,000-task board (40 groups): the first rows paint
+about 0.2 s after the view opens with 22 rows mounted and about 4,000 DOM nodes,
+against 3.3 s and 152,000 nodes drawing every row; the desktop no longer needs
+its progressive mount.
+
 - **Data.** Columns `assignee` (the round `InitialsAvatar` and the name; `null`
   reads "Unassigned", or the row's `unassignedLabel` ("Needs assignee"), beside
   the dashed empty avatar, toned by `assigneeTone`: `muted` by default,
@@ -506,7 +530,12 @@ stable in a host with many rows.
   selects every drawn row. Every other key on a row goes to `onRowKeyDown`; a
   host's single-key commands should yield while
   `useCommandPalette().isSequencePending()` is true, so G S and G P still reach
-  the palette.
+  the palette. The keys walk the table's model (the group toggles and the rows
+  of unfolded groups, in reading order), never the DOM: in a windowed list a key
+  that lands on a row that is not mounted scrolls its place into view (clear of
+  the sticky column header), mounts it and focuses it; `activeRowId` likewise
+  scrolls into view when it changes. ⌘/Ctrl+A and Shift ranges work over the
+  whole ordered id list, mounted or not.
 - **Row keys a host binds** (what reaches `onRowKeyDown`, exactly). The table
   consumes, on a row, ↑/↓, `j`/`k`, Home/End and ← (to the group), plus with
   `selection` `x`, Shift+↑/↓ and ⌘/Ctrl+A; it never calls `preventDefault` on
@@ -518,7 +547,9 @@ stable in a host with many rows.
   calls `event.preventDefault()` there (Dispatch: Enter and `o` open the page
   itself, Space the quick look; prevent both, since Space's default scrolls the
   page, or presses a callback-only row's button). Keys typed into a host control
-  inside a row (a cell picker's field, an open popover) never arrive.
+  inside a row (a cell picker's field, an open popover) never arrive. Rows are
+  mounted lazily above `windowAbove`: a handler acts on the `row` and `group` it
+  is given and never on a row element cached from an earlier call.
 - **`indent`** (`TaskRowData.indent`, `0 | 1 | 2`): a sub-issue nested under the
   row before it. The row carries `data-indent` and its title cell (the key and
   the title together) moves in one 20px step per level (`--task-nest`), on the
