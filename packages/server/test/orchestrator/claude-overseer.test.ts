@@ -26,6 +26,7 @@ import {
   OVERSEER_TOOL_PREFIX,
   overseerSdkTools,
 } from '../../src/orchestrator/overseers/claude.js';
+import { recorded } from './claudeRecordings.js';
 import { floorDecision, preToolUse } from './helpers.js';
 
 // The exact text the Agent SDK throws when it can't resolve its own bundled
@@ -630,5 +631,305 @@ describe('ClaudeOverseer attachments', () => {
         },
       ])
     ).toBe('what is this?');
+  });
+});
+
+// Turn options that log what the backend reported, in order: every delta by
+// segment, narration and tool rows as the transcript would get them, and
+// each segment the stream abandoned.
+function liveRecorder(on: { live?: boolean; narration?: boolean } = {}) {
+  const rows: string[] = [];
+  const text = new Map<string, string>();
+  const options: OverseerTurnOptions = {
+    onToolUse: (name) => rows.push(`tool ${name}`),
+    ...(on.live === false
+      ? {}
+      : {
+          onTextDelta: (id: string, delta: string) =>
+            text.set(id, `${text.get(id) ?? ''}${delta}`),
+          onSegmentAbandoned: (id: string) => rows.push(`abandoned ${id}`),
+        }),
+    ...(on.narration === false
+      ? {}
+      : {
+          onNarration: (id: string, said: string) =>
+            rows.push(`narration ${id}: ${said}`),
+        }),
+  };
+  return { rows, text, options };
+}
+
+const STRING_REPLY =
+  "The current year is 2026, which matches today's date of October 23, 2026.\n\ndone";
+
+describe('ClaudeOverseer live text and narration', () => {
+  it('streams each text block under its own segment and keeps the line before a tool call as narration', async () => {
+    const { toolset } = stubToolset();
+    const { rows, text, options } = liveRecorder();
+    const { captured, turn } = await runTurn(
+      recorded('string'),
+      toolset,
+      undefined,
+      options
+    );
+    expect(captured?.includePartialMessages).toBe(true);
+    expect(Object.fromEntries(text)).toEqual({
+      'msg_string_1:0': "I'll check the date.",
+      'msg_string_2:0': STRING_REPLY,
+    });
+    // The narration lands before the call it led to, and the reply is not
+    // narration as well.
+    expect(rows).toEqual([
+      "narration msg_string_1:0: I'll check the date.",
+      'tool Bash',
+    ]);
+    expect(turn).toMatchObject({
+      reply: STRING_REPLY,
+      streamId: 'msg_string_2:0',
+    });
+  });
+
+  it('keys a text block after a thinking block by its own index, in streaming-input mode', async () => {
+    const { toolset } = stubToolset();
+    const { rows, text, options } = liveRecorder();
+    const { turn } = await runTurn(
+      recorded('stream'),
+      toolset,
+      undefined,
+      options
+    );
+    expect([...text.keys()]).toEqual(['msg_stream_1:1', 'msg_stream_2:0']);
+    expect(rows).toEqual([
+      'narration msg_stream_1:1: I will check the date.',
+      'tool Bash',
+    ]);
+    expect(turn).toMatchObject({ streamId: 'msg_stream_2:0' });
+  });
+
+  it('without live text asks for no partial messages and counts text blocks per message', async () => {
+    const { toolset } = stubToolset();
+    const { rows, options } = liveRecorder({ live: false });
+    // What the SDK sends with includePartialMessages off: no stream events.
+    const { captured, turn } = await runTurn(
+      recorded('stream', (e) => e.type !== 'stream_event'),
+      toolset,
+      undefined,
+      options
+    );
+    expect(captured?.includePartialMessages).toBeUndefined();
+    expect(rows).toEqual([
+      'narration msg_stream_1:0: I will check the date.',
+      'tool Bash',
+    ]);
+    expect(turn).toMatchObject({ streamId: 'msg_stream_2:0' });
+  });
+
+  it('with neither callback replies exactly as before', async () => {
+    const { toolset } = stubToolset();
+    const { rows, options } = liveRecorder({ live: false, narration: false });
+    const { captured, turn } = await runTurn(
+      recorded('string'),
+      toolset,
+      undefined,
+      options
+    );
+    expect(captured?.includePartialMessages).toBeUndefined();
+    expect(rows).toEqual(['tool Bash']);
+    expect(turn).toMatchObject({ reply: STRING_REPLY, sessionId: 'sess-rec' });
+  });
+
+  it("ignores a sub-agent's text, tool calls and usage", async () => {
+    const { toolset } = stubToolset();
+    const { rows, text, options } = liveRecorder();
+    const sub = { parent_tool_use_id: 'toolu_task', session_id: 's' };
+    const stream = function* stream() {
+      yield { type: 'system', subtype: 'init', session_id: 's' };
+      yield {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          id: 'msg_top',
+          content: [{ type: 'tool_use', name: 'Task', input: {} }],
+          usage: { input_tokens: 1200 },
+        },
+      };
+      yield {
+        ...sub,
+        type: 'stream_event',
+        event: { type: 'message_start', message: { id: 'msg_sub' } },
+      };
+      yield {
+        ...sub,
+        type: 'stream_event',
+        event: {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'text' },
+        },
+      };
+      yield {
+        ...sub,
+        type: 'stream_event',
+        event: {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: 'sub-agent musing' },
+        },
+      };
+      yield {
+        ...sub,
+        type: 'assistant',
+        message: {
+          id: 'msg_sub',
+          content: [
+            { type: 'text', text: 'sub-agent musing' },
+            { type: 'tool_use', name: 'Grep', input: {} },
+          ],
+          usage: { input_tokens: 90_000 },
+        },
+      };
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 's',
+        result: 'found it',
+      };
+    };
+    const { turn } = await runTurn(stream, toolset, undefined, options);
+    expect(text.size).toBe(0);
+    expect(rows).toEqual(['tool Task']);
+    expect(turn).toMatchObject({ reply: 'found it', contextTokens: 1200 });
+  });
+
+  it('keeps pending text the result does not contain as narration, ahead of the reply', async () => {
+    const { toolset } = stubToolset();
+    const { rows, options } = liveRecorder();
+    const stream = function* stream() {
+      yield {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          id: 'msg_a',
+          content: [
+            { type: 'text', text: 'An aside the result leaves out.' },
+            { type: 'text', text: 'The answer.' },
+          ],
+        },
+      };
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 's',
+        result: 'The answer.',
+      };
+    };
+    const { turn } = await runTurn(stream, toolset, undefined, options);
+    expect(rows).toEqual([
+      'narration msg_a:0: An aside the result leaves out.',
+    ]);
+    expect(turn).toMatchObject({ reply: 'The answer.', streamId: 'msg_a:1' });
+  });
+
+  // The CLI falls back to a non-streaming request when the stream fails
+  // mid-block: the half-streamed block never finishes, and its text comes
+  // again under a new API message.
+  it('reports a block its stream broke off as abandoned, never as narration', async () => {
+    const { toolset } = stubToolset();
+    const { rows, text, options } = liveRecorder();
+    const event = (e: object) => ({
+      type: 'stream_event',
+      session_id: 's',
+      parent_tool_use_id: null,
+      event: e,
+    });
+    const block = (id: string, said: string) => [
+      event({ type: 'message_start', message: { id } }),
+      event({
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'text' },
+      }),
+      event({
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: said },
+      }),
+    ];
+    const stream = function* stream() {
+      yield* block('msg_A', 'Let me lo');
+      yield event({ type: 'content_block_stop', index: 0 });
+      yield event({ type: 'message_stop' });
+      yield* block('msg_B', 'Let me look.');
+      yield {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          id: 'msg_B',
+          content: [
+            { type: 'text', text: 'Let me look.' },
+            { type: 'tool_use', name: 'Read', input: {} },
+          ],
+        },
+      };
+      yield event({ type: 'content_block_stop', index: 0 });
+      yield event({ type: 'message_stop' });
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 's',
+        result: 'Seen it.',
+      };
+    };
+    const { turn } = await runTurn(stream, toolset, undefined, options);
+    expect(Object.fromEntries(text)).toEqual({
+      'msg_A:0': 'Let me lo',
+      'msg_B:0': 'Let me look.',
+    });
+    expect(rows).toEqual([
+      'abandoned msg_A:0',
+      'narration msg_B:0: Let me look.',
+      'tool Read',
+    ]);
+    expect(turn).toMatchObject({ reply: 'Seen it.' });
+    expect(turn).not.toHaveProperty('streamId');
+  });
+
+  it('commits narration when the CLI asks about a call before its message is read', async () => {
+    const { toolset } = stubToolset();
+    const { rows, options } = liveRecorder();
+    let sdkOptions: Options | undefined;
+    const stream = async function* stream() {
+      yield {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          id: 'msg_a',
+          content: [{ type: 'text', text: 'Let me look.' }],
+        },
+      };
+      await sdkOptions?.canUseTool?.('Read', { file_path: 'a' }, callOpts);
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 's',
+        result: 'Seen it.',
+      };
+    };
+    const queryFn = (args: { options?: Options }) => {
+      sdkOptions = args.options;
+      return stream() as unknown as Query;
+    };
+    const overseer = new ClaudeOverseer(
+      '/tmp/does-not-matter',
+      queryFn as unknown as typeof import('@anthropic-ai/claude-agent-sdk').query
+    );
+    await overseer.start('look', toolset, {
+      ...options,
+      authorizeTool: (request) => {
+        rows.push(`ask ${request.toolName}`);
+        return Promise.resolve({ allow: true });
+      },
+    });
+    expect(rows).toEqual(['narration msg_a:0: Let me look.', 'ask Read']);
   });
 });

@@ -12,18 +12,62 @@ export interface LogGroup {
   entries: NormalizedEntry[];
 }
 
+// A tool call's outcome reaches the log as a later entry carrying the call's
+// `toolUseId`: a result entry with no `toolName` (Claude), or the call logged
+// again once it completed (Codex). Folds each into its call, in the call's
+// place and keeping the call's time, so the call shows once with how it
+// ended. A result whose call is not in the log has nothing to show; it is
+// dropped.
+function foldToolResults(entries: NormalizedEntry[]): NormalizedEntry[] {
+  const callAt = new Map<string, number>();
+  const folded: NormalizedEntry[] = [];
+  for (const entry of entries) {
+    const id = entry.kind === 'tool' ? entry.toolUseId : undefined;
+    if (id === undefined) {
+      folded.push(entry);
+      continue;
+    }
+    const at = callAt.get(id);
+    if (at !== undefined) {
+      folded[at] = { ...folded[at], ...entry, ts: folded[at].ts };
+    } else if (entry.toolName !== undefined) {
+      callAt.set(id, folded.length);
+      folded.push(entry);
+    }
+  }
+  return folded;
+}
+
+/**
+ * Whether this run's executor reports how its tool calls end, which the log
+ * shows once one has: a settled tool entry with a `toolUseId`. A run that
+ * does (Claude and Codex runs on a current daemon) leaves a call `running`
+ * only until its result lands; one that does not (an older daemon, a
+ * scripted run) never resolves a call at all, so only its live edge counts as
+ * running (see RunLogView).
+ */
+export function reportsToolResults(entries: NormalizedEntry[]): boolean {
+  return entries.some(
+    (entry) =>
+      entry.kind === 'tool' &&
+      entry.toolUseId !== undefined &&
+      (entry.toolName === undefined || entry.status !== 'running')
+  );
+}
+
 // Splits a run's flat entry list into LogGroups for rendering. `usage`
 // entries are excluded here — they don't render as log lines at all, only
 // feed `liveCostUsd` below — and so are a sub-agent's `progress` ticks, which
 // arrive with every tool call it makes and only feed the fan-out tree
 // (`foldSubagents`). A sub-agent's start and finish do render, as the spawn
-// and the report are events in the run's own story. Everything else becomes
-// its own group, except runs of consecutive `tool` entries, which collapse
-// into one `tools` group so the log view can render them as a single
-// collapsible cluster.
+// and the report are events in the run's own story. A tool call's result is
+// folded into the call (foldToolResults). Everything else becomes its own
+// group, except runs of consecutive `tool` entries, which collapse into one
+// `tools` group so the log view can render them as a single collapsible
+// cluster.
 export function groupLogEntries(entries: NormalizedEntry[]): LogGroup[] {
   const groups: LogGroup[] = [];
-  for (const entry of entries) {
+  for (const entry of foldToolResults(entries)) {
     if (entry.kind === 'usage') continue;
     if (entry.kind === 'agent' && entry.agent?.phase === 'progress') continue;
     const groupKind: LogGroup['kind'] =

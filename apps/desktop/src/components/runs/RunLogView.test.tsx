@@ -675,3 +675,160 @@ test('a resumable failed run can ask its agent to fix the failure', async () => 
   });
   expect(sent).toEqual([askAgentToFix(error)]);
 });
+
+// A tool chip's state as ToolChip draws it: a failed chip washes red, a running one
+// shimmers its label.
+function chipState(target: string): 'running' | 'done' | 'failed' {
+  const chip = screen.getByText(target).closest('[class*="rounded-chip"]');
+  if (chip === null) throw new Error(`no chip shows ${target}`);
+  if (chip.className.includes('text-red')) return 'failed';
+  return chip.querySelector('[class*="shimmer-text"]') === null
+    ? 'done'
+    : 'running';
+}
+
+function call(
+  toolUseId: string,
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  parentToolUseId?: string
+): NormalizedEntry {
+  return {
+    ts: '2026-10-25T10:00:00.000Z',
+    kind: 'tool',
+    toolName,
+    toolInput,
+    toolUseId,
+    status: 'running',
+    ...(parentToolUseId !== undefined ? { parentToolUseId } : {}),
+  };
+}
+
+function result(toolUseId: string, status: 'done' | 'error'): NormalizedEntry {
+  return { ts: '2026-10-25T10:00:01.000Z', kind: 'tool', toolUseId, status };
+}
+
+// Each call's result settles its chip, so calls the agent made side by side show
+// running until their own result lands, wherever they sit in the log. A sub-agent's
+// calls never get one, so only the live edge may shimmer among them.
+test('a tool chip ends done or failed once its result lands', () => {
+  const entries = [
+    call('tu-1', 'Bash', { command: 'ls' }),
+    call('tu-2', 'Bash', { command: 'pwd' }),
+    result('tu-1', 'done'),
+    call('tu-sub', 'Grep', { pattern: 'route' }, 'tu-spawn'),
+    call('tu-3', 'Bash', { command: 'make' }),
+    result('tu-3', 'error'),
+  ];
+  const view = renderEntries(entries);
+
+  expect(chipState('ls')).toBe('done');
+  expect(chipState('pwd')).toBe('running');
+  expect(chipState('route')).toBe('done');
+  expect(chipState('make')).toBe('failed');
+  // One chip per call: the results fold into them.
+  expect(screen.getAllByText('Run')).toHaveLength(3);
+
+  // A finished run shimmers nothing, whatever never got its result.
+  view.rerender(
+    <RunLogView
+      meta={meta({ state: 'finished' })}
+      entries={entries}
+      pendingApprovals={[]}
+      onApprove={noop}
+      onSendMessage={noop}
+      openQuestions={[]}
+      onAnswerQuestion={noop}
+      pendingScopeRequest={null}
+      onDecideScopeRequest={noop}
+      scopeDecide={CAN_DECIDE}
+      onRestartDaemon={noop}
+      onRequestChanges={noop}
+      onOpenMessage={null}
+      me={null}
+      readsAllThreads
+    />
+  );
+  expect(chipState('pwd')).toBe('done');
+});
+
+// An executor that never reports results (an older daemon) keeps the old rule: only the
+// live edge runs, or every historical call would shimmer for the rest of the run.
+test('without results, only the last tool call of a running run shimmers', () => {
+  renderEntries([
+    call('tu-1', 'Bash', { command: 'ls' }),
+    call('tu-2', 'Bash', { command: 'pwd' }),
+  ]);
+  expect(chipState('ls')).toBe('done');
+  expect(chipState('pwd')).toBe('running');
+});
+
+function renderLive(
+  entries: NormalizedEntry[],
+  live: { id: string; text: string }[],
+  state: RunMeta['state'] = 'running'
+) {
+  return render(
+    <RunLogView
+      meta={meta({ state })}
+      entries={entries}
+      live={live}
+      pendingApprovals={[]}
+      onApprove={noop}
+      onSendMessage={noop}
+      openQuestions={[]}
+      onAnswerQuestion={noop}
+      pendingScopeRequest={null}
+      onDecideScopeRequest={noop}
+      scopeDecide={CAN_DECIDE}
+      onRestartDaemon={noop}
+      onRequestChanges={noop}
+      onOpenMessage={null}
+      me={null}
+      readsAllThreads
+    />
+  );
+}
+
+// What the agent is writing comes after everything it finished, as the same
+// prose; the text a row mounts with shows at once rather than being typed out
+// again, and the words arriving stand in for the "Working…" spinner.
+test('a running run shows the text being written at the tail of its log', () => {
+  const said: NormalizedEntry = {
+    ts: '2026-10-25T10:00:00.000Z',
+    kind: 'assistant',
+    text: 'Read the tests.',
+    streamId: 'msg_1:0',
+  };
+  renderLive([said], [{ id: 'msg_2:0', text: 'Now the **fix**.' }]);
+
+  const log = screen.getByRole('region', { name: 'Run log' });
+  const finished = within(log).getByText('Read the tests.');
+  const writing = within(log).getByText('fix');
+  expect(writing.tagName).toBe('STRONG');
+  expect(
+    finished.compareDocumentPosition(writing) & Node.DOCUMENT_POSITION_FOLLOWING
+  ).toBeTruthy();
+  expect(within(log).getByText(/Now the/).textContent).toBe('Now the fix.');
+  expect(within(log).queryByText('Working…')).toBeNull();
+});
+
+test('the spinner stands in again once nothing is being written', () => {
+  renderLive(
+    [
+      {
+        ts: '2026-10-25T10:00:00.000Z',
+        kind: 'assistant',
+        text: 'Read the tests.',
+      },
+    ],
+    []
+  );
+  expect(screen.getByText('Working…')).toBeDefined();
+});
+
+test('a run with nothing logged yet shows its first words instead of the spinner', () => {
+  renderLive([], [{ id: 'msg_1:0', text: 'Looking around.' }]);
+  expect(screen.getByText('Looking around.')).toBeDefined();
+  expect(screen.queryByText('Working…')).toBeNull();
+});

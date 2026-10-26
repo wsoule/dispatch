@@ -1,5 +1,5 @@
 import { foldSubagents, providerById } from '@dispatch-foo/core/browser';
-import type { NormalizedEntry, RunMeta } from '@dispatch/client';
+import type { LiveSegment, NormalizedEntry, RunMeta } from '@dispatch/client';
 import {
   Info,
   Mail,
@@ -15,7 +15,7 @@ import { isFromA2A } from '../../lib/a2a';
 import type { DecideAvailability } from '../../lib/daemonAuth';
 import type { RunQuestion, RunScopeRequest } from '../../lib/gates';
 import type { PendingApproval } from '../../lib/pendingApprovals';
-import { groupLogEntries } from '../../lib/runLog';
+import { groupLogEntries, reportsToolResults } from '../../lib/runLog';
 import { parseDeliveredText, parseDigestLine } from '../../lib/runMessages';
 import {
   continueMessage,
@@ -46,6 +46,8 @@ const SENDABLE_STATES = new Set<RunMeta['state']>([
   'running',
   'awaiting-approval',
 ]);
+
+const NO_LIVE: readonly LiveSegment[] = [];
 
 // The agent-facing prompt to answer with msg_reply; a person reading the chat has no use for it.
 const WAITING_NOTE = 'The sender is waiting.';
@@ -205,6 +207,9 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
 interface RunLogViewProps {
   meta: RunMeta;
   entries: NormalizedEntry[];
+  /** The text the agent is writing right now and `entries` does not hold yet, one segment
+   * per text block (useRunLive); none once the run has ended. */
+  live?: readonly LiveSegment[];
   /** Each tool call this run is parked on, oldest first, one card per call. Empty while
    * this window cannot read gates or the list has not loaded; a banner covers that. */
   pendingApprovals: readonly PendingApproval[];
@@ -252,6 +257,7 @@ interface RunLogViewProps {
 export function RunLogView({
   meta,
   entries,
+  live = NO_LIVE,
   pendingApprovals,
   onApprove,
   onLoadApprovalInput,
@@ -274,27 +280,39 @@ export function RunLogView({
   // different run on the left, and each run should open at its latest output.
   const { scrollRef, contentRef, scrollToBottom } = useStickToBottom(meta.id);
 
-  const groups = groupLogEntries(entries);
+  const groups = useMemo(() => groupLogEntries(entries), [entries]);
+  const settlesCalls = useMemo(() => reportsToolResults(entries), [entries]);
   // The sub-agents this run fanned out into, folded from the same entries the
   // transcript renders — so the tree ticks with each `run.log` event.
   const subagents = useMemo(() => foldSubagents(entries), [entries]);
   const terminal = isTerminalRunState(meta.state);
   const canSend = SENDABLE_STATES.has(meta.state);
-  // The transcript's one genuinely live entry — the run's last *rendered* entry while it's
-  // actually still producing output. Drives `TranscriptRow`'s `live` prop (StreamingText's
-  // reveal, Thinking's shimmer, ToolChip's running state); never true for a paused or finished
-  // run, and never true for anything but the last entry, so history never fakes still being
-  // written. Derived from `groups` (post `groupLogEntries`), not the raw `entries` array —
-  // `groupLogEntries` drops `usage`-kind entries, which never render a `TranscriptRow` at all,
-  // so a `usage` entry arriving after the last visible one would otherwise make `entries.at(-1)`
-  // point at something nothing on screen matches, killing every live indicator.
+  // The transcript's genuinely live entries, only ever while the run is actually producing
+  // output: its last *rendered* entry (unless the agent is already writing past it, in the
+  // live text below), and in a run whose executor reports how its calls end, each call of
+  // the agent's own still waiting for its result (several can run at once).
+  // Drives `TranscriptRow`'s `live` prop (StreamingText's reveal, Thinking's shimmer,
+  // ToolChip's running state); never true for a paused or finished run, so history never
+  // fakes still being written. A sub-agent's calls never get a result, so they follow the
+  // last-entry rule. Derived from `groups` (post `groupLogEntries`), not the raw `entries`
+  // array — `groupLogEntries` drops `usage`-kind entries, which never render a `TranscriptRow`
+  // at all, so a `usage` entry arriving after the last visible one would otherwise make
+  // `entries.at(-1)` point at something nothing on screen matches, killing every live
+  // indicator.
   const lastGroup = groups.length > 0 ? groups[groups.length - 1] : undefined;
   const lastEntry =
     lastGroup !== undefined
       ? lastGroup.entries[lastGroup.entries.length - 1]
       : undefined;
+  const writing = live.length > 0;
   const isLive = (entry: NormalizedEntry) =>
-    meta.state === 'running' && entry === lastEntry;
+    meta.state === 'running' &&
+    ((entry === lastEntry && !writing) ||
+      (settlesCalls &&
+        entry.kind === 'tool' &&
+        entry.status === 'running' &&
+        entry.toolUseId !== undefined &&
+        entry.parentToolUseId === undefined));
   // Only a run that stopped short of finishing has something to *continue* —
   // and only one with a session id, which is the same thing the server's own
   // resume gate checks, so the button never offers what would 400.
@@ -358,6 +376,7 @@ export function RunLogView({
             </div>
           )}
           {groups.length === 0 &&
+            !writing &&
             (meta.state === 'provisioning' || meta.state === 'running' ? (
               <div className="flex flex-1 items-center justify-center">
                 <LoadingState
@@ -407,6 +426,17 @@ export function RunLogView({
             )
           )}
 
+          {/* What the agent is writing right now, after everything it has finished: each text
+              block it has not ended yet, revealed as it grows through the same Markdown its
+              settled row uses. A block leaves here in the render its entry lands in. */}
+          {live.map((segment) => (
+            <TranscriptRow
+              key={`live:${segment.id}`}
+              entry={{ ts: '', kind: 'assistant', text: segment.text }}
+              live
+            />
+          ))}
+
           {/* Why the run stopped, in the run itself — without this a force-failed run (a
               daemon restart, not the agent's doing) reads as "failed, $0" with zero
               explanation. Rendered at the end of the transcript because the failure is
@@ -452,8 +482,9 @@ export function RunLogView({
           {/* A live run that has not printed anything for a moment is indistinguishable from a
               wedged one without this. Only while genuinely running — never on a paused or
               finished run, where a spinner would be a lie. Suppressed when the empty-state
-              LoadingState above is already showing the same "Working…" label. */}
-          {meta.state === 'running' && groups.length > 0 && (
+              LoadingState above is already showing the same "Working…" label, and while the
+              agent's words are arriving, which say it is working better than a spinner. */}
+          {meta.state === 'running' && groups.length > 0 && !writing && (
             <LoadingState
               label="Working…"
               startedAt={Date.parse(meta.createdAt)}

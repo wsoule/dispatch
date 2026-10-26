@@ -51,7 +51,11 @@ describe('runCodexTurn', () => {
       })
     );
 
-    expect(result).toEqual({ threadId: 'thread-1', reply: 'done' });
+    expect(result).toEqual({
+      threadId: 'thread-1',
+      reply: 'done',
+      replyItemId: 'msg-final',
+    });
     expect(
       codex.requests.filter((r) => r.method !== undefined).map((r) => r.method)
     ).toEqual([
@@ -104,7 +108,11 @@ describe('runCodexTurn', () => {
         resumeThreadId: 'thread-9',
       })
     );
-    expect(resumed).toEqual({ threadId: 'thread-9', reply: 'two' });
+    expect(resumed).toEqual({
+      threadId: 'thread-9',
+      reply: 'two',
+      replyItemId: 'msg-final',
+    });
     expect(second.paramsOf('thread/resume')).toMatchObject({
       threadId: 'thread-9',
     });
@@ -215,6 +223,7 @@ describe('runCodexTurn', () => {
     });
     const result = await runCodexTurn(request(codex));
     expect(result.reply).toBe('the answer');
+    expect(result.replyItemId).toBe('a');
     expect(result.total).toEqual({
       totalTokens: 1500,
       inputTokens: 1200,
@@ -222,6 +231,38 @@ describe('runCodexTurn', () => {
       outputTokens: 300,
     });
     expect(result.contextTokens).toBe(800);
+  });
+
+  it("hands each agentMessage delta to its item, never another thread's", async () => {
+    const codex = scriptedCodex({
+      onTurn: (c, t) => {
+        const delta = (itemId: string, text: string, threadId = t) =>
+          c.notify('item/agentMessage/delta', {
+            threadId,
+            turnId: 'turn-1',
+            itemId,
+            delta: text,
+          });
+        delta('m1', 'Check');
+        delta('m1', 'ing.');
+        delta('m1', '');
+        delta('m9', 'not ours', 'other-thread');
+        delta('m2', 'Done');
+        finishTurn(c, t, 'Done');
+      },
+    });
+    const deltas: [string, string][] = [];
+    const result = await runCodexTurn(
+      request(codex, {
+        onAgentMessageDelta: (itemId, text) => deltas.push([itemId, text]),
+      })
+    );
+    expect(deltas).toEqual([
+      ['m1', 'Check'],
+      ['m1', 'ing.'],
+      ['m2', 'Done'],
+    ]);
+    expect(result.reply).toBe('Done');
   });
 
   it('lets a hook steer the turn and fail it', async () => {

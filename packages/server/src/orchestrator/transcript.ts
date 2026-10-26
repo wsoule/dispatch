@@ -13,6 +13,7 @@ import {
 } from 'node:fs';
 import { dirname } from 'node:path';
 
+import type { LiveText } from '../liveText.js';
 import type {
   MemoryMode,
   NormalizedEntry,
@@ -138,6 +139,11 @@ export interface RunDetail {
   mutations: MutationEvidence[];
 }
 
+/** GET /api/runs/:id's body: the detail, plus the text a live run has
+ *  streamed and not logged as an entry yet (Orchestrator.liveText). A
+ *  transcript never holds `live`. */
+export type RunDetailView = RunDetail & { live?: LiveText };
+
 /**
  * One run's on-disk JSONL transcript: a header line carrying the run's
  * starting metadata, followed by an append-only stream of log entries and
@@ -208,6 +214,21 @@ export class Transcript {
     appendFileSync(this.path, `${prefix}${JSON.stringify(line)}\n`);
   }
 
+  /**
+   * How many entries the transcript holds, counted the way `read()` (and so
+   * GET /api/runs/:id) sees them: the index the next appended entry gets. A
+   * torn final line from a crash mid-write is closed off first, so the next
+   * entry starts a line of its own instead of fusing with it into one line
+   * neither reader can parse, which would leave the count one too high.
+   */
+  countEntries(): number {
+    if (!existsSync(this.path)) return 0;
+    const raw = readFileSync(this.path, 'utf8');
+    if (raw.length > 0 && !raw.endsWith('\n')) appendFileSync(this.path, '\n');
+    return parseLines(raw, this.path).filter((line) => line.type === 'entry')
+      .length;
+  }
+
   // Tolerant read: a transcript can be left with a truncated final line by a
   // crash mid-write (the process dies between `write()` and its trailing
   // newline), and every line before that one is still a valid, durable
@@ -216,19 +237,25 @@ export class Transcript {
   // logged and skipped rather than throwing and losing the whole transcript.
   read(): TranscriptLine[] {
     if (!existsSync(this.path)) return [];
-    const lines: TranscriptLine[] = [];
-    for (const raw of readFileSync(this.path, 'utf8').split('\n')) {
-      if (raw.trim() === '') continue;
-      try {
-        lines.push(JSON.parse(raw) as TranscriptLine);
-      } catch (err) {
-        console.error(
-          `dispatchd: skipping unparsable transcript line in ${this.path}: ${(err as Error).message}`
-        );
-      }
-    }
-    return lines;
+    return parseLines(readFileSync(this.path, 'utf8'), this.path);
   }
+}
+
+// A transcript file's text as its lines, skipping (and logging) any line that
+// does not parse; see Transcript.read.
+function parseLines(text: string, path: string): TranscriptLine[] {
+  const lines: TranscriptLine[] = [];
+  for (const raw of text.split('\n')) {
+    if (raw.trim() === '') continue;
+    try {
+      lines.push(JSON.parse(raw) as TranscriptLine);
+    } catch (err) {
+      console.error(
+        `dispatchd: skipping unparsable transcript line in ${path}: ${(err as Error).message}`
+      );
+    }
+  }
+  return lines;
 }
 
 // How much of a transcript's end recentEntries reads.

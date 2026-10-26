@@ -260,17 +260,29 @@ function statusForItem(status: unknown): 'running' | 'done' | 'error' {
   return 'running';
 }
 
+// Maps one item notification to its entry. A tool item is logged when it
+// starts and again when it completes, both under the item's id as
+// `toolUseId`, so a reader folds the completed copy into the started one.
+// A finished agentMessage of a run that streams carries its id as `streamId`:
+// its `item/agentMessage/delta` text was keyed by it.
 function entryForItem(
   item: CodexItem,
-  completed: boolean
+  completed: boolean,
+  streams: boolean
 ): NormalizedEntry | undefined {
   const ts = new Date().toISOString();
+  const callId = typeof item.id === 'string' ? { toolUseId: item.id } : {};
   if (
     item.type === 'agentMessage' &&
     completed &&
     typeof item.text === 'string'
   ) {
-    return { ts, kind: 'assistant', text: item.text };
+    return {
+      ts,
+      kind: 'assistant',
+      text: item.text,
+      ...(streams && typeof item.id === 'string' ? { streamId: item.id } : {}),
+    };
   }
   if (item.type === 'reasoning' && completed && Array.isArray(item.summary)) {
     const text = item.summary
@@ -291,6 +303,7 @@ function entryForItem(
           : {}),
       },
       status: statusForItem(item.status),
+      ...callId,
     };
   }
   if (item.type === 'fileChange') {
@@ -300,6 +313,7 @@ function entryForItem(
       toolName: 'codex.fileChange',
       toolInput: { changes: item.changes },
       status: statusForItem(item.status),
+      ...callId,
     };
   }
   if (item.type === 'mcpToolCall') {
@@ -311,6 +325,7 @@ function entryForItem(
       toolName: `mcp.${server}.${tool}`,
       toolInput: item.arguments,
       status: statusForItem(item.status),
+      ...callId,
     };
   }
   return undefined;
@@ -681,6 +696,7 @@ export class CodexExecutor implements Executor {
         turnId === undefined &&
         (message.method === 'item/started' ||
           message.method === 'item/completed' ||
+          message.method === 'item/agentMessage/delta' ||
           message.method === 'item/commandExecution/terminalInteraction' ||
           message.method === 'thread/tokenUsage/updated' ||
           message.method === 'turn/completed')
@@ -699,12 +715,30 @@ export class CodexExecutor implements Executor {
         const item = itemFrom(message);
         if (item === undefined) return;
         const completed = message.method === 'item/completed';
-        const entry = entryForItem(item, completed);
+        const entry = entryForItem(
+          item,
+          completed,
+          events.onDelta !== undefined
+        );
         if (entry !== undefined) events.onEntry(entry);
         const bypass = completed
           ? unaskedFloorCommand(item, flooredAsks)
           : undefined;
         if (bypass !== undefined) stopForFloorBypass(bypass);
+        return;
+      }
+      // An agentMessage's text as Codex writes it, keyed by the item. Codex is
+      // not version-pinned, so a run must work when none of these arrive.
+      if (message.method === 'item/agentMessage/delta') {
+        const params = objectValue(message.params);
+        if (params?.threadId !== threadId || params?.turnId !== turnId) return;
+        if (
+          typeof params?.itemId === 'string' &&
+          typeof params.delta === 'string' &&
+          params.delta !== ''
+        ) {
+          events.onDelta?.(params.itemId, params.delta);
+        }
         return;
       }
       // Codex asks before starting a shell but not about what is typed into

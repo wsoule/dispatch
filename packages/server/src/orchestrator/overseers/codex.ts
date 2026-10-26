@@ -326,6 +326,56 @@ class ApprovalGate {
   }
 }
 
+// One turn's agentMessage items that may still be the reply, by item id,
+// oldest first. A message followed by another item (a command, an edit, a
+// tool call, another message) was prose between steps: narration, unless
+// Codex marked it the final answer. At the turn's end every one but the reply
+// item is narration. Keyed by item id, never by text.
+class TurnNarration {
+  private readonly pending: { id: string; text: string; final: boolean }[] = [];
+
+  constructor(private readonly opts: OverseerTurnOptions) {}
+
+  watch(item: CodexItem, completed: boolean): void {
+    if (!completed) {
+      // Thinking and the human's own line say nothing about what came before.
+      if (item.type !== 'reasoning' && item.type !== 'userMessage') {
+        this.commit();
+      }
+      return;
+    }
+    if (
+      item.type === 'agentMessage' &&
+      typeof item.id === 'string' &&
+      typeof item.text === 'string'
+    ) {
+      this.pending.push({
+        id: item.id,
+        text: item.text,
+        final: item.phase === 'final_answer',
+      });
+    }
+  }
+
+  // A step follows: every pending message but a final answer is narration.
+  commit(): void {
+    const answers = this.pending.filter((m) => m.final);
+    for (const m of this.pending) if (!m.final) this.report(m);
+    this.pending.splice(0, this.pending.length, ...answers);
+  }
+
+  // The turn is over and `replyItemId` is its reply: the rest is narration.
+  settle(replyItemId: string | undefined): void {
+    for (const m of this.pending.splice(0)) {
+      if (m.id !== replyItemId) this.report(m);
+    }
+  }
+
+  private report(m: { id: string; text: string }): void {
+    if (m.text.trim() !== '') this.opts.onNarration?.(m.id, m.text);
+  }
+}
+
 interface CodexOverseerOptions {
   spawnProcess?: SpawnCodexAppServer;
   cartoSpec?: (projectRoot: string) => StdioServerSpec | null;
@@ -375,6 +425,7 @@ export class CodexOverseer implements OverseerBackend {
     )();
     const pricing = (this.options.pricing ?? codexPricingFor)(this.rootDir);
     const gate = new ApprovalGate(this.rootDir, opts);
+    const narration = new TurnNarration(opts);
     const callTool = (name: string, args: unknown) => toolset.call(name, args);
     const result = await runCodexTurn({
       cwd: this.rootDir,
@@ -397,6 +448,8 @@ export class CodexOverseer implements OverseerBackend {
       // Idle, not wall-clock: a human answering a card or a long test run must not end the turn.
       idle: true,
       onServerRequest: (request, respond, controls) => {
+        // A registry call's tool row lands now: the prose before it goes first.
+        if (request.method === 'item/tool/call') narration.commit();
         if (claimCodexToolCall(callTool, request, respond)) return true;
         if (!isCodexApprovalMethod(request.method)) return false;
         void gate.ask(
@@ -410,14 +463,25 @@ export class CodexOverseer implements OverseerBackend {
         );
         return true;
       },
-      onItem: (item, completed, controls) =>
-        gate.watch(item, completed, controls),
+      onItem: (item, completed, controls) => {
+        // Before the gate reports a built-in call, so narration leads its row.
+        narration.watch(item, completed);
+        gate.watch(item, completed, controls);
+      },
       onTerminalInput: (itemId, stdin, controls) =>
         gate.typed(itemId, stdin, controls),
+      // An agentMessage item is one segment; its id keys the live text.
+      ...(opts.onTextDelta === undefined
+        ? {}
+        : { onAgentMessageDelta: opts.onTextDelta }),
     });
+    narration.settle(result.replyItemId);
     const reply = result.reply.trim();
     return {
       reply: reply === '' ? EMPTY_REPLY_MESSAGE : reply,
+      ...(result.replyItemId !== undefined && reply !== ''
+        ? { streamId: result.replyItemId }
+        : {}),
       sessionId: result.threadId,
       // Bill this turn only: the thread's totals include every earlier turn.
       ...(pricing !== undefined && result.turnUsage !== undefined

@@ -1,5 +1,11 @@
 import type { OverseerAction, OverseerRecord } from '@dispatch/client';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { expect, test } from 'bun:test';
 import { useState } from 'react';
 
@@ -43,6 +49,7 @@ function overseerSession(over: Partial<OverseerSession> = {}): OverseerSession {
     conversationId: null,
     record: undefined,
     recordError: null,
+    live: null,
     submit: () => Promise.resolve(),
     reply: () => Promise.resolve(),
     sending: false,
@@ -50,7 +57,7 @@ function overseerSession(over: Partial<OverseerSession> = {}): OverseerSession {
     revoked: false,
     confirmAction: () => Promise.resolve(),
     decidingActionId: null,
-    decideApproval: () => Promise.resolve(),
+    decideApproval: () => Promise.resolve(true),
     decidingRequestId: null,
     decideError: null,
     model: 'claude-opus-5',
@@ -630,12 +637,206 @@ test('a turn settling in place re-pins to the bottom', () => {
   expect(log.scrollTop).toBe(512);
 });
 
-// A parked built-in call is the one row where the session is blocked right
-// now: the card offers the three answers a run's approval does, and each one
-// reaches the session's decideApproval with the matching decision.
-test('a parked tool call renders an allow/deny card wired to decideApproval', async () => {
-  const decisions: unknown[] = [];
-  const overseer = overseerSession({
+// A running turn with the user's question asked and `live` written so far.
+function writingSession(
+  segments: { id: string; text: string }[] | null,
+  over: Partial<OverseerRecord> = {}
+): OverseerSession {
+  return overseerSession({
+    conversationId: 'w-1',
+    record: overseerRecord({
+      state: 'running',
+      messages: [{ role: 'user', text: 'status?', at: '2026-08-10T00:00:01Z' }],
+      ...over,
+    }),
+    live: segments === null ? null : { turnId: 't1', segments },
+  });
+}
+
+// The words the turn is writing say it is working; the spinner row is only
+// for the wait before the first of them.
+test('live text takes the working row’s place while the turn writes', () => {
+  const { rerender } = render(
+    <OverseerChat overseer={writingSession(null)} durable />
+  );
+  expect(screen.getByText('The overseer is working…')).toBeDefined();
+
+  rerender(
+    <OverseerChat
+      overseer={writingSession([
+        { id: 's1', text: 'Two runs are **blocked**' },
+      ])}
+      durable
+    />
+  );
+  expect(screen.queryByText('The overseer is working…')).toBeNull();
+  const live = screen.getByTestId('overseer-live');
+  // Markdown while it streams, not raw asterisks that turn bold at the end.
+  expect(live.querySelector('strong')?.textContent).toBe('blocked');
+});
+
+// Once the record holds the text as rows, the session's `live` no longer has
+// it: the narration and the reply each show exactly once.
+test('a settled turn shows its narration and its reply once each', () => {
+  const { rerender } = render(
+    <OverseerChat
+      overseer={writingSession([
+        { id: 's1', text: 'Checking the queue.' },
+        { id: 's2', text: 'Both wait on review.' },
+      ])}
+      durable
+    />
+  );
+  expect(screen.getAllByTestId('overseer-live')).toHaveLength(2);
+
+  rerender(
+    <OverseerChat
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: overseerRecord({
+          messages: [
+            { role: 'user', text: 'status?', at: '2026-08-10T00:00:01Z' },
+            {
+              role: 'narration',
+              text: 'Checking the queue.',
+              at: '2026-08-10T00:00:02Z',
+              streamId: 's1',
+            },
+            {
+              role: 'assistant',
+              text: 'Both wait on review.',
+              at: '2026-08-10T00:00:03Z',
+              streamId: 's2',
+            },
+          ],
+        }),
+      })}
+      durable
+    />
+  );
+  expect(screen.queryByTestId('overseer-live')).toBeNull();
+  expect(screen.getAllByText('Checking the queue.')).toHaveLength(1);
+  expect(screen.getAllByText('Both wait on review.')).toHaveLength(1);
+});
+
+// Narration is the agent's own voice, so it sits in the reply's column, but
+// muted: the answer stays what the eye lands on.
+test('narration reads as the agent’s quieter voice beside its reply', () => {
+  render(
+    <OverseerChat
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: overseerRecord({
+          messages: [
+            {
+              role: 'narration',
+              text: 'Checking the queue.',
+              at: '2026-08-10T00:00:02Z',
+            },
+            {
+              role: 'assistant',
+              text: 'Both wait on review.',
+              at: '2026-08-10T00:00:03Z',
+            },
+          ],
+        }),
+      })}
+      durable
+    />
+  );
+  const narration = screen.getByTestId('overseer-narration');
+  const reply = screen.getByText('Both wait on review.').closest('div');
+  expect(narration.className).toContain('self-stretch');
+  expect(
+    narration.querySelector('[data-slot="markdown"]')?.className
+  ).toContain('text-muted-foreground');
+  expect(reply?.className ?? '').not.toContain('text-muted-foreground');
+});
+
+// Live text grows inside one row, which moves neither the row count nor the
+// last key the pin effect follows; the log follows its own DOM for that.
+// scrollHeight is a getter so the test can grow the content by hand.
+test('live text growing in place keeps a reader at the bottom following', async () => {
+  const { rerender } = render(
+    <OverseerChat
+      overseer={writingSession([{ id: 's1', text: 'Checking' }])}
+      compact
+    />
+  );
+  const log = screen.getByRole('log');
+  let height = 480;
+  Object.defineProperty(log, 'scrollHeight', {
+    get: () => height,
+    configurable: true,
+  });
+  Object.defineProperty(log, 'clientHeight', {
+    value: 480,
+    configurable: true,
+  });
+  Object.defineProperty(log, 'scrollTop', {
+    value: 0,
+    writable: true,
+    configurable: true,
+  });
+  fireEvent.scroll(log);
+
+  height = 900;
+  rerender(
+    <OverseerChat
+      overseer={writingSession([
+        {
+          id: 's1',
+          text: 'Checking the merge queue: two runs wait on review.',
+        },
+      ])}
+      compact
+    />
+  );
+  await waitFor(() => {
+    expect(log.scrollTop).toBe(900);
+  });
+});
+
+test('a reader scrolled up stays put while live text grows', async () => {
+  const { rerender } = render(
+    <OverseerChat
+      overseer={writingSession([{ id: 's1', text: 'Checking' }])}
+      compact
+    />
+  );
+  const log = screen.getByRole('log');
+  Object.defineProperty(log, 'scrollHeight', {
+    value: 900,
+    configurable: true,
+  });
+  Object.defineProperty(log, 'clientHeight', {
+    value: 300,
+    configurable: true,
+  });
+  Object.defineProperty(log, 'scrollTop', {
+    value: 100,
+    writable: true,
+    configurable: true,
+  });
+  fireEvent.scroll(log);
+
+  rerender(
+    <OverseerChat
+      overseer={writingSession([
+        { id: 's1', text: 'Checking the merge queue: two runs wait.' },
+      ])}
+      compact
+    />
+  );
+  await waitFor(() => {
+    expect(screen.getByText(/two runs wait/)).toBeDefined();
+  });
+  expect(log.scrollTop).toBe(100);
+});
+
+// A running turn parked on `git status`, recording every decision it gets.
+function parkedSession(decisions: unknown[], held = false): OverseerSession {
+  return overseerSession({
     conversationId: 'w-1',
     record: overseerRecord({
       state: 'running',
@@ -661,35 +862,177 @@ test('a parked tool call renders an allow/deny card wired to decideApproval', as
           input: { command: 'git status' },
           summary: 'Bash: git status',
           requestedAt: '2026-08-10T00:00:01Z',
+          ...(held ? { held: true } : {}),
         },
       ],
     }),
     decideApproval: (requestId, decision) => {
       decisions.push([requestId, decision]);
-      return Promise.resolve();
+      return Promise.resolve(true);
     },
   });
-  render(<ChatWithDraft overseer={overseer} />);
+}
 
-  expect(screen.getByText('Wants to run')).toBeDefined();
-  expect(screen.getByText('Bash: git status')).toBeDefined();
+// A parked built-in call is the one row where the session is blocked right
+// now: the card is the one a run's parked call gets, with its three answers,
+// and each reaches the session's decideApproval with the matching decision.
+test('a parked tool call renders the shared approval card wired to decideApproval', async () => {
+  const decisions: unknown[] = [];
+  render(<ChatWithDraft overseer={parkedSession(decisions)} />);
+
+  expect(
+    screen.getByRole('radiogroup', {
+      name: /^Wants to run\s+Bash: git status$/,
+    })
+  ).toBeDefined();
+  expect(
+    screen.getByText('Bash: git status', { selector: 'pre' })
+  ).toBeDefined();
   // Blocked on the human, so no "working" spinner row under the card.
   expect(screen.queryByText('The overseer is working…')).toBeNull();
 
+  await clickAndSettle(screen.getByRole('radio', { name: /^Approve once/ }));
   await clickAndSettle(
-    screen.getByRole('button', { name: 'Allow: Bash: git status' })
-  );
-  await clickAndSettle(
-    screen.getByRole('button', { name: 'Allow Bash for this conversation' })
-  );
-  await clickAndSettle(
-    screen.getByRole('button', { name: 'Deny: Bash: git status' })
+    screen.getByRole('radio', { name: /^Allow Bash for this conversation/ })
   );
   expect(decisions).toEqual([
-    ['req-1', { allow: true }],
+    ['req-1', { allow: true, scope: 'once' }],
     ['req-1', { allow: true, scope: 'session' }],
+  ]);
+});
+
+// Deny asks why first; the reason is optional and reaches the model as its
+// refusal, so a bare "no" does not leave it guessing.
+test('denying a parked call collects an optional reason', async () => {
+  const decisions: unknown[] = [];
+  render(<ChatWithDraft overseer={parkedSession(decisions)} />);
+
+  fireEvent.click(screen.getByRole('radio', { name: /^Deny and tell it why/ }));
+  // Nothing is decided until the reason box is sent.
+  expect(decisions).toEqual([]);
+  const reason = screen.getByLabelText('Reason for denying');
+  expect(document.activeElement).toBe(reason);
+  // The other answers wait while the reason is written.
+  expect(
+    screen
+      .getByRole('radio', { name: /^Approve once/ })
+      .hasAttribute('disabled')
+  ).toBe(true);
+  fireEvent.change(reason, {
+    target: { value: '  Use git diff --stat, not status.  ' },
+  });
+  await clickAndSettle(
+    screen.getByRole('button', { name: 'Deny and tell it why' })
+  );
+
+  fireEvent.click(screen.getByRole('radio', { name: /^Deny and tell it why/ }));
+  await clickAndSettle(screen.getByRole('button', { name: 'Deny' }));
+  expect(decisions).toEqual([
+    ['req-1', { allow: false, reason: 'Use git diff --stat, not status.' }],
     ['req-1', { allow: false }],
   ]);
+});
+
+// The session reports a failed decision on decideError and resolves false;
+// the card must not take that as done and throw away the typed reason.
+test('a deny that did not go through keeps the reason box and the reason', async () => {
+  const decisions: unknown[] = [];
+  render(
+    <ChatWithDraft
+      overseer={{
+        ...parkedSession(decisions),
+        decideApproval: (requestId, decision) => {
+          decisions.push([requestId, decision]);
+          return Promise.resolve(false);
+        },
+      }}
+    />
+  );
+  fireEvent.click(screen.getByRole('radio', { name: /^Deny and tell it why/ }));
+  fireEvent.change(screen.getByLabelText('Reason for denying'), {
+    target: { value: 'use make clean' },
+  });
+  await clickAndSettle(
+    screen.getByRole('button', { name: 'Deny and tell it why' })
+  );
+  expect(decisions).toEqual([
+    ['req-1', { allow: false, reason: 'use make clean' }],
+  ]);
+  expect(screen.getByLabelText('Reason for denying')).toHaveProperty(
+    'value',
+    'use make clean'
+  );
+});
+
+// Two parked calls give two cards with the same answers: each card's group
+// is named after its own call, so a screen reader can tell them apart.
+test('each parked call names its own approval card', () => {
+  const session = parkedSession([]);
+  const record = session.record;
+  if (record === null) throw new Error('no record');
+  const second = {
+    requestId: 'req-2',
+    toolName: 'Bash',
+    input: { command: 'rm -rf dist' },
+    summary: 'Bash: rm -rf dist',
+    requestedAt: '2026-08-10T00:00:02Z',
+  };
+  render(
+    <ChatWithDraft
+      overseer={{
+        ...session,
+        record: {
+          ...record,
+          messages: [
+            ...record.messages,
+            {
+              role: 'approval',
+              tool: 'Bash',
+              requestId: 'req-2',
+              outcome: 'pending',
+              text: 'Bash: rm -rf dist',
+              at: '2026-08-10T00:00:02Z',
+            },
+          ],
+          pendingApprovals: [...record.pendingApprovals, second],
+        },
+      }}
+    />
+  );
+  expect(
+    screen.getByRole('radiogroup', {
+      name: /^Wants to run\s+Bash: git status$/,
+    })
+  ).toBeDefined();
+  expect(
+    screen.getByRole('radiogroup', {
+      name: /^Wants to run\s+Bash: rm -rf dist$/,
+    })
+  ).toBeDefined();
+});
+
+// A held call (the floor, or Dispatch's own surfaces) is allowed once only.
+test('a held call offers no grant for the conversation', () => {
+  render(<ChatWithDraft overseer={parkedSession([], true)} />);
+  expect(screen.getByRole('radio', { name: /^Approve once/ })).toBeDefined();
+  expect(
+    screen.queryByRole('radio', { name: /for this conversation/ })
+  ).toBeNull();
+});
+
+// One decision at a time across every approval card: the session holds a
+// single lock, so a card must not take a click while another decides.
+test('approval cards lock while any approval is being decided', () => {
+  const decisions: unknown[] = [];
+  render(
+    <ChatWithDraft
+      overseer={{ ...parkedSession(decisions), decidingRequestId: 'req-0' }}
+    />
+  );
+  const once = screen.getByRole('radio', { name: /^Approve once/ });
+  expect(once.hasAttribute('disabled')).toBe(true);
+  fireEvent.click(once);
+  expect(decisions).toEqual([]);
 });
 
 // The opening composer picks the model the conversation opens on (the

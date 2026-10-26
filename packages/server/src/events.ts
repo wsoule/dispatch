@@ -28,7 +28,28 @@ export type ServerEvent =
   | { type: 'comment.changed'; taskId: string; commentIds: string[] }
   | { type: 'hello'; version: string }
   | { type: 'run.changed' }
-  | { type: 'run.log'; runId: string; entry: NormalizedEntry }
+  // `index` is the entry's place among the transcript's entries (how many came
+  // before it), so a client can tell a frame it already holds, or one it
+  // missed, from the next one. Absent when the entry could not be written; a
+  // run.changed follows such a frame so clients refetch the run.
+  | { type: 'run.log'; runId: string; entry: NormalizedEntry; index?: number }
+  // A live run's text as the model writes it: `text` extends segment
+  // `segmentId` of turn `turnId` (one per run). View-only, never stored; the
+  // finished text arrives as a run.log `assistant` entry whose `streamId` is
+  // the segment. `seq` counts one run's frames, so a gap means a missed frame,
+  // which GET /api/runs/:id's `live` snapshot repairs. Sent to the same
+  // sockets as run.log. `abandoned` (with empty `text`) ends a segment no
+  // entry will finish: the model's stream broke off and sent the text again
+  // under a new segment, so the view drops it.
+  | {
+      type: 'run.delta';
+      runId: string;
+      turnId: string;
+      seq: number;
+      segmentId: string;
+      text: string;
+      abandoned?: true;
+    }
   // Phase 5 P1: a plan's state (running -> ready|failed) changed, or it was
   // just confirmed — same "go refetch, no payload beyond the id" contract as
   // run.changed.
@@ -136,6 +157,22 @@ export type ServerEvent =
   // appends several entries, and a client rendering the thread wants the whole
   // record anyway.
   | { type: 'overseer.changed'; conversationId: string }
+  // The running Overseer turn's text as the model writes it: `text` extends
+  // segment `segmentId` of turn `turnId`. View-only, never stored. `seq`
+  // counts one conversation's frames for the daemon's life, so a gap means a
+  // missed frame, which GET /api/overseer/:id's `live` snapshot repairs. Sent
+  // only to the conversation's live audience (overseerLiveAudience).
+  // `abandoned` (with empty `text`) ends a segment no row will hold, as on
+  // run.delta.
+  | {
+      type: 'overseer.delta';
+      conversationId: string;
+      turnId: string;
+      seq: number;
+      segmentId: string;
+      text: string;
+      abandoned?: true;
+    }
   // The decision feed's contents changed: something started or stopped
   // awaiting a human. Same "go refetch" contract as task.changed — the feed is
   // derived on every read (see decisionFeed.ts), so there is no increment to

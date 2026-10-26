@@ -89,12 +89,17 @@ export interface CodexTurnRequest {
     stdin: string,
     controls: CodexTurnControls
   ) => void;
+  /** Text of an agentMessage item as Codex writes it (`item/agentMessage/delta`).
+   *  Codex is not version-pinned, so a turn must work when none arrives. */
+  onAgentMessageDelta?: (itemId: string, delta: string) => void;
 }
 
 interface CodexTurnResult {
   threadId: string;
   /** The turn's final answer; '' when Codex said nothing. */
   reply: string;
+  /** The agentMessage item `reply` is the text of, when it had an id. */
+  replyItemId?: string;
   /** Cumulative thread token totals, when Codex reported them. */
   total?: CodexTokenTotal;
   /** Tokens this turn alone used: what to bill, since `total` spans every turn of the thread. */
@@ -226,6 +231,7 @@ export async function runCodexTurn(
   let threadId: string | undefined;
   let turnId: string | undefined;
   let reply = '';
+  let replyItemId: string | undefined;
   let replyIsFinal = false;
   let total: CodexTokenTotal | undefined;
   let contextTokens: number | undefined;
@@ -353,6 +359,7 @@ export async function runCodexTurn(
         const isFinal = item.phase === 'final_answer';
         if (isFinal || !replyIsFinal) {
           reply = item.text;
+          replyItemId = typeof item.id === 'string' ? item.id : undefined;
           replyIsFinal = isFinal;
         }
       }
@@ -360,6 +367,20 @@ export async function runCodexTurn(
         req.onItem?.(item, completed, controls);
       } catch (error) {
         end(toError(error));
+      }
+      return;
+    }
+    if (message.method === 'item/agentMessage/delta') {
+      if (
+        typeof params?.itemId === 'string' &&
+        typeof params.delta === 'string' &&
+        params.delta !== ''
+      ) {
+        try {
+          req.onAgentMessageDelta?.(params.itemId, params.delta);
+        } catch (error) {
+          end(toError(error));
+        }
       }
       return;
     }
@@ -500,6 +521,7 @@ export async function runCodexTurn(
   return {
     threadId,
     reply,
+    ...(replyItemId === undefined ? {} : { replyItemId }),
     ...(total === undefined ? {} : { total }),
     ...(turnUsage === undefined ? {} : { turnUsage }),
     ...(contextTokens === undefined ? {} : { contextTokens }),

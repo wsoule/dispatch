@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import type { Components } from 'react-markdown';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -88,6 +88,37 @@ function hastClassName(node: HastLike | undefined): string | undefined {
   return undefined;
 }
 
+// The renderers that never change, kept at module scope so their identity holds across
+// renders: react-markdown treats a new function as a new component type, and would remount
+// every link, inline code span and code block of the message on each render.
+const STATIC_COMPONENTS = {
+  a: ({ children, href }) => (
+    <MarkdownLink href={href}>{children}</MarkdownLink>
+  ),
+  code: ({ children }) => (
+    <code className="bg-surface-quaternary rounded-[4px] px-1 py-0.5 font-mono text-[0.85em]">
+      {children}
+    </code>
+  ),
+  // Every `<pre>` react-markdown emits wraps a fenced (or indented) code block, so
+  // the whole block is swapped for `CodeBlock` here. The source text and language
+  // come from the hast `node`, not the rendered `children` — see `hastText`.
+  pre: ({ node }) => {
+    const codeElement = preCodeChild(node);
+    const code = hastText(codeElement ?? node).replace(/\n$/, '');
+    return (
+      <div className="my-2">
+        <CodeBlock
+          code={code}
+          language={resolveLanguage(hastClassName(codeElement))}
+        />
+      </div>
+    );
+  },
+} satisfies Components;
+
+const REMARK_PLUGINS = [remarkGfm];
+
 // Renders agent/message text as GitHub-flavored markdown, so a run's Session transcript reads
 // like Claude Code's own output (headings, lists, tables, **bold**, `inline code`, and fenced
 // ```code blocks```) instead of the flat pre-wrapped text it was before. Element styling for
@@ -101,7 +132,11 @@ function hastClassName(node: HastLike | undefined): string | undefined {
 // `variant: 'prose'` is the task page's long-form measure (Linear's 15px/450 on a 24px line,
 // headings held at 15px/600 so a description never shouts over the title); the default
 // inherits the caller's size for transcripts, chat and cards.
-export function Markdown({
+//
+// Memoized: a chat re-renders on every streamed delta, and parsing every settled message's
+// markdown again each time stalls the window in a long conversation. Only a message whose
+// props changed renders.
+export const Markdown = memo(function Markdown({
   content,
   className,
   variant = 'inline',
@@ -118,10 +153,13 @@ export function Markdown({
 }) {
   // One component per `img`, so a rerender keeps each image mounted (and fetched once).
   // With no `img`, an image is a link: agent-written markdown never loads one.
-  const imgComponent = useMemo<Components['img']>(() => {
+  const components = useMemo<Components>(() => {
     const render = img ?? LinkedImage;
-    return ({ src, alt }) =>
-      render({ src: typeof src === 'string' ? src : undefined, alt });
+    return {
+      ...STATIC_COMPONENTS,
+      img: ({ src, alt }) =>
+        render({ src: typeof src === 'string' ? src : undefined, alt }),
+    };
   }, [img]);
   return (
     <div
@@ -134,37 +172,12 @@ export function Markdown({
       )}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={REMARK_PLUGINS}
         {...(urlTransform === undefined ? {} : { urlTransform })}
-        components={{
-          img: imgComponent,
-          a: ({ children, href }) => (
-            <MarkdownLink href={href}>{children}</MarkdownLink>
-          ),
-          code: ({ children }) => (
-            <code className="bg-surface-quaternary rounded-[4px] px-1 py-0.5 font-mono text-[0.85em]">
-              {children}
-            </code>
-          ),
-          // Every `<pre>` react-markdown emits wraps a fenced (or indented) code block, so
-          // the whole block is swapped for `CodeBlock` here. The source text and language
-          // come from the hast `node`, not the rendered `children` — see `hastText`.
-          pre: ({ node }) => {
-            const codeElement = preCodeChild(node);
-            const code = hastText(codeElement ?? node).replace(/\n$/, '');
-            return (
-              <div className="my-2">
-                <CodeBlock
-                  code={code}
-                  language={resolveLanguage(hastClassName(codeElement))}
-                />
-              </div>
-            );
-          },
-        }}
+        components={components}
       >
         {content}
       </ReactMarkdown>
     </div>
   );
-}
+});

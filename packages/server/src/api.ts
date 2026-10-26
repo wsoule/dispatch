@@ -267,6 +267,7 @@ import type { PrWorktreeManager } from './orchestrator/prWorktree.js';
 import { toLandingWorktree } from './orchestrator/prWorktree.js';
 import type { ReviewRunner } from './orchestrator/review.js';
 import type { TaskAuthorship } from './orchestrator/taskAuthorship.js';
+import type { RunDetailView } from './orchestrator/transcript.js';
 import {
   OrchestratorClientError,
   OrchestratorConflictError,
@@ -5591,11 +5592,15 @@ export async function handleApi(
           return errorResponse(404, `run not found: ${segments[1]}`);
         }
         // The same landing fields the list carries, so run detail can say
-        // where its work went.
-        return jsonResponse({
+        // where its work went, and the text a live run has streamed and not
+        // logged yet.
+        const live = ctx.orchestrator.liveText(segments[1]);
+        const view: RunDetailView = {
           ...result,
           meta: ctx.orchestrator.decorateRunsWithPushed([result.meta])[0],
-        });
+          ...(live !== undefined ? { live } : {}),
+        };
+        return jsonResponse(view);
       }
       if (
         segments.length === 3 &&
@@ -6368,14 +6373,18 @@ export async function handleApi(
         return errorResponse(405, 'method not allowed');
       }
       // One conversation per person per project: the newest one they opened.
+      // Reads carry a running turn's live text; mutation responses need not.
       if (
         segments.length === 2 &&
         segments[1] === 'current' &&
         method === 'GET'
       ) {
+        const current = ctx.overseerManager.current(speaker?.address ?? null);
         return jsonResponse({
           conversation:
-            ctx.overseerManager.current(speaker?.address ?? null) ?? null,
+            current === undefined
+              ? null
+              : ctx.overseerManager.withLive(current),
         });
       }
       const conversationId = segments[1];
@@ -6389,7 +6398,9 @@ export async function handleApi(
         );
       }
       if (segments.length === 2 && method === 'GET') {
-        return jsonResponse(ctx.overseerManager.get(conversationId));
+        return jsonResponse(
+          ctx.overseerManager.withLive(ctx.overseerManager.get(conversationId))
+        );
       }
       // The model and effort its next turns run on; null restores the default.
       if (segments.length === 2 && method === 'PATCH') {

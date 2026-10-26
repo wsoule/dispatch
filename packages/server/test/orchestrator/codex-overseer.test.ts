@@ -6,6 +6,7 @@ import type {
   OverseerToolRequest,
   OverseerToolResult,
   OverseerToolset,
+  OverseerTurnOptions,
 } from '../../src/orchestrator/overseerBackend.js';
 import { EMPTY_REPLY_MESSAGE } from '../../src/orchestrator/overseerPrompt.js';
 import {
@@ -130,7 +131,11 @@ describe('CodexOverseer session', () => {
       effort: 'max',
     });
 
-    expect(turn).toEqual({ reply: 'all quiet', sessionId: 'thread-1' });
+    expect(turn).toEqual({
+      reply: 'all quiet',
+      streamId: 'msg-final',
+      sessionId: 'thread-1',
+    });
     expect(codex.paramsOf('initialize')?.capabilities).toEqual({
       experimentalApi: true,
       requestAttestation: false,
@@ -339,6 +344,204 @@ describe('CodexOverseer registry tools', () => {
     expect(used).toEqual([
       ['codex.commandExecution', { command: 'git status', cwd: ROOT }],
     ]);
+  });
+});
+
+describe('CodexOverseer narration and live text', () => {
+  // One agentMessage item, as Codex reports it: started, its deltas, completed.
+  function message(
+    c: FakeCodexProcess,
+    t: string,
+    id: string,
+    text: string,
+    phase?: string
+  ): void {
+    const item = { type: 'agentMessage', id, text: '' };
+    c.notify('item/started', { threadId: t, turnId: 'turn-1', item });
+    for (const piece of text.match(/.{1,6}/gs) ?? []) {
+      c.notify('item/agentMessage/delta', {
+        threadId: t,
+        turnId: 'turn-1',
+        itemId: id,
+        delta: piece,
+      });
+    }
+    c.notify('item/completed', {
+      threadId: t,
+      turnId: 'turn-1',
+      item: { ...item, text, ...(phase === undefined ? {} : { phase }) },
+    });
+  }
+
+  function command(c: FakeCodexProcess, t: string, id: string): void {
+    c.notify('item/started', {
+      threadId: t,
+      turnId: 'turn-1',
+      item: {
+        type: 'commandExecution',
+        id,
+        command: 'git status',
+        cwd: ROOT,
+        status: 'inProgress',
+      },
+    });
+  }
+
+  function completed(c: FakeCodexProcess, t: string): void {
+    c.notify('turn/completed', {
+      threadId: t,
+      turn: { id: 'turn-1', status: 'completed', error: null },
+    });
+  }
+
+  // Everything the backend reported, in the order the transcript gets it.
+  function recording() {
+    const seen: string[] = [];
+    const text = new Map<string, string>();
+    const options: OverseerTurnOptions = {
+      onTextDelta: (id, delta) => text.set(id, `${text.get(id) ?? ''}${delta}`),
+      onNarration: (id, said) => seen.push(`narration ${id}: ${said}`),
+      onToolUse: (name) => seen.push(`tool ${name}`),
+    };
+    return { seen, text, options };
+  }
+
+  it('streams each message by item id and keeps commentary before a command as narration', async () => {
+    const codex = scriptedCodex({
+      onTurn: (c, t) => {
+        message(c, t, 'm1', 'Checking the tree.', 'commentary');
+        command(c, t, 'c1');
+        message(c, t, 'm2', 'It is clean.', 'final_answer');
+        completed(c, t);
+      },
+    });
+    const { seen, text, options } = recording();
+    const turn = await overseerOver(codex).start(
+      'status?',
+      stubToolset().toolset,
+      options
+    );
+    expect(seen).toEqual([
+      'narration m1: Checking the tree.',
+      'tool codex.commandExecution',
+    ]);
+    expect(Object.fromEntries(text)).toEqual({
+      m1: 'Checking the tree.',
+      m2: 'It is clean.',
+    });
+    expect(turn).toMatchObject({ reply: 'It is clean.', streamId: 'm2' });
+  });
+
+  it('commits the message before a registry call, and leaves a final answer alone', async () => {
+    const codex = scriptedCodex({
+      onTurn: (c, t) => {
+        message(c, t, 'm1', 'Looking at runs.');
+        c.serverRequest('item/tool/call', 'call-1', {
+          threadId: t,
+          turnId: 'turn-1',
+          callId: 'c1',
+          namespace: null,
+          tool: 'list_runs',
+          arguments: {},
+        });
+      },
+    });
+    const { seen, options } = recording();
+    const { toolset, calls } = stubToolset();
+    const pending = overseerOver(codex).start('runs?', toolset, options);
+    await waitFor(() => calls.length === 1);
+    expect(seen).toEqual(['narration m1: Looking at runs.']);
+    message(codex, 'thread-1', 'm2', 'None are live.', 'final_answer');
+    // A step after a final answer does not make it narration.
+    command(codex, 'thread-1', 'c2');
+    completed(codex, 'thread-1');
+    const turn = await pending;
+    expect(seen).toEqual([
+      'narration m1: Looking at runs.',
+      'tool codex.commandExecution',
+    ]);
+    expect(turn.reply).toBe('None are live.');
+  });
+
+  it('with no phases, the last message is the reply and the earlier ones narration', async () => {
+    const codex = scriptedCodex({
+      onTurn: (c, t) => {
+        message(c, t, 'm1', 'First thought.');
+        c.notify('item/started', {
+          threadId: t,
+          turnId: 'turn-1',
+          item: { type: 'reasoning', id: 'r1' },
+        });
+        message(c, t, 'm2', 'Second thought.');
+        message(c, t, 'm3', 'The answer.');
+        completed(c, t);
+      },
+    });
+    const { seen, options } = recording();
+    const turn = await overseerOver(codex).start(
+      'hm?',
+      stubToolset().toolset,
+      options
+    );
+    expect(seen).toEqual([
+      'narration m1: First thought.',
+      'narration m2: Second thought.',
+    ]);
+    expect(turn).toMatchObject({ reply: 'The answer.', streamId: 'm3' });
+  });
+
+  // The manager puts the reply in place of that narration row; the backend
+  // only has to name the segment.
+  it('names an already narrated message as the reply when the turn ends on a step', async () => {
+    for (const phase of [undefined, 'commentary']) {
+      const codex = scriptedCodex({
+        onTurn: (c, t) => {
+          message(c, t, 'm1', 'The tree is clean.', phase);
+          command(c, t, 'c1');
+          completed(c, t);
+        },
+      });
+      const { seen, options } = recording();
+      const turn = await overseerOver(codex).start(
+        'status?',
+        stubToolset().toolset,
+        options
+      );
+      expect(seen).toEqual([
+        'narration m1: The tree is clean.',
+        'tool codex.commandExecution',
+      ]);
+      expect(turn).toMatchObject({
+        reply: 'The tree is clean.',
+        streamId: 'm1',
+      });
+    }
+  });
+
+  it('works the same when Codex sends no deltas at all', async () => {
+    const codex = scriptedCodex({
+      onTurn: (c, t) => {
+        c.notify('item/completed', {
+          threadId: t,
+          turnId: 'turn-1',
+          item: { type: 'agentMessage', id: 'm1', text: 'One moment.' },
+        });
+        command(c, t, 'c1');
+        finishTurn(c, t, 'Done.');
+      },
+    });
+    const { seen, text, options } = recording();
+    const turn = await overseerOver(codex).start(
+      'go',
+      stubToolset().toolset,
+      options
+    );
+    expect(text.size).toBe(0);
+    expect(seen).toEqual([
+      'narration m1: One moment.',
+      'tool codex.commandExecution',
+    ]);
+    expect(turn.reply).toBe('Done.');
   });
 });
 

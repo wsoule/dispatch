@@ -11,7 +11,6 @@ import {
   Plus,
   Search,
   Shield,
-  TerminalSquare,
   Wrench,
   X,
 } from 'lucide-react';
@@ -44,6 +43,8 @@ import { cn } from '@/lib/utils';
 import { IconButton, type IconButtonProps } from '@/ui/ai/icon-button';
 import { PillButton } from '@/ui/ai/pill';
 import { PromptBar } from '@/ui/ai/prompt-bar';
+import { StreamingText } from '@/ui/ai/streaming-text';
+import { ToolApprovalCard } from '@/ui/ai/tool-approval-card';
 import { ToolChip, ToolChipGroup } from '@/ui/ai/tool-chips';
 import { Button } from '@/ui/button';
 import {
@@ -175,26 +176,52 @@ function ErrorLine({ children }: { children: ReactNode }) {
   );
 }
 
+/** The agent's own prose, as Markdown. While `streaming`, what the text grows
+ * by is revealed as it arrives, through the same Markdown, so the row looks the
+ * same once the record holds it. */
+function AgentProse({
+  text,
+  streaming = false,
+  className,
+}: {
+  text: string;
+  streaming?: boolean;
+  className?: string;
+}) {
+  const draw = (shown: string) => (
+    <Markdown content={shown} className={cn('text-[13px]', className)} />
+  );
+  return streaming ? (
+    <StreamingText text={text} streaming render={draw} />
+  ) : (
+    draw(text)
+  );
+}
+
 /** One turn of the overseer conversation — the same bubble treatment as the plan
  * thread: the assistant's replies are markdown (it's an agent transcript), the
- * user's own words render verbatim. */
+ * user's own words render verbatim. A `streaming` reply is the running turn's
+ * text still arriving: it has no time yet. */
 function OverseerMessageBubble({
-  role,
+  speaker,
   text,
   at,
+  streaming = false,
   plain = false,
   attachments = [],
   fetchAttachment,
 }: {
-  role: 'user' | 'assistant';
+  speaker: 'user' | 'assistant';
   text: string;
-  at: string;
+  at?: string;
+  streaming?: boolean;
   /** Two views: a pill for you, bare text for the agent, the time on hover. */
   plain?: boolean;
   attachments?: OverseerAttachment[];
   fetchAttachment: (attachment: OverseerAttachment) => Promise<Blob>;
 }) {
-  const fromUser = role === 'user';
+  const fromUser = speaker === 'user';
+  const live = streaming ? 'overseer-live' : undefined;
   const files =
     attachments.length > 0 ? (
       <SentAttachments
@@ -203,7 +230,7 @@ function OverseerMessageBubble({
       />
     ) : null;
   if (plain) {
-    const when = new Date(at).toLocaleString();
+    const when = at === undefined ? undefined : new Date(at).toLocaleString();
     return fromUser ? (
       <>
         {files}
@@ -217,13 +244,18 @@ function OverseerMessageBubble({
         )}
       </>
     ) : (
-      <div title={when} className="max-w-full self-stretch px-1">
-        <Markdown content={text} className="text-[13px]" />
+      <div
+        title={when}
+        data-testid={live}
+        className="max-w-full self-stretch px-1"
+      >
+        <AgentProse text={text} streaming={streaming} />
       </div>
     );
   }
   return (
     <div
+      data-testid={live}
       className={cn(
         'rounded-card flex max-w-[85%] flex-col gap-1 px-3 py-2',
         fromUser
@@ -233,7 +265,9 @@ function OverseerMessageBubble({
     >
       <div className="text-muted-foreground flex items-baseline gap-1.5 text-[12px] font-medium">
         {fromUser ? 'You' : 'Assistant'}
-        <span className="font-book">{formatRelativeTimeFromIso(at)}</span>
+        {at !== undefined && (
+          <span className="font-book">{formatRelativeTimeFromIso(at)}</span>
+        )}
       </div>
       {fromUser ? (
         <>
@@ -243,8 +277,33 @@ function OverseerMessageBubble({
           )}
         </>
       ) : (
-        <Markdown content={text} className="text-[13px]" />
+        <AgentProse text={text} streaming={streaming} />
       )}
+    </div>
+  );
+}
+
+/** Prose the agent wrote between tool calls (or before a Stop): the agent's
+ * own voice, so Markdown in its column with no speaker line of its own, and
+ * muted, so the reply stays what the eye lands on. */
+function OverseerNarration({
+  text,
+  at,
+  plain,
+}: {
+  text: string;
+  at: string;
+  plain: boolean;
+}) {
+  return (
+    <div
+      title={new Date(at).toLocaleString()}
+      data-testid="overseer-narration"
+      className={
+        plain ? 'max-w-full self-stretch px-1' : 'max-w-[85%] self-start px-3'
+      }
+    >
+      <AgentProse text={text} className="text-muted-foreground" />
     </div>
   );
 }
@@ -398,71 +457,43 @@ function OverseerConfirmBatch({
 
 interface OverseerApproveCardProps {
   approval: OverseerApproval;
-  /** A decision for *this* call is in flight — this card owns the spinner. */
-  deciding: boolean;
   /** Some approval decision is in flight; every approve card locks. */
   locked: boolean;
-  onDecide: (decision: OverseerApprovalDecision) => void;
+  onDecide: (decision: OverseerApprovalDecision) => Promise<void>;
 }
 
 /**
  * A built-in tool call the overseer's turn is parked on — Bash, Edit, a
  * project MCP tool — which is a different question from the confirm card
  * above: nothing is queued for later, the session is blocked right now and
- * allowing runs the call at once. Three answers rather than two, because
- * "yes", "yes and stop asking about this tool" and "no" are genuinely
- * different instructions, the same trio a run's approval offers.
+ * allowing runs the call at once. It is the same card a run's parked call
+ * gets: allow once, allow the tool for the rest of the conversation, or deny
+ * with an optional reason the model gets as its refusal. A held call (the
+ * floor, or Dispatch's own surfaces) is allowed once only.
  */
 function OverseerApproveCard({
   approval,
-  deciding,
   locked,
   onDecide,
 }: OverseerApproveCardProps) {
   return (
-    <div className="bg-state-waiting-surface rounded-card flex flex-col gap-2 self-stretch border-[0.5px] border-(--state-waiting-edge) px-3 py-2.5">
-      <div className="text-state-waiting flex items-center gap-1.5 text-[12px] font-medium">
-        <TerminalSquare className="size-3.5" />
-        Wants to run
-        <span className="text-muted-foreground font-book">
-          {approval.toolName}
-        </span>
-      </div>
-      {/* The call itself — a command line, so it keeps the code face. */}
-      <p className="font-mono text-[12px] break-all">{approval.summary}</p>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          disabled={locked}
-          onClick={() => onDecide({ allow: true })}
-          aria-label={`Allow: ${approval.summary}`}
-        >
-          {deciding ? (
-            <Spinner className="size-3.5" />
-          ) : (
-            <Check className="size-3.5" />
-          )}
-          Allow
-        </Button>
-        {/* A held call (the floor, or Dispatch's own surfaces) is allowed once only. */}
-        {approval.held !== true && (
-          <PillButton
-            disabled={locked}
-            onClick={() => onDecide({ allow: true, scope: 'session' })}
-            aria-label={`Allow ${approval.toolName} for this conversation`}
-          >
-            Allow for this conversation
-          </PillButton>
-        )}
-        <PillButton
-          disabled={locked}
-          onClick={() => onDecide({ allow: false })}
-          aria-label={`Deny: ${approval.summary}`}
-        >
-          <X className="size-3.5" />
-          Deny
-        </PillButton>
-      </div>
-    </div>
+    <ToolApprovalCard
+      toolName={approval.toolName}
+      // Several parked calls can be on screen: the call names its card's
+      // group, so "Approve once" says what it approves.
+      question={
+        <>
+          Wants to run
+          <span className="sr-only"> {approval.summary}</span>
+        </>
+      }
+      // The call itself, a command line, so it keeps the code face.
+      preview={approval.summary}
+      sessionScope={approval.held === true ? undefined : 'this conversation'}
+      sessionDescription="Ends after four hours, or when the conversation starts over."
+      onDecide={onDecide}
+      busy={locked}
+    />
   );
 }
 
@@ -769,8 +800,8 @@ export function OverseerChat({
   const decideError = overseer.decideError;
 
   const fullThread = useMemo(
-    () => buildOverseerThread(overseer.record),
-    [overseer.record]
+    () => buildOverseerThread(overseer.record, overseer.live),
+    [overseer.record, overseer.live]
   );
   const [query, setQuery] = useState<string | null>(null);
   const thread = useMemo(
@@ -815,6 +846,25 @@ export function OverseerChat({
     const el = scrollRef.current;
     if (el !== null && followRef.current) el.scrollTop = el.scrollHeight;
   }, [thread.length, lastKey]);
+
+  // A row growing in place (live text revealing, its Markdown reflowing)
+  // changes neither the row count nor the last key, so the log's own DOM is
+  // watched too, and followed for a reader at the bottom. Only the open
+  // conversation renders the log.
+  const hasLog = overseer.conversationId !== null;
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!hasLog || el === null) return;
+    const observer = new MutationObserver(() => {
+      if (followRef.current) el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(el, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    return () => observer.disconnect();
+  }, [hasLog]);
 
   function onLogScroll() {
     const el = scrollRef.current;
@@ -873,11 +923,15 @@ export function OverseerChat({
     void overseer.confirmAction(actionId, approve);
   }
 
-  function decideApproval(
+  // The card keeps its reason box only when its decision rejects; the session
+  // reports the failure on decideError and resolves false, so say so here.
+  async function decideApproval(
     requestId: string,
     decision: OverseerApprovalDecision
-  ) {
-    void overseer.decideApproval(requestId, decision);
+  ): Promise<void> {
+    if (!(await overseer.decideApproval(requestId, decision))) {
+      throw new Error('the decision did not go through');
+    }
   }
 
   // A failed turn's fixes: re-send the last ask, or hand the error to the agent.
@@ -892,11 +946,31 @@ export function OverseerChat({
         return (
           <OverseerMessageBubble
             key={item.key}
-            role={item.role}
+            speaker={item.role}
             text={item.text}
             at={item.at}
             plain={durable}
             attachments={item.attachments}
+            fetchAttachment={overseer.fetchAttachment}
+          />
+        );
+      case 'narration':
+        return (
+          <OverseerNarration
+            key={item.key}
+            text={item.text}
+            at={item.at}
+            plain={durable}
+          />
+        );
+      case 'live':
+        return (
+          <OverseerMessageBubble
+            key={item.key}
+            speaker="assistant"
+            text={item.text}
+            streaming
+            plain={durable}
             fetchAttachment={overseer.fetchAttachment}
           />
         );
@@ -948,7 +1022,6 @@ export function OverseerChat({
           <OverseerApproveCard
             key={item.key}
             approval={item.approval}
-            deciding={decidingRequestId === item.approval.requestId}
             locked={decidingRequestId !== null}
             onDecide={(decision) =>
               decideApproval(item.approval.requestId, decision)

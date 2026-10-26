@@ -28,6 +28,8 @@ export interface NormalizedEntry {
     | 'usage'
     | 'message'
     | 'agent';
+  // A `tool` entry with no `toolName` is a tool call's result: `status` says
+  // how it ended and `text` is a capped preview of its output.
   text?: string;
   toolName?: string;
   toolInput?: unknown;
@@ -57,7 +59,17 @@ export interface NormalizedEntry {
   // Set on entries delivered via `Orchestrator.notifyRun` — a non-interrupting
   // channel digest rather than a message the agent must respond to.
   digest?: boolean;
+  // `assistant` entries whose text streamed: the segment its `onDelta` text
+  // was keyed by, so a client showing that text live drops it once the
+  // entry lands.
+  streamId?: string;
 }
+
+// How much of a tool's result a transcript keeps: a run's tool result entry,
+// an Overseer status tool's row. The model gets the whole payload; this copy
+// exists so the human can see what the agent went on, and a whole file or a
+// full test log would swamp the chat.
+export const MAX_TOOL_RESULT_TEXT = 2000;
 
 // A live handle to a running executor invocation — the orchestrator holds
 // one of these per live run so API calls (approval, mid-run message, cancel)
@@ -164,6 +176,16 @@ export interface ExecutorRun {
 // id, so the executor implementation itself never needs to know a run id.
 export interface ExecutorEvents {
   onEntry(entry: NormalizedEntry): void;
+  // Text as the model writes it, keyed by the segment it belongs to (one
+  // Claude text block, one Codex agentMessage item). Never persisted: the
+  // finished text arrives as an `assistant` entry whose `streamId` is that
+  // segment. Optional: an executor streams only when it is given, and must
+  // work the same when the model's stream sends none.
+  onDelta?(segmentId: string, text: string): void;
+  // A segment `onDelta` streamed that no entry will finish: the model's
+  // stream broke off mid-block (the text comes again under a new segment).
+  // Optional, like onDelta.
+  onSegmentAbandoned?(segmentId: string): void;
   onApprovalRequest(request: {
     requestId: string;
     toolName: string;

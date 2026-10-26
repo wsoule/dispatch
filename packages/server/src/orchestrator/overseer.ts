@@ -1,6 +1,7 @@
 import {
   DEFAULT_EXECUTOR_NAME,
   loadConfig,
+  overseerSettings,
   untrustedInline,
 } from '@dispatch-foo/core';
 import type { EffortLevel } from '@dispatch-foo/core';
@@ -9,9 +10,12 @@ import { SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 import { createHash, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 
-import type { EventBus } from '../events.js';
+import type { EventBus, SocketAudience } from '../events.js';
 import { floorCheckForToolInput } from '../floor.js';
+import { LiveTextBuffer } from '../liveText.js';
+import type { LiveText } from '../liveText.js';
 import type { OverseerBus } from '../messaging/overseerBus.js';
+import { tierAllows } from '../tiers.js';
 import { backendModel, pickAgentBackend } from './agentBackends.js';
 import type {
   OverseerBackend,
@@ -28,6 +32,7 @@ import { grantKey, GrantStore, type GrantView } from './overseerGrants.js';
 import type { OverseerStore } from './overseerStore.js';
 import type { OverseerAction, OverseerToolRegistry } from './overseerTools.js';
 import {
+  MAX_TOOL_RESULT_TEXT,
   OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
@@ -35,8 +40,8 @@ import {
 import type { ApprovalDecision } from './types.js';
 
 // Same short collision-resistant hex tag as plan.ts's generatePlanId, and
-// local to this package for the same reason: a overseer conversation is a purely
-// server-side, in-memory concept that is never written to a task file.
+// local to this package for the same reason: an overseer conversation is a
+// purely server-side concept that is never written to a task file.
 function generateOverseerId(
   now: string,
   nonce: string = randomBytes(4).toString('hex')
@@ -77,17 +82,30 @@ type OverseerState = 'running' | 'ready' | 'failed';
 /**
  * One transcript entry.
  *
- * `user`/`assistant` are the conversation proper. `tool` records a tool call
- * the assistant made mid-turn — a registry status tool or a built-in one — so
- * the human can see what the answer was actually derived from. `action`
- * records a mutating registry call's life: queued at `pending`, then
- * `applied`/`denied`/`failed` once a human decides. `approval` records a
- * built-in tool call's life: parked at `pending`, then `allowed`/`denied`.
+ * `user`/`assistant` are the conversation proper: one `assistant` reply per
+ * turn. `narration` is prose the assistant wrote mid-turn, before a tool call
+ * (or the partial text of a turn that was stopped or failed). `tool` records a
+ * tool call the assistant made mid-turn — a registry status tool or a
+ * built-in one — so the human can see what the answer was actually derived
+ * from. `action` records a mutating registry call's life: queued at
+ * `pending`, then `applied`/`denied`/`failed` once a human decides.
+ * `approval` records a built-in tool call's life: parked at `pending`, then
+ * `allowed`/`denied`.
  */
 export interface OverseerMessage {
-  role: 'user' | 'assistant' | 'tool' | 'action' | 'approval' | 'notice';
+  role:
+    | 'user'
+    | 'assistant'
+    | 'narration'
+    | 'tool'
+    | 'action'
+    | 'approval'
+    | 'notice';
   text: string;
   at: string;
+  /** `narration` and `assistant` entries whose text streamed: the segment id
+   *  its `overseer.delta` frames carried, so a client drops that live text. */
+  streamId?: string;
   /** `tool`, `action` and `approval` entries: which tool the entry is about. */
   tool?: string;
   /** `action` entries: the OverseerAction this entry reports on. */
@@ -208,6 +226,31 @@ export interface OverseerRecord {
   updatedAt: string;
 }
 
+/** What GET /api/overseer/:id answers with: the record, plus the running
+ *  turn's live text. `live` is never stored. */
+export type OverseerRecordView = OverseerRecord & { live?: LiveText };
+
+/**
+ * Who hears an Overseer turn's live text over /ws (owner decision 2026-10-23):
+ * any deciding human, the reach the bus mirror of the conversation's lines
+ * already has, plus the conversation's owner and operator-tier sockets. Never
+ * the shared agent token, whose socket resolves to the operator.
+ */
+export function overseerLiveAudience(
+  record: Pick<OverseerRecord, 'owner'>
+): (who: SocketAudience | undefined) => boolean {
+  return (who) => {
+    if (who === undefined || who.agentToken) return false;
+    if (who.ref !== null && who.ref === record.owner) return true;
+    if (who.tier === 'operator') return true;
+    return (
+      who.ref?.startsWith('human:') === true &&
+      who.tier !== null &&
+      tierAllows(who.tier, 'decide')
+    );
+  };
+}
+
 /** One line on `OverseerRecord.queued`. */
 export interface OverseerQueuedMessage {
   id: string;
@@ -234,11 +277,6 @@ const QUEUED_NOTE =
   'until the human confirms its approval card. Do not say the action was ' +
   'taken — tell the user what you have queued and that it needs their ' +
   'confirmation.';
-
-// How much of a status tool's result is kept in the transcript. The model gets
-// the whole payload; this copy exists so the human can see what a claim was
-// based on, and a full merge-queue or ledger dump would swamp the chat.
-const MAX_TOOL_TEXT = 2000;
 
 // How much of a built-in tool call's input the transcript and an approval
 // card quote — a whole file written by `Write` is not what a human reads
@@ -316,17 +354,19 @@ function describeToolCall(toolName: string, input: unknown): string {
 // Renders a tool result for the transcript: compact JSON, capped.
 function describeToolResult(data: unknown): string {
   const text = JSON.stringify(data) ?? String(data);
-  return text.length <= MAX_TOOL_TEXT
+  return text.length <= MAX_TOOL_RESULT_TEXT
     ? text
-    : `${text.slice(0, MAX_TOOL_TEXT)}… (truncated)`;
+    : `${text.slice(0, MAX_TOOL_RESULT_TEXT)}… (truncated)`;
 }
 
 /**
  * Owns the overseer's chat conversations (epic: the project assistant tab):
  * drives a `OverseerBackend` as a multi-turn, tool-calling conversation and
- * tracks each turn's running -> ready|failed state plus the transcript in a
- * small in-memory registry. Machine-local, exactly like PlanManager — a
- * conversation that was still `running` when dispatchd restarts is simply gone.
+ * tracks each turn's running -> ready|failed state plus the transcript,
+ * written through to the store so a conversation outlives the daemon (a turn
+ * the daemon died in loads back as failed). Machine-local, like PlanManager.
+ * The text a running turn streams is the one thing kept in memory only: see
+ * `live` and `withLive`.
  *
  * Two rules this class exists to enforce, on top of what OverseerToolRegistry
  * already guarantees. A turn's mutating registry calls are *collected*, never
@@ -363,6 +403,15 @@ export class OverseerManager {
 
   // The running turn's abort handle, per conversation; Stop fires it.
   private readonly turns = new Map<string, AbortController>();
+  // Each conversation's live text: what its running turn streamed and has not
+  // committed to the record yet. Never persisted.
+  private readonly live = new LiveTextBuffer();
+  // The narration rows the running turn appended, per conversation, by
+  // their scoped segment id (turn id + backend segment id). A backend can
+  // name an already narrated segment as its reply (Codex picks its last
+  // message even when a step followed it); the reply then takes that row's
+  // place instead of repeating it. Cleared when the turn ends.
+  private readonly narrated = new Map<string, Map<string, OverseerMessage>>();
   // Set by shutdown(): turns still settling write nothing more.
   private shuttingDown = false;
   // Who typed each conversation's queued messages, for posting them when they go.
@@ -426,12 +475,18 @@ export class OverseerManager {
   // no daemon restart: the `overseer` role's model (unless the conversation
   // was opened on a chosen one), and the same permission mode and caps a
   // dispatched run gets — the overseer is exactly as autonomous as the agents
-  // it oversees. The two callbacks bind this conversation, so a parked call
-  // lands on the right record.
-  private turnOptionsFor(conversationId: string): OverseerTurnOptions {
+  // it oversees. The callbacks bind this conversation, so a parked call
+  // lands on the right record, and the live text ones bind the turn too:
+  // `overseer.stream` decides which the backend gets (`off` gives neither).
+  private turnOptionsFor(
+    conversationId: string,
+    turnId: string
+  ): { options: OverseerTurnOptions; live: boolean } {
     const config = loadConfig(this.ctx.rootDir);
     const record = this.conversations.get(conversationId);
-    return {
+    const { stream } = overseerSettings(config);
+    const live = stream === 'live';
+    const options: OverseerTurnOptions = {
       model: backendModel(
         config,
         record?.backendName ?? DEFAULT_EXECUTOR_NAME,
@@ -459,7 +514,125 @@ export class OverseerManager {
           tool: toolName,
           text: describeToolCall(toolName, input),
         }),
+      ...(live
+        ? {
+            onTextDelta: (segmentId: string, text: string) =>
+              this.textDelta(conversationId, turnId, segmentId, text),
+            onSegmentAbandoned: (segmentId: string) =>
+              this.abandonSegment(conversationId, turnId, segmentId),
+          }
+        : {}),
+      ...(stream !== 'off'
+        ? {
+            onNarration: (segmentId: string, text: string) =>
+              this.narrate(conversationId, turnId, live, segmentId, text),
+          }
+        : {}),
     };
+    return { options, live };
+  }
+
+  // One frame of live text: kept for the snapshot and sent to the sockets
+  // that may read it. Frames from a turn that already ended are dropped.
+  private textDelta(
+    conversationId: string,
+    turnId: string,
+    segmentId: string,
+    text: string
+  ): void {
+    const record = this.conversations.get(conversationId);
+    if (record === undefined || text === '') return;
+    const id = streamIdOf(turnId, segmentId);
+    const seq = this.live.append(conversationId, turnId, id, text);
+    if (seq === undefined) return;
+    this.ctx.events.broadcast(
+      {
+        type: 'overseer.delta',
+        conversationId,
+        turnId,
+        seq,
+        segmentId: id,
+        text,
+      },
+      overseerLiveAudience(record)
+    );
+  }
+
+  // A segment no row will ever hold (the model's stream broke off, and the
+  // text comes again under a new one) leaves the live text, so a Stop does
+  // not keep it as narration, and a frame tells the sockets to drop it too.
+  private abandonSegment(
+    conversationId: string,
+    turnId: string,
+    segmentId: string
+  ): void {
+    const record = this.conversations.get(conversationId);
+    if (record === undefined) return;
+    const id = streamIdOf(turnId, segmentId);
+    const seq = this.live.abandon(conversationId, turnId, id);
+    if (seq === undefined) return;
+    this.ctx.events.broadcast(
+      {
+        type: 'overseer.delta',
+        conversationId,
+        turnId,
+        seq,
+        segmentId: id,
+        text: '',
+        abandoned: true,
+      },
+      overseerLiveAudience(record)
+    );
+  }
+
+  // A finished segment that is not the reply lands on the record as a
+  // narration row, and leaves the live text in the same step.
+  private narrate(
+    conversationId: string,
+    turnId: string,
+    streamed: boolean,
+    segmentId: string,
+    text: string
+  ): void {
+    if (!this.live.isRunning(conversationId, turnId)) return;
+    const id = streamIdOf(turnId, segmentId);
+    this.live.drop(conversationId, turnId, id);
+    const said = text.trim();
+    if (said === '') return;
+    const row = this.appendMessage(conversationId, {
+      role: 'narration',
+      text: said,
+      ...(streamed ? { streamId: id } : {}),
+    });
+    if (row === undefined) return;
+    const rows = this.narrated.get(conversationId) ?? new Map();
+    this.narrated.set(conversationId, rows.set(id, row));
+  }
+
+  // Ends the turn's live text. A turn that stopped or failed keeps what it
+  // had said as narration rows, so partial text survives; a turn that
+  // settled has its reply, which covers the rest.
+  private endLive(conversationId: string, turnId: string, keep: boolean): void {
+    for (const segment of this.live.end(conversationId, turnId)) {
+      const said = segment.text.trim();
+      if (!keep || said === '') continue;
+      this.appendMessage(conversationId, {
+        role: 'narration',
+        text: said,
+        streamId: segment.id,
+      });
+    }
+  }
+
+  /**
+   * `record` as GET /api/overseer/:id answers it: while a turn runs, with
+   * the text it has streamed and not committed (`live`), so a window that
+   * opens or reconnects mid-turn picks up from there.
+   */
+  withLive(record: OverseerRecord): OverseerRecordView {
+    if (record.state !== 'running') return record;
+    const live = this.live.snapshot(record.id);
+    return live === undefined ? record : { ...record, live };
   }
 
   /** The backend a conversation opened with none named runs on: the default agent's, else Claude's. */
@@ -533,7 +706,8 @@ export class OverseerManager {
     this.conversations.set(record.id, record);
     this.persist(record);
     this.postEntry(record.id, 0, speaker);
-    const options = this.turnOptionsFor(record.id);
+    const turnId = this.live.begin(record.id);
+    const { options, live } = this.turnOptionsFor(record.id, turnId);
     const toolset = this.toolsetFor(record.id);
     const outgoing = withAttachmentNote(prompt, attachments, this.ctx.rootDir);
     const files = turnAttachments(attachments, this.ctx.rootDir);
@@ -546,7 +720,8 @@ export class OverseerManager {
           ...(files.length > 0 ? { attachments: files } : {}),
         }),
       [],
-      { speaker, line: 0 }
+      { speaker, line: 0 },
+      { turnId, live }
     );
     return record;
   }
@@ -716,7 +891,8 @@ export class OverseerManager {
         );
     const outgoing = rollover ? `${recapOf(record.messages)}\n${said}` : said;
     const sessionId = rollover ? undefined : record.sessionId;
-    const options = this.turnOptionsFor(conversationId);
+    const turnId = this.live.begin(conversationId);
+    const { options, live } = this.turnOptionsFor(conversationId, turnId);
     const toolset = this.toolsetFor(conversationId);
     const files = slash
       ? []
@@ -733,7 +909,8 @@ export class OverseerManager {
           ...(files.length > 0 ? { attachments: files } : {}),
         }),
       drained,
-      { speaker, line }
+      { speaker, line },
+      { turnId, live }
     );
     return updated;
   }
@@ -767,11 +944,13 @@ export class OverseerManager {
   // being silently lost — the point of those notices is that the assistant
   // never contradicts what the human actually decided. `from` is who spoke the
   // turn and the index of their line, which the reply answers on the bus.
+  // `stream` is the turn's live text: its id, and whether its text streams.
   private async runTurn(
     conversationId: string,
     run: (abortController: AbortController) => Promise<OverseerTurn>,
     drained: string[],
-    from: { speaker: Sender | null; line: number }
+    from: { speaker: Sender | null; line: number },
+    stream: { turnId: string; live: boolean }
   ): Promise<void> {
     const abort = new AbortController();
     this.turns.set(conversationId, abort);
@@ -785,6 +964,16 @@ export class OverseerManager {
       if (this.shuttingDown) return;
       const current = this.conversations.get(conversationId);
       if (current === undefined) return;
+      // The reply replaces the live text in the same update, and the
+      // narration row of its own segment when the backend narrated it first.
+      this.endLive(conversationId, stream.turnId, false);
+      const narratedReply =
+        turn.streamId === undefined
+          ? undefined
+          : this.narrated
+              .get(conversationId)
+              ?.get(streamIdOf(stream.turnId, turn.streamId));
+      const earlier = current.messages.filter((m) => m !== narratedReply);
       this.updateRecord(conversationId, {
         state: 'ready',
         sessionId: turn.sessionId ?? current.sessionId,
@@ -796,23 +985,23 @@ export class OverseerManager {
           ? { spendUsd: (current.spendUsd ?? 0) + turn.costUsd }
           : {}),
         messages: [
-          ...current.messages,
+          ...earlier,
           {
             role: 'assistant',
             text: turn.reply,
             at: new Date().toISOString(),
+            ...(stream.live && turn.streamId !== undefined
+              ? { streamId: streamIdOf(stream.turnId, turn.streamId) }
+              : {}),
             ...(turn.costUsd !== undefined ? { costUsd: turn.costUsd } : {}),
           },
         ],
       });
-      this.postEntry(
-        conversationId,
-        current.messages.length,
-        from.speaker,
-        from.line
-      );
+      this.postEntry(conversationId, earlier.length, from.speaker, from.line);
     } catch (err) {
       if (this.shuttingDown) return;
+      // What the turn had said stays, ahead of the notice or the failure.
+      this.endLive(conversationId, stream.turnId, true);
       const current = this.conversations.get(conversationId);
       // Oldest first: anything decided *during* the turn comes after.
       const undeliveredDecisions = [
@@ -842,6 +1031,9 @@ export class OverseerManager {
       }
     } finally {
       this.turns.delete(conversationId);
+      this.narrated.delete(conversationId);
+      // Past shutdown, or for a conversation that is gone, nothing more lands.
+      this.live.end(conversationId, stream.turnId);
       // A turn that is over has no tool call left to run: anything still
       // parked would otherwise sit on the record forever, undecidable in any
       // way that could matter. Past shutdown the next boot clears them instead.
@@ -1470,18 +1662,16 @@ export class OverseerManager {
   }
 
   // Appends one transcript entry, stamped now.
+  // Returns the row as stored, or undefined when the conversation is gone.
   private appendMessage(
     conversationId: string,
     message: Omit<OverseerMessage, 'at'>
-  ): void {
+  ): OverseerMessage | undefined {
     const record = this.conversations.get(conversationId);
-    if (record === undefined) return;
-    this.updateRecord(conversationId, {
-      messages: [
-        ...record.messages,
-        { ...message, at: new Date().toISOString() },
-      ],
-    });
+    if (record === undefined) return undefined;
+    const row: OverseerMessage = { ...message, at: new Date().toISOString() };
+    this.updateRecord(conversationId, { messages: [...record.messages, row] });
+    return row;
   }
 
   private updateRecord(
@@ -1499,6 +1689,12 @@ export class OverseerManager {
     this.persist(updated);
     this.ctx.events.broadcast({ type: 'overseer.changed', conversationId });
   }
+}
+
+// The id a segment's live text and its row carry: unique in the conversation
+// whatever ids the backend reuses from turn to turn.
+function streamIdOf(turnId: string, segmentId: string): string {
+  return `${turnId}:${segmentId}`;
 }
 
 function isSlashCommand(text: string): boolean {

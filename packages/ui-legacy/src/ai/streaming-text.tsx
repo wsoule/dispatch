@@ -12,6 +12,13 @@ export type StreamingTextSource = {
 export type StreamingTextProps = {
   text: string;
   streaming: boolean;
+  /** Draws the revealed text, e.g. through the app's Markdown component, so formatting
+   * shows while the text streams instead of popping in at the end. It gets the text with
+   * an unterminated code fence closed (see `closeOpenFence`), and owns the typography:
+   * nothing is added around it, so a streamed row can look exactly like the settled row
+   * that replaces it. No caret is drawn, since a rendered block has no inline end to put
+   * one on. Without it the text is a plain paragraph with a typing caret. */
+  render?: (text: string) => ReactNode;
   sources?: StreamingTextSource[];
   followUps?: string[];
   onFollowUp?: (followUp: string) => void;
@@ -53,14 +60,54 @@ function SourceChip({
   );
 }
 
-/** Streamed answer text: a word-boundary-aware typing reveal with a blinking caret
- * (hidden once done or under reduced motion), inline numbered source chips, an actions
- * slot for copy/regenerate controls, and follow-up suggestion buttons. Extras stay
- * hidden until the reveal finishes, matching the showcase's "Streaming Text" primitive
- * where they fade in only after the answer lands. */
+// A line that opens or closes a fenced code block: up to three spaces, then three or more
+// backticks or tildes, then (for an opener) an info string.
+const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+
+/** `markdown` with a code fence that is still open at its end closed, for showing text
+ * that is still arriving: a half-written block then renders as the code block it is going
+ * to be. A trailing line that is the start of the closing fence (two of its three
+ * backticks, say) is replaced by the whole fence rather than shown as code. Text with no
+ * open fence comes back unchanged. */
+export function closeOpenFence(markdown: string): string {
+  // The open fence and the line it opened on, or null outside a code block.
+  let open: { fence: string; at: number } | null = null;
+  const lines = markdown.split('\n');
+  for (const [at, line] of lines.entries()) {
+    const match = FENCE.exec(line);
+    if (match === null) continue;
+    const [, fence, rest] = match;
+    if (open === null) {
+      // A backtick fence's info string may not hold a backtick (CommonMark).
+      if (fence[0] !== '`' || !rest.includes('`')) open = { fence, at };
+    } else if (
+      fence[0] === open.fence[0] &&
+      fence.length >= open.fence.length &&
+      rest.trim() === ''
+    ) {
+      open = null;
+    }
+  }
+  if (open === null) return markdown;
+  const { fence, at } = open;
+  const last = lines.length - 1;
+  const tail = lines[last].replace(/^ {0,3}/, '').trimEnd();
+  if (last > at && /^(`+|~+)$/.test(tail) && tail[0] === fence[0]) {
+    return [...lines.slice(0, last), fence].join('\n');
+  }
+  return `${markdown}${markdown.endsWith('\n') ? '' : '\n'}${fence}`;
+}
+
+/** Streamed answer text: a word-boundary-aware reveal of what `text` grows by (the text
+ * it mounts with shows at once — see `useStreamedText`) with a blinking caret (hidden once
+ * done or under reduced motion), or the caller's own `render` of it, inline numbered
+ * source chips, an actions slot for copy/regenerate controls, and follow-up suggestion
+ * buttons. Extras stay hidden until the reveal finishes, matching the showcase's
+ * "Streaming Text" primitive where they fade in only after the answer lands. */
 export function StreamingText({
   text,
   streaming,
+  render,
   sources = [],
   followUps = [],
   onFollowUp,
@@ -71,15 +118,19 @@ export function StreamingText({
 
   return (
     <div className="flex w-full flex-col">
-      <p className="text-foreground text-[13px] leading-relaxed">
-        {shown}
-        {!done && (
-          <span
-            aria-hidden="true"
-            className="bg-foreground ml-0.5 inline-block h-3 w-0.5 translate-y-0.5 animate-[caret-blink_1s_step-end_infinite] rounded-full motion-reduce:hidden"
-          />
-        )}
-      </p>
+      {render !== undefined ? (
+        render(closeOpenFence(shown))
+      ) : (
+        <p className="text-foreground text-[13px] leading-relaxed">
+          {shown}
+          {!done && (
+            <span
+              aria-hidden="true"
+              className="bg-foreground ml-0.5 inline-block h-3 w-0.5 translate-y-0.5 animate-[caret-blink_1s_step-end_infinite] rounded-full motion-reduce:hidden"
+            />
+          )}
+        </p>
+      )}
 
       {done && actions && (
         <div className="mt-2 flex items-center gap-0.5">{actions}</div>

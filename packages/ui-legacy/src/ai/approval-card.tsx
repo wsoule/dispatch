@@ -20,6 +20,11 @@ export type ApprovalCardProps = {
   onSelect: (id: string) => void;
   selectedId?: string;
   disabled?: boolean;
+  /** Whether the selected option is an answer already given, which the line under the
+   * options says ("Answered" rather than "Selected"). Defaults to `disabled`: a card is
+   * usually disabled because it was answered. A caller that disables the options for
+   * another reason (a Deny whose reason is still being written) passes false. */
+  answered?: boolean;
   /** Merged over the card frame's own classes. The default keeps the gallery's `max-w-sm`;
    * full-width surfaces (transcript, inbox) pass `max-w-none` to lift it. */
   className?: string;
@@ -100,6 +105,7 @@ export function ApprovalCard({
   onSelect,
   selectedId,
   disabled = false,
+  answered = disabled,
   className,
 }: ApprovalCardProps) {
   const selectedOption = options.find((option) => option.id === selectedId);
@@ -162,7 +168,7 @@ export function ApprovalCard({
             className="text-status-green size-3.5 shrink-0"
           />
           <span className="font-book text-foreground text-[12px]">
-            {disabled ? 'Answered — ' : 'Selected — '}
+            {answered ? 'Answered — ' : 'Selected — '}
             <span className="font-medium">{selectedOption.label}</span>
           </span>
         </div>

@@ -2,20 +2,22 @@ import './dom-env';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, test } from 'bun:test';
+import { type ReactNode, StrictMode } from 'react';
 
 import {
   type ApiClient,
   ApiError,
+  type LiveText,
   type Message,
   type OverseerRecord,
+  type OverseerRecordView,
   type ReplyInput,
 } from '../src/api';
-
-afterEach(cleanup);
-import { type ReactNode, StrictMode } from 'react';
-
+import { liveTextStore, resetLiveText, runLiveKey } from '../src/liveText';
 import { memoryStorage } from '../src/storage';
+import { useLiveText } from '../src/useLiveText';
 import {
+  applyOverseerDelta,
   invalidateOverseerEvent,
   overseerKey,
   overseerKeyPrefix,
@@ -23,6 +25,12 @@ import {
 } from '../src/useOverseerSession';
 
 const PORT = 4321;
+
+afterEach(() => {
+  cleanup();
+  // The live text store is one per window, so each test starts it empty.
+  resetLiveText(PORT);
+});
 
 function overseerRecord(): OverseerRecord {
   return {
@@ -122,9 +130,10 @@ async function sessionAfterFailedRefetch(refetchError: unknown) {
   return result;
 }
 
-// The ghost direction: overseer records live in an in-memory Map, so a daemon
-// restart 404s every id. The cached record and its pendingActions describe a
-// conversation that no longer exists anywhere and must not reach any consumer.
+// The ghost direction: a 404 says the daemon has no such conversation (another
+// project's daemon answered, or the record is gone). The cached record and its
+// pendingActions describe a conversation that no longer exists there and must
+// not reach any consumer.
 test('a 404 on refetch drops the cached record', async () => {
   const result = await sessionAfterFailedRefetch(
     new ApiError('overseer conversation w-1 not found', 404)
@@ -221,10 +230,10 @@ test('reset clears the composer draft along with the conversation', () => {
   expect(result.current.conversationId).toBeNull();
 });
 
-// A dispatchd restart destroys every overseer record (they live in an in-memory
-// Map), and nothing in the app notices on its own: `overseer.changed` can never
-// arrive for a conversation the daemon no longer has, and the record query has
-// no refetch interval. The trigger is the daemon's `hello` frame, which the
+// A daemon that comes back without a conversation (another project's daemon on
+// the same port, a record that is gone) is noticed by nothing on its own:
+// `overseer.changed` can never arrive for a conversation the daemon does not
+// have, and the record query has no refetch interval. The trigger is the daemon's `hello` frame, which the
 // server sends from its websocket `open` handler and so on every reconnect;
 // useDispatchProject handles it and cannot name a conversation id — it does
 // not own this session — so it invalidates by prefix. This is that chain's far
@@ -642,9 +651,11 @@ test('decideApproval answers the tool-approval gate with approve, approve-sessio
   ]);
   const result = await openedSession(client);
 
+  let answered: boolean | undefined;
   await act(async () => {
-    await result.current.decideApproval('rq-1', { allow: true });
+    answered = await result.current.decideApproval('rq-1', { allow: true });
   });
+  expect(answered).toBe(true);
   await act(async () => {
     await result.current.decideApproval('rq-2', {
       allow: true,
@@ -679,9 +690,12 @@ test('a decision whose gate is no longer open surfaces decideError', async () =>
     'This action is no longer waiting for you.'
   );
 
+  let answered: boolean | undefined;
   await act(async () => {
-    await result.current.decideApproval('rq-1', { allow: true });
+    answered = await result.current.decideApproval('rq-1', { allow: true });
   });
+  // Resolved, never rejected, but false: a card keeps what was typed.
+  expect(answered).toBe(false);
   expect(result.current.decideError).toBe(
     'This approval is no longer waiting for you.'
   );
@@ -945,4 +959,381 @@ test('an overseer.changed event invalidates that conversation', () => {
   expect(
     queryClient.getQueryState(overseerKey(PORT, 'w-1'))?.isInvalidated
   ).toBe(true);
+});
+
+// A running w-1 whose first segment already landed as a narration row.
+function runningRecord(live?: LiveText): OverseerRecordView {
+  return {
+    ...overseerRecord(),
+    state: 'running',
+    pendingActions: [],
+    messages: [
+      { role: 'user', text: 'what is going on?', at: '2026-08-10T00:00:00Z' },
+      {
+        role: 'narration',
+        text: 'Checking.',
+        at: '2026-08-10T00:00:01Z',
+        streamId: 't1:a',
+      },
+    ],
+    ...(live === undefined ? {} : { live }),
+  };
+}
+
+// A hook over `getOverseer` answers handed out in order (the last one repeats),
+// with the conversation open, and the QueryClient it reads.
+function openWith(answers: OverseerRecordView[]) {
+  let calls = 0;
+  const client = {
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    getOverseer: () => {
+      const answer = answers[Math.min(calls, answers.length - 1)];
+      calls += 1;
+      return Promise.resolve(answer);
+    },
+  } as unknown as ApiClient;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const rendered = renderHook(() => useOverseerSession(client, PORT, '/repo'), {
+    wrapper: ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    ),
+  });
+  act(() => {
+    rendered.result.current.open('w-1');
+  });
+  return { ...rendered, queryClient, calls: () => calls };
+}
+
+function delta(seq: number, segmentId: string, text: string) {
+  return { conversationId: 'w-1', turnId: 't1', seq, segmentId, text };
+}
+
+test('live shows the snapshot’s text minus the segments the record already holds', async () => {
+  const { result } = openWith([
+    runningRecord({
+      seq: 3,
+      turnId: 't1',
+      segments: [
+        { id: 't1:a', text: 'Checking.' },
+        { id: 't1:b', text: 'Two runs' },
+      ],
+    }),
+  ]);
+  await waitFor(() => {
+    expect(result.current.live).toEqual({
+      turnId: 't1',
+      segments: [{ id: 't1:b', text: 'Two runs' }],
+    });
+  });
+});
+
+test('live follows delta frames, and is null once the turn is not running', async () => {
+  const running = runningRecord({
+    seq: 1,
+    turnId: 't1',
+    segments: [{ id: 't1:b', text: 'Two' }],
+  });
+  const settled: OverseerRecordView = {
+    ...running,
+    state: 'ready',
+    live: undefined,
+  };
+  const answers = [running];
+  const { result, queryClient } = openWith(answers);
+  await waitFor(() => {
+    expect(result.current.live?.segments).toEqual([
+      { id: 't1:b', text: 'Two' },
+    ]);
+  });
+  act(() => {
+    applyOverseerDelta(queryClient, PORT, delta(2, 't1:b', ' runs'));
+  });
+  expect(result.current.live?.segments).toEqual([
+    { id: 't1:b', text: 'Two runs' },
+  ]);
+
+  answers[0] = settled;
+  await act(async () => {
+    await queryClient.invalidateQueries({ queryKey: overseerKey(PORT, 'w-1') });
+  });
+  await waitFor(() => {
+    expect(result.current.record?.state).toBe('ready');
+  });
+  expect(result.current.live).toBeNull();
+});
+
+// The server sends one when the model's stream broke off mid-block: no row
+// will ever replace that text, so the view must not keep it.
+test('an abandoning frame takes its segment off the live text at once', async () => {
+  const { result, queryClient } = openWith([
+    runningRecord({
+      seq: 1,
+      turnId: 't1',
+      segments: [{ id: 't1:x', text: 'Let me lo' }],
+    }),
+  ]);
+  await waitFor(() => {
+    expect(result.current.live?.segments).toEqual([
+      { id: 't1:x', text: 'Let me lo' },
+    ]);
+  });
+  act(() => {
+    applyOverseerDelta(queryClient, PORT, {
+      ...delta(2, 't1:x', ''),
+      abandoned: true,
+    });
+    applyOverseerDelta(queryClient, PORT, delta(3, 't1:y', 'Let me look'));
+  });
+  expect(result.current.live?.segments).toEqual([
+    { id: 't1:y', text: 'Let me look' },
+  ]);
+});
+
+test('a missed frame refetches the record once, and its snapshot repairs the text', async () => {
+  const { result, queryClient, calls } = openWith([
+    runningRecord({
+      seq: 1,
+      turnId: 't1',
+      segments: [{ id: 't1:b', text: 'Two' }],
+    }),
+    runningRecord({
+      seq: 4,
+      turnId: 't1',
+      segments: [{ id: 't1:b', text: 'Two runs are' }],
+    }),
+  ]);
+  await waitFor(() => {
+    expect(result.current.live).not.toBeNull();
+  });
+  expect(calls()).toBe(1);
+
+  // Frame 2 never arrives: 3 and 4 wait, and only one refetch goes out.
+  act(() => {
+    applyOverseerDelta(queryClient, PORT, delta(3, 't1:b', ' are'));
+    applyOverseerDelta(queryClient, PORT, delta(4, 't1:b', ' live'));
+  });
+  expect(result.current.live?.segments).toEqual([{ id: 't1:b', text: 'Two' }]);
+  await waitFor(() => {
+    expect(result.current.live?.segments).toEqual([
+      { id: 't1:b', text: 'Two runs are' },
+    ]);
+  });
+  expect(calls()).toBe(2);
+
+  // Back in step: the next frame appends without a fetch.
+  act(() => {
+    applyOverseerDelta(queryClient, PORT, delta(5, 't1:b', ' now'));
+  });
+  expect(result.current.live?.segments).toEqual([
+    { id: 't1:b', text: 'Two runs are now' },
+  ]);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(calls()).toBe(2);
+});
+
+// The record refetch that brings a segment's row also brings a `live` without
+// that segment, and the two reach the view through different stores. No render
+// may fall between them showing the segment nowhere: its text would blink out
+// at every narration, and the "working" row flash in before every reply.
+test('a segment never vanishes between its live text and its row', async () => {
+  const before = runningRecord({
+    seq: 2,
+    turnId: 't1',
+    segments: [{ id: 't1:b', text: 'Two runs are blocked.' }],
+  });
+  const narrated: OverseerRecordView = {
+    ...before,
+    messages: [
+      ...before.messages,
+      {
+        role: 'narration',
+        text: 'Two runs are blocked.',
+        at: '2026-08-10T00:00:02Z',
+        streamId: 't1:b',
+      },
+    ],
+    live: { seq: 2, turnId: 't1', segments: [] },
+  };
+  const settled: OverseerRecordView = {
+    ...narrated,
+    state: 'ready',
+    messages: [
+      ...narrated.messages,
+      {
+        role: 'assistant',
+        text: 'Both wait on review.',
+        at: '2026-08-10T00:00:03Z',
+        streamId: 't1:c',
+      },
+    ],
+    live: undefined,
+  };
+  const answers = [before];
+  const client = {
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    getOverseer: () => Promise.resolve(answers[0]),
+  } as unknown as ApiClient;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  // Where segment `watch` is on each render: live text, a row, or nowhere.
+  let watch = 't1:b';
+  const seen: string[] = [];
+  const { result } = renderHook(
+    () => {
+      const session = useOverseerSession(client, PORT, '/repo');
+      const asRow =
+        session.record?.messages.some((m) => m.streamId === watch) === true;
+      const asLive =
+        session.live?.segments.some((s) => s.id === watch) === true;
+      seen.push(asRow ? 'row' : asLive ? 'live' : 'none');
+      return session;
+    },
+    {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={queryClient}>
+          {children}
+        </QueryClientProvider>
+      ),
+    }
+  );
+  act(() => {
+    result.current.open('w-1');
+  });
+  await waitFor(() => {
+    expect(result.current.live?.segments).toHaveLength(1);
+  });
+
+  // The segment lands as a narration row.
+  seen.length = 0;
+  answers[0] = narrated;
+  await act(async () => {
+    await queryClient.invalidateQueries({ queryKey: overseerKey(PORT, 'w-1') });
+  });
+  await waitFor(() => {
+    expect(seen.at(-1)).toBe('row');
+  });
+  expect(seen).not.toContain('none');
+
+  // The reply streams, then lands as the turn settles.
+  watch = 't1:c';
+  act(() => {
+    applyOverseerDelta(queryClient, PORT, delta(3, 't1:c', 'Both wait'));
+  });
+  expect(result.current.live?.segments).toEqual([
+    { id: 't1:c', text: 'Both wait' },
+  ]);
+  seen.length = 0;
+  answers[0] = settled;
+  await act(async () => {
+    await queryClient.invalidateQueries({ queryKey: overseerKey(PORT, 'w-1') });
+  });
+  await waitFor(() => {
+    expect(result.current.record?.state).toBe('ready');
+  });
+  expect(seen).not.toContain('none');
+  expect(result.current.live).toBeNull();
+});
+
+// useLiveText, the generic hook under `live` above, as a run's chat reads it:
+// keyed by run, on a port of its own so the Overseer tests' resets miss it.
+const LIVE_PORT = 4322;
+const LIVE_KEY = runLiveKey('r-1');
+const NONE: ReadonlySet<string> = new Set();
+
+afterEach(() => {
+  resetLiveText(LIVE_PORT);
+});
+
+function frame(seq: number, segmentId: string, text: string) {
+  return { turnId: 't1', seq, segmentId, text };
+}
+
+function apply(seq: number, segmentId: string, text: string): void {
+  act(() => {
+    liveTextStore.applyDelta(
+      LIVE_PORT,
+      LIVE_KEY,
+      frame(seq, segmentId, text),
+      () => {}
+    );
+  });
+}
+
+// The generic hook a run's chat reads (the Overseer's session uses it too):
+// only a running record shows live text, and never a segment it holds.
+test('shows a running key’s segments minus the committed ones', () => {
+  const { result, rerender } = renderHook(
+    ({ running, committed }) =>
+      useLiveText(LIVE_PORT, LIVE_KEY, running, committed),
+    { initialProps: { running: true, committed: NONE } }
+  );
+  expect(result.current).toBeNull();
+
+  apply(1, 'a', 'One');
+  apply(2, 'b', 'Two');
+  expect(result.current).toEqual({
+    turnId: 't1',
+    segments: [
+      { id: 'a', text: 'One' },
+      { id: 'b', text: 'Two' },
+    ],
+  });
+
+  rerender({ running: true, committed: new Set(['a']) });
+  expect(result.current?.segments).toEqual([{ id: 'b', text: 'Two' }]);
+
+  rerender({ running: false, committed: new Set(['a']) });
+  expect(result.current).toBeNull();
+});
+
+// A snapshot without a segment can reach the store a render before the record
+// that holds its row: the segment stays shown until that row arrives.
+test('keeps a shown segment until the record holds its row', () => {
+  const { result, rerender } = renderHook(
+    ({ committed }) => useLiveText(LIVE_PORT, LIVE_KEY, true, committed),
+    { initialProps: { committed: NONE } }
+  );
+  apply(1, 'a', 'Said');
+  expect(result.current?.segments).toEqual([{ id: 'a', text: 'Said' }]);
+
+  act(() => {
+    liveTextStore.mergeSnapshot(
+      LIVE_PORT,
+      LIVE_KEY,
+      { seq: 1, turnId: 't1', segments: [] },
+      () => {}
+    );
+  });
+  expect(result.current?.segments).toEqual([{ id: 'a', text: 'Said' }]);
+
+  rerender({ committed: new Set(['a']) });
+  expect(result.current?.segments).toEqual([]);
+});
+
+// The keep-rule above must not hold a segment the stream abandoned: no row
+// will ever arrive for it, and it would sit there for the rest of the run.
+test('drops a shown segment at once when its stream abandons it', () => {
+  const { result } = renderHook(() =>
+    useLiveText(LIVE_PORT, LIVE_KEY, true, NONE)
+  );
+  apply(1, 'a', 'Half a sen');
+  expect(result.current?.segments).toEqual([{ id: 'a', text: 'Half a sen' }]);
+  act(() => {
+    liveTextStore.applyDelta(
+      LIVE_PORT,
+      LIVE_KEY,
+      { ...frame(2, 'a', ''), abandoned: true },
+      () => {}
+    );
+  });
+  expect(result.current?.segments).toEqual([]);
+});
+
+test('reads nothing for no key', () => {
+  apply(1, 'a', 'One');
+  const { result } = renderHook(() => useLiveText(LIVE_PORT, null, true, NONE));
+  expect(result.current).toBeNull();
 });

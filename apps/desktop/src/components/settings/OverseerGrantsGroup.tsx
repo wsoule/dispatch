@@ -17,7 +17,7 @@ function lapsesAt(grant: OverseerGrant): string {
       });
 }
 
-/** What "Allow for this conversation" still covers, each revocable. */
+/** What each "Allow <tool> for this conversation" answer still covers, each revocable. */
 export function OverseerGrantsGroup({
   client,
   port,
@@ -39,7 +39,7 @@ export function OverseerGrantsGroup({
   return (
     <SettingsGroup
       title="Your agent’s grants"
-      hint="What “Allow for this conversation” still covers. Each ends after four hours or when the conversation starts over. Irreversible commands and changes to Dispatch itself always ask."
+      hint="The tools you allowed “for this conversation” and what they still cover. Each ends after four hours or when the conversation starts over. Irreversible commands and changes to Dispatch itself always ask."
       keywords="overseer assistant allow session permission revoke"
       requires="none"
     >

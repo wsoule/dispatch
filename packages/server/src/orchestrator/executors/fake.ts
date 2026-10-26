@@ -8,12 +8,19 @@ import type {
   NormalizedEntry,
 } from '../types.js';
 
-// One scripted step: emit a log entry, write (and commit) real files into
-// the run's worktree, and/or raise an approval request that pauses the
-// script until the orchestrator calls `approve()`. A step can combine an
-// entry with a write/approval — the fields are independent, all optional,
-// applied in entry -> write -> approval order.
+// One scripted step: stream live text, emit a log entry, write (and commit)
+// real files into the run's worktree, and/or raise an approval request that
+// pauses the script until the orchestrator calls `approve()`. A step can
+// combine an entry with a write/approval — the fields are independent, all
+// optional, applied in delta -> entry -> write -> approval order.
 interface FakeStep {
+  // Text the model "writes" into segment `segmentId`, reported through
+  // onDelta when the run is given one, the way a real executor streams it.
+  // The `assistant` entry that finishes the segment names it as `streamId`.
+  delta?: { segmentId: string; text: string };
+  // A segment streamed earlier that no entry will finish, reported through
+  // onSegmentAbandoned as a real executor does when the model's stream breaks.
+  abandon?: string;
   entry?: NormalizedEntry;
   write?: (cwd: string) => void;
   commitMessage?: string;
@@ -113,6 +120,12 @@ export class FakeExecutor implements Executor {
           // stop is that the operation already underway is left alone.
           if (stopRequested) break;
 
+          if (step.delta !== undefined) {
+            events.onDelta?.(step.delta.segmentId, step.delta.text);
+          }
+          if (step.abandon !== undefined) {
+            events.onSegmentAbandoned?.(step.abandon);
+          }
           if (step.entry !== undefined) events.onEntry(step.entry);
 
           if (step.delayMs !== undefined) {

@@ -12,9 +12,11 @@ import {
 import { isFakeOverseerDevToolEnabled } from '../lib/devTools';
 
 export {
+  applyOverseerDelta,
   invalidateOverseerEvent,
   overseerKey,
   overseerKeyPrefix,
+  resetLiveText,
 } from '@dispatch/client';
 export type {
   OverseerApprovalDecision,

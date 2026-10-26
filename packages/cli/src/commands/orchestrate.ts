@@ -8,6 +8,7 @@ import {
   formatApprovalRequest,
   formatDiffFiles,
   formatEntry,
+  formatLastEntries,
   formatRunsTable,
   type ToolApproval,
   toolApprovalOf,
@@ -512,11 +513,7 @@ export function registerOrchestrateCommands(
         );
         for (const line of parked) ctx.log(line);
       }
-      const last20 = detail.entries.slice(-20);
-      for (const entry of last20) {
-        const line = formatEntry(entry);
-        if (line !== null) ctx.log(line);
-      }
+      for (const line of formatLastEntries(detail.entries, 20)) ctx.log(line);
     });
 
   run

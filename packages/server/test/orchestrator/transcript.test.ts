@@ -121,6 +121,25 @@ describe('Transcript', () => {
       error: 'interrupted',
     });
   });
+
+  // run.log numbers each entry from this count, so it must agree with what
+  // a later read (GET /api/runs/:id) sees, a crash's torn line included.
+  it('counts entries the way read() sees them, closing off a torn line first', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dispatch-transcript-'));
+    const path = join(dir, 'r-000006.jsonl');
+    const transcript = new Transcript(path);
+    expect(transcript.countEntries()).toBe(0);
+    transcript.writeHeader(makeMeta({ id: 'r-000006' }));
+    transcript.appendEntry({ ts: 't1', kind: 'assistant', text: 'one' });
+    appendFileSync(path, '{"type":"entry","entry":{"ts":"t2","kind":');
+
+    expect(transcript.countEntries()).toBe(1);
+    transcript.appendEntry({ ts: 't3', kind: 'assistant', text: 'two' });
+    const entries = transcript
+      .read()
+      .flatMap((line) => (line.type === 'entry' ? [line.entry.text] : []));
+    expect(entries).toEqual(['one', 'two']);
+  });
 });
 
 describe('replayTranscript', () => {

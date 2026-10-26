@@ -1,0 +1,627 @@
+{
+  "about": "Two real Agent SDK 0.3.293 turns recorded with includePartialMessages on (claude-haiku-5-5): \"string\" passed the prompt as a string, \"stream\" as streaming input with a canUseTool that parked the Bash call. Slimmed to the fields the Overseer reads (parent = parent_tool_use_id, msgId = the API message id); API message and tool-use ids are renamed, and the Bash input of \"stream\" is rewritten to a neutral path. The prompt asked for one sentence, a Bash call, then a two-paragraph answer.",
+  "string": {
+    "parked": 0,
+    "events": [
+      {
+        "type": "active_goal",
+        "parent": null
+      },
+      {
+        "type": "autocompact_state",
+        "parent": null
+      },
+      {
+        "type": "system",
+        "subtype": "init",
+        "parent": null
+      },
+      {
+        "type": "system",
+        "subtype": "status",
+        "parent": null
+      },
+      {
+        "type": "rate_limit_event",
+        "parent": null
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "message_start",
+        "msgId": "msg_string_1"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_start",
+        "index": 0,
+        "block": "text"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "text_delta",
+        "text": "I"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "text_delta",
+        "text": "'ll check the date."
+      },
+      {
+        "type": "assistant",
+        "parent": null,
+        "msgId": "msg_string_1",
+        "content": [
+          {
+            "type": "text",
+            "text": "I'll check the date."
+          }
+        ]
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_stop",
+        "index": 0
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_start",
+        "index": 1,
+        "block": "tool_use"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 1,
+        "delta": "input_json_delta",
+        "text": ""
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 1,
+        "delta": "input_json_delta",
+        "text": "{\"command\": \"date +%"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 1,
+        "delta": "input_json_delta",
+        "text": "Y"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 1,
+        "delta": "input_json_delta",
+        "text": "\", \"description\": \"Print"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 1,
+        "delta": "input_json_delta",
+        "text": " the current year"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 1,
+        "delta": "input_json_delta",
+        "text": "\"}"
+      },
+      {
+        "type": "assistant",
+        "parent": null,
+        "msgId": "msg_string_1",
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Bash",
+            "id": "toolu_string_bash"
+          }
+        ]
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_stop",
+        "index": 1
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "message_delta"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "message_stop"
+      },
+      {
+        "type": "system",
+        "subtype": "task_summary",
+        "parent": null
+      },
+      {
+        "type": "user",
+        "parent": null,
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_string_bash",
+            "is_error": false
+          }
+        ]
+      },
+      {
+        "type": "system",
+        "subtype": "status",
+        "parent": null
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "message_start",
+        "msgId": "msg_string_2"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_start",
+        "index": 0,
+        "block": "text"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "text_delta",
+        "text": "The current year is 2026,"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "text_delta",
+        "text": " which"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "text_delta",
+        "text": " matches today's date of"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "text_delta",
+        "text": " October"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "text_delta",
+        "text": " 23, 2026."
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "text_delta",
+        "text": "\n\ndone"
+      },
+      {
+        "type": "assistant",
+        "parent": null,
+        "msgId": "msg_string_2",
+        "content": [
+          {
+            "type": "text",
+            "text": "The current year is 2026, which matches today's date of October 23, 2026.\n\ndone"
+          }
+        ]
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_stop",
+        "index": 0
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "message_delta"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "message_stop"
+      },
+      {
+        "type": "system",
+        "subtype": "post_turn_summary",
+        "parent": null
+      },
+      {
+        "type": "result",
+        "subtype": "success",
+        "parent": null,
+        "result": "The current year is 2026, which matches today's date of October 23, 2026.\n\ndone",
+        "is_error": false
+      }
+    ]
+  },
+  "stream": {
+    "parked": 1,
+    "events": [
+      {
+        "type": "active_goal",
+        "parent": null
+      },
+      {
+        "type": "autocompact_state",
+        "parent": null
+      },
+      {
+        "type": "system",
+        "subtype": "init",
+        "parent": null
+      },
+      {
+        "type": "system",
+        "subtype": "status",
+        "parent": null
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "message_start",
+        "msgId": "msg_stream_1"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_start",
+        "index": 0,
+        "block": "thinking"
+      },
+      {
+        "type": "system",
+        "subtype": "thinking_tokens",
+        "parent": null
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "thinking_delta"
+      },
+      {
+        "type": "rate_limit_event",
+        "parent": null
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "thinking_delta"
+      },
+      {
+        "type": "system",
+        "subtype": "thinking_tokens",
+        "parent": null
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "signature_delta"
+      },
+      {
+        "type": "assistant",
+        "parent": null,
+        "msgId": "msg_stream_1",
+        "content": [
+          {
+            "type": "thinking"
+          }
+        ]
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_stop",
+        "index": 0
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_start",
+        "index": 1,
+        "block": "text"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 1,
+        "delta": "text_delta",
+        "text": "I"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 1,
+        "delta": "text_delta",
+        "text": " will check the date."
+      },
+      {
+        "type": "assistant",
+        "parent": null,
+        "msgId": "msg_stream_1",
+        "content": [
+          {
+            "type": "text",
+            "text": "I will check the date."
+          }
+        ]
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_stop",
+        "index": 1
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_start",
+        "index": 2,
+        "block": "tool_use"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 2,
+        "delta": "input_json_delta",
+        "text": "{\"command\": \"touch /t"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 2,
+        "delta": "input_json_delta",
+        "text": "mp/marker.tx"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 2,
+        "delta": "input_json_delta",
+        "text": "t\", \"description\": \"Create a marker file\"}"
+      },
+      {
+        "type": "assistant",
+        "parent": null,
+        "msgId": "msg_stream_1",
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Bash",
+            "id": "toolu_stream_bash"
+          }
+        ]
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_stop",
+        "index": 2
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "message_delta"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "message_stop"
+      },
+      {
+        "type": "system",
+        "subtype": "task_summary",
+        "parent": null
+      },
+      {
+        "type": "user",
+        "parent": null,
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_stream_bash",
+            "is_error": false
+          }
+        ]
+      },
+      {
+        "type": "system",
+        "subtype": "status",
+        "parent": null
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "message_start",
+        "msgId": "msg_stream_2"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_start",
+        "index": 0,
+        "block": "text"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "text_delta",
+        "text": "The year is 2026,"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "text_delta",
+        "text": " based on today's date of"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "text_delta",
+        "text": " October"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "text_delta",
+        "text": " 23, 2026. I"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "text_delta",
+        "text": " took"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "text_delta",
+        "text": " that"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "text_delta",
+        "text": " date"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "text_delta",
+        "text": " from the environment"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "text_delta",
+        "text": " context rather than checking it"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "text_delta",
+        "text": " with a command"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_delta",
+        "index": 0,
+        "delta": "text_delta",
+        "text": ".\n\ndone"
+      },
+      {
+        "type": "assistant",
+        "parent": null,
+        "msgId": "msg_stream_2",
+        "content": [
+          {
+            "type": "text",
+            "text": "The year is 2026, based on today's date of October 23, 2026. I took that date from the environment context rather than checking it with a command.\n\ndone"
+          }
+        ]
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "content_block_stop",
+        "index": 0
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "message_delta"
+      },
+      {
+        "type": "stream_event",
+        "parent": null,
+        "event": "message_stop"
+      },
+      {
+        "type": "system",
+        "subtype": "post_turn_summary",
+        "parent": null
+      },
+      {
+        "type": "result",
+        "subtype": "success",
+        "parent": null,
+        "result": "The year is 2026, based on today's date of October 23, 2026. I took that date from the environment context rather than checking it with a command.\n\ndone",
+        "is_error": false
+      }
+    ]
+  }
+}

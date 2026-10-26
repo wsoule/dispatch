@@ -170,6 +170,7 @@ export type {
   ReviewTarget,
   ReviewVerdict,
   RunDetail,
+  RunDetailView,
   RunKind,
   PresenceEntry,
   AuthTier,
@@ -240,7 +241,10 @@ export type {
   OverseerGrant,
   OverseerMessage,
   OverseerRecord,
+  OverseerRecordView,
   OverseerState,
+  LiveSegment,
+  LiveText,
 } from './api';
 export { reduceProposal } from './proposalReducer';
 export type { ProposalAction } from './proposalReducer';
@@ -284,6 +288,16 @@ export {
 } from './models';
 export type { ModelOption, PickableRole } from './models';
 export {
+  liveTextStore,
+  overseerLiveKey,
+  resetLiveText,
+  runLiveKey,
+} from './liveText';
+export type { LiveFrame, LiveTextState } from './liveText';
+export { useLiveText } from './useLiveText';
+export type { LiveTextView } from './useLiveText';
+export {
+  applyOverseerDelta,
   invalidateOverseerEvent,
   overseerKey,
   overseerKeyPrefix,
@@ -291,6 +305,7 @@ export {
 } from './useOverseerSession';
 export type {
   OverseerApprovalDecision,
+  OverseerLive,
   OverseerSession,
   OverseerSessionOptions,
 } from './useOverseerSession';

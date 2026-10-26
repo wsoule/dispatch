@@ -49,7 +49,8 @@ async function getRun(
  * The overseer chat against the scripted fake backend (`FakeOverseer`, registered
  * by bin.ts under DISPATCH_ENABLE_FAKES=1 and selected via the
  * `dispatch.devFakeOverseer` devtool flag). The script's turns are: a status
- * answer derived from a real `list_runs` read, then two turns that each queue
+ * answer derived from a real `list_runs` read (narrated first, and streamed
+ * slowly enough to watch its text arrive), then two turns that each queue
  * a `dispatch_task` of the first ready task on the fake executor. That gives
  * the flow this spec exists to cover: status Q/A, a confirm card, the deny
  * path (nothing changes), and the approve path (a fake-dispatched run really
@@ -98,13 +99,59 @@ test.describe('overseer chat end to end', () => {
     await page
       .getByLabel('Overseer opening question')
       .fill("What's going on in this project?");
+    // The reply's text, live or settled; the most copies of it the log ever
+    // held at once is recorded on every DOM change from here on, so a frame
+    // showing the live text beside the settled row cannot slip between two
+    // polls.
+    await page.evaluate(() => {
+      const reply = /Status check: this project has \d+ runs on record/;
+      const w = window as unknown as { replyCopies: number };
+      w.replyCopies = 0;
+      new MutationObserver(() => {
+        const rows = document.querySelectorAll('[role="log"] p');
+        const copies = Array.from(rows).filter((p) =>
+          reply.test(p.textContent ?? '')
+        ).length;
+        w.replyCopies = Math.max(w.replyCopies, copies);
+      }).observe(document.body, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+      });
+    });
     // `exact` matters: role-name matching is substring-based.
     await page.getByRole('button', { name: 'Send', exact: true }).click();
+    // The fake streams this turn a few characters at a time, so the reply's
+    // first words show as live text while the turn still runs. A live row
+    // exists only until the record holds its text, so this is the reply
+    // arriving before it lands. Polled every frame: the window is short.
+    await page.waitForFunction(
+      () =>
+        Array.from(
+          document.querySelectorAll('[data-testid="overseer-live"]')
+        ).some((row) => row.textContent?.includes('Status check') === true),
+      undefined,
+      { polling: 'raf', timeout: 15_000 }
+    );
     // The reply is derived from a real list_runs read against the fixture —
     // the exact counts belong to the fixture, so pin the shape, not the sum.
-    await expect(
-      page.getByText(/Status check: this project has \d+ runs on record/)
-    ).toBeVisible({ timeout: 15_000 });
+    // Once the turn settles, its live text has become rows: the narration
+    // it wrote before the read, and the reply, never shown twice.
+    const statusReply = /Status check: this project has \d+ runs on record/;
+    await expect(page.getByText(statusReply)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('overseer-stop')).toHaveCount(0, {
+      timeout: 15_000,
+    });
+    await expect(page.getByTestId('overseer-live')).toHaveCount(0);
+    await expect(page.getByText(statusReply)).toHaveCount(1);
+    expect(
+      await page.evaluate(
+        () => (window as unknown as { replyCopies: number }).replyCopies
+      )
+    ).toBe(1);
+    await expect(page.getByTestId('overseer-narration')).toHaveText(
+      'Reading the run list first.'
+    );
     // The read-only tool call is recorded in the transcript as a tool row.
     await expect(page.getByText('list_runs').first()).toBeVisible();
 

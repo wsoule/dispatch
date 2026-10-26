@@ -23,6 +23,7 @@ assertable
 atag
 atch
 authtest
+autocompact
 autodetection
 AUTOINCREMENT
 automations
@@ -484,7 +485,6 @@ rustls
 rustup
 sandboxing
 satteri
-scrollbox
 sslip
 subshell
 Sätteri
@@ -729,7 +729,6 @@ xcrun
 charmbracelet
 charmland
 generativelanguage
-opentui
 oninitialized
 rewake
 rundll

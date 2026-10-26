@@ -24,6 +24,11 @@ import {
   mergeFlagSettings,
 } from '../../memory/claudeModes.js';
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
+import {
+  apiMessageId,
+  type ClaudeStreamEvent,
+  ClaudeTextSegments,
+} from '../claudeTextSegments.js';
 import type { StdioServerSpec } from '../dispatchMcp.js';
 import { cartoMcpSpec, cartoSpecFor, dispatchMcpSpec } from '../dispatchMcp.js';
 import { activeExperiments } from '../experiments.js';
@@ -492,12 +497,13 @@ interface AssistantContentBlock {
 }
 
 // The one block kind read off a `user`-typed SDK message: a tool's result,
-// keyed back to its tool_use. Only sub-agent spawns are looked up today (see
-// SubagentTracker.onToolResult); every other tool result is still skipped.
+// keyed back to its tool_use. `content` is the output the model reads: a
+// string, or text (and image) blocks.
 interface UserContentBlock {
   type: string;
   tool_use_id?: string;
   is_error?: boolean;
+  content?: unknown;
 }
 
 // Maps one assistant turn's content blocks to the NormalizedEntry lines the
@@ -511,12 +517,17 @@ interface UserContentBlock {
 // spawn), and every entry made here carries it so the transcript can tell the
 // agent's own work from its sub-agents'. A `Task`/`Agent` tool_use is the
 // agent spawning a sub-agent and is logged through `tracker` as an `agent`
-// entry instead of a plain tool entry.
+// entry instead of a plain tool entry. The id of every other tool call the
+// agent itself made goes into `toolCalls`, so its result can be logged too.
+// `streamIdOf`, given for a top-level message while the run streams, names
+// the segment each text block streamed under (ClaudeTextSegments.claim).
 function entriesForAssistantContent(
   content: unknown,
   ts: string,
   tracker: SubagentTracker,
-  parentToolUseId: string | undefined
+  parentToolUseId: string | undefined,
+  toolCalls: Set<string>,
+  streamIdOf?: () => string
 ): NormalizedEntry[] {
   const blocks = content as AssistantContentBlock[];
   const entries: NormalizedEntry[] = [];
@@ -524,7 +535,14 @@ function entriesForAssistantContent(
     parentToolUseId !== undefined ? { parentToolUseId } : ({} as const);
   for (const block of blocks) {
     if (block.type === 'text' && block.text !== undefined) {
-      entries.push({ ts, kind: 'assistant', text: block.text, ...parent });
+      const streamId = streamIdOf?.();
+      entries.push({
+        ts,
+        kind: 'assistant',
+        text: block.text,
+        ...parent,
+        ...(streamId !== undefined ? { streamId } : {}),
+      });
     } else if (block.type === 'thinking' && block.thinking !== undefined) {
       entries.push({ ts, kind: 'thinking', text: block.thinking, ...parent });
     } else if (block.type === 'tool_use' && block.name !== undefined) {
@@ -539,17 +557,12 @@ function entriesForAssistantContent(
           continue;
         }
       }
-      // TODO(M7): every tool entry is logged as `status: 'running'` and
-      // never resolved to 'done'/'error'. Doing that cheaply would need (a)
-      // a stable id to update — NormalizedEntry/the transcript's append-only
-      // JSONL have neither; the transcript would need a new line kind that
-      // *patches* a prior entry by tool_use_id rather than only ever
-      // appending, and every reader (getRun's replay, the web UI's log view)
-      // would need to apply that patch when folding entries — and (b)
-      // reading the SDK's own tool_result content blocks, which arrive on a
-      // *user*-typed message this loop only reads for sub-agent results
-      // (entriesForUserContent). Neither half is cheap, so this stays
-      // 'running' until that transcript-patching seam exists.
+      // Logged as `running`: the transcript is append-only, so the call's
+      // outcome is a later entry of its own (see entriesForUserContent) that
+      // readers fold into this one by `toolUseId`.
+      if (block.id !== undefined && parentToolUseId === undefined) {
+        toolCalls.add(block.id);
+      }
       entries.push({
         ts,
         kind: 'tool',
@@ -564,22 +577,44 @@ function entriesForAssistantContent(
   return entries;
 }
 
-// The `agent` entries a `user`-typed SDK message amounts to: one finished
-// entry per tool_result that answers a sub-agent spawn. Everything else on
-// these messages (ordinary tool results, the prompts this executor sends) is
-// still ignored — see the TODO(M7) above.
+// The entries a `user`-typed SDK message amounts to. A tool_result answering
+// a sub-agent spawn finishes that sub-agent (an `agent` entry); one answering
+// another tool call the agent itself made (`toolCalls`) is that call's
+// outcome: a `tool` entry with the call's `toolUseId` and `status` done or
+// error, and no output. The transcript and its run.log frames reach every
+// request-tier client, and a result can carry what the call read (the
+// operator's exported memory, a personal doc, an MCP answer), so only the
+// outcome is kept. A sub-agent's own tool results, and the prompts this
+// executor sends, are skipped: their calls stay `running`.
 function entriesForUserContent(
-  message: { message: { content: unknown }; tool_use_result?: unknown },
+  message: {
+    message: { content: unknown };
+    parent_tool_use_id?: string | null;
+    tool_use_result?: unknown;
+  },
   ts: string,
-  tracker: SubagentTracker
+  tracker: SubagentTracker,
+  toolCalls: Set<string>
 ): NormalizedEntry[] {
   const content = message.message.content;
   if (!Array.isArray(content)) return [];
+  const topLevel = (message.parent_tool_use_id ?? null) === null;
   const entries: NormalizedEntry[] = [];
   for (const block of content as UserContentBlock[]) {
     if (block.type !== 'tool_result') continue;
     const finished = tracker.onToolResult(block, message.tool_use_result, ts);
-    if (finished !== null) entries.push(finished);
+    if (finished !== null) {
+      entries.push(finished);
+      continue;
+    }
+    const id = block.tool_use_id;
+    if (!topLevel || id === undefined || !toolCalls.delete(id)) continue;
+    entries.push({
+      ts,
+      kind: 'tool',
+      toolUseId: id,
+      status: block.is_error === true ? 'error' : 'done',
+    });
   }
   return entries;
 }
@@ -1083,6 +1118,8 @@ export class ClaudeExecutor implements Executor {
       // these to actually find.
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       settingSources: ['user', 'project', 'local'],
+      // Stream events only when someone shows the text as it is written.
+      ...(events.onDelta !== undefined ? { includePartialMessages: true } : {}),
       ...experimentOptions(experiments),
       // Bug fix (fix/executor-mcp-wiring): `query()` does NOT auto-load a
       // project's committed `.mcp.json` the way the interactive `claude` CLI
@@ -1219,6 +1256,14 @@ export class ClaudeExecutor implements Executor {
       // lifecycle messages, tool results) into `agent` entries — see the
       // tracker's own doc comment for why one object has to see all three.
       const subagents = new SubagentTracker();
+      // The agent's own tool calls still waiting for their result.
+      const toolCalls = new Set<string>();
+      // Names the agent's text blocks while the run streams, so each
+      // finished block's entry carries the segment its deltas went to.
+      const segments =
+        events.onDelta === undefined
+          ? undefined
+          : new ClaudeTextSegments((id) => events.onSegmentAbandoned?.(id));
       // The session's live background tasks (background_tasks_changed
       // carries the whole set each time), so windDown can stop them.
       let backgroundTasks: string[] = [];
@@ -1240,17 +1285,42 @@ export class ClaudeExecutor implements Executor {
               };
             }
             const ts = new Date().toISOString();
+            const topLevel = (message.parent_tool_use_id ?? null) === null;
+            const apiId = apiMessageId(message.message);
             for (const entry of entriesForAssistantContent(
               message.message.content,
               ts,
               subagents,
-              message.parent_tool_use_id ?? undefined
+              message.parent_tool_use_id ?? undefined,
+              toolCalls,
+              segments !== undefined && topLevel
+                ? () => segments.claim(apiId)
+                : undefined
             )) {
               events.onEntry(entry);
             }
+          } else if (message.type === 'stream_event') {
+            // A sub-agent's text is not the run's own; its entries say so,
+            // and its stream is not shown live.
+            if (
+              segments !== undefined &&
+              (message.parent_tool_use_id ?? null) === null
+            ) {
+              const delta = segments.event(
+                message.event as unknown as ClaudeStreamEvent
+              );
+              if (delta !== null) {
+                events.onDelta?.(delta.segmentId, delta.text);
+              }
+            }
           } else if (message.type === 'user') {
             const ts = new Date().toISOString();
-            for (const entry of entriesForUserContent(message, ts, subagents)) {
+            for (const entry of entriesForUserContent(
+              message,
+              ts,
+              subagents,
+              toolCalls
+            )) {
               events.onEntry(entry);
             }
           } else if (message.type === 'system') {

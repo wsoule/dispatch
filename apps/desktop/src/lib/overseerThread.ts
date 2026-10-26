@@ -2,6 +2,7 @@ import type {
   OverseerAction,
   OverseerApproval,
   OverseerAttachment,
+  OverseerLive,
   OverseerMessage,
   OverseerRecord,
 } from '@dispatch/client';
@@ -10,14 +11,16 @@ import { TASKS_PRESETS, type TasksPreset } from './tasksPresets';
 
 // One rendered row of a overseer conversation, flattened from the record's
 // transcript the same way planThread.ts flattens a plan's. Beyond the plan
-// thread's message/pending/failed rows, the overseer transcript carries three
-// more kinds: `tool` (a tool call the assistant made mid-turn — a status tool
-// or a built-in one), the action lifecycle, which splits into `confirm` (a
-// queued mutation still awaiting the human — rendered as the approve/deny
-// card) and `outcome` (a decision that already happened, kept as the audit
-// line it is), and the approval lifecycle: `approve` (a built-in tool call
-// the running turn is blocked on — the allow/deny card) settling into the
-// same `outcome` rows.
+// thread's message/pending/failed rows, the overseer transcript carries more
+// kinds: `narration` (prose the assistant wrote mid-turn, before a tool call),
+// `tool` (a tool call the assistant made mid-turn — a status tool or a
+// built-in one), the action lifecycle, which splits into `confirm` (a queued
+// mutation still awaiting the human — rendered as the approve/deny card) and
+// `outcome` (a decision that already happened, kept as the audit line it is),
+// and the approval lifecycle: `approve` (a built-in tool call the running turn
+// is blocked on — the allow/deny card) settling into the same `outcome` rows.
+// While a turn runs, `live` rows carry what it is writing and has not
+// committed as a row yet.
 export type OverseerThreadItem =
   | {
       kind: 'message';
@@ -28,6 +31,12 @@ export type OverseerThreadItem =
       /** The files the human attached to the line, when any. */
       attachments?: OverseerAttachment[];
     }
+  /** Prose the assistant wrote between tool calls, or the partial text of a
+   *  stopped or failed turn: the agent's voice, quieter than its reply. */
+  | { kind: 'narration'; key: string; text: string; at: string }
+  /** A running turn's text as the model writes it, one row per segment. It
+   *  becomes a `narration` or `message` row once the record holds it. */
+  | { kind: 'live'; key: string; segmentId: string; text: string }
   | { kind: 'tool'; key: string; tool: string; text: string; at: string }
   | {
       kind: 'outcome';
@@ -115,9 +124,14 @@ const TURN_FAILED_FALLBACK =
  * moves it down to where the failure happened, with the failure text on the
  * card); an action already decided drops its stale `pending` rows and keeps
  * only its decided `outcome` rows.
+ *
+ * `live` is the running turn's uncommitted text (OverseerSession.live). Its
+ * segments follow the transcript, where the "working" row would be, and take
+ * that row's place while any of them has text.
  */
 export function buildOverseerThread(
-  record: OverseerRecord | undefined
+  record: OverseerRecord | undefined,
+  live: OverseerLive | null = null
 ): OverseerThreadItem[] {
   if (record === undefined) return [];
 
@@ -182,9 +196,21 @@ export function buildOverseerThread(
   }
 
   // A running turn parked on a call is waiting on the human, not working —
-  // the card says so, and a spinner under it would say the opposite.
-  if (record.state === 'running' && record.pendingApprovals.length === 0) {
-    items.push({ kind: 'pending', key: `${record.id}-pending` });
+  // the card says so, and a spinner under it would say the opposite. Text the
+  // turn is writing says it is working on its own.
+  if (record.state === 'running') {
+    const writing = (live?.segments ?? []).filter((s) => s.text.trim() !== '');
+    for (const segment of writing) {
+      items.push({
+        kind: 'live',
+        key: `${record.id}-live-${segment.id}`,
+        segmentId: segment.id,
+        text: segment.text,
+      });
+    }
+    if (writing.length === 0 && record.pendingApprovals.length === 0) {
+      items.push({ kind: 'pending', key: `${record.id}-pending` });
+    }
   } else if (record.state === 'failed') {
     items.push({
       kind: 'failed',
@@ -230,6 +256,10 @@ function buildRow(
         ? { attachments: message.attachments }
         : {}),
     };
+  }
+  if (message.role === 'narration') {
+    if (message.text.trim() === '') return null;
+    return { kind: 'narration', key, text: message.text, at: message.at };
   }
   if (message.role === 'notice') {
     return {
@@ -319,6 +349,8 @@ function buildRow(
 function searchableText(item: OverseerThreadItem): string | null {
   switch (item.kind) {
     case 'message':
+    case 'narration':
+    case 'live':
     case 'outcome':
     case 'notice':
     case 'queued':

@@ -116,6 +116,27 @@ export interface OverseerTurnOptions {
    * only the calls that did not go through it.
    */
   onToolUse?: (toolName: string, input: unknown) => void;
+  /**
+   * Text as the model writes it, keyed by the segment it belongs to: one
+   * Claude text block, or one Codex agentMessage item. View-only: the manager
+   * shows it while the turn runs and never stores it. Absent, the backend
+   * streams nothing (and Claude's is not asked for partial messages at all).
+   */
+  onTextDelta?: (segmentId: string, text: string) => void;
+  /**
+   * A segment `onTextDelta` streamed that will never be finished: the model's
+   * stream broke off mid-block, and the text comes again under a new
+   * segment. View-only like `onTextDelta`, and given only with it; the
+   * manager drops the segment, so a stopped turn never keeps it as narration.
+   */
+  onSegmentAbandoned?: (segmentId: string) => void;
+  /**
+   * A finished segment that is not the reply: prose the model wrote between
+   * tool calls. Reported before the tool call that follows it, so the
+   * transcript keeps the order the model wrote in; never for the reply's own
+   * segment, which `OverseerTurn.reply` carries.
+   */
+  onNarration?: (segmentId: string, text: string) => void;
   /** Fired by Stop; the backend ends the turn as soon as it can. */
   abortController?: AbortController;
   /**
@@ -136,6 +157,12 @@ export interface OverseerTurnAttachment {
 /** One settled assistant turn: the text reply, and the handle to resume from. */
 export interface OverseerTurn {
   reply: string;
+  /** The segment the reply was written in, when the backend knows it: the id
+   *  its text streamed under through `onTextDelta`. It may name a segment
+   *  already reported through `onNarration` (Codex's reply is its last
+   *  message, even when a step came after it): the reply row then replaces
+   *  that narration row rather than repeating its text. */
+  streamId?: string;
   /**
    * The backend's opaque resume handle (the Agent SDK session id for
    * ClaudeOverseer), threaded into the next `sendMessage` so follow-ups keep

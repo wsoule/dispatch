@@ -6,6 +6,32 @@ import { useEffect } from 'react';
 import { Markdown } from './Markdown';
 
 describe('Markdown', () => {
+  // A chat re-renders on every streamed delta: a settled message must not
+  // remount its code blocks and links each time (or parse again at all).
+  test('keeps its code blocks and links mounted when a parent re-renders', () => {
+    const content = '[docs](https://example.com)\n\n```ts\nconst a = 1;\n```';
+    const { container, rerender } = render(
+      <div data-tick="0">
+        <Markdown content={content} />
+      </div>
+    );
+    const mounted = () => ({
+      link: container.querySelector('a'),
+      block: container.querySelector('[data-slot="markdown"] .my-2'),
+    });
+    const before = mounted();
+    expect(before.link).not.toBeNull();
+    expect(before.block).not.toBeNull();
+    rerender(
+      <div data-tick="1">
+        <Markdown content={content} />
+      </div>
+    );
+    const after = mounted();
+    expect(after.link === before.link).toBe(true);
+    expect(after.block === before.block).toBe(true);
+  });
+
   test('a linked remote image is plain text, never a link inside a link', () => {
     const { container } = render(
       <Markdown

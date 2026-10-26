@@ -1,13 +1,17 @@
 import { TaskStore, updateConfig } from '@dispatch-foo/core';
 import type { JsonValue, Message, Sender } from '@dispatch-foo/protocol';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
-import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { TaskCache } from '../../src/cache.js';
 import { EventBus } from '../../src/events.js';
-import type { ServerEvent } from '../../src/events.js';
+import type {
+  BroadcastClient,
+  ServerEvent,
+  SocketAudience,
+} from '../../src/events.js';
 import { LedgerStore } from '../../src/ledger.js';
 import { closeOrphanedGates } from '../../src/messaging/gates.js';
 import {
@@ -20,6 +24,7 @@ import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
 import { MergeQueue } from '../../src/orchestrator/mergeQueue.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
 import {
+  overseerLiveAudience,
   OverseerManager,
   ROLLOVER_TOKENS,
 } from '../../src/orchestrator/overseer.js';
@@ -45,6 +50,7 @@ import {
   OrchestratorNotFoundError,
 } from '../../src/orchestrator/types.js';
 import type { ApprovalDecision } from '../../src/orchestrator/types.js';
+import type { AuthTier } from '../../src/tiers.js';
 import { initGitRepo, lateBoundOverseerMessaging } from './helpers.js';
 
 let fakeHome: string;
@@ -1275,7 +1281,7 @@ describe('overseer on the bus', () => {
     messaging.close();
   });
 
-  it('the boot sweep closes conversation gates, since conversations do not survive a restart', async () => {
+  it('the boot sweep closes conversation gates, since queued actions do not survive a restart', async () => {
     const { messaging } = await busHarness();
     expect(
       closeOrphanedGates(messaging.engine, {
@@ -1546,10 +1552,14 @@ describe('an answer pinned to its card', () => {
 // ---------------------------------------------------------------------------
 
 // A backend whose turns end when the test says, or when Stop aborts them.
+// `options` is what the turn in flight was handed, so a test can speak
+// through its live text callbacks.
 class HeldBackend implements OverseerBackend {
   readonly prompts: string[] = [];
   readonly resumed: (string | undefined)[] = [];
+  options: OverseerTurnOptions | undefined;
   private finish: ((turn: OverseerTurn) => void) | null = null;
+  private failTurn: ((error: Error) => void) | null = null;
 
   start(
     prompt: string,
@@ -1575,6 +1585,13 @@ class HeldBackend implements OverseerBackend {
     finish?.({ reply: 'ok', sessionId: 's-1', ...turn });
   }
 
+  // Fails the turn in flight, as a backend whose model went away does.
+  fail(message: string): void {
+    const fail = this.failTurn;
+    this.failTurn = null;
+    fail?.(new Error(message));
+  }
+
   private turn(
     sessionId: string | undefined,
     prompt: string,
@@ -1582,8 +1599,10 @@ class HeldBackend implements OverseerBackend {
   ): Promise<OverseerTurn> {
     this.resumed.push(sessionId);
     this.prompts.push(prompt);
+    this.options = options;
     return new Promise((resolve, reject) => {
       this.finish = resolve;
+      this.failTurn = reject;
       options?.abortController?.signal.addEventListener('abort', () =>
         reject(new Error('aborted'))
       );
@@ -1904,5 +1923,335 @@ describe('slash commands', () => {
     h.backend.settle();
     await waitFor(() => h.backend.prompts.length === 4);
     expect(h.backend.prompts[3]).toBe('two');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Live text: what a running turn streams, and the narration it leaves
+// ---------------------------------------------------------------------------
+
+type DeltaEvent = Extract<ServerEvent, { type: 'overseer.delta' }>;
+
+function deltasOf(h: { seen: ServerEvent[] }): DeltaEvent[] {
+  return h.seen.filter((e): e is DeltaEvent => e.type === 'overseer.delta');
+}
+
+// Sets `overseer.stream` in the project's config, read afresh every turn.
+function streamMode(mode: string): void {
+  appendFileSync(
+    join(repo, '.dispatch', 'config.yml'),
+    `overseer:\n  stream: ${mode}\n`
+  );
+}
+
+describe('overseer live text', () => {
+  it('streams frames whose seq keeps counting across turns, and a snapshot only while running', async () => {
+    const h = heldManager();
+    const started = h.manager.start('first', 'held');
+    h.backend.options?.onTextDelta?.('m1:0', 'Hel');
+    h.backend.options?.onTextDelta?.('m1:0', 'lo');
+    const [one, two] = deltasOf(h);
+    const turnId = one.turnId;
+    const segmentId = `${turnId}:m1:0`;
+    expect(one).toEqual({
+      type: 'overseer.delta',
+      conversationId: started.id,
+      turnId,
+      seq: 1,
+      segmentId,
+      text: 'Hel',
+    });
+    expect(two).toMatchObject({ seq: 2, turnId, segmentId, text: 'lo' });
+    expect(h.manager.withLive(h.manager.get(started.id)).live).toEqual({
+      seq: 2,
+      turnId,
+      segments: [{ id: segmentId, text: 'Hello' }],
+    });
+
+    h.backend.settle({ reply: 'Hello', streamId: 'm1:0' });
+    await waitFor(() => h.manager.get(started.id).state === 'ready');
+    const settled = h.manager.withLive(h.manager.get(started.id));
+    expect(settled.live).toBeUndefined();
+    expect(settled.messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      text: 'Hello',
+      streamId: segmentId,
+    });
+
+    // The next turn reuses the backend's segment id; its frames still differ.
+    h.manager.sendMessage(started.id, 'again');
+    expect(h.manager.withLive(h.manager.get(started.id)).live).toMatchObject({
+      seq: 2,
+      segments: [],
+    });
+    h.backend.options?.onTextDelta?.('m1:0', 'Again');
+    const next = deltasOf(h).at(-1);
+    expect(next).toMatchObject({ seq: 3, text: 'Again' });
+    expect(next?.turnId).not.toBe(turnId);
+    expect(next?.segmentId).toBe(`${next?.turnId}:m1:0`);
+  });
+
+  it('lands narration as its own row and takes it out of the live text', async () => {
+    const h = heldManager();
+    const started = h.manager.start('look around', 'held');
+    const options = h.backend.options;
+    options?.onTextDelta?.('a', 'Looking.');
+    options?.onNarration?.('a', 'Looking.\n');
+    options?.onTextDelta?.('b', 'Two runs');
+    const turnId = deltasOf(h)[0].turnId;
+    expect(h.manager.get(started.id).messages.at(-1)).toEqual({
+      role: 'narration',
+      text: 'Looking.',
+      streamId: `${turnId}:a`,
+      at: expect.any(String),
+    });
+    expect(
+      h.manager.withLive(h.manager.get(started.id)).live?.segments
+    ).toEqual([{ id: `${turnId}:b`, text: 'Two runs' }]);
+
+    h.backend.settle({ reply: 'Two runs are live.', streamId: 'b' });
+    await waitFor(() => h.manager.get(started.id).state === 'ready');
+    expect(h.manager.get(started.id).messages.map((m) => m.role)).toEqual([
+      'user',
+      'narration',
+      'assistant',
+    ]);
+  });
+
+  // Codex's reply is its last message even when a step followed it, and by
+  // then that message went out as narration: it must not show twice.
+  it('a reply naming a narrated segment takes the place of that row', async () => {
+    for (const mode of ['live', 'narration']) {
+      const h = heldManager();
+      streamMode(mode);
+      const started = h.manager.start('status?', 'held');
+      const options = h.backend.options;
+      options?.onTextDelta?.('m1', 'The tree is clean.');
+      options?.onNarration?.('m1', 'The tree is clean.');
+      options?.onToolUse?.('codex.commandExecution', { command: 'git status' });
+      h.backend.settle({ reply: 'The tree is clean.', streamId: 'm1' });
+      await waitFor(() => h.manager.get(started.id).state === 'ready');
+      const messages = h.manager.get(started.id).messages;
+      expect(messages.map((m) => [m.role, m.text])).toEqual([
+        ['user', 'status?'],
+        ['tool', expect.any(String)],
+        ['assistant', 'The tree is clean.'],
+      ]);
+      if (mode === 'live') {
+        const turnId = deltasOf(h)[0].turnId;
+        expect(messages.at(-1)?.streamId).toBe(`${turnId}:m1`);
+      }
+      rmSync(join(repo, '.dispatch', 'config.yml'));
+      TaskStore.init(repo);
+    }
+  });
+
+  it('Stop keeps the partial text as narration ahead of the notice, and drops what comes after', async () => {
+    const h = heldManager();
+    const started = h.manager.start('think hard', 'held');
+    const options = h.backend.options;
+    options?.onTextDelta?.('a', 'Half a thou');
+    h.manager.stop(started.id);
+    await waitFor(() => h.manager.get(started.id).state !== 'running');
+    const turnId = deltasOf(h)[0].turnId;
+    expect(
+      h.manager.get(started.id).messages.map((m) => [m.role, m.text])
+    ).toEqual([
+      ['user', 'think hard'],
+      ['narration', 'Half a thou'],
+      ['notice', 'Stopped'],
+    ]);
+    expect(h.manager.get(started.id).messages[1].streamId).toBe(`${turnId}:a`);
+
+    // The model keeps talking after Stop settled the turn: none of it lands.
+    options?.onTextDelta?.('a', 'ght');
+    options?.onNarration?.('a', 'Half a thought');
+    expect(deltasOf(h)).toHaveLength(1);
+    expect(h.manager.get(started.id).messages).toHaveLength(3);
+    expect(h.manager.withLive(h.manager.get(started.id)).live).toBeUndefined();
+  });
+
+  // A Claude block whose stream broke off comes again under a new segment:
+  // the half-written one must not stay on screen, nor land as narration.
+  it('drops an abandoned segment from the live text, and Stop does not keep it', async () => {
+    const h = heldManager();
+    const started = h.manager.start('look', 'held');
+    const options = h.backend.options;
+    options?.onTextDelta?.('a', 'Let me lo');
+    options?.onSegmentAbandoned?.('a');
+    const turnId = deltasOf(h)[0].turnId;
+    expect(deltasOf(h).at(-1)).toEqual({
+      type: 'overseer.delta',
+      conversationId: started.id,
+      turnId,
+      seq: 2,
+      segmentId: `${turnId}:a`,
+      text: '',
+      abandoned: true,
+    });
+    expect(h.manager.withLive(h.manager.get(started.id)).live).toEqual({
+      seq: 2,
+      turnId,
+      segments: [],
+    });
+    // A segment that never streamed, or went already, sends nothing.
+    options?.onSegmentAbandoned?.('a');
+    options?.onSegmentAbandoned?.('never');
+    expect(deltasOf(h)).toHaveLength(2);
+
+    options?.onTextDelta?.('b', 'Let me look');
+    h.manager.stop(started.id);
+    await waitFor(() => h.manager.get(started.id).state !== 'running');
+    expect(
+      h.manager.get(started.id).messages.map((m) => [m.role, m.text])
+    ).toEqual([
+      ['user', 'look'],
+      ['narration', 'Let me look'],
+      ['notice', 'Stopped'],
+    ]);
+    // After the turn, an abandon changes nothing.
+    options?.onSegmentAbandoned?.('b');
+    expect(deltasOf(h)).toHaveLength(3);
+  });
+
+  it('a failed turn keeps its partial text too', async () => {
+    const h = heldManager();
+    const started = h.manager.start('go', 'held');
+    h.backend.options?.onTextDelta?.('a', 'Starting on');
+    h.backend.fail('model down');
+    await waitFor(() => h.manager.get(started.id).state === 'failed');
+    const record = h.manager.get(started.id);
+    expect(record.error).toBe('model down');
+    expect(record.messages.at(-1)).toMatchObject({
+      role: 'narration',
+      text: 'Starting on',
+    });
+  });
+
+  it('never writes live text to the store', () => {
+    const h = heldManager();
+    const started = h.manager.start('first', 'held');
+    h.backend.options?.onTextDelta?.('a', 'not yet said');
+    const file = join(overseerDir(repo), `${started.id}.json`);
+    const stored = readFileSync(file, 'utf8');
+    expect(stored).not.toContain('not yet said');
+    expect(JSON.parse(stored)).not.toHaveProperty('live');
+    expect(h.manager.get(started.id)).not.toHaveProperty('live');
+    // A restart starts over: the turn loads as restarted, with no live text.
+    const again = heldManager(h.store);
+    expect(
+      again.manager.withLive(again.manager.get(started.id))
+    ).not.toHaveProperty('live');
+  });
+
+  it('overseer.stream decides which callbacks a turn gets', async () => {
+    const turnOptions = (): OverseerTurnOptions | undefined => {
+      const h = heldManager();
+      h.manager.start('hi', 'held');
+      return h.backend.options;
+    };
+    const live = turnOptions();
+    expect(live?.onTextDelta).toBeFunction();
+    expect(live?.onSegmentAbandoned).toBeFunction();
+    expect(live?.onNarration).toBeFunction();
+
+    streamMode('narration');
+    const h = heldManager();
+    const started = h.manager.start('hi', 'held');
+    expect(h.backend.options?.onTextDelta).toBeUndefined();
+    expect(h.backend.options?.onSegmentAbandoned).toBeUndefined();
+    h.backend.options?.onNarration?.('a', 'Checking first.');
+    // Nothing streamed, so the row names no stream.
+    expect(h.manager.get(started.id).messages.at(-1)).toEqual({
+      role: 'narration',
+      text: 'Checking first.',
+      at: expect.any(String),
+    });
+    h.backend.settle({ reply: 'done', streamId: 'b' });
+    await waitFor(() => h.manager.get(started.id).state === 'ready');
+    expect(h.manager.get(started.id).messages.at(-1)).not.toHaveProperty(
+      'streamId'
+    );
+
+    rmSync(join(repo, '.dispatch', 'config.yml'));
+    TaskStore.init(repo);
+    streamMode('off');
+    const off = turnOptions();
+    expect(off?.onTextDelta).toBeUndefined();
+    expect(off?.onSegmentAbandoned).toBeUndefined();
+    expect(off?.onNarration).toBeUndefined();
+  });
+
+  it('sends frames only to the sockets of the live audience', () => {
+    const h = heldManager();
+    const got = new Map<string, number>();
+    const socket = (name: string, data: SocketAudience): BroadcastClient => ({
+      data,
+      send: (payload) => {
+        if ((JSON.parse(payload) as ServerEvent).type === 'overseer.delta') {
+          got.set(name, (got.get(name) ?? 0) + 1);
+        }
+      },
+    });
+    h.events.add(
+      socket('operator', {
+        ref: 'human:op',
+        tier: 'operator',
+        agentToken: false,
+      })
+    );
+    h.events.add(
+      socket('agent', { ref: 'human:op', tier: 'operator', agentToken: true })
+    );
+    h.events.add(
+      socket('teammate', {
+        ref: 'human:ann',
+        tier: 'request',
+        agentToken: false,
+      })
+    );
+    h.manager.start('hi', 'held');
+    h.backend.options?.onTextDelta?.('a', 'hello');
+    h.backend.options?.onSegmentAbandoned?.('a');
+    expect(Object.fromEntries(got)).toEqual({ operator: 2 });
+  });
+});
+
+describe('overseerLiveAudience', () => {
+  const who = (
+    ref: string | null,
+    tier: AuthTier | null,
+    agentToken = false
+  ): SocketAudience => ({ ref, tier, agentToken });
+
+  // The owner decision of 2026-10-23: any deciding human, plus the owner and
+  // the operator tier; never the agent token.
+  it.each([
+    ['the owner on the request tier', who('human:ann', 'request'), true],
+    ['the operator', who('human:op', 'operator'), true],
+    ['another deciding human', who('human:bo', 'decide'), true],
+    [
+      'a request-tier human who is not the owner',
+      who('human:cy', 'request'),
+      false,
+    ],
+    ['the shared agent token', who('human:op', 'operator', true), false],
+    [
+      'an agent with its own decide-tier token',
+      who('agent:run-1', 'decide'),
+      false,
+    ],
+    ['a socket nobody resolved', who(null, null), false],
+  ] as const)('%s: %p', (_label, audience, hears) => {
+    expect(overseerLiveAudience({ owner: 'human:ann' })(audience)).toBe(hears);
+  });
+
+  it('reaches only deciding humans and the operator for an unowned conversation', () => {
+    const hears = overseerLiveAudience({});
+    expect(hears(who('human:bo', 'decide'))).toBe(true);
+    expect(hears(who('human:op', 'operator'))).toBe(true);
+    expect(hears(who('human:cy', 'request'))).toBe(false);
+    expect(hears(who('human:op', 'operator', true))).toBe(false);
+    expect(hears(undefined)).toBe(false);
   });
 });

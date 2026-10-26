@@ -154,10 +154,16 @@ function renderEvidence(packet: RunPacket): string {
 
 /** The transcript. `thinking` and `usage` entries are dropped: the first is
  *  the model's scratch work rather than a record of what happened, and the
- *  second is accounting already summarised in the header. */
+ *  second is accounting already summarised in the header. So is a tool
+ *  call's result (a `tool` entry with no `toolName`): the call's own row is
+ *  already there, and the result's text is the tool's raw output, which a
+ *  page meant to be handed to anyone must not carry (`printenv`, `.env`). */
 function renderTranscript(packet: RunPacket): string {
   const shown = packet.entries.filter(
-    (e) => e.kind !== 'thinking' && e.kind !== 'usage'
+    (e) =>
+      e.kind !== 'thinking' &&
+      e.kind !== 'usage' &&
+      !(e.kind === 'tool' && e.toolName === undefined && e.status !== 'running')
   );
   if (shown.length === 0) return '';
   const rows = shown

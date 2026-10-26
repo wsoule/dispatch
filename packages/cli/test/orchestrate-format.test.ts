@@ -18,6 +18,7 @@ import {
   formatDiffFiles,
   formatEntry,
   formatEpicProgress,
+  formatLastEntries,
   formatPlanNeedsReply,
   formatProposal,
   formatRunsTable,
@@ -121,6 +122,74 @@ describe('formatEntry', () => {
       status: 'error',
     };
     expect(formatEntry(entry)).toBe('[tool ✗] run_shell');
+  });
+
+  it("skips a tool call's result, whose call already printed", () => {
+    const result: NormalizedEntry = {
+      ts: '2026-07-20T00:00:00Z',
+      kind: 'tool',
+      status: 'error',
+      text: 'exit code 1',
+    };
+    expect(formatEntry(result)).toBeNull();
+    expect(formatEntry({ ...result, status: 'done' })).toBeNull();
+  });
+
+  // `run show`'s window: every Claude call is followed by its result entry,
+  // which prints nothing, so counting entries would halve the lines shown.
+  it('formatLastEntries counts printed lines, not entries', () => {
+    const entries: NormalizedEntry[] = Array.from({ length: 15 }, (_, i) => [
+      {
+        ts: '2026-07-20T00:00:00Z',
+        kind: 'tool' as const,
+        toolName: `Bash${i}`,
+        status: 'running' as const,
+      },
+      {
+        ts: '2026-07-20T00:00:01Z',
+        kind: 'tool' as const,
+        status: 'done' as const,
+      },
+    ]).flat();
+    const lines = formatLastEntries(entries, 10);
+    expect(lines).toHaveLength(10);
+    expect(lines[0]).toBe('[tool …] Bash5');
+    expect(lines.at(-1)).toBe('[tool …] Bash14');
+  });
+
+  // A finished run's calls are not still running: the result entry (Claude)
+  // or the completed copy (Codex) under the call's id says how each ended.
+  it('formatLastEntries shows how each call ended, one line per call', () => {
+    const ts = '2026-07-20T00:00:00Z';
+    const entries: NormalizedEntry[] = [
+      { ts, kind: 'tool', toolName: 'Bash', status: 'running', toolUseId: 'a' },
+      { ts, kind: 'tool', toolName: 'Read', status: 'running', toolUseId: 'b' },
+      { ts, kind: 'tool', status: 'done', toolUseId: 'a', text: 'ok' },
+      { ts, kind: 'tool', status: 'error', toolUseId: 'b' },
+      {
+        ts,
+        kind: 'tool',
+        toolName: 'codex.commandExecution',
+        status: 'running',
+        toolUseId: 'c',
+      },
+      {
+        ts,
+        kind: 'tool',
+        toolName: 'codex.commandExecution',
+        status: 'done',
+        toolUseId: 'c',
+      },
+      { ts, kind: 'tool', toolName: 'Grep', status: 'running', toolUseId: 'd' },
+      { ts, kind: 'assistant', text: 'Done.' },
+    ];
+    expect(formatLastEntries(entries, 20)).toEqual([
+      '[tool ✓] Bash',
+      '[tool ✗] Read',
+      '[tool ✓] codex.commandExecution',
+      '[tool …] Grep',
+      '[assistant] Done.',
+    ]);
   });
 
   it('skips a thinking entry by default', () => {

@@ -188,6 +188,31 @@ describe('renderSharePage', () => {
     expect(html).not.toContain('1000 tokens');
   });
 
+  test("leaves out a tool call's result and its raw output", () => {
+    const html = renderSharePage(
+      packet({
+        entries: [
+          {
+            ts: '2026-09-22T10:04:00.000Z',
+            kind: 'tool',
+            toolName: 'Bash',
+            status: 'running',
+          },
+          {
+            ts: '2026-09-22T10:05:00.000Z',
+            kind: 'tool',
+            status: 'done',
+            text: 'GITHUB_TOKEN=ghp_secret',
+          },
+        ],
+      })
+    );
+
+    expect(html).toContain('tool · Bash');
+    expect(html).not.toContain('ghp_secret');
+    expect(html).not.toContain('10:05:00');
+  });
+
   test('marks a failed command distinctly from a passing one', () => {
     const html = renderSharePage(
       packet({

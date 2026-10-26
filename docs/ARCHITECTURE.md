@@ -174,8 +174,12 @@ are bare "go refetch" signals carrying at most an id (`task.changed`,
 `run.changed`, `plan.changed`, `finding.changed`, `landing.changed`,
 `delivery.changed`), while events whose payload a client would immediately fetch
 anyway carry it inline (`run.log`, `queue.drained`, `board.sync`, `run.survey`,
-`fixloop.capped`, `linear.changed`, `message.new`). Read the comments in
-`events.ts` before adding one — each existing choice is argued there.
+`fixloop.capped`, `linear.changed`, `message.new`). Two carry text that is never
+stored at all: `run.delta` and `overseer.delta`, the words of a running turn as
+the model writes them (see
+[Live text, narration and tool results](#live-text-narration-and-tool-results)).
+Read the comments in `events.ts` before adding one — each existing choice is
+argued there.
 
 ## The orchestrator
 
@@ -262,6 +266,147 @@ Notable modules:
 | `epic.ts`/`epicBranch.ts`                      | —     | Epic sessions, progress, and their branches                            |
 | `repoDigest.ts`/`orientation.ts`/`hotspots.ts` | —     | Repo context handed to agents                                          |
 | `jj.ts`                                        | —     | Jujutsu support, including colocation with git                         |
+
+## Live text, narration and tool results
+
+The Overseer chat and a task run's chat show an agent at work, not only what it
+settled on. Three pieces do that: **live text** (the words of a running turn,
+streamed and never stored), **narration** (the Overseer's prose between tool
+calls, stored as rows) and **tool results** (how each of a run's tool calls
+ended, stored as entries).
+
+**Segments.** Live text is cut into segments: one Claude text block, or one
+Codex `agentMessage` item. A Claude segment is `<apiMessageId>:<blockIndex>`,
+read off the Agent SDK's partial messages, which a turn asks for only while it
+streams (`includePartialMessages`; `orchestrator/claudeTextSegments.ts` names
+them for both the Overseer and runs). A Codex segment is the item id, fed by
+`item/agentMessage/delta`; Codex is not version-pinned, so everything works the
+same when no delta ever arrives. A sub-agent's messages (`parent_tool_use_id`
+set) never stream, and the Overseer does not count a sub-agent's tool calls or
+usage as its own either. The Overseer prefixes each segment with its turn id, so
+an id is unique within the conversation.
+
+**Frames.** Each piece of text is one websocket event,
+`{ type, conversationId | runId, turnId, seq, segmentId, text }`, where `text`
+extends segment `segmentId`. `seq` counts one key's frames (a conversation, or a
+run) for the daemon's life and never resets between turns; a run has one turn
+for its whole life, and the daemon forgets a run's live text when it ends. When
+a segment's text lands on the record, the row carries the segment as `streamId`
+and the segment leaves the live text in the same step: an Overseer `narration`
+or `assistant` row, a run's `assistant` entry (dropped before its `run.log` is
+sent). A client hides every live segment whose id a row already carries. A
+Claude text block that its API message stopped without finishing (the stream
+broke off, and the CLI sends the text again under a new message) is abandoned,
+in a run and in an Overseer turn alike: it leaves the live text, so a stopped
+Overseer turn never keeps it as narration, and a frame with `abandoned: true`
+and empty `text` tells clients to drop it rather than show it for the rest of
+the turn.
+
+**Snapshot.** `GET /api/overseer/:id`, `GET /api/overseer/current` and
+`GET /api/runs/:id` add `live: { seq, turnId, segments }` while a turn runs, so
+a window that opens or reconnects mid-turn starts from what was already written.
+Mutation responses may omit it; the stored record and the run transcript never
+hold it. The buffer is `packages/server/src/liveText.ts`, in memory only.
+
+**Gap repair.** The client folds frames in `packages/client/src/liveText.ts`, a
+pure reducer behind one store per window, keyed by port and
+`overseer:<conversationId>` or `run:<runId>`. A frame whose `seq` follows the
+last one appends (a new `turnId` starts that turn's segments empty); an old or
+repeated one is ignored; anything else is a gap: the key goes stale, holds the
+frame, and refetches its record once per stale episode. The record's `live`
+replaces the local text unless the local text is newer, held frames replay while
+they follow on, and a gap left over refetches once more. The desktop resets a
+daemon's live text on the websocket's `hello`, before it refetches every
+Overseer record and run detail: a restarted daemon counts `seq` from zero.
+`useLiveText` keeps a segment on screen until the row that replaces it reaches
+the view, so text does not blink out between the two; an abandoned segment goes
+at once. Every window hears every run's frames, so the desktop keeps text only
+for a run a surface shows (its detail query has an observer): a frame for a run
+no surface shows drops the text held for it and marks its cached detail stale,
+so a run opened later starts from its detail's snapshot. A run's segment leaves
+the store when the `run.log` entry naming it arrives, and the run's key goes
+once a fetched detail shows the run ended.
+
+**Run log order.** A `run.log` frame carries `index`, its entry's place among
+the run's transcript entries, the same position `GET /api/runs/:id` lists it at.
+The desktop appends a frame that continues its cached detail, ignores one it
+already holds, and refetches once (never cancelling a fetch already out) after
+one that skips ahead. Frames that land while a detail fetch is out are added to
+its response by index before it lands, so steady output never restarts a fetch.
+A frame from an older daemon has no index and is appended as before; one that
+lands while a detail fetch is out has the detail fetched once more after that
+fetch lands, since its response may predate the entry. A daemon that could not
+write an entry to the transcript still sends its frame, with no index, and then
+`run.changed`, so every window refetches the run instead of staying one entry
+ahead of the transcript.
+
+**Audience (owner decision, 2026-10-23).** `overseer.delta` goes only to the
+conversation's live audience (`overseerLiveAudience` in
+`orchestrator/overseer.ts`): any deciding human (a `human:` credential at the
+`decide` tier or above, the reach the bus mirror of the conversation's lines
+already has through `messageAudience` in `messaging/service.ts`), the
+conversation's owner at any tier, and operator-tier sockets. Never a socket
+opened with the shared agent token. `run.delta` goes to exactly the sockets
+`run.log` reaches, which today is every socket; that is parity on purpose, and
+scoping both is separate work.
+
+**Switches.** Two `.dispatch/config.yml` blocks, read when a turn or a run
+starts. They are rollback switches, so both default to `live`; YAML `true` and
+`false` read as `live` and `off`. Neither is in Settings yet.
+
+```yaml
+overseer:
+  stream: live # live | narration | off
+runs:
+  stream: live # live | off
+```
+
+For the Overseer, `live` streams and keeps narration, `narration` keeps the rows
+but streams nothing (Claude is not asked for partial messages), and `off` is one
+reply per turn with nothing in between. For runs, `off` shows each block of text
+once the model finished it.
+
+**Narration.** `OverseerMessage.role` gains `narration`: prose the Overseer
+wrote mid-turn, before a tool call, kept as a row in the order it was written.
+Each turn still has exactly one `assistant` reply row, so everything that reads
+"the turn's reply" (the rollover recap, the bus reply, the last line on Tasks,
+`GET /api/agents`, the memory export) is unchanged. The Claude backend holds
+each finished text block as pending, commits the pending blocks as narration
+just before the next top-level tool call, and treats what is pending at the
+`result` as the reply; a pending block whose text the result does not contain is
+kept as narration too, so no text is lost. The Codex backend holds finished
+`agentMessage` items by id: the next item commits the earlier ones as narration,
+except one Codex marked `final_answer`, and at the turn's end every item but the
+reply is narration. Codex's reply is its last message even when a step followed
+it, by which time that message went out as narration: the manager then moves it,
+so the reply row takes the narration row's place rather than repeating it. A
+turn that is stopped or fails keeps the text it had streamed as narration rows,
+ahead of the stop notice or the failure. A desktop that predates the role drops
+those rows, so a newer daemon is safe with it.
+
+**Run tool results.** A run's transcript is append-only, so a tool call's
+outcome is an entry of its own. The Claude executor logs each top-level
+`tool_result` for a call the agent itself made as a `tool` entry with the call's
+`toolUseId`, no `toolName`, `status` `done` or `error`, and no output: the
+transcript and its run.log frames reach every request-tier client, and a result
+can carry what the call read (the operator's exported memory, a personal doc, an
+MCP answer). Showing output means scoping run.log first. A sub-agent's results
+are not logged. The Codex executor logs a tool item when it starts and again
+when it completes, both under the item id. The desktop folds each result into
+its call by `toolUseId` (`lib/runLog.ts`), so a chip ends done or failed. In a
+log that reports results, a call shows as running until its result lands; for an
+older daemon, a scripted run, or a sub-agent's call, only the live edge does.
+`dispatch run show` folds each result into its call's line (✓ or ✗);
+`dispatch run --watch` and `run watch` skip result entries, since the call's own
+line already printed.
+
+**Rendering.** Both chats render live text through `StreamingText`
+(`packages/ui`) with the app's Markdown: text that grows continues its reveal
+from where it was, text that arrives whole shows at once, and a code fence still
+open at the end is closed for display. Overseer narration renders as the agent's
+prose, quieter than the reply, and live segments take the place of the "working"
+row while there is text. Both chats use one approval card (`ToolApprovalCard`),
+whose Deny takes an optional reason that reaches the model.
 
 ## Messaging
 

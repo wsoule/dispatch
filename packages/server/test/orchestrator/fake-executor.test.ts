@@ -61,6 +61,46 @@ describe('FakeExecutor', () => {
     expect(finishes).toEqual([{ state: 'finished', costUsd: 0.1, turns: 2 }]);
   });
 
+  it('streams a scripted delta ahead of its entry, only to a run given onDelta', async () => {
+    const repo = initGitRepo();
+    const script = {
+      steps: [
+        { delta: { segmentId: 'seg-1', text: 'Star' } },
+        {
+          delta: { segmentId: 'seg-1', text: 'ting' },
+          entry: {
+            ts: 't1',
+            kind: 'assistant' as const,
+            text: 'Starting',
+            streamId: 'seg-1',
+          },
+        },
+      ],
+      finish: { state: 'finished' as const },
+    };
+    const order: string[] = [];
+    const { events } = collectEvents();
+    new FakeExecutor(script).start(
+      { ...baseOpts, cwd: repo },
+      {
+        ...events,
+        onDelta: (id, text) => order.push(`delta ${id} ${text}`),
+        onEntry: (entry) => order.push(`entry ${entry.streamId}`),
+      }
+    );
+    // Without onDelta the deltas go nowhere and the entries still land.
+    const quiet = collectEvents();
+    new FakeExecutor(script).start({ ...baseOpts, cwd: repo }, quiet.events);
+
+    await Bun.sleep(10);
+    expect(order).toEqual([
+      'delta seg-1 Star',
+      'delta seg-1 ting',
+      'entry seg-1',
+    ]);
+    expect(quiet.entries.map((e) => e.text)).toEqual(['Starting']);
+  });
+
   it('actually writes and commits files in the worktree when scripted', async () => {
     const repo = initGitRepo();
     const executor = new FakeExecutor({

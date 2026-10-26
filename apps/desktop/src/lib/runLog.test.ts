@@ -1,7 +1,12 @@
 import type { NormalizedEntry } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
-import { groupLogEntries, liveCostUsd, toolEntryPreview } from './runLog';
+import {
+  groupLogEntries,
+  liveCostUsd,
+  reportsToolResults,
+  toolEntryPreview,
+} from './runLog';
 
 function entry(partial: Partial<NormalizedEntry>): NormalizedEntry {
   return { ts: '2026-01-01T00:00:00.000Z', kind: 'assistant', ...partial };
@@ -130,5 +135,77 @@ describe('groupLogEntries — sub-agent entries', () => {
       { kind: 'message', entries: [started] },
       { kind: 'message', entries: [finished] },
     ]);
+  });
+});
+
+describe('groupLogEntries — tool results', () => {
+  const call = entry({
+    ts: '2026-01-01T00:00:01.000Z',
+    kind: 'tool',
+    toolName: 'Bash',
+    toolInput: { command: 'ls' },
+    toolUseId: 'tu-1',
+    status: 'running',
+  });
+
+  test("folds a Claude result into its call, in the call's place", () => {
+    const result = entry({
+      ts: '2026-01-01T00:00:05.000Z',
+      kind: 'tool',
+      toolUseId: 'tu-1',
+      status: 'error',
+      text: 'exit code 1',
+    });
+    const said = entry({ kind: 'assistant', text: 'that failed' });
+    expect(groupLogEntries([call, said, result])).toEqual([
+      {
+        kind: 'tools',
+        entries: [{ ...call, status: 'error', text: 'exit code 1' }],
+      },
+      { kind: 'message', entries: [said] },
+    ]);
+  });
+
+  test("takes a Codex call's completed copy over its started one", () => {
+    const completed = entry({
+      ts: '2026-01-01T00:00:05.000Z',
+      kind: 'tool',
+      toolName: 'codex.commandExecution',
+      toolInput: { command: 'ls', output: 'a\nb', exitCode: 0 },
+      toolUseId: 'tu-1',
+      status: 'done',
+    });
+    const started = { ...call, toolName: 'codex.commandExecution' };
+    expect(groupLogEntries([started, completed])).toEqual([
+      { kind: 'tools', entries: [{ ...completed, ts: started.ts }] },
+    ]);
+  });
+
+  test('keeps a call with no result, and drops a result with no call', () => {
+    const stray = entry({ kind: 'tool', toolUseId: 'tu-9', status: 'done' });
+    const other = entry({ kind: 'tool', toolName: 'Read', toolUseId: 'tu-2' });
+    expect(groupLogEntries([stray, call, other])).toEqual([
+      { kind: 'tools', entries: [call, other] },
+    ]);
+  });
+
+  test('reportsToolResults is true once any call has settled by id', () => {
+    expect(reportsToolResults([call])).toBe(false);
+    // A scripted run's settled call without an id says nothing about results.
+    expect(
+      reportsToolResults([
+        call,
+        entry({ kind: 'tool', toolName: 'Read', status: 'done' }),
+      ])
+    ).toBe(false);
+    expect(
+      reportsToolResults([
+        call,
+        entry({ kind: 'tool', toolUseId: 'tu-1', status: 'done' }),
+      ])
+    ).toBe(true);
+    expect(
+      reportsToolResults([{ ...call, status: 'done', toolUseId: 'tu-3' }])
+    ).toBe(true);
   });
 });

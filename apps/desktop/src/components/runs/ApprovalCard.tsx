@@ -3,12 +3,11 @@ import { useEffect, useRef, useState } from 'react';
 import type { DecideAvailability } from '../../lib/daemonAuth';
 import { DecideUnavailableNotice } from './DecideUnavailableNotice';
 import { formatRelativeTimeFromIso } from '@/lib/format';
-import type { ApprovalCardOption } from '@/ui/ai/approval-card';
-import { ApprovalCard as AiApprovalCard } from '@/ui/ai/approval-card';
+import {
+  ToolApprovalCard,
+  type ToolApprovalDecision,
+} from '@/ui/ai/tool-approval-card';
 import { Button } from '@/ui/button';
-import { Collapsible, CollapsibleContent } from '@/ui/collapsible';
-import { ScrollArea } from '@/ui/scroll-area';
-import { Textarea } from '@/ui/textarea';
 
 interface ApprovalCardProps {
   toolName: string;
@@ -99,18 +98,14 @@ function useFullInput(load: (() => Promise<unknown>) | undefined): {
   return { full, error, retry };
 }
 
-const DENY_ID = 'deny';
-const SESSION_ID = 'session';
-const ONCE_ID = 'once';
-
 /**
  * The human-in-the-loop gate for a run that's paused on `canUseTool` (real executor) or a
- * scripted approval gate (FakeExecutor): shows which tool wants to run and with what input,
- * then lets the user allow or deny it. Built on the `ui/ai/approval-card` primitive for the
- * question/options chrome; "Deny" doesn't fire through the primitive's immediate-select
- * semantics because it needs a reason first, so it opens a reason box below instead of
- * deciding right away. Both callback shape and payloads (`onDecide(allow, opts)`) are
- * unchanged from before this reskin.
+ * scripted approval gate (FakeExecutor): the shared `ToolApprovalCard` (which tool wants to
+ * run and with what, allow once or for the run, or deny with a reason), plus what only a run
+ * gate has: how long the run has been frozen, a truncated preview that a deciding window
+ * swaps for the full call, why an attached window cannot decide, and the error a failed
+ * answer left. The callback shape (`onDecide(allow, opts)`) is unchanged from before the
+ * card was shared.
  */
 export function ApprovalCard({
   toolName,
@@ -132,93 +127,46 @@ export function ApprovalCard({
     truncated && availability.enabled ? loadFullInput : undefined
   );
   const showsPreview = truncated && full === null;
-  const [deciding, setDeciding] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | undefined>();
-  // Denying opens a reason box rather than firing immediately. The button says "tell it why",
-  // so denying silently would make that a lie — and a bare refusal leaves the agent guessing at
-  // what it did wrong, which usually means it guesses again.
-  const [denying, setDenying] = useState(false);
-  const [reason, setReason] = useState('');
-  const reasonRef = useRef<HTMLTextAreaElement>(null);
-  // Picking Deny reveals the reason box, so the caret follows that choice into it.
-  useEffect(() => {
-    if (denying) reasonRef.current?.focus();
-  }, [denying]);
 
-  async function decide(
-    allow: boolean,
-    opts?: { scope?: 'once' | 'session'; reason?: string }
-  ) {
-    setDeciding(true);
+  // The shared card keeps its reason box open when this rejects, so the error is shown
+  // here and passed on.
+  async function decide(decision: ToolApprovalDecision) {
     setError(null);
     try {
-      await onDecide(allow, opts);
-      setDenying(false);
-      setReason('');
+      await onDecide(
+        decision.allow,
+        decision.allow
+          ? { scope: decision.scope }
+          : decision.reason === undefined
+            ? undefined
+            : { reason: decision.reason }
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setDeciding(false);
+      throw err;
     }
   }
-
-  function handleSelect(id: string) {
-    if (deciding || !availability.enabled) return;
-    setSelectedId(id);
-    if (id === DENY_ID) {
-      setDenying(true);
-      return;
-    }
-    void decide(true, { scope: id === SESSION_ID ? 'session' : 'once' });
-  }
-
-  const options: ApprovalCardOption[] = [
-    { id: DENY_ID, label: 'Deny and tell it why' },
-    ...(sessionAllowed
-      ? [
-          {
-            id: SESSION_ID,
-            label: `Allow ${toolName} for this run`,
-            description:
-              'Scoped to this run — never carries into the next one.',
-          },
-        ]
-      : []),
-    { id: ONCE_ID, label: 'Approve once', recommended: true },
-  ];
 
   return (
-    <div
-      data-slot="tool-approval-card"
-      className="animate-in fade-in-0 flex flex-col gap-2 duration-100 motion-reduce:animate-none"
+    <ToolApprovalCard
+      toolName={toolName}
+      // The detail stays a plain string: a tool name isn't agent-authored markdown.
+      detail={
+        frozenSince !== undefined
+          ? `${toolName} — frozen ${formatRelativeTimeFromIso(frozenSince)}`
+          : toolName
+      }
+      preview={
+        full !== null
+          ? formatInput(full.input)
+          : formatPreview(toolInput, truncated)
+      }
+      sessionScope={sessionAllowed ? 'this run' : undefined}
+      sessionDescription="Scoped to this run — never carries into the next one."
+      onDecide={decide}
+      disabled={!availability.enabled}
     >
-      <AiApprovalCard
-        // Full-width in the transcript — the primitive's gallery default is `max-w-sm`. The
-        // detail stays a plain string: a tool name isn't agent-authored markdown.
-        className="max-w-none"
-        question="Waiting on approval"
-        detail={
-          frozenSince !== undefined
-            ? `${toolName} — frozen ${formatRelativeTimeFromIso(frozenSince)}`
-            : toolName
-        }
-        options={options}
-        onSelect={handleSelect}
-        selectedId={selectedId}
-        // Disabled while composing a deny reason too, not just while deciding: the reason box
-        // asks "why not?" before anything fires, so the other two options staying clickable
-        // underneath it would let a stray click approve the very thing being denied. The
-        // pre-reskin version removed the option row outright for the same reason.
-        disabled={deciding || denying || !availability.enabled}
-      />
-      <ScrollArea className="rounded-control border-border-chip bg-surface-quaternary max-h-40 border-[0.5px]">
-        <pre className="text-muted-foreground p-2 font-mono text-[11px] break-words whitespace-pre-wrap">
-          {full !== null
-            ? formatInput(full.input)
-            : formatPreview(toolInput, truncated)}
-        </pre>
-      </ScrollArea>
       {showsPreview && (
         <div
           data-slot="approval-input-truncated"
@@ -245,38 +193,6 @@ export function ApprovalCard({
         onRestartDaemon={onRestartDaemon}
       />
       {error !== null && <div className="text-red text-[12px]">{error}</div>}
-      {/* `denying` drives a real Collapsible rather than a plain conditional — no chevron
-          here, just the reveal/animate-in behavior for the reason box. */}
-      <Collapsible open={denying}>
-        <CollapsibleContent className="flex flex-col gap-2">
-          <Textarea
-            ref={reasonRef}
-            aria-label="Reason for denying"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Why not? The agent gets this as the reason it was refused."
-            className="font-book min-h-[52px] w-full resize-y text-[13px]"
-          />
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="ghost"
-              disabled={deciding}
-              onClick={() => {
-                setDenying(false);
-                setSelectedId(undefined);
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              disabled={deciding}
-              onClick={() => void decide(false, { reason })}
-            >
-              Deny{reason.trim() === '' ? '' : ' and tell it why'}
-            </Button>
-          </div>
-        </CollapsibleContent>
-      </Collapsible>
-    </div>
+    </ToolApprovalCard>
   );
 }

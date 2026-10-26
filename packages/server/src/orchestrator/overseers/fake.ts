@@ -19,6 +19,20 @@ interface FakeOverseerCall {
   input?:
     | Record<string, unknown>
     | ((prior: OverseerToolResult[]) => Record<string, unknown>);
+  /** Prose the model writes before this call: reported as narration, after
+   *  streaming it when the turn streams. */
+  narration?: string;
+}
+
+/**
+ * How a scripted turn's text arrives through `onTextDelta`: `chunk`
+ * characters at a time (8 by default), `delayMs` apart (none by default), so a
+ * test can watch the text arrive before the reply lands. A turn without it
+ * streams nothing, like a backend that cannot.
+ */
+interface FakeOverseerStream {
+  chunk?: number;
+  delayMs?: number;
 }
 
 /** One scripted assistant turn: the calls it makes, then the text it replies with. */
@@ -30,6 +44,8 @@ export interface FakeOverseerTurn {
    * the assistant answered from them rather than from a canned string.
    */
   reply?: string | ((results: OverseerToolResult[]) => string);
+  /** Streams the turn's narration and reply; absent, none of it streams. */
+  stream?: FakeOverseerStream;
 }
 
 // A scriptable stand-in for ClaudeOverseer (mirrors planners/fake.ts's
@@ -40,7 +56,12 @@ export interface FakeOverseerTurn {
 //     order, so a test can drive ask -> queue -> confirm -> follow-up.
 //   - `{ ok: false, error }`       — every turn rejects with this message.
 export type FakeOverseerScript =
-  | { ok: true; calls?: FakeOverseerCall[]; reply?: string }
+  | {
+      ok: true;
+      calls?: FakeOverseerCall[];
+      reply?: string;
+      stream?: FakeOverseerStream;
+    }
   | { ok: true; turns: FakeOverseerTurn[] }
   | { ok: false; error: string };
 
@@ -81,32 +102,35 @@ export class FakeOverseer implements OverseerBackend {
   async start(
     prompt: string,
     toolset: OverseerToolset,
-    _options?: OverseerTurnOptions
+    options: OverseerTurnOptions = {}
   ): Promise<OverseerTurn> {
-    return this.runTurn(0, prompt, toolset);
+    return this.runTurn(0, prompt, toolset, options);
   }
 
   async sendMessage(
     sessionId: string | undefined,
     message: string,
     toolset: OverseerToolset,
-    _options?: OverseerTurnOptions
+    options: OverseerTurnOptions = {}
   ): Promise<OverseerTurn> {
     const consumed =
       sessionId === undefined ? 0 : Number.parseInt(sessionId, 10);
     return this.runTurn(
       Number.isFinite(consumed) ? consumed : 0,
       message,
-      toolset
+      toolset,
+      options
     );
   }
 
   // Plays the turn at `index` (the number of turns already consumed): every
-  // scripted call in order, then the reply.
+  // scripted call in order, each after its narration, then the reply. Each
+  // piece of text is one segment, `fake-<turn>-<n>`.
   private async runTurn(
     index: number,
     prompt: string,
-    toolset: OverseerToolset
+    toolset: OverseerToolset,
+    options: OverseerTurnOptions
   ): Promise<OverseerTurn> {
     if (!this.script.ok) {
       throw new Error(this.script.error);
@@ -116,7 +140,13 @@ export class FakeOverseer implements OverseerBackend {
 
     const turn = this.turnAt(index);
     const results: OverseerToolResult[] = [];
+    let segments = 0;
     for (const call of turn.calls ?? []) {
+      if (call.narration !== undefined) {
+        const segmentId = `fake-${index}-${segments++}`;
+        await streamText(segmentId, call.narration, turn.stream, options);
+        options.onNarration?.(segmentId, call.narration);
+      }
       const input =
         typeof call.input === 'function' ? call.input(results) : call.input;
       const result = await toolset.call(call.tool, input ?? {});
@@ -127,9 +157,13 @@ export class FakeOverseer implements OverseerBackend {
       });
       results.push(result);
     }
-    const reply = turn.reply ?? DEFAULT_REPLY;
+    const scripted = turn.reply ?? DEFAULT_REPLY;
+    const reply = typeof scripted === 'function' ? scripted(results) : scripted;
+    const streamId = `fake-${index}-${segments}`;
+    const streamed = await streamText(streamId, reply, turn.stream, options);
     return {
-      reply: typeof reply === 'function' ? reply(results) : reply,
+      reply,
+      ...(streamed ? { streamId } : {}),
       sessionId: String(index + 1),
     };
   }
@@ -137,7 +171,8 @@ export class FakeOverseer implements OverseerBackend {
   private turnAt(index: number): FakeOverseerTurn {
     if (!this.script.ok) throw new Error(this.script.error);
     if (!('turns' in this.script)) {
-      return { calls: this.script.calls, reply: this.script.reply };
+      const { calls, reply, stream } = this.script;
+      return { calls, reply, stream };
     }
     const turn = this.script.turns[index];
     if (turn === undefined) {
@@ -145,4 +180,27 @@ export class FakeOverseer implements OverseerBackend {
     }
     return turn;
   }
+}
+
+// Hands `text` to `onTextDelta` in the script's pieces, and says whether it
+// streamed at all. Stops early once the turn is stopped, as a real model's
+// stream would.
+async function streamText(
+  segmentId: string,
+  text: string,
+  stream: FakeOverseerStream | undefined,
+  options: OverseerTurnOptions
+): Promise<boolean> {
+  const { onTextDelta, abortController } = options;
+  if (stream === undefined || onTextDelta === undefined) return false;
+  const chunk = Math.max(1, stream.chunk ?? 8);
+  const delayMs = stream.delayMs ?? 0;
+  for (let at = 0; at < text.length; at += chunk) {
+    if (abortController?.signal.aborted === true) break;
+    if (at > 0 && delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    onTextDelta(segmentId, text.slice(at, at + chunk));
+  }
+  return true;
 }

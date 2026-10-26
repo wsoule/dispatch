@@ -11,14 +11,19 @@ import {
   DEFAULT_MESSAGING,
   DEFAULT_MODELS,
   DEFAULT_NOTIFICATIONS,
+  DEFAULT_OVERSEER,
   DEFAULT_PREVIEW,
   DEFAULT_RECEIPTS,
   DEFAULT_REPO_DIGEST,
+  DEFAULT_RUNS,
   DEFAULT_SYNC,
   loadConfig,
+  overseerSettings,
   queueWeights,
+  runSettings,
   syncPlace,
 } from '../src/config.js';
+import type { DispatchConfig } from '../src/config.js';
 import {
   DEFAULT_A2A,
   DEFAULT_MEMORY,
@@ -79,6 +84,8 @@ describe('loadConfig', () => {
       sync: DEFAULT_SYNC,
       policy: DEFAULT_POLICY,
       preview: DEFAULT_PREVIEW,
+      overseer: DEFAULT_OVERSEER,
+      runs: DEFAULT_RUNS,
       queue: { weights: DEFAULT_QUEUE_WEIGHTS },
       a2a: DEFAULT_A2A,
       a2aWarnings: [],
@@ -434,6 +441,61 @@ describe('the carto block', () => {
   it('throws when carto is not a mapping', () => {
     expect(() => loadConfig(writeConfig('carto: nope\n'))).toThrow(
       /invalid \.dispatch\/config\.yml: carto must be a mapping/
+    );
+  });
+});
+
+describe('the overseer block', () => {
+  it('streams live text when the block is absent', () => {
+    expect(loadConfig(writeConfig('statuses: [todo]\n')).overseer).toEqual({
+      stream: 'live',
+    });
+    expect(overseerSettings({} as DispatchConfig)).toEqual({ stream: 'live' });
+  });
+
+  it('accepts narration and off, and reads YAML booleans as live/off', () => {
+    const stream = (yaml: string) =>
+      loadConfig(writeConfig(`overseer:\n  stream: ${yaml}\n`)).overseer
+        ?.stream;
+    expect(stream('narration')).toBe('narration');
+    expect(stream('off')).toBe('off');
+    expect(stream('false')).toBe('off');
+    expect(stream('true')).toBe('live');
+  });
+
+  it('rejects an unknown mode and a block that is not a mapping', () => {
+    expect(() =>
+      loadConfig(writeConfig('overseer:\n  stream: typing\n'))
+    ).toThrow(/overseer\.stream must be one of: live, narration, off/);
+    expect(() => loadConfig(writeConfig('overseer: live\n'))).toThrow(
+      /overseer must be a mapping/
+    );
+  });
+});
+
+describe('the runs block', () => {
+  it('streams live text when the block is absent', () => {
+    expect(loadConfig(writeConfig('statuses: [todo]\n')).runs).toEqual({
+      stream: 'live',
+    });
+    expect(runSettings({} as DispatchConfig)).toEqual({ stream: 'live' });
+  });
+
+  it('accepts off, and reads YAML booleans as live/off', () => {
+    const stream = (yaml: string) =>
+      loadConfig(writeConfig(`runs:\n  stream: ${yaml}\n`)).runs?.stream;
+    expect(stream('off')).toBe('off');
+    expect(stream('false')).toBe('off');
+    expect(stream('true')).toBe('live');
+  });
+
+  it('rejects an unknown mode and a block that is not a mapping', () => {
+    // `narration` is the Overseer's: a run's text is all rows already.
+    expect(() =>
+      loadConfig(writeConfig('runs:\n  stream: narration\n'))
+    ).toThrow(/runs\.stream must be one of: live, off/);
+    expect(() => loadConfig(writeConfig('runs: live\n'))).toThrow(
+      /runs must be a mapping/
     );
   });
 });

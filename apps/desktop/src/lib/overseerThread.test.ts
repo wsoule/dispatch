@@ -400,6 +400,104 @@ describe('buildOverseerThread', () => {
   });
 });
 
+describe('narration and live text', () => {
+  test('narration renders as its own row, in transcript order', () => {
+    const items = buildOverseerThread(
+      makeRecord([
+        { role: 'user', text: 'status?', at },
+        { role: 'narration', text: 'Checking the runs.', at, streamId: 's1' },
+        { role: 'tool', tool: 'list_runs', text: '{"runs":[]}', at },
+        { role: 'narration', text: '   ', at },
+        { role: 'assistant', text: 'All quiet.', at, streamId: 's2' },
+      ])
+    );
+    expect(items.map((i) => i.kind)).toEqual([
+      'message',
+      'narration',
+      'tool',
+      'message',
+    ]);
+    expect(items[1]).toEqual({
+      kind: 'narration',
+      key: 'w-1-msg-1',
+      text: 'Checking the runs.',
+      at,
+    });
+  });
+
+  test('live segments follow the transcript in place of the working row', () => {
+    const items = buildOverseerThread(
+      makeRecord([{ role: 'user', text: 'status?', at }], {
+        state: 'running',
+        queued: [{ id: 'q-1', text: 'and then?', at }],
+      }),
+      {
+        turnId: 't1',
+        segments: [
+          { id: 's1', text: 'Checking.' },
+          { id: 's2', text: 'Two runs' },
+        ],
+      }
+    );
+    expect(items.map((i) => i.kind)).toEqual([
+      'message',
+      'live',
+      'live',
+      'queued',
+    ]);
+    expect(items[2]).toEqual({
+      kind: 'live',
+      key: 'w-1-live-s2',
+      segmentId: 's2',
+      text: 'Two runs',
+    });
+  });
+
+  test('a turn with no words yet keeps the working row', () => {
+    const items = buildOverseerThread(
+      makeRecord([{ role: 'user', text: 'status?', at }], { state: 'running' }),
+      { turnId: 't1', segments: [{ id: 's1', text: '\n ' }] }
+    );
+    expect(items.map((i) => i.kind)).toEqual(['message', 'pending']);
+  });
+
+  test('a parked call shows what the turn wrote, still with no spinner', () => {
+    const approval = {
+      requestId: 'req-1',
+      toolName: 'Bash',
+      input: { command: 'ls' },
+      summary: 'Bash: ls',
+      requestedAt: at,
+    };
+    const items = buildOverseerThread(
+      makeRecord([], { state: 'running', pendingApprovals: [approval] }),
+      { turnId: 't1', segments: [{ id: 's1', text: 'Listing.' }] }
+    );
+    expect(items.map((i) => i.kind)).toEqual(['approve', 'live']);
+  });
+
+  test('live text is ignored once the turn is not running', () => {
+    const items = buildOverseerThread(
+      makeRecord([{ role: 'assistant', text: 'All quiet.', at }]),
+      { turnId: 't1', segments: [{ id: 's1', text: 'All quiet.' }] }
+    );
+    expect(items.map((i) => i.kind)).toEqual(['message']);
+  });
+
+  test('find reaches narration and live text', () => {
+    const items = buildOverseerThread(
+      makeRecord([{ role: 'narration', text: 'Checking the queue.', at }], {
+        state: 'running',
+      }),
+      { turnId: 't1', segments: [{ id: 's1', text: 'The Queue is empty' }] }
+    );
+    expect(findInThread(items, 'queue').map((i) => i.kind)).toEqual([
+      'narration',
+      'live',
+    ]);
+  });
+});
+
 describe('one durable conversation', () => {
   test('notices render as their own rows and queued messages follow the stream', () => {
     const record = makeRecord(

@@ -95,6 +95,11 @@ export interface NormalizedEntry {
   toolName?: string;
   toolInput?: unknown;
   status?: 'running' | 'done' | 'error';
+  // `kind: 'tool'` and `kind: 'agent'`: the id of the tool call the entry
+  // records. A call's result (a `tool` entry with no `toolName`) and Codex's
+  // completed copy of a call carry the call's id, so `run show` folds them
+  // into the call's line. Mirrors NormalizedEntry.toolUseId server-side.
+  toolUseId?: string;
   // Set on entries a sub-agent made rather than the run's own agent.
   parentToolUseId?: string;
   // `kind: 'agent'` only: one lifecycle event of a spawned sub-agent —

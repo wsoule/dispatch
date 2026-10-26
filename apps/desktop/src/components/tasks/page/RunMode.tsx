@@ -1,7 +1,7 @@
 import { SquareTerminal } from 'lucide-react';
 import { useMemo } from 'react';
 
-import { useRunDetail } from '../../../hooks/useRunData';
+import { useRunDetail, useRunLive } from '../../../hooks/useRunData';
 import type { RunQuestion } from '../../../lib/gates';
 import type { PendingApproval } from '../../../lib/pendingApprovals';
 import { deriveStopControl, isTerminalRunState } from '../../../lib/runState';
@@ -34,6 +34,10 @@ export function RunMode({ page }: { page: TaskPageModel }) {
   const run = page.selectedRun;
   const runId = run?.id ?? null;
   const detail = useRunDetail(project.client, project.port, runId);
+  const live = useRunLive(
+    project.port,
+    detail?.meta.id === runId ? detail : undefined
+  );
   const { openThread } = useShellActions();
   // The run's open asks plus those of the task's ended execute runs, which stay
   // open for the task whatever run is shown.
@@ -110,6 +114,7 @@ export function RunMode({ page }: { page: TaskPageModel }) {
           <RunLogView
             meta={detail.meta}
             entries={detail.entries}
+            live={live?.segments}
             pendingApprovals={
               project.pendingApprovals.get(run.id) ?? NO_APPROVALS
             }

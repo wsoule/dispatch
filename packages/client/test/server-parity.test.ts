@@ -106,6 +106,47 @@ describe('events mirror dispatchd', () => {
     );
   });
 
+  it('overseer.delta declares the same fields with the same optionality', () => {
+    const member = (source: string): string[] | null => {
+      const body = /\{\n {6}type: 'overseer\.delta';([\s\S]*?)\n {4}\}/.exec(
+        source
+      )?.[1];
+      if (body === undefined) return null;
+      return [...body.matchAll(/\n {6}(\w+\??):/g)].map((m) => m[1]);
+    };
+    const server = member(serverSource('events.ts'));
+    const client = member(clientSource());
+    expect(server).toEqual([
+      'conversationId',
+      'turnId',
+      'seq',
+      'segmentId',
+      'text',
+      'abandoned?',
+    ]);
+    expect(client).toEqual(server);
+  });
+
+  it("run.delta declares overseer.delta's fields, keyed by run", () => {
+    const member = (source: string): string[] | null => {
+      const body = /\{\n {6}type: 'run\.delta';([\s\S]*?)\n {4}\}/.exec(
+        source
+      )?.[1];
+      if (body === undefined) return null;
+      return [...body.matchAll(/\n {6}(\w+\??):/g)].map((m) => m[1]);
+    };
+    const server = member(serverSource('events.ts'));
+    expect(server).toEqual([
+      'runId',
+      'turnId',
+      'seq',
+      'segmentId',
+      'text',
+      'abandoned?',
+    ]);
+    expect(member(clientSource())).toEqual(server);
+  });
+
   it('epic.paused declares the same fields with the same optionality', () => {
     const member = (source: string): string[] | null => {
       const body = /\{\n {6}type: 'epic\.paused';([\s\S]*?)\n {4}\}/.exec(
@@ -118,6 +159,28 @@ describe('events mirror dispatchd', () => {
     const client = member(clientSource());
     expect(server).not.toBeNull();
     expect(client).toEqual(server);
+  });
+});
+
+describe('run types mirror dispatchd', () => {
+  it('NormalizedEntry declares the same fields with the same optionality', () => {
+    const server = fields(
+      serverSource('orchestrator', 'types.ts'),
+      'NormalizedEntry'
+    );
+    expect(server).toContain('streamId?');
+    expect(fields(clientSource(), 'NormalizedEntry')).toEqual(server);
+  });
+
+  it('RunDetail and RunDetailView match the run detail the API answers with', () => {
+    const transcript = serverSource('orchestrator', 'transcript.ts');
+    const server = fields(transcript, 'RunDetail');
+    expect(server).not.toBeNull();
+    expect(fields(clientSource(), 'RunDetail')).toEqual(server);
+    const pattern = /export type RunDetailView = ([^;]+);/;
+    const view = pattern.exec(transcript)?.[1];
+    expect(view).toBeDefined();
+    expect(pattern.exec(clientSource())?.[1]).toBe(view);
   });
 });
 
@@ -238,6 +301,23 @@ describe('overseer types mirror dispatchd', () => {
     expect(client).toEqual(server);
   });
 
+  for (const iface of ['LiveText', 'LiveSegment']) {
+    it(`${iface} declares the same fields as the server's live text`, () => {
+      const server = fields(serverSource('liveText.ts'), iface);
+      expect(server).not.toBeNull();
+      expect(fields(clientSource(), iface)).toEqual(server);
+    });
+  }
+
+  it('OverseerRecordView adds the same live field to the record', () => {
+    const pattern = /export type OverseerRecordView = ([^;]+);/;
+    const server = pattern.exec(
+      serverSource('orchestrator', 'overseer.ts')
+    )?.[1];
+    expect(server).toBeDefined();
+    expect(pattern.exec(clientSource())?.[1]).toBe(server);
+  });
+
   it('OverseerState carries the same states the server stores', () => {
     const pattern = /type OverseerState = ([^;]+);/;
     const server = literals(
@@ -251,7 +331,7 @@ describe('overseer types mirror dispatchd', () => {
 
   // The three inline literal unions inside the interfaces (message role,
   // action lifecycle outcome, action status) — field-name parity above says
-  // nothing about their members.
+  // nothing about their members. A long union wraps onto its own lines.
   for (const [iface, field] of [
     ['OverseerMessage', 'role'],
     ['OverseerMessage', 'outcome?'],
@@ -265,7 +345,7 @@ describe('overseer types mirror dispatchd', () => {
           source
         )?.[1];
       const pattern = new RegExp(
-        `\\n {2}${field.replace('?', '\\?')}: ([^;]+);`
+        `\\n {2}${field.replace('?', '\\?')}:\\s+([^;]+);`
       );
       const server = literals(
         bodyOf(serverSource('orchestrator', file)) ?? '',

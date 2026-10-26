@@ -10,7 +10,8 @@ export type CodeBlockProps = {
   language: CodeBlockLanguage;
   /** File name shown in the header bar, e.g. `churn.ts`. Omitted entirely when absent. */
   filename?: string;
-  /** Reveals `code` line by line via `useStreamedText` instead of rendering it whole. */
+  /** Reveals what `code` grows by line by line via `useStreamedText`; the code it
+   * mounts with shows at once. */
   streaming?: boolean;
   /** Notified with the full `code` string after a successful copy-to-clipboard. */
   onCopy?: (code: string) => void;
@@ -231,8 +232,8 @@ const TOKEN_CLASS: Record<CodeTokenKind, string> = {
 const COPIED_RESET_MS = 1500;
 
 /** Framed source snippet: mono filename + language label header with a copy button,
- * and a horizontally-scrollable `font-mono` body. `streaming` reveals `code` one
- * completed line at a time (via `useStreamedText`), each line fading in on arrival —
+ * and a horizontally-scrollable `font-mono` body. `streaming` reveals code that grows
+ * one completed line at a time (via `useStreamedText`), each line fading in on arrival —
  * skipped entirely under reduced motion. Matches the showcase's "Code Block" primitive. */
 export function CodeBlock({
   code,

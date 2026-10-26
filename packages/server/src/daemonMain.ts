@@ -377,12 +377,23 @@ const FAKE_OVERSEER_MUTATING_TURN: FakeOverseerTurn = {
 // two identical mutating turns (queue-deny-requeue-approve is the flow the
 // desktop e2e drives, so the second ask must queue again). Fixed like the
 // executor/planner defaults above — a test/e2e hook, not a scripting facility.
+//
+// The status turn narrates before its read and streams its text a few
+// characters at a time, slowly enough (about a second and a half in all) for
+// the desktop e2e to watch the words arrive before the reply lands.
 function buildDefaultFakeOverseerScript(): FakeOverseerScript {
   return {
     ok: true,
     turns: [
       {
-        calls: [{ tool: 'list_runs', input: { includeTerminal: true } }],
+        calls: [
+          {
+            tool: 'list_runs',
+            input: { includeTerminal: true },
+            narration: 'Reading the run list first.',
+          },
+        ],
+        stream: { chunk: 4, delayMs: 50 },
         reply: (results) => {
           const listed = results[0]?.content as
             | { runs?: { live: boolean }[]; total?: number }

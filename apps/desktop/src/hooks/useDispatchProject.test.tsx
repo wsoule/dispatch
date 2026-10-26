@@ -13,7 +13,11 @@ import type {
   ThreadDetail,
 } from '@dispatch/client';
 import * as dispatchClient from '@dispatch/client';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  QueryClient,
+  QueryClientProvider,
+  QueryObserver,
+} from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { expect, mock, spyOn, test } from 'bun:test';
 import type { ReactNode } from 'react';
@@ -331,9 +335,9 @@ function seedGhostRecord(queryClient: QueryClient) {
 
 // The daemon's `hello` is sent from its websocket `open` handler, so it is the
 // one frame that marks a *connection* — including the reconnect after a
-// restart, which drops every in-memory overseer record at once. Nothing else
-// reports that: `overseer.changed` can never arrive for a conversation the
-// daemon no longer has. This asserts the wiring, not the response to it —
+// restart, which fails every turn that was running and closes its parked
+// calls. Nothing else reports that: the change happened before the socket
+// existed, so no `overseer.changed` for it ever arrives. This asserts the wiring, not the response to it —
 // useOverseerSession.test.tsx covers the far end.
 test('hello invalidates every cached overseer record for this daemon', async () => {
   const queryClient = await mountConnected();
@@ -468,6 +472,144 @@ test('a hello during the first presence fetch still gets a fresh one', async () 
   await waitFor(() => {
     expect(presenceFetches).toBe(2);
   });
+});
+
+// A running turn's text as the model writes it goes to the live text store the
+// session reads, never into the record cache: refetching a record per frame
+// would cancel its own repair fetch over and over.
+test('an overseer delta lands in the live text store and leaves the record alone', async () => {
+  const queryClient = await mountConnected();
+  dispatchClient.resetLiveText(PORT);
+  seedGhostRecord(queryClient);
+  const frame = {
+    type: 'overseer.delta' as const,
+    conversationId: 'w-1',
+    turnId: 't-1',
+    segmentId: 'msg_1:0',
+  };
+
+  act(() => {
+    sink?.onEvent({ ...frame, seq: 1, text: 'Checking ' });
+    sink?.onEvent({ ...frame, seq: 2, text: 'the queue.' });
+  });
+
+  expect(
+    dispatchClient.liveTextStore.get(
+      PORT,
+      dispatchClient.overseerLiveKey('w-1')
+    )?.segments
+  ).toEqual([{ id: 'msg_1:0', text: 'Checking the queue.' }]);
+  expect(
+    queryClient.getQueryState(overseerKey(PORT, 'w-1'))?.isInvalidated
+  ).toBe(false);
+});
+
+// A frame past a gap is repaired from the record's `live` snapshot, so the
+// record refetches once for it.
+test('an overseer delta after a missed frame refetches that record', async () => {
+  const queryClient = await mountConnected();
+  dispatchClient.resetLiveText(PORT);
+  seedGhostRecord(queryClient);
+
+  act(() => {
+    sink?.onEvent({
+      type: 'overseer.delta',
+      conversationId: 'w-1',
+      turnId: 't-1',
+      seq: 4,
+      segmentId: 'msg_1:0',
+      text: 'tail only',
+    });
+  });
+
+  await waitFor(() => {
+    expect(
+      queryClient.getQueryState(overseerKey(PORT, 'w-1'))?.isInvalidated
+    ).toBe(true);
+  });
+});
+
+// A restarted daemon counts frames from zero again, so `hello` drops every
+// conversation's live text; the refetched records' snapshots refill it.
+test('hello drops the live text held for this daemon', async () => {
+  await mountConnected();
+  dispatchClient.resetLiveText(PORT);
+  const key = dispatchClient.overseerLiveKey('w-1');
+  act(() => {
+    sink?.onEvent({
+      type: 'overseer.delta',
+      conversationId: 'w-1',
+      turnId: 't-1',
+      seq: 1,
+      segmentId: 'msg_1:0',
+      text: 'Checking',
+    });
+  });
+  expect(dispatchClient.liveTextStore.get(PORT, key)).toBeDefined();
+
+  act(() => {
+    sink?.onEvent({ type: 'hello', version: '0.0.1' });
+  });
+
+  expect(dispatchClient.liveTextStore.get(PORT, key)).toBeUndefined();
+});
+
+// A live run's text goes to the same store, keyed by run; the detail cache
+// never sees a frame (applyRunEvent's own tests cover the fold).
+test('a run delta lands in the live text store and leaves the run detail alone', async () => {
+  const queryClient = await mountConnected();
+  dispatchClient.resetLiveText(PORT);
+  queryClient.setQueryData(['dispatch-run', PORT, 'r-1'], {
+    meta: runFixture('r-1', 'running'),
+    entries: [],
+    evidence: [],
+    mutations: [],
+  });
+  // A surface showing the run: only a shown run's text is kept.
+  const unwatch = new QueryObserver(queryClient, {
+    queryKey: ['dispatch-run', PORT, 'r-1'],
+    enabled: false,
+  }).subscribe(() => {});
+
+  act(() => {
+    sink?.onEvent({
+      type: 'run.delta',
+      runId: 'r-1',
+      turnId: 'turn-1',
+      seq: 1,
+      segmentId: 'msg_1:0',
+      text: 'Reading',
+    });
+  });
+
+  expect(
+    dispatchClient.liveTextStore.get(PORT, dispatchClient.runLiveKey('r-1'))
+      ?.segments
+  ).toEqual([{ id: 'msg_1:0', text: 'Reading' }]);
+  expect(
+    queryClient.getQueryState(['dispatch-run', PORT, 'r-1'])?.isInvalidated
+  ).toBe(false);
+  unwatch();
+});
+
+// hello dropped the run's live text with the rest; its detail's snapshot
+// refills it, and brings back entries logged while the socket was down.
+test('hello refetches every cached run detail for this daemon', async () => {
+  const queryClient = await mountConnected();
+  queryClient.setQueryData(['dispatch-run', PORT, 'r-1'], {
+    meta: runFixture('r-1', 'running'),
+    entries: [],
+    evidence: [],
+    mutations: [],
+  });
+
+  act(() => {
+    sink?.onEvent({ type: 'hello', version: '0.0.1' });
+  });
+
+  expect(
+    queryClient.getQueryState(['dispatch-run', PORT, 'r-1'])?.isInvalidated
+  ).toBe(true);
 });
 
 // A new message joins the open thread from the event itself, without a refetch.

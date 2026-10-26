@@ -39,7 +39,6 @@ const EXPECTED: Record<string, string> = {
   '@dispatch/sandbox': 'FSL-1.1-ALv2',
   '@dispatch/desktop': 'FSL-1.1-ALv2',
   '@dispatch/site': 'FSL-1.1-ALv2',
-  '@dispatch/tui': 'FSL-1.1-ALv2',
 };
 
 // Folders inside a package under a license of their own — the GitLab `ee/`

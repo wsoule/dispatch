@@ -1049,6 +1049,137 @@ describe('who an overseer conversation belongs to', () => {
   });
 });
 
+// A backend whose turn speaks when the test says, through the live text
+// callbacks it was handed, and ends on `release`.
+class SpeakingOverseer implements OverseerBackend {
+  options: OverseerTurnOptions = {};
+  private finish: ((turn: OverseerTurn) => void) | null = null;
+  start(
+    _prompt: string,
+    _toolset: OverseerToolset,
+    options: OverseerTurnOptions = {}
+  ): Promise<OverseerTurn> {
+    this.options = options;
+    return new Promise((resolve) => {
+      this.finish = resolve;
+    });
+  }
+  sendMessage(
+    _sessionId: string | undefined,
+    message: string,
+    toolset: OverseerToolset,
+    options: OverseerTurnOptions = {}
+  ): Promise<OverseerTurn> {
+    return this.start(message, toolset, options);
+  }
+  release(reply: string): void {
+    this.finish?.({ reply, sessionId: 's-1' });
+    this.finish = null;
+  }
+}
+
+describe('overseer live text', () => {
+  async function teammate(email: string, tier: string): Promise<string> {
+    const res = await fetch(`${baseUrl}/api/team/tokens`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, tier }),
+    });
+    return ((await json(res)) as { token: string }).token;
+  }
+
+  // Opens /ws as `token` and keeps the text of every overseer.delta it hears.
+  async function listen(
+    token: string
+  ): Promise<{ heard: string[]; close: () => void }> {
+    const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/ws?token=${token}`);
+    const heard: string[] = [];
+    ws.addEventListener('message', (ev) => {
+      const event = JSON.parse(ev.data as string) as {
+        type: string;
+        text?: string;
+      };
+      if (event.type === 'overseer.delta') heard.push(event.text ?? '');
+    });
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener('open', () => resolve());
+      ws.addEventListener('error', () => reject(new Error('ws failed')));
+    });
+    return { heard, close: () => ws.close() };
+  }
+
+  // The free plan's three seats: the operator and two teammates, so the
+  // request-tier owner of one conversation is the non-owner of the next.
+  it('reaches the owner, the operator and deciding humans, never the agent token', async () => {
+    const backend = new SpeakingOverseer();
+    await startWithOverseer(backend);
+    const ann = await teammate('ann@example.com', 'request');
+    const sockets = {
+      ann: await listen(ann),
+      operator: await listen(handle.tokens.appToken),
+      decider: await listen(await teammate('bo@example.com', 'decide')),
+      agent: await listen(handle.tokens.agentToken),
+    };
+    // Ann's own conversation, opened with her request-tier token...
+    const opened = await rawFetch(`${baseUrl}/api/overseer`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${ann}`,
+      },
+      body: JSON.stringify({ prompt: 'what is running?' }),
+    });
+    expect(opened.status).toBe(202);
+    backend.options.onTextDelta?.('a', 'for Ann');
+    // ...and the operator's, where Ann is a request-tier non-owner.
+    await startConversation();
+    backend.options.onTextDelta?.('a', 'for the operator');
+    await waitFor(() => Promise.resolve(sockets.operator.heard.length === 2));
+    // Every socket got its frames in the same broadcasts; give the rest time.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(
+      Object.fromEntries(
+        Object.entries(sockets).map(([name, s]) => [name, s.heard])
+      )
+    ).toEqual({
+      ann: ['for Ann'],
+      operator: ['for Ann', 'for the operator'],
+      decider: ['for Ann', 'for the operator'],
+      agent: [],
+    });
+    for (const s of Object.values(sockets)) s.close();
+  });
+
+  it('GET carries the running turn’s live text, and drops it once the turn settles', async () => {
+    const backend = new SpeakingOverseer();
+    await startWithOverseer(backend);
+    const { record } = await startConversation();
+    backend.options.onTextDelta?.('a', 'Check');
+    backend.options.onTextDelta?.('a', 'ing');
+    const running = (await getRecord(record.id)) as OverseerRecord & {
+      live?: { seq: number; turnId: string; segments: unknown[] };
+    };
+    const turnId = running.live?.turnId ?? '';
+    expect(running.live).toEqual({
+      seq: 2,
+      turnId,
+      segments: [{ id: `${turnId}:a`, text: 'Checking' }],
+    });
+    const current = (await json(
+      await fetch(`${baseUrl}/api/overseer/current`)
+    )) as { conversation: { live?: unknown } | null };
+    expect(current.conversation?.live).toEqual(running.live);
+
+    backend.release('All clear.');
+    const ready = await settled(record.id);
+    expect(ready).not.toHaveProperty('live');
+    expect(ready.messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      text: 'All clear.',
+    });
+  });
+});
+
 // Records each turn's prompt and the attachments the manager handed it, and
 // answers at once.
 class RecordingOverseer implements OverseerBackend {

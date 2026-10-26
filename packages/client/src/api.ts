@@ -351,6 +351,9 @@ export interface NormalizedEntry {
     | 'usage'
     | 'message'
     | 'agent';
+  // A `tool` entry with no `toolName` is a tool call's result: `status` says
+  // how it ended and `text` is a capped preview of its output. Readers fold it
+  // into the call with the same `toolUseId`.
   text?: string;
   toolName?: string;
   toolInput?: unknown;
@@ -374,15 +377,23 @@ export interface NormalizedEntry {
   // Set on entries delivered via the orchestrator's `notifyRun` — a
   // non-interrupting channel digest rather than a message to respond to.
   digest?: boolean;
+  // `assistant` entries whose text streamed: the segment its `run.delta`
+  // frames carried, so a client drops that live text once the entry lands.
+  streamId?: string;
 }
 
-// The body of `GET /api/runs/:id`.
+// A run's transcript and meta.
 export interface RunDetail {
   meta: RunMeta;
   entries: NormalizedEntry[];
   evidence: CommandEvidence[];
   mutations: MutationEvidence[];
 }
+
+// Mirrors RunDetailView in packages/server/src/orchestrator/transcript.ts —
+// the body of `GET /api/runs/:id`: the detail, plus the text a live run has
+// streamed and not logged as an entry yet.
+export type RunDetailView = RunDetail & { live?: LiveText };
 
 export interface DiffFile {
   path: string;
@@ -1154,7 +1165,26 @@ export type ServerEvent =
   | { type: 'comment.changed'; taskId: string; commentIds: string[] }
   | { type: 'hello'; version: string }
   | { type: 'run.changed' }
-  | { type: 'run.log'; runId: string; entry: NormalizedEntry }
+  // `index` is the entry's place among the run's transcript entries (how many
+  // came before it): a frame below the cached length is already held, one
+  // above it means frames were missed. Absent from an older daemon, or when
+  // the entry could not be written.
+  | { type: 'run.log'; runId: string; entry: NormalizedEntry; index?: number }
+  // A live run's text as the model writes it: `text` extends segment
+  // `segmentId` of the run's turn `turnId`, until a run.log `assistant` entry
+  // with that `streamId` replaces it. A gap in `seq` means a missed frame;
+  // GET /api/runs/:id's `live` repairs it. Mirrors packages/server/src/events.ts.
+  | {
+      type: 'run.delta';
+      runId: string;
+      turnId: string;
+      seq: number;
+      segmentId: string;
+      text: string;
+      // Ends a segment no entry will finish (the model's stream broke off);
+      // `text` is empty.
+      abandoned?: true;
+    }
   // Phase 5 P2: a plan's state (running -> ready|failed) changed, or it was
   // just confirmed. Same "go refetch" contract as the other *.changed events
   // — mirrors packages/server/src/events.ts exactly.
@@ -1192,6 +1222,21 @@ export type ServerEvent =
   // A overseer conversation's record changed (turn settled, action queued or
   // confirmed). Mirrors packages/server/src/events.ts exactly.
   | { type: 'overseer.changed'; conversationId: string }
+  // The running Overseer turn's text as the model writes it: `text` extends
+  // segment `segmentId` of turn `turnId`. `seq` counts the conversation's
+  // frames, so a gap means a missed one; GET /api/overseer/:id's `live`
+  // repairs it. Mirrors packages/server/src/events.ts.
+  | {
+      type: 'overseer.delta';
+      conversationId: string;
+      turnId: string;
+      seq: number;
+      segmentId: string;
+      text: string;
+      // Ends a segment no row will hold (the model's stream broke off);
+      // `text` is empty.
+      abandoned?: true;
+    }
   | { type: 'review.changed'; runId: string }
   | { type: 'config.changed' }
   // A task draft changed state or was dismissed — no id, refetch the list.
@@ -1593,16 +1638,28 @@ export interface DraftRecord {
 export type OverseerState = 'running' | 'ready' | 'failed';
 
 // Mirrors OverseerMessage in packages/server/src/orchestrator/overseer.ts — one
-// transcript entry. `user`/`assistant` are the conversation proper; `tool`
-// records a tool call the assistant made mid-turn (a registry status tool or
-// a built-in one); `action` records a mutating registry call's life: queued
-// at `pending`, then `applied`/`denied`/`failed` once a human decides;
-// `approval` records a built-in tool call's life: parked at `pending`, then
-// `allowed`/`denied`.
+// transcript entry. `user`/`assistant` are the conversation proper (one
+// `assistant` reply per turn); `narration` is prose the assistant wrote
+// mid-turn, before a tool call, or the partial text of a stopped or failed
+// turn; `tool` records a tool call the assistant made mid-turn (a registry
+// status tool or a built-in one); `action` records a mutating registry call's
+// life: queued at `pending`, then `applied`/`denied`/`failed` once a human
+// decides; `approval` records a built-in tool call's life: parked at
+// `pending`, then `allowed`/`denied`.
 export interface OverseerMessage {
-  role: 'user' | 'assistant' | 'tool' | 'action' | 'approval' | 'notice';
+  role:
+    | 'user'
+    | 'assistant'
+    | 'narration'
+    | 'tool'
+    | 'action'
+    | 'approval'
+    | 'notice';
   text: string;
   at: string;
+  /** `narration` and `assistant` entries whose text streamed: the segment id
+   *  its `overseer.delta` frames carried, so that live text can be dropped. */
+  streamId?: string;
   /** `tool`, `action` and `approval` entries: which tool the entry is about. */
   tool?: string;
   /** `action` entries: the OverseerAction this entry reports on. */
@@ -1747,6 +1804,31 @@ export interface OverseerRecord {
   createdAt: string;
   updatedAt: string;
 }
+
+// Mirrors LiveSegment in packages/server/src/liveText.ts — one stretch of model
+// text a running turn has not committed yet (a Claude text block, a Codex
+// agentMessage item).
+export interface LiveSegment {
+  id: string;
+  text: string;
+}
+
+// Mirrors LiveText in packages/server/src/liveText.ts — what a running turn has
+// streamed and not committed, as GET /api/overseer/:id's (and GET
+// /api/runs/:id's) `live` carries it.
+export interface LiveText {
+  /** Per conversation (or run), monotonic for the daemon's life: never resets between turns. */
+  seq: number;
+  /** New for every turn. */
+  turnId: string;
+  /** The running turn's uncommitted segments, in the order they started. */
+  segments: LiveSegment[];
+}
+
+// Mirrors OverseerRecordView in packages/server/src/orchestrator/overseer.ts —
+// what GET /api/overseer/:id and /current answer with: the record, plus the
+// running turn's live text. Mutation responses may leave `live` out.
+export type OverseerRecordView = OverseerRecord & { live?: LiveText };
 
 // Mirrors AgentSessionKind in packages/server/src/orchestrator/agentSessions.ts:
 // which kind of conversation agent a session row is — planner chat, enrich
@@ -3307,7 +3389,7 @@ export interface ApiClient {
   // All agents page; merge with `fetchRuns` for the full picture. Refetch on
   // `plan.changed`, `draft.changed` and `overseer.changed`.
   fetchAgentSessions(): Promise<AgentSessionMeta[]>;
-  fetchRun(id: string): Promise<RunDetail>;
+  fetchRun(id: string): Promise<RunDetailView>;
   cancelRun(runId: string): Promise<void>;
   /**
    * Asks a live run to stop gracefully: the agent finishes its current
@@ -3626,7 +3708,8 @@ export interface ApiClient {
       attachments?: OverseerAttachment[];
     }
   ): Promise<OverseerRecord>;
-  getOverseer(id: string): Promise<OverseerRecord>;
+  /** The record, with its running turn's live text while a turn runs. */
+  getOverseer(id: string): Promise<OverseerRecordView>;
   /** The model and effort the conversation's next turns run on; null restores the project default. */
   setOverseerOptions(
     id: string,
@@ -3666,7 +3749,7 @@ export interface ApiClient {
     entryId: string
   ): Promise<OverseerRecord>;
   /** The caller's own conversation on this project, newest first, or null. */
-  currentOverseer(): Promise<{ conversation: OverseerRecord | null }>;
+  currentOverseer(): Promise<{ conversation: OverseerRecordView | null }>;
   /** What "Allow for this conversation" still covers: per program for Bash, up to four hours. */
   listOverseerGrants(
     conversationId: string
