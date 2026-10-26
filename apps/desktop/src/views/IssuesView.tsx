@@ -497,91 +497,100 @@ export function IssuesView({
 
   return (
     <div data-testid="tasks-view" className={styles.root}>
-      <ViewToolbar
-        label="Issue view options"
-        search={{
-          value: search,
-          onChange: setSearch,
-          placeholder: 'Search issues',
-          label: 'Search issues',
-          inputRef: searchInput,
-        }}
-        controls={
-          <span className={styles.toolbarGroup}>
-            <FilterMenu
-              filters={filters}
-              onChange={setFilters}
-              context={menuContext}
-              open={filterOpen}
-              onOpenChange={setFilterOpen}
-              onAiFilter={aiFilter}
-            />
-            <DisplayPopover
-              mode={display.layout}
-              prefs={display}
-              onPrefsChange={setPrefs}
-              showArchived={data.showArchived}
-              archivedCount={data.archivedTasks.length}
-              onShowArchivedChange={data.setShowArchived}
-              open={displayOpen}
-              onOpenChange={setDisplayOpen}
-            />
-            <Button
-              variant="quiet"
-              size="sm"
-              icon={<Users {...ICON} />}
-              aria-label={
-                byPerson ? 'Stop grouping by person' : 'Group by person'
-              }
-              title={byPerson ? 'Stop grouping by person' : 'Group by person'}
-              aria-pressed={byPerson}
-              disabled={mode === 'graph'}
-              onClick={() =>
-                setPrefs((prev) => toggleGroupByPerson(prev, mode))
-              }
-            />
-            {/* On a full page (a task, docs, a PR) neither layout is showing, so
+      {/* The list's own chrome: a page that replaces the list (a task, the
+          Timeline, Threads, Docs) has its own header, so the search, filters
+          and presets go with the list. */}
+      {!full && (
+        <>
+          <ViewToolbar
+            label="Issue view options"
+            search={{
+              value: search,
+              onChange: setSearch,
+              placeholder: 'Search issues',
+              label: 'Search issues',
+              inputRef: searchInput,
+            }}
+            controls={
+              <span className={styles.toolbarGroup}>
+                <FilterMenu
+                  filters={filters}
+                  onChange={setFilters}
+                  context={menuContext}
+                  open={filterOpen}
+                  onOpenChange={setFilterOpen}
+                  onAiFilter={aiFilter}
+                />
+                <DisplayPopover
+                  mode={display.layout}
+                  prefs={display}
+                  onPrefsChange={setPrefs}
+                  showArchived={data.showArchived}
+                  archivedCount={data.archivedTasks.length}
+                  onShowArchivedChange={data.setShowArchived}
+                  open={displayOpen}
+                  onOpenChange={setDisplayOpen}
+                />
+                <Button
+                  variant="quiet"
+                  size="sm"
+                  icon={<Users {...ICON} />}
+                  aria-label={
+                    byPerson ? 'Stop grouping by person' : 'Group by person'
+                  }
+                  title={
+                    byPerson ? 'Stop grouping by person' : 'Group by person'
+                  }
+                  aria-pressed={byPerson}
+                  disabled={mode === 'graph'}
+                  onClick={() =>
+                    setPrefs((prev) => toggleGroupByPerson(prev, mode))
+                  }
+                />
+                {/* On a full page (a task, docs, a PR) neither layout is showing, so
                 nothing is selected, and picking one goes back to the list. */}
-            <SegmentedControl
-              label="Tasks layout"
-              size="sm"
-              options={MODES}
-              value={full ? '' : mode}
-              onChange={(next) => {
-                const picked = MODES.find((m) => m.id === next);
-                if (picked === undefined) return;
-                onModeChange(picked.id);
-                if (full) onClosePage();
-              }}
-            />
-            <TasksViewMenu
-              preset={preset}
-              onPreset={onPreset}
-              savedViews={savedViews}
-              filters={filters}
-              display={display}
-            />
-          </span>
-        }
-        end={
-          <Button
-            variant="primary"
-            size="sm"
-            icon={<Plus {...ICON} />}
-            onClick={onNewTask}
-          >
-            New task
-          </Button>
-        }
-      />
-      <div className={styles.tabs}>
-        <NavTabs label="Presets" size="sm" items={tabs} />
-      </div>
-      <FilterChips
-        chips={chips}
-        onClearAll={() => setFilters(EMPTY_TASK_FILTER_SET)}
-        clearDisabled={!filtersActive}
-      />
+                <SegmentedControl
+                  label="Tasks layout"
+                  size="sm"
+                  options={MODES}
+                  value={full ? '' : mode}
+                  onChange={(next) => {
+                    const picked = MODES.find((m) => m.id === next);
+                    if (picked === undefined) return;
+                    onModeChange(picked.id);
+                    if (full) onClosePage();
+                  }}
+                />
+                <TasksViewMenu
+                  preset={preset}
+                  onPreset={onPreset}
+                  savedViews={savedViews}
+                  filters={filters}
+                  display={display}
+                />
+              </span>
+            }
+            end={
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<Plus {...ICON} />}
+                onClick={onNewTask}
+              >
+                New task
+              </Button>
+            }
+          />
+          <div className={styles.tabs}>
+            <NavTabs label="Presets" size="sm" items={tabs} />
+          </div>
+          <FilterChips
+            chips={chips}
+            onClearAll={() => setFilters(EMPTY_TASK_FILTER_SET)}
+            clearDisabled={!filtersActive}
+          />
+        </>
+      )}
       {full ? (
         <div className={styles.full}>
           {!OWN_HEADER.has(page.kind) && (
