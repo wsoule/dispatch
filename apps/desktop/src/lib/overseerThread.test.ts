@@ -114,6 +114,54 @@ describe('buildOverseerThread', () => {
     expect(states('failed')[0]).toBe('done');
   });
 
+  test('a call does not read as running while its turn waits on an approval', () => {
+    const approval = {
+      requestId: 'req-1',
+      toolName: 'Bash',
+      input: { command: 'rm -rf build' },
+      summary: 'Bash: rm -rf build',
+      requestedAt: at,
+    };
+    const rows: OverseerMessage[] = [
+      { role: 'user', text: 'clean up', at },
+      {
+        role: 'tool',
+        tool: 'Bash',
+        text: 'Bash: rm -rf build',
+        at,
+        toolUseId: 'toolu_1',
+        status: 'running',
+      },
+      {
+        role: 'approval',
+        tool: 'Bash',
+        requestId: 'req-1',
+        outcome: 'pending',
+        text: 'Bash: rm -rf build',
+        at,
+      },
+    ];
+    const tools = (record: OverseerRecord) =>
+      groupToolRows(buildOverseerThread(record)).flatMap((i) =>
+        i.kind === 'tools' ? i.calls.map((c) => c.state) : []
+      );
+    const parked = makeRecord(rows, {
+      state: 'running',
+      pendingApprovals: [approval],
+    });
+    expect(
+      groupToolRows(buildOverseerThread(parked)).map((i) => i.kind)
+    ).toEqual(['message', 'tools', 'approve']);
+    expect(tools(parked)).toEqual(['done']);
+    // Allowed: the call runs, and reads so, until its result settles it.
+    const allowed = rows.map((m) =>
+      m.role === 'approval' ? { ...m, outcome: 'allowed' as const } : m
+    );
+    expect(tools(makeRecord(allowed, { state: 'running' }))).toEqual([
+      'running',
+    ]);
+  });
+
   test('a still-pending action renders as one confirm card, not a transcript row', () => {
     const action = makeAction();
     const items = buildOverseerThread(

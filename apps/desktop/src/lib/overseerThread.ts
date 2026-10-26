@@ -358,9 +358,12 @@ function buildRow(
 }
 
 // How a tool row reads: its `status` once the call ended. A call still
-// `running` is running only while its turn is: one on a record whose turn is
-// over never got its result (a Stop, a failed turn) and reads as ended, with
-// no spinner. A row from before `status` failed when its text says so.
+// `running` is running only while its turn is working: the daemon settles a
+// row its turn left running when that turn ends, so one on a record that is
+// not running reads as ended; and a turn parked on a call is waiting on the
+// human, which the approval card says and a shimmer above it would
+// contradict (the 'working' row hides for the same reason). A row from
+// before `status` failed when its text says so.
 function toolCallState(
   record: OverseerRecord,
   message: OverseerMessage
@@ -368,7 +371,9 @@ function toolCallState(
   if (message.status === 'error') return 'failed';
   if (message.status === 'done') return 'done';
   if (message.status === 'running') {
-    return record.state === 'running' ? 'running' : 'done';
+    const working =
+      record.state === 'running' && record.pendingApprovals.length === 0;
+    return working ? 'running' : 'done';
   }
   return message.text.startsWith('error:') ? 'failed' : 'done';
 }
