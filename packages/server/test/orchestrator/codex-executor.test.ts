@@ -25,6 +25,7 @@ import type {
   ExecutorEvents,
   NormalizedEntry,
 } from '../../src/orchestrator/types.js';
+import { MAX_TOOL_RESULT_TEXT } from '../../src/orchestrator/types.js';
 import {
   HUMAN,
   makeOrchestrator,
@@ -1020,6 +1021,45 @@ describe('CodexExecutor', () => {
       ['codex.commandExecution', 'cmd-1', 'running'],
       ['codex.commandExecution', 'cmd-1', 'error'],
       ['mcp.dispatch.task_get', 'mcp-1', 'done'],
+    ]);
+  });
+
+  it("caps a completed command's output the way an Overseer tool row is capped", async () => {
+    const long = 'x'.repeat(MAX_TOOL_RESULT_TEXT + 500);
+    const process = scriptedProcess({
+      afterTurn(fake) {
+        for (const [id, output] of [
+          ['cmd-long', long],
+          ['cmd-short', 'ok'],
+        ]) {
+          fake.notify('item/completed', {
+            threadId: 'thread-new',
+            turnId: 'turn-1',
+            item: {
+              type: 'commandExecution',
+              id,
+              command: 'make',
+              cwd: 'C:\\worktree',
+              status: 'completed',
+              aggregatedOutput: output,
+              exitCode: 0,
+            },
+          });
+        }
+        fake.notify('turn/completed', {
+          threadId: 'thread-new',
+          turn: { id: 'turn-1', status: 'completed', error: null },
+        });
+      },
+    });
+    const harness = startHarness(process);
+    await waitFor(() => harness.finishes.length === 1);
+    const outputs = harness.entries.map(
+      (entry) => (entry.toolInput as { output?: unknown }).output
+    );
+    expect(outputs).toEqual([
+      `${'x'.repeat(MAX_TOOL_RESULT_TEXT)}… (truncated)`,
+      'ok',
     ]);
   });
 
