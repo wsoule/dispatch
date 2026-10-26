@@ -16,6 +16,7 @@ import {
   summarizeSubagents,
   TaskParseError,
   TaskStore,
+  UNASSIGNED,
   usesIntegrationBranch,
 } from '@dispatch-foo/core';
 import type {
@@ -385,6 +386,23 @@ function runLog(
 
 function humanOwner(ref: string | undefined): string | undefined {
   return ref?.startsWith('human:') === true ? ref : undefined;
+}
+
+// The store patch for a dispatch or resume Activity line. An automatic caller
+// (actor 'none') would otherwise end the line `— none`, which tells a reader
+// nothing, so it reads `— auto: <trigger>` instead: what started the run, e.g.
+// `epic e-1 auto-fill, unblocked by t-2`. That tail has spaces, so the desktop's
+// activity parser keeps it as text rather than reading it as an actor. Any
+// other actor is credited as before.
+function automaticActivity(
+  line: string,
+  actor: string | undefined,
+  trigger: string | undefined
+): { appendActivity: string; activityActor?: string } {
+  if (actor !== UNASSIGNED)
+    return { appendActivity: line, activityActor: actor };
+  const tail = trigger === undefined ? 'auto' : `auto: ${trigger}`;
+  return { appendActivity: `${line} — ${tail}` };
 }
 
 // A run's memory with auto memory off and no section, for when the port cannot say.
@@ -1340,7 +1358,8 @@ export class Orchestrator {
     // dispatch for that specific task. `operator` is who the run acts for;
     // absent means no one, never the actor or the daemon's human.
     // `dispatchedBy` names whom the run is for when the actor is nobody: a
-    // fan-out's runs are its starter's.
+    // fan-out's runs are its starter's. `trigger` says what started an
+    // automatic dispatch (see automaticActivity).
     opts: {
       model?: string;
       effort?: EffortLevel;
@@ -1348,6 +1367,7 @@ export class Orchestrator {
       operator?: string | null;
       dispatchedBy?: string;
       guard?: DispatchGuard;
+      trigger?: string;
     } = {}
   ): Promise<RunMeta> {
     const task = this.ctx.store.get(taskId);
@@ -1449,8 +1469,11 @@ export class Orchestrator {
       taskId,
       {
         status: this.statuses().roles.dispatched,
-        appendActivity: `${now} dispatched (${executorName}, branch ${branch})`,
-        activityActor: opts.actor ?? this.ctx.actorContext?.humanRef,
+        ...automaticActivity(
+          `${now} dispatched (${executorName}, branch ${branch})`,
+          opts.actor ?? this.ctx.actorContext?.humanRef,
+          opts.trigger
+        ),
       },
       now
     );
@@ -2683,6 +2706,8 @@ export class Orchestrator {
       defaults?: { executor?: string; model?: string };
       /** Re-checked on the task as it stands just before a run registers. */
       guard?: DispatchGuard;
+      /** What started an automatic dispatch (see automaticActivity). */
+      trigger?: string;
     } = {}
   ): Promise<RunMeta> {
     if (request.guard !== undefined) {
@@ -2696,6 +2721,7 @@ export class Orchestrator {
           actor: request.actor,
           dispatchedBy: request.dispatchedBy,
           operator: request.operator ?? null,
+          trigger: request.trigger,
         });
       }
     }
@@ -2715,6 +2741,7 @@ export class Orchestrator {
       operator: request.operator,
       dispatchedBy: request.dispatchedBy,
       guard: request.guard,
+      trigger: request.trigger,
     });
     if (reason !== null) {
       // Logged on the task so a run on the cheaper tier is explainable from
@@ -2860,7 +2887,12 @@ export class Orchestrator {
   // saying so in terms the caller can act on.
   private resumeForRedispatch(
     run: RunMeta,
-    who: { actor?: string; dispatchedBy?: string; operator: string | null }
+    who: {
+      actor?: string;
+      dispatchedBy?: string;
+      operator: string | null;
+      trigger?: string;
+    }
   ): RunMeta {
     if (this.needsQuietProof(run)) {
       // The sweep's resume then acts for this caller, not the run's operator.
@@ -2874,6 +2906,7 @@ export class Orchestrator {
       actor: who.actor,
       dispatchedBy: who.dispatchedBy,
       operator: who.operator,
+      trigger: who.trigger,
     });
   }
 
@@ -5986,7 +6019,7 @@ export class Orchestrator {
   // boot sweep, an automatic caller — whomever its predecessor was for.
   // `operator` is who the successor acts for, absent meaning no one; only the
   // boot sweep (`auto`) with none named keeps the run's own, as no new
-  // principal is acting.
+  // principal is acting. `trigger` is dispatch()'s, for the same callers.
   resumeRun(
     runId: string,
     opts: {
@@ -5998,6 +6031,7 @@ export class Orchestrator {
       // it off (failOverAccount); absent keeps the predecessor's.
       account?: string;
       failoverFrom?: string;
+      trigger?: string;
     } = {}
   ): RunMeta {
     this.refuseHeld();
@@ -6128,12 +6162,14 @@ export class Orchestrator {
       meta.taskId,
       {
         status: this.statuses().roles.dispatched,
-        appendActivity: `${now} ${how} (run ${newRunId})${sessionNote}${substitutionNote}`,
         // Left unattributed on the auto path: no person asked for this one, and
         // crediting the daemon's operator would misreport who acted.
-        activityActor:
+        ...automaticActivity(
+          `${now} ${how} (run ${newRunId})${sessionNote}${substitutionNote}`,
           opts.actor ??
-          (opts.auto === true ? undefined : this.ctx.actorContext?.humanRef),
+            (opts.auto === true ? undefined : this.ctx.actorContext?.humanRef),
+          opts.trigger
+        ),
       },
       now
     );

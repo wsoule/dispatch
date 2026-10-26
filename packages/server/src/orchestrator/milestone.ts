@@ -273,6 +273,18 @@ interface Watched {
 }
 
 // Active or paused: a session that still claims its scope.
+// What an auto-filled dispatch's Activity line names as its cause, in place
+// of a `— none` actor: the milestone whose fill picked the task and, when the task
+// had blockers, the ones whose progress released it (a fill only takes a task
+// once every blocker is out of its way).
+function fillTrigger(milestoneId: string, task: TaskDoc | undefined): string {
+  const blockers = task?.meta.blockedBy ?? [];
+  const fill = `milestone ${milestoneId} auto-fill`;
+  return blockers.length === 0
+    ? fill
+    : `${fill}, unblocked by ${blockers.join(', ')}`;
+}
+
 function isLive(session: MilestoneSessionRecord): boolean {
   return session.state === 'active' || session.state === 'paused';
 }
@@ -1192,6 +1204,7 @@ export class MilestoneEngine {
           operator,
           dispatchedBy: dispatcher,
           guard,
+          trigger: fillTrigger(milestoneId, task),
         });
         startedTasks.push(task);
       } catch (err) {
