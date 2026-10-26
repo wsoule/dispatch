@@ -43,6 +43,7 @@ export {
 export type { ActorKind, ActorRef } from './actor.js';
 export {
   computeStack,
+  DEPENDENT_START_MODES,
   dispatchableTasks,
   fanoutWaitingOn,
   findDependencyCycles,
@@ -52,7 +53,7 @@ export {
   readyTasks,
   releasesFanoutDependents,
 } from './graph.js';
-export type { FanoutBlocker, TaskStack } from './graph.js';
+export type { DependentStart, FanoutBlocker, TaskStack } from './graph.js';
 export {
   AGE_HORIZON_DAYS,
   DEFAULT_QUEUE_WEIGHTS,

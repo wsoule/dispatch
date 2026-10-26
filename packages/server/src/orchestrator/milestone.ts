@@ -16,6 +16,7 @@ import {
 } from '@dispatch-foo/core';
 import type {
   ActorContext,
+  DependentStart,
   FanoutBlocker,
   StatusModel,
   TaskDoc,
@@ -310,6 +311,8 @@ interface ProgressBoard {
   /** Readings by `<dispatcher> <task id>`, filled as containers ask. */
   readings: Map<string, ChildReading>;
   runCostEstimateUsd: number;
+  /** The project's `orchestrator.startDependents`. */
+  startDependents: DependentStart;
 }
 
 /**
@@ -376,8 +379,8 @@ export class MilestoneEngine {
     // Two distinct triggers can make a milestone's next dispatch decision stale:
     // a run reaching a terminal state (frees a concurrency slot, and — since
     // Orchestrator.handleFinish moves the task to `in-review` before firing
-    // terminal hooks — is also the exact moment a blocker becomes
-    // dispatch-satisfying; see core's isSatisfiedForDispatch) and a run
+    // terminal hooks — is also the moment a blocker releases its dependents
+    // under `startDependents: review`) and a run
     // being reviewed (a discard sends the task back to `todo`, undoing that
     // satisfaction for any dependent not yet dispatched). They are handled
     // by two *distinct* methods below (not funneled into one), because a
@@ -632,6 +635,7 @@ export class MilestoneEngine {
   // which progressAll() used to repeat per milestone.
   private progressBoard(): ProgressBoard {
     const statuses = statusModelFor(this.ctx.rootDir);
+    const orchestratorConfig = loadConfig(this.ctx.rootDir).orchestrator;
     const tasks = this.ctx.cache.allItems();
     const runs = this.ctx.orchestrator.list();
     const latestRun = new Map<string, RunMeta>();
@@ -658,8 +662,8 @@ export class MilestoneEngine {
       withRunBranch: tasksWithRunBranch(runs),
       finished,
       readings: new Map(),
-      runCostEstimateUsd: loadConfig(this.ctx.rootDir).orchestrator
-        .runCostEstimateUsd,
+      runCostEstimateUsd: orchestratorConfig.runCostEstimateUsd,
+      startDependents: orchestratorConfig.startDependents,
     };
   }
 
@@ -695,7 +699,8 @@ export class MilestoneEngine {
             task,
             (blockerId) => board.byId.get(blockerId),
             statuses,
-            blocker
+            blocker,
+            board.startDependents
           ),
           dispatchable: dispatchable.has(id),
           heldBy: holder(task),
@@ -807,12 +812,11 @@ export class MilestoneEngine {
   // wrong, and auto-re-dispatching the identical prompt would just burn
   // budget repeating the same mistake. The task simply stays in the ready
   // queue for a human (or a future session) to explicitly pick up again.
-  // Merge/PR-merge (task -> `done`) is no longer the trigger that unblocks a
-  // sibling: fillQueue's dispatchableTasks() already counts a blocker as
-  // satisfied the moment it reaches `in-review`, which onRunTerminal already
-  // reacted to. The non-discard branch here still re-checks readiness
-  // (cheap, and a no-op if nothing changed) so nothing is missed if a review
-  // action is ever the first signal an active session sees.
+  // Merge/PR-merge (task -> `done`) is what unblocks a sibling under the
+  // default `startDependents: landed`, so the non-discard branch re-checks
+  // readiness here. Under `review` the blocker was already satisfied the
+  // moment it reached `in-review`, which onRunTerminal reacted to; the
+  // re-check is then a cheap no-op.
   private onRunReviewed(meta: RunMeta): void {
     if (meta.reviewAction === 'discard') return;
     this.reactAcrossSessions();
@@ -1027,12 +1031,23 @@ export class MilestoneEngine {
     const byId = new Map(tasks.map((t) => [t.meta.id, t]));
     const finished = tasksWithFinishedRun(runs);
     const blocker = blockerView(holder, tasksWithRunBranch(runs), finished);
+    // Read per pass, like the spend estimate below, so flipping the mode
+    // mid-session changes the next fill.
+    const { startDependents } = loadConfig(this.ctx.rootDir).orchestrator;
     const waitingOn = (t: TaskDoc) =>
-      fanoutWaitingOn(t, (id) => byId.get(id), statuses, blocker);
+      fanoutWaitingOn(
+        t,
+        (id) => byId.get(id),
+        statuses,
+        blocker,
+        startDependents
+      );
     this.noteWatched(milestoneId, work, mine, statuses, waitingOn);
     // The scope includes archived children (see scopeOf); dispatchability
     // must exclude them explicitly. dispatchableTasks releases a dependent at
-    // a blocker's review role; a fan-out also wants a branch to stack on.
+    // a blocker's review role; a fan-out holds it until the blocker lands
+    // unless `startDependents: review`, and then also wants a branch to stack
+    // on (core's releasesFanoutDependents).
     const candidates = dispatchableTasks(tasks, statuses, (id) =>
       finished.has(id)
     ).filter(
@@ -1511,6 +1526,7 @@ export class MilestoneEngine {
     let statuses: StatusModel | null = null;
     let withRunBranch: Set<string> | null = null;
     let finished: Set<string> | null = null;
+    let startDependents: DependentStart | null = null;
     for (const [milestoneId, { waiting, held, parked }] of this.watching) {
       if (!this.armed.has(milestoneId)) continue;
       const session = this.sessions.get(milestoneId);
@@ -1533,6 +1549,9 @@ export class MilestoneEngine {
         withRunBranch = tasksWithRunBranch(runs);
         finished = tasksWithFinishedRun(runs);
       }
+      startDependents ??= loadConfig(this.ctx.rootDir).orchestrator
+        .startDependents;
+      const start = startDependents;
       const model = statuses;
       const { holder } = this.holderFor(session);
       const view = blockerView(holder, withRunBranch, finished);
@@ -1540,7 +1559,12 @@ export class MilestoneEngine {
         const blocker = this.ctx.cache.get(id);
         return (
           blocker === null ||
-          releasesFanoutDependents(blocker.meta.status, model, view(blocker))
+          releasesFanoutDependents(
+            blocker.meta.status,
+            model,
+            view(blocker),
+            start
+          )
         );
       });
       // Back to ready: the session's own task again, so it is now work to fill.
