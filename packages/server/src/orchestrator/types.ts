@@ -81,11 +81,19 @@ export function redactMessageEntry(
   return { ts: entry.ts, kind: 'message', messageId, redacted: true };
 }
 
-// How much of a tool's result a transcript keeps: a run's tool result entry,
+// How much of a tool's result a transcript keeps: a Codex command's output,
 // an Overseer status tool's row. The model gets the whole payload; this copy
 // exists so the human can see what the agent went on, and a whole file or a
 // full test log would swamp the chat.
 export const MAX_TOOL_RESULT_TEXT = 2000;
+
+// A tool result's text as a transcript keeps it: the first
+// MAX_TOOL_RESULT_TEXT characters, marked when it was cut.
+export function capToolResult(text: string): string {
+  return text.length <= MAX_TOOL_RESULT_TEXT
+    ? text
+    : `${text.slice(0, MAX_TOOL_RESULT_TEXT)}… (truncated)`;
+}
 
 // A live handle to a running executor invocation — the orchestrator holds
 // one of these per live run so API calls (approval, mid-run message, cancel)

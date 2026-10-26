@@ -32,7 +32,7 @@ import { grantKey, GrantStore, type GrantView } from './overseerGrants.js';
 import type { OverseerStore } from './overseerStore.js';
 import type { OverseerAction, OverseerToolRegistry } from './overseerTools.js';
 import {
-  MAX_TOOL_RESULT_TEXT,
+  capToolResult,
   OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
@@ -353,10 +353,7 @@ function describeToolCall(toolName: string, input: unknown): string {
 
 // Renders a tool result for the transcript: compact JSON, capped.
 function describeToolResult(data: unknown): string {
-  const text = JSON.stringify(data) ?? String(data);
-  return text.length <= MAX_TOOL_RESULT_TEXT
-    ? text
-    : `${text.slice(0, MAX_TOOL_RESULT_TEXT)}… (truncated)`;
+  return capToolResult(JSON.stringify(data) ?? String(data));
 }
 
 /**
