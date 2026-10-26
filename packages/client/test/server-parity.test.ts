@@ -330,12 +330,14 @@ describe('overseer types mirror dispatchd', () => {
     expect(client).toEqual(server);
   });
 
-  // The three inline literal unions inside the interfaces (message role,
-  // action lifecycle outcome, action status) — field-name parity above says
-  // nothing about their members. A long union wraps onto its own lines.
+  // The inline literal unions inside the interfaces (message role, action
+  // lifecycle outcome, tool row status, action status) — field-name parity
+  // above says nothing about their members. A long union wraps onto its own
+  // lines.
   for (const [iface, field] of [
     ['OverseerMessage', 'role'],
     ['OverseerMessage', 'outcome?'],
+    ['OverseerMessage', 'status?'],
     ['OverseerAction', 'status'],
   ] as const) {
     it(`${iface}.${field} carries the same literals as the server`, () => {

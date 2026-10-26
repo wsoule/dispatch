@@ -345,6 +345,55 @@ describe('CodexOverseer registry tools', () => {
       ['codex.commandExecution', { command: 'git status', cwd: ROOT }],
     ]);
   });
+
+  it('reports how each built-in call ended by its item id, from item/completed', async () => {
+    const events: string[] = [];
+    const codex = scriptedCodex({
+      onTurn: (c, t) => {
+        const tools = [
+          { type: 'commandExecution', id: 'c1', command: 'git status' },
+          { type: 'commandExecution', id: 'c2', command: 'ls /root' },
+          { type: 'fileChange', id: 'f1', changes: [] },
+          { type: 'mcpToolCall', id: 'm1', server: 'carto', tool: 'map' },
+          { type: 'dynamicToolCall', id: 'd1', tool: 'list_runs' },
+        ];
+        for (const item of tools) {
+          c.notify('item/started', {
+            threadId: t,
+            turnId: 'turn-1',
+            item: { ...item, status: 'inProgress' },
+          });
+        }
+        const end = (id: string, status: string) =>
+          c.notify('item/completed', {
+            threadId: t,
+            turnId: 'turn-1',
+            item: { ...tools.find((i) => i.id === id), status },
+          });
+        end('c1', 'completed');
+        end('c2', 'declined');
+        end('f1', 'failed');
+        // A status Codex has not named leaves the call running.
+        end('m1', 'somethingNew');
+        // A registry call recorded itself through the toolset.
+        end('d1', 'completed');
+        finishTurn(c, t, 'done');
+      },
+    });
+    await overseerOver(codex).start('status?', stubToolset().toolset, {
+      onToolUse: (name, _input, id) => events.push(`use ${name} ${id}`),
+      onToolResult: (id, status) => events.push(`result ${id} ${status}`),
+    });
+    expect(events).toEqual([
+      'use codex.commandExecution c1',
+      'use codex.commandExecution c2',
+      'use codex.fileChange f1',
+      'use mcp.carto.map m1',
+      'result c1 done',
+      'result c2 error',
+      'result f1 error',
+    ]);
+  });
 });
 
 describe('CodexOverseer narration and live text', () => {

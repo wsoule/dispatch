@@ -381,6 +381,85 @@ describe('ClaudeOverseer session wiring', () => {
     expect(reported).toEqual([['Bash', { command: 'ls' }]]);
   });
 
+  it('reports how each built-in call ended by its tool_use id, never its output', async () => {
+    const { toolset } = stubToolset();
+    const call = (id: string, name: string) => ({
+      type: 'tool_use',
+      id,
+      name,
+      input: {},
+    });
+    const result = (
+      id: string,
+      isError?: boolean,
+      parent: string | null = null
+    ) => ({
+      type: 'user',
+      parent_tool_use_id: parent,
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: id,
+            content: 'secret output',
+            ...(isError === undefined ? {} : { is_error: isError }),
+          },
+        ],
+      },
+    });
+    const stream = function* stream() {
+      yield { type: 'system', subtype: 'init', session_id: 'sess-1' };
+      yield {
+        type: 'assistant',
+        session_id: 'sess-1',
+        message: {
+          content: [
+            call('toolu_1', 'Bash'),
+            call('toolu_2', 'Edit'),
+            call('toolu_3', `${OVERSEER_TOOL_PREFIX}list_runs`),
+            call('toolu_4', 'Task'),
+          ],
+        },
+      };
+      // A sub-agent's own call and its result are not the Overseer's.
+      yield {
+        type: 'assistant',
+        session_id: 'sess-1',
+        parent_tool_use_id: 'toolu_4',
+        message: { content: [call('toolu_5', 'Read')] },
+      };
+      yield result('toolu_5', false, 'toolu_4');
+      yield result('toolu_1');
+      yield result('toolu_2', true);
+      // The registry call recorded itself; its result is not reported.
+      yield result('toolu_3');
+      // A result for a call never reported, and a repeat, are skipped.
+      yield result('toolu_9');
+      yield result('toolu_1', true);
+      yield result('toolu_4', false);
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-1',
+        result: 'done',
+      };
+    };
+    const events: string[] = [];
+    await runTurn(stream, toolset, undefined, {
+      onToolUse: (name, _input, id) => events.push(`use ${name} ${id}`),
+      onToolResult: (id, status) => events.push(`result ${id} ${status}`),
+    });
+    expect(events).toEqual([
+      'use Bash toolu_1',
+      'use Edit toolu_2',
+      'use Task toolu_4',
+      'result toolu_1 done',
+      'result toolu_2 error',
+      'result toolu_4 done',
+    ]);
+  });
+
   it('returns the reply and session id, and resumes the prior session on a follow-up', async () => {
     const { toolset } = stubToolset();
     const opening = await runTurn(successStream(), toolset);

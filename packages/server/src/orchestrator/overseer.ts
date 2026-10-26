@@ -108,6 +108,17 @@ export interface OverseerMessage {
   streamId?: string;
   /** `tool`, `action` and `approval` entries: which tool the entry is about. */
   tool?: string;
+  /** `tool` entries for a built-in call the backend named: its id for the
+   *  call (Claude's tool_use id, Codex's item id). */
+  toolUseId?: string;
+  /**
+   * `tool` entries: how the call went, never what it returned. A built-in
+   * call with a `toolUseId` lands `running` and is settled in place when its
+   * result comes; a registry call lands once it ran. A row still `running`
+   * after its turn ended never got a result (a Stop, a failed turn). Absent
+   * on older rows and on a built-in call reported without an id.
+   */
+  status?: 'running' | 'done' | 'error';
   /** `action` entries: the OverseerAction this entry reports on. */
   actionId?: string;
   /** `approval` entries: the OverseerApproval this entry reports on. */
@@ -413,6 +424,10 @@ export class OverseerManager {
   // message even when a step followed it); the reply then takes that row's
   // place instead of repeating it. Cleared when the turn ends.
   private readonly narrated = new Map<string, Map<string, OverseerMessage>>();
+  // The built-in calls the running turn reported by id and has no result for
+  // yet, per conversation: what `onToolResult` may settle. Cleared when the
+  // turn ends, so a result that comes later leaves its row as stored.
+  private readonly runningCalls = new Map<string, Set<string>>();
   // Set by shutdown(): turns still settling write nothing more.
   private shuttingDown = false;
   // Who typed each conversation's queued messages, for posting them when they go.
@@ -550,12 +565,10 @@ export class OverseerManager {
           config.orchestrator.permissionMode,
           request
         ),
-      onToolUse: (toolName, input) =>
-        this.appendMessage(conversationId, {
-          role: 'tool',
-          tool: toolName,
-          text: describeToolCall(toolName, input),
-        }),
+      onToolUse: (toolName, input, toolUseId) =>
+        this.toolUse(conversationId, turnId, toolName, input, toolUseId),
+      onToolResult: (toolUseId, status) =>
+        this.toolResult(conversationId, turnId, toolUseId, status),
       ...(live
         ? {
             onTextDelta: (segmentId: string, text: string) =>
@@ -572,6 +585,56 @@ export class OverseerManager {
         : {}),
     };
     return { options, live };
+  }
+
+  // A built-in call the backend reported lands as a tool row. One it named by
+  // id, while its turn runs, shows as running until its result settles it.
+  private toolUse(
+    conversationId: string,
+    turnId: string,
+    toolName: string,
+    input: unknown,
+    toolUseId: string | undefined
+  ): void {
+    const settles =
+      toolUseId !== undefined && this.live.isRunning(conversationId, turnId);
+    if (settles) {
+      const calls = this.runningCalls.get(conversationId) ?? new Set<string>();
+      this.runningCalls.set(conversationId, calls.add(toolUseId));
+    }
+    this.appendMessage(conversationId, {
+      role: 'tool',
+      tool: toolName,
+      text: describeToolCall(toolName, input),
+      ...(toolUseId !== undefined ? { toolUseId } : {}),
+      ...(settles ? { status: 'running' as const } : {}),
+    });
+  }
+
+  // Settles a running call's row in place with how it ended, in one update.
+  // A result for a call this turn is not running, or one that lands after
+  // the turn ended, changes nothing: that row stays as stored.
+  private toolResult(
+    conversationId: string,
+    turnId: string,
+    toolUseId: string,
+    status: 'done' | 'error'
+  ): void {
+    if (!this.live.isRunning(conversationId, turnId)) return;
+    if (this.runningCalls.get(conversationId)?.delete(toolUseId) !== true) {
+      return;
+    }
+    const record = this.conversations.get(conversationId);
+    if (record === undefined) return;
+    const at = record.messages.findLastIndex(
+      (m) => m.role === 'tool' && m.toolUseId === toolUseId
+    );
+    if (at === -1) return;
+    this.updateRecord(conversationId, {
+      messages: record.messages.map((m, i) =>
+        i === at ? { ...m, status } : m
+      ),
+    });
   }
 
   // One frame of live text: kept for the snapshot and sent to the sockets
@@ -1074,6 +1137,7 @@ export class OverseerManager {
     } finally {
       this.turns.delete(conversationId);
       this.narrated.delete(conversationId);
+      this.runningCalls.delete(conversationId);
       // Past shutdown, or for a conversation that is gone, nothing more lands.
       this.live.end(conversationId, stream.turnId);
       // A turn that is over has no tool call left to run: anything still
@@ -1500,6 +1564,7 @@ export class OverseerManager {
         role: 'tool',
         tool: name,
         text: registry.transcriptFor(name, data) ?? describeToolResult(data),
+        status: 'done',
       });
       return { content: data, isError: false };
     } catch (err) {
@@ -1508,6 +1573,7 @@ export class OverseerManager {
         role: 'tool',
         tool: name,
         text: `error: ${message}`,
+        status: 'error',
       });
       return { content: { error: message }, isError: true };
     }

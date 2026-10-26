@@ -14,6 +14,7 @@ import {
   approvalResult,
   CODEX_APPROVAL_TOOL_NAMES,
   codexCostUsd,
+  codexItemStatus,
   codexPermission,
   codexPricingFor,
   codexUserMcpServerNames,
@@ -206,11 +207,13 @@ function unaskedFloorCommand(
 }
 
 // One turn's approval bookkeeping: edit paths Codex announced, asks that
-// carried a floor command, and the unfinished line typed into each shell.
+// carried a floor command, the unfinished line typed into each shell, and the
+// built-in calls it reported that have not ended yet.
 class ApprovalGate {
   private readonly editPaths = new Map<string, string[]>();
   private readonly flooredAsks = new Set<string>();
   private readonly stdinTails = new Map<string, string>();
+  private readonly running = new Set<string>();
 
   constructor(
     private readonly rootDir: string,
@@ -281,6 +284,7 @@ class ApprovalGate {
       this.started(item);
       return;
     }
+    this.finished(item);
     const bypass = unaskedFloorCommand(item, this.flooredAsks);
     if (bypass !== undefined) controls.fail(bypass);
   }
@@ -302,27 +306,49 @@ class ApprovalGate {
     }
   }
 
-  // Keeps an edit's paths (its ask names none) and reports built-in calls.
+  // Keeps an edit's paths (its ask names none) and reports built-in calls,
+  // each by its item id, which its item/completed names again.
   private started(item: CodexItem): void {
+    const id = typeof item.id === 'string' ? item.id : undefined;
     if (item.type === 'fileChange') {
       const paths = fileChangePaths(item) ?? [];
-      if (typeof item.id === 'string') this.editPaths.set(item.id, paths);
-      this.opts.onToolUse?.('codex.fileChange', { paths });
+      if (id !== undefined) this.editPaths.set(id, paths);
+      this.report('codex.fileChange', { paths }, id);
       return;
     }
     if (item.type === 'commandExecution') {
-      this.opts.onToolUse?.('codex.commandExecution', {
-        command: readCodexCommand(item.command)?.text ?? item.command,
-        cwd: item.cwd,
-      });
+      this.report(
+        'codex.commandExecution',
+        {
+          command: readCodexCommand(item.command)?.text ?? item.command,
+          cwd: item.cwd,
+        },
+        id
+      );
       return;
     }
     if (item.type === 'mcpToolCall') {
-      this.opts.onToolUse?.(
+      this.report(
         `mcp.${String(item.server)}.${String(item.tool)}`,
-        item.arguments
+        item.arguments,
+        id
       );
     }
+  }
+
+  private report(toolName: string, input: unknown, id: string | undefined) {
+    if (id !== undefined) this.running.add(id);
+    this.opts.onToolUse?.(toolName, input, id);
+  }
+
+  // How a reported call ended, from its completed item's status: a failed or
+  // declined one is an error. A status Codex has not named is not reported.
+  private finished(item: CodexItem): void {
+    if (typeof item.id !== 'string' || !this.running.has(item.id)) return;
+    const status = codexItemStatus(item.status);
+    if (status === 'running') return;
+    this.running.delete(item.id);
+    this.opts.onToolResult?.(item.id, status);
   }
 }
 

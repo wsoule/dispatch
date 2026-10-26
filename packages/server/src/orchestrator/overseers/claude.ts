@@ -49,13 +49,23 @@ export const OVERSEER_TOOL_PREFIX = `mcp__${SERVER_NAME}__`;
 
 // The subset of Anthropic content-block fields the transcript needs: an
 // assistant message's `tool_use` blocks name the built-in calls the model is
-// about to make. Same narrow local shape the executor uses, for the same
-// reason (no `@anthropic-ai/sdk` type import for two field names).
+// about to make, and the id their results answer. Same narrow local shape the
+// executor uses, for the same reason (no `@anthropic-ai/sdk` type import for a
+// few field names).
 interface AssistantContentBlock {
   type: string;
+  id?: string;
   name?: string;
   input?: unknown;
   text?: unknown;
+}
+
+// A tool_result block of a `user` message: which call it answers and whether
+// that call failed. Its content (what the call returned) is never read.
+interface ToolResultBlock {
+  type: string;
+  tool_use_id?: string;
+  is_error?: boolean;
 }
 
 /**
@@ -231,6 +241,8 @@ export class ClaudeOverseer implements OverseerBackend {
     );
     const allowed = new Set(allowedTools);
     const { authorizeTool } = opts;
+    // The built-in calls reported through onToolUse that have no result yet.
+    const running = new Set<string>();
     // A tool call commits the text before it as narration. The tool_use block
     // normally does that; the gates and the registry commit too, in case the
     // CLI asks about a call before its message is read.
@@ -401,8 +413,18 @@ export class ClaudeOverseer implements OverseerBackend {
           if (!isTopLevel(message)) continue;
           // Narration first, so it lands ahead of the tool rows it led to.
           text.finished(message.message);
-          reportToolUses(message.message.content, opts.onToolUse);
+          reportToolUses(message.message.content, opts.onToolUse, running);
           contextTokens = contextOf(message.message.usage) ?? contextTokens;
+          continue;
+        }
+        if (message.type === 'user') {
+          if (isTopLevel(message)) {
+            reportToolResults(
+              message.message.content,
+              opts.onToolResult,
+              running
+            );
+          }
           continue;
         }
         if (message.type !== 'result') continue;
@@ -533,18 +555,40 @@ function contextOf(usage: unknown): number | undefined {
   return total > 0 ? total : undefined;
 }
 
-// Hands each built-in tool call in an assistant message to `onToolUse`. The
+// Hands each built-in tool call in an assistant message to `onToolUse`, with
+// its tool_use id, and keeps that id in `running` for its result. The
 // registry's own tools are skipped: those record themselves through
 // `toolset.call`, and reporting them here too would list every status call
 // twice in the transcript.
 function reportToolUses(
   content: unknown,
-  onToolUse: OverseerTurnOptions['onToolUse']
+  onToolUse: OverseerTurnOptions['onToolUse'],
+  running: Set<string>
 ): void {
   if (onToolUse === undefined || !Array.isArray(content)) return;
   for (const block of content as AssistantContentBlock[]) {
     if (block.type !== 'tool_use' || block.name === undefined) continue;
     if (block.name.startsWith(OVERSEER_TOOL_PREFIX)) continue;
-    onToolUse(block.name, block.input);
+    if (block.id !== undefined) running.add(block.id);
+    onToolUse(block.name, block.input, block.id);
+  }
+}
+
+// Hands how each call in `running` ended to `onToolResult`: a top-level user
+// message's tool_result blocks name the call they answer, and `is_error`
+// marks one that failed or was refused. A result for any other call (a
+// registry tool's, which recorded itself) is not reported.
+function reportToolResults(
+  content: unknown,
+  onToolResult: OverseerTurnOptions['onToolResult'],
+  running: Set<string>
+): void {
+  if (onToolResult === undefined || !Array.isArray(content)) return;
+  for (const block of content as ToolResultBlock[]) {
+    if (block.type !== 'tool_result' || block.tool_use_id === undefined) {
+      continue;
+    }
+    if (!running.delete(block.tool_use_id)) continue;
+    onToolResult(block.tool_use_id, block.is_error === true ? 'error' : 'done');
   }
 }

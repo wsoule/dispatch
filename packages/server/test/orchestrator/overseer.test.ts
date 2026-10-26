@@ -255,6 +255,8 @@ describe('OverseerManager turns', () => {
     const toolEntry = record.messages.find((m) => m.role === 'tool');
     expect(toolEntry?.tool).toBe('list_ready_tasks');
     expect(toolEntry?.text).toContain('Ship the thing');
+    // It ran before the row landed, so the row says how it went.
+    expect(toolEntry?.status).toBe('done');
     // The model saw the real payload, not a summary of it.
     expect(h.backend.observations[0].result.isError).toBe(false);
   });
@@ -332,7 +334,9 @@ describe('OverseerManager turns', () => {
     );
     // A call that failed its schema is not a queued action.
     expect(record.pendingActions).toEqual([]);
-    expect(record.messages.filter((m) => m.role === 'tool')).toHaveLength(2);
+    expect(
+      record.messages.filter((m) => m.role === 'tool').map((m) => m.status)
+    ).toEqual(['error', 'error']);
   });
 
   it('lands at failed with the backend error when a turn throws', async () => {
@@ -1622,6 +1626,82 @@ function heldManager(store = fileOverseerStore(overseerDir(repo))) {
   manager.registerBackend('held', backend);
   return { ...h, manager, backend, store };
 }
+
+describe('Overseer tool rows', () => {
+  // The record's tool rows, as `tool:status:toolUseId`.
+  const toolRows = (record: OverseerRecord) =>
+    record.messages
+      .filter((m) => m.role === 'tool')
+      .map((m) => `${m.tool}:${m.status ?? ''}:${m.toolUseId ?? ''}`);
+  const changes = (h: { seen: ServerEvent[] }) =>
+    h.seen.filter((e) => e.type === 'overseer.changed').length;
+
+  it('a built-in call named by id runs until its result settles the row in place', () => {
+    const h = heldManager();
+    const started = h.manager.start('look around', 'held');
+    const options = h.backend.options;
+    options?.onToolUse?.('Bash', { command: 'git status' }, 'toolu_1');
+    options?.onToolUse?.('Edit', { file_path: 'a.ts' }, 'toolu_2');
+    const running = h.manager.get(started.id);
+    expect(running.messages.at(-2)).toEqual({
+      role: 'tool',
+      tool: 'Bash',
+      text: 'Bash: git status',
+      toolUseId: 'toolu_1',
+      status: 'running',
+      at: expect.any(String),
+    });
+
+    const before = changes(h);
+    options?.onToolResult?.('toolu_1', 'done');
+    expect(changes(h)).toBe(before + 1);
+    options?.onToolResult?.('toolu_2', 'error');
+    const settled = h.manager.get(started.id);
+    // Settled where they stood: no row was added.
+    expect(settled.messages).toHaveLength(running.messages.length);
+    expect(toolRows(settled)).toEqual([
+      'Bash:done:toolu_1',
+      'Edit:error:toolu_2',
+    ]);
+  });
+
+  it('a result for a call the turn is not running changes nothing', () => {
+    const h = heldManager();
+    const started = h.manager.start('look around', 'held');
+    const options = h.backend.options;
+    options?.onToolUse?.('Bash', { command: 'ls' }, 'toolu_1');
+    options?.onToolResult?.('toolu_1', 'done');
+    const before = changes(h);
+    // An id never reported, and a second result for one already settled.
+    options?.onToolResult?.('toolu_9', 'error');
+    options?.onToolResult?.('toolu_1', 'error');
+    expect(changes(h)).toBe(before);
+    expect(toolRows(h.manager.get(started.id))).toEqual(['Bash:done:toolu_1']);
+  });
+
+  it('a call reported without an id has no status, as before', () => {
+    const h = heldManager();
+    const started = h.manager.start('look around', 'held');
+    h.backend.options?.onToolUse?.('Bash', { command: 'ls' });
+    expect(toolRows(h.manager.get(started.id))).toEqual(['Bash::']);
+  });
+
+  it('a call still running when the turn stops stays as stored, and a late result changes nothing', async () => {
+    const h = heldManager();
+    const started = h.manager.start('look around', 'held');
+    const options = h.backend.options;
+    options?.onToolUse?.('Bash', { command: 'sleep 60' }, 'toolu_1');
+    h.manager.stop(started.id);
+    await waitFor(() => h.manager.get(started.id).state === 'ready');
+
+    options?.onToolResult?.('toolu_1', 'done');
+    // The next turn's calls are its own: the stopped turn's id is not one.
+    h.manager.sendMessage(started.id, 'go on');
+    h.backend.options?.onToolResult?.('toolu_1', 'done');
+    const record = h.manager.get(started.id);
+    expect(toolRows(record)).toEqual(['Bash:running:toolu_1']);
+  });
+});
 
 describe('one durable conversation', () => {
   it('survives the daemon: a settled conversation loads back whole', async () => {

@@ -255,7 +255,9 @@ function itemFrom(message: CodexAppServerMessage): CodexItem | undefined {
     | undefined;
 }
 
-function statusForItem(status: unknown): 'running' | 'done' | 'error' {
+/** How a Codex tool item (a command, an edit, an MCP call) stands: `done`
+ *  once it completed, `error` once it failed or was declined. */
+export function codexItemStatus(status: unknown): 'running' | 'done' | 'error' {
   if (status === 'completed') return 'done';
   if (status === 'failed' || status === 'declined') return 'error';
   return 'running';
@@ -311,7 +313,7 @@ function entryForItem(
             }
           : {}),
       },
-      status: statusForItem(item.status),
+      status: codexItemStatus(item.status),
       ...callId,
     };
   }
@@ -321,7 +323,7 @@ function entryForItem(
       kind: 'tool',
       toolName: 'codex.fileChange',
       toolInput: { changes: item.changes },
-      status: statusForItem(item.status),
+      status: codexItemStatus(item.status),
       ...callId,
     };
   }
@@ -333,7 +335,7 @@ function entryForItem(
       kind: 'tool',
       toolName: `mcp.${server}.${tool}`,
       toolInput: item.arguments,
-      status: statusForItem(item.status),
+      status: codexItemStatus(item.status),
       ...callId,
     };
   }

@@ -1666,6 +1666,18 @@ export interface OverseerMessage {
   streamId?: string;
   /** `tool`, `action` and `approval` entries: which tool the entry is about. */
   tool?: string;
+  /** `tool` entries for a built-in call the backend named: its id for the
+   *  call (Claude's tool_use id, Codex's item id). */
+  toolUseId?: string;
+  /**
+   * `tool` entries: how the call went, never what it returned. A built-in
+   * call with a `toolUseId` lands `running` and is settled in place when its
+   * result comes; a registry call lands once it ran. A `running` row on a
+   * record that is not `running` never got its result (a Stop, a failed
+   * turn): treat it as ended. Absent on older rows and on a built-in call
+   * reported without an id, where a `text` starting `error:` is a failure.
+   */
+  status?: 'running' | 'done' | 'error';
   /** `action` entries: the OverseerAction this entry reports on. */
   actionId?: string;
   /** `approval` entries: the OverseerApproval this entry reports on. */
