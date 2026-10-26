@@ -20,6 +20,8 @@ const GR8R_DIRS = ['shell', 'adapters'].map((name) => path.join(srcDir, name));
 /** Gr8r files that sit in directories the legacy views share (components/shell holds the
     Tailwind-styled palette and dialogs too, lib/ the reducers), listed one by one. */
 const GR8R_FILES = [
+  'components/graph/GraphTooLarge.tsx',
+  'components/graph/GraphTooLarge.module.css',
   'components/peek/PeekSlideOver.tsx',
   'components/peek/PeekSlideOver.module.css',
   'components/peek/PeekSlideOver.test.tsx',
@@ -45,6 +47,9 @@ const GR8R_FILES = [
   'lib/shellRoutes.ts',
   'lib/fanoutVerbs.ts',
   'lib/issueSearch.ts',
+  'views/GraphView.tsx',
+  'views/GraphView.module.css',
+  'views/GraphView.test.tsx',
   'views/IssuesView.tsx',
   'views/IssuesView.module.css',
   'views/IssuesViewMenus.tsx',

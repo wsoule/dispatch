@@ -122,21 +122,20 @@ describe('parseTasksDisplay', () => {
   });
 
   // The layout field mirrors the header's view tabs, so every tab id must survive storage.
-  it('round-trips the milestones layout', () => {
-    const prefs = { ...DEFAULT_TASKS_DISPLAY, layout: 'milestones' as const };
-    expect(parseTasksDisplay(serializeTasksDisplay(prefs)).layout).toBe(
-      'milestones'
-    );
+  it('round-trips the list layout', () => {
+    const prefs = { ...DEFAULT_TASKS_DISPLAY, layout: 'list' as const };
+    expect(parseTasksDisplay(serializeTasksDisplay(prefs)).layout).toBe('list');
   });
 
-  it('reads a stored branches layout, now retired, as milestones', () => {
-    expect(
-      parseTasksDisplay(JSON.stringify({ layout: 'branches' })).layout
-    ).toBe('milestones');
-    expect(tasksDisplayFromValue({ layout: 'branches' })?.layout).toBe(
-      'milestones'
-    );
-  });
+  // The milestone map (Milestones, then the Graph mode) and the Branches graph
+  // before it are a page of their own now; the list still groups by milestone.
+  it.each(['branches', 'milestones', 'graph'])(
+    'reads a stored %s layout, now retired, as the list',
+    (layout) => {
+      expect(parseTasksDisplay(JSON.stringify({ layout })).layout).toBe('list');
+      expect(tasksDisplayFromValue({ layout })?.layout).toBe('list');
+    }
+  );
 
   it('round-trips a priority sub-grouping', () => {
     const prefs = {

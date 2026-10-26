@@ -23,10 +23,10 @@ interface ShortcutGroup {
   rows: ShortcutRow[];
 }
 
-// The left column: the shell. The right column: a focused list row. Mirrors
-// `lib/keyboard.ts` and `twoViewsKeyAction` (lib/twoViews.ts) — a key listed here
-// that the resolver doesn't know is a bug in one of the two. `g h` and `g c` are
-// unlisted aliases of `g o`, as `g a` is.
+// The left column: the shell. The right column: a focused list row, and the
+// Live page's own keys. Mirrors `lib/keyboard.ts` and `twoViewsKeyAction`
+// (lib/twoViews.ts) — a key listed here that the resolver doesn't know is a bug
+// in one of the two. `g h` and `g c` are unlisted aliases of `g o`, as `g a` is.
 const SHELL_GROUPS: ShortcutGroup[] = [
   {
     heading: 'Shell',
@@ -48,6 +48,7 @@ const SHELL_GROUPS: ShortcutGroup[] = [
       { label: 'Review', keys: ['G', 'R'], chord: true },
       { label: 'Threads', keys: ['G', 'M'], chord: true },
       { label: 'Timeline', keys: ['G', 'L'], chord: true },
+      { label: 'Graph', keys: ['G', 'G'], chord: true },
       { label: 'Settings', keys: ['G', 'S'], chord: true },
       { label: 'Overseer / Tasks', keys: ['⌘1', '⌘2'] },
       { label: 'Presets, in chip order', keys: ['⌘3–9'] },
@@ -144,7 +145,8 @@ function ShortcutColumn({ groups }: { groups: ShortcutGroup[] }) {
                 </dt>
                 <dd className="flex shrink-0 items-center gap-1">
                   {row.keys.map((key, index) => (
-                    <Fragment key={key}>
+                    // By position: a chord may repeat a key (`G` then `G`).
+                    <Fragment key={`${String(index)}:${key}`}>
                       {index > 0 && (
                         <span className="text-muted-foreground text-[11px]">
                           {row.chord ? 'then' : '/'}

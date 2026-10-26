@@ -62,7 +62,7 @@ function dataWith(
   } as unknown as DispatchProjectData;
 }
 
-function renderProjects(data: DispatchProjectData, showHeader?: boolean) {
+function renderProjects(data: DispatchProjectData, onBack?: () => void) {
   const opened: string[] = [];
   const creates: (CreateTaskPreset | undefined)[] = [];
   const actions = {
@@ -74,7 +74,7 @@ function renderProjects(data: DispatchProjectData, showHeader?: boolean) {
         projectName="Acme"
         data={data}
         onOpenTask={(id) => opened.push(id)}
-        showHeader={showHeader}
+        onBack={onBack}
       />
     </ShellActionsProvider>
   );
@@ -212,11 +212,21 @@ test('2000 tasks mount only a window of rows', () => {
   expect(mounted).toBeLessThan(100);
 });
 
-test('a host drawing its own header drops the page header, tree intact', () => {
-  const { container } = renderProjects(dataWith(hierarchy), false);
-  expect(container.querySelector('[data-slot=page-header]')).toBeNull();
+test('hosted under Tasks, the header leads with "‹ tasks" and offers New project, tree intact', () => {
+  const backs: string[] = [];
+  const { container, creates } = renderProjects(dataWith(hierarchy), () =>
+    backs.push('back')
+  );
+  expect(container.querySelector('[data-slot=page-header]')).toBeTruthy();
+  fireEvent.click(screen.getByTestId('tasks-back'));
+  expect(backs).toEqual(['back']);
+  // The creator, set to make a project, as the graph's Projects layout offered.
+  fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+  expect(creates).toEqual([{ kind: 'project' }]);
   expect(rowKeys(container)).toEqual(['i-1', 'i-1/p-1', 'i-1/p-1/m-1']);
   cleanupAll();
+  // On its own (no host) the header has no back chip.
   const shown = renderProjects(dataWith(hierarchy));
   expect(shown.container.querySelector('[data-slot=page-header]')).toBeTruthy();
+  expect(screen.queryByTestId('tasks-back')).toBeNull();
 });

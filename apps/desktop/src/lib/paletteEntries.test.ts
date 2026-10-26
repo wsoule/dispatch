@@ -192,8 +192,11 @@ describe('navigation rows', () => {
       ['Go to Tasks', '⌘2'],
       ['Go to Settings', '⌘,'],
       ['Go to Timeline', 'G L'],
+      ['Go to Graph', 'G G'],
       ['Open Files', undefined],
       ['Open Terminals', undefined],
+      ['Open Projects', undefined],
+      ['Open Live', undefined],
     ]);
     expect(entries.some((e) => e.id === 'action-toggle-sidebar')).toBe(false);
     for (const row of nav) row.run();
@@ -202,8 +205,11 @@ describe('navigation rows', () => {
       'project:board',
       'global:settings',
       'project:timeline',
+      'project:graph',
       'project:files',
       'project:terminals',
+      'project:projects',
+      'project:live',
     ]);
   });
 });

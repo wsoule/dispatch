@@ -1,8 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 
 import {
-  layoutForMode,
-  modeForLayout,
   readTwoViewsDisplay,
   TWO_VIEWS_TASKS_DISPLAY,
   writeTwoViewsDisplay,
@@ -31,15 +29,20 @@ describe('Two views Tasks display', () => {
     );
     expect(readTwoViewsDisplay().grouping).toBe('milestone');
   });
-});
 
-describe('layouts and modes', () => {
-  test.each([
-    ['list', 'list'],
-    ['board', 'board'],
-    ['graph', 'milestones'],
-  ] as const)('%p saves as %p', (mode, layout) => {
-    expect(layoutForMode(mode)).toBe(layout);
-    expect(modeForLayout(layout)).toBe(mode);
-  });
+  // The Graph mode saved its layout as `milestones` (the milestone map); the
+  // graph is a sidebar destination now, so a window that last had it open
+  // comes back on the list, the layout that still groups by milestone.
+  test.each(['milestones', 'graph'])(
+    'a display saved in the retired %s layout reads as the list',
+    (layout) => {
+      window.localStorage.setItem(
+        'dispatch:two-views-tasks-display-v1',
+        JSON.stringify({ version: 2, layout, grouping: 'milestone' })
+      );
+      const prefs = readTwoViewsDisplay();
+      expect(prefs.layout).toBe('list');
+      expect(prefs.grouping).toBe('milestone');
+    }
+  );
 });

@@ -57,13 +57,15 @@ export type GlobalKeyCommand =
   /** Open the keyboard-shortcuts reference (`?`). */
   | 'open-shortcuts'
   /** The `g` chords: `g h` Home, `g s` Settings, `g i` Inbox, `g m` Threads (messages),
-   * `g t` Tasks, `g l` Timeline (`t` is taken), `g r` Projects (the roadmap), `g f` Live
-   * (work in flight), `g c` Control room, `g a` Overseer (Linear's "Agent"). */
+   * `g t` Tasks, `g l` Timeline (`t` is taken), `g g` Graph, `g r` Projects (the
+   * roadmap), `g f` Live (work in flight), `g c` Control room, `g a` Overseer (Linear's
+   * "Agent"). */
   | 'goto-home'
   | 'goto-settings'
   | 'goto-inbox'
   | 'goto-threads'
   | 'goto-timeline'
+  | 'goto-graph'
   | 'goto-tasks'
   | 'goto-projects'
   | 'goto-live'
@@ -80,6 +82,9 @@ const G_CHORDS: Record<string, GlobalKeyCommand> = {
   m: 'goto-threads',
   t: 'goto-tasks',
   l: 'goto-timeline',
+  // A second `g` completes the chord rather than re-arming it: the prefix is
+  // held only while `pendingPrefix` is null, so `g g` is free for the Graph.
+  g: 'goto-graph',
   r: 'goto-projects',
   f: 'goto-live',
   c: 'goto-control-room',

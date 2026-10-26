@@ -22,6 +22,7 @@ import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { useShellActions } from '../components/shell/ShellActionsContext';
 import { AssigneeAvatar } from '../components/tasks/AssigneeAvatar';
 import { StatusIcon } from '../components/tasks/StatusIcon';
+import { TasksBackButton } from '../components/tasks/TasksPageHeader';
 import {
   VirtualRows,
   type VirtualRowsHandle,
@@ -50,6 +51,7 @@ import { cn } from '@/lib/utils';
 import { ListRow } from '@/ui/ai/list-row';
 import { PageHeader } from '@/ui/ai/page-header';
 import { LabelPill } from '@/ui/ai/pill';
+import { Button } from '@/ui/button';
 import { EmptyState, ProgressGlyph } from '@/ui/chrome';
 
 /** Nodes flipped away from their default fold (see `expandedByDefault`), per session. */
@@ -84,8 +86,8 @@ interface ProjectsViewProps {
   data: DispatchProjectData;
   /** Opens a container's page (its Flight Plan) or an issue's. */
   onOpenTask: (taskId: string) => void;
-  /** False drops the page header, for a host that draws its own (Tasks' Graph mode). */
-  showHeader?: boolean;
+  /** Two views: the page leads with "‹ tasks" back to the list. */
+  onBack?: () => void;
 }
 
 /**
@@ -94,13 +96,14 @@ interface ProjectsViewProps {
  * its progress (issues done of total, by status type), health, target date and lead;
  * an issue row its status and assignee. `j`/`k` move, `l`/`h` expand and collapse (or
  * step into and out of a node), Enter opens the row's page, where a container shows its
- * Flight Plan.
+ * Flight Plan. A page under Tasks (the Projects section's "All", the palette's Open
+ * Projects), led by "‹ tasks" and carrying New project in its header.
  */
 export function ProjectsView({
   projectName,
   data,
   onOpenTask,
-  showHeader = true,
+  onBack,
 }: ProjectsViewProps) {
   const shell = useShellActions();
   const attention = useMemo(
@@ -222,7 +225,24 @@ export function ProjectsView({
   }
 
   const crumb = [...(projectName === null ? [] : [projectName]), 'Projects'];
-  const header = showHeader ? <PageHeader crumb={crumb} /> : null;
+  const newProject = () => shell.openCreateTask({ kind: 'project' });
+  // The header's action: the creator set to make a project. Under Tasks the
+  // header also leads with "‹ tasks".
+  const header = (
+    <PageHeader
+      leading={
+        onBack === undefined ? undefined : <TasksBackButton onBack={onBack} />
+      }
+      crumb={crumb}
+      actions={
+        showTree ? (
+          <Button variant="outline" size="sm" onClick={newProject}>
+            New project
+          </Button>
+        ) : undefined
+      }
+    />
+  );
 
   if (!showTree) {
     return (
@@ -232,10 +252,7 @@ export function ProjectsView({
           icon={Box}
           heading="No projects yet"
           description="Initiatives, projects and milestones — made here or synced from Linear — show up as a tree to browse."
-          primary={{
-            label: 'New project',
-            onClick: () => shell.openCreateTask({ kind: 'project' }),
-          }}
+          primary={{ label: 'New project', onClick: newProject }}
           className="min-h-0 flex-1"
         />
       </div>

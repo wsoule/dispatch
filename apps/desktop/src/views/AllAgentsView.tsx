@@ -51,6 +51,9 @@ interface AllAgentsViewProps {
   client: ApiClient | null;
   onRetry: () => void;
   onJumpToRun: (runId: string) => void;
+  /** Opens the Live page (every container with work moving), the header's
+   * "Live" link; the page has no sidebar row of its own. */
+  onOpenLive?: () => void;
 }
 
 /** The one filter control, in the order work moves through it — the header's view tabs,
@@ -148,6 +151,7 @@ export function AllAgentsView({
   client,
   onRetry,
   onJumpToRun,
+  onOpenLive,
 }: AllAgentsViewProps) {
   const [showAll, setShowAll] = useState(false);
   const [stateFilter, setStateFilter] = useState<AgentFilter>('all');
@@ -199,13 +203,29 @@ export function AllAgentsView({
     </Button>
   ) : undefined;
 
+  // The way to the Live page, which draws the runs in motion as bands with
+  // their Flight Plans; quiet, since it leaves this page.
+  const liveLink =
+    onOpenLive === undefined ? undefined : (
+      <Button variant="link" size="sm" onClick={onOpenLive}>
+        Live
+      </Button>
+    );
+  const actions =
+    liveLink === undefined && archiveToggle === undefined ? undefined : (
+      <>
+        {liveLink}
+        {archiveToggle}
+      </>
+    );
+
   // The header carries the one control, four buckets — deliberately not a search box:
   // this page is scanned down a column, and the question it gets asked is "what is still
   // owed", not "where is that one run".
   const header = (
     <PageHeader
       crumb={['All agents']}
-      actions={archiveToggle}
+      actions={actions}
       tabs={
         <ViewTabs
           label="Agent state"

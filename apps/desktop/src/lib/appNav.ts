@@ -14,9 +14,11 @@ export type ProjectView =
   | 'cockpit'
   | 'overview'
   | 'board'
-  /** Initiatives → projects → milestones → issues, as one tree to browse. */
+  /** Initiatives → projects → milestones → issues, as one tree to browse; a
+   * page under Tasks, reached from the Projects section's "All". */
   | 'projects'
-  /** Everything in motion at once: a Flight Plan band per container with work moving. */
+  /** Everything in motion at once: a Flight Plan band per container with work
+   * moving; a page under Tasks, reached from the palette and the Runs page. */
   | 'live'
   /** retired — normalized to 'inbox' */
   | 'runs'
@@ -47,6 +49,9 @@ export type ProjectView =
   | 'terminals'
   /** The Gantt of every project's milestones, grouped by initiative (Phase 4). */
   | 'timeline'
+  /** The dependency graph at every level (initiatives, projects, milestones,
+   * issues), a sidebar destination of its own (Phase 5). */
+  | 'graph'
   /** retired — normalized to 'cockpit' */
   | 'plans'
   /** A single AI task draft's review page — `activeDraftId` says which one. */

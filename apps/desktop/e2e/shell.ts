@@ -11,6 +11,7 @@ export type ShellDestinationLabel =
   | 'Issues'
   | 'Needs you'
   | 'Timeline'
+  | 'Graph'
   | 'Threads'
   | 'Docs'
   | 'Runs';

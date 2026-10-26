@@ -193,8 +193,11 @@ import { DocsView } from './views/DocsView';
 import { DraftView } from './views/DraftView';
 import { FilesView } from './views/FilesView';
 import { FirstRunView } from './views/FirstRunView';
+import { GraphView } from './views/GraphView';
 import { IssuesView, type TasksSidePage } from './views/IssuesView';
+import { LiveView } from './views/LiveView';
 import { OverseerFocusView } from './views/OverseerFocusView';
+import { ProjectsView } from './views/ProjectsView';
 import { PrReviewView } from './views/PrReviewView';
 import { SessionsHubView } from './views/SessionsHubView';
 import type { HostedSettingsPage } from './views/SettingsView';
@@ -1707,6 +1710,37 @@ function App() {
             }
           />
         );
+      case 'graph':
+        // Every box is a task; the peeked one is the graph's selection.
+        return (
+          <GraphView data={data} bucketOf={bucketOf} selectedId={peekTaskId} />
+        );
+      case 'projects':
+        // The initiative › project › milestone › issue tree, once the Issues
+        // graph's Projects layout; a row's page is the quick look.
+        return (
+          <ProjectsView
+            projectName={activeProject?.name ?? null}
+            data={data}
+            onOpenTask={selectBoardTask}
+            onBack={closeTwoViewsPage}
+          />
+        );
+      case 'live':
+        // Every container with work moving, once the Issues graph's Live
+        // layout: dispatches in place, a node's page on `o`, its quick look
+        // on Enter and Space.
+        return (
+          <LiveView
+            projectName={activeProject?.name ?? null}
+            data={data}
+            dispatchTask={cockpitDispatch}
+            onDispatchFailed={onCockpitDispatchFailed}
+            onOpenTask={openTaskView}
+            onPeekTask={peekTask}
+            onBack={closeTwoViewsPage}
+          />
+        );
     }
   };
 
@@ -1886,6 +1920,10 @@ function App() {
           client={data.client}
           onRetry={data.retryEnsureDispatchd}
           onJumpToRun={jumpToRun}
+          // The Live page under Tasks; any navigation closes Settings.
+          onOpenLive={() =>
+            dispatchNav({ type: 'setProjectView', view: 'live' })
+          }
         />
       ),
     },
@@ -2085,11 +2123,10 @@ function App() {
         onNavigate={dispatchNav}
         // A project row opens the project's own page, on its Flight Plan.
         onOpenTask={(taskId) => openTaskView(taskId, 'plan')}
-        // "All": the Issues graph, where every project is drawn.
-        onOpenProjects={() => {
-          dispatchNav({ type: 'tv/showTasks' });
-          dispatchNav({ type: 'tv/setTasksMode', mode: 'graph' });
-        }}
+        // "All": the Projects page under Tasks, where every project is listed.
+        onOpenProjects={() =>
+          dispatchNav({ type: 'setProjectView', view: 'projects' })
+        }
         onOpenTimeline={(projectId) => {
           setTimelineFocus(projectId);
           dispatchNav({ type: 'setProjectView', view: 'timeline' });
@@ -2310,14 +2347,9 @@ function App() {
             onOpenTask={(taskId) => openTaskView(taskId)}
             peekTaskId={peekTaskId}
             onNewTask={() => openCreateTask()}
-            onNewProject={() => openCreateTask({ kind: 'project' })}
-            onDispatchTask={cockpitDispatch}
-            onDispatchFailed={onCockpitDispatchFailed}
-            onPeekTask={peekTask}
             onOpenRef={openRef}
             onOpenDecision={onOpenDecision}
             onClosePage={closeTwoViewsPage}
-            projectKey={activeProject?.path ?? ''}
             speechByTask={speechByTask}
             onOpenPr={(number) => dispatchNav({ type: 'openPr', number })}
             onOpenDoc={(docId) => openDoc(docId, null)}

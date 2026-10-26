@@ -26,15 +26,19 @@ const DIGIT_PRESETS: readonly TasksPreset[] = [
 // navReducer, and this reducer maps each destination to Overseer, Tasks or a peek.
 
 export type MainView = 'overseer' | 'tasks';
-export type TasksMode = 'list' | 'board' | 'graph';
+/** The Issues list's layouts. The dependency graph is a page of its own
+ * (`HostedView` 'graph'), not a layout of the list. */
+export type TasksMode = 'list' | 'board';
 
 /** Settings' own pages plus the two global views that fold into it. */
 type TwoViewsSettingsPage = SettingsPage | 'usage' | 'runs';
 
-/** Project views shown as a page under Tasks, led by "‹ tasks". */
+/** Project views shown as a page under Tasks, led by "‹ tasks". Timeline and
+ * Graph have sidebar rows of their own; Projects (the treegrid) opens from the
+ * Projects section's "All", Live from the palette and the Runs page. */
 export type HostedView = Extract<
   ProjectView,
-  'files' | 'terminals' | 'threads' | 'timeline'
+  'files' | 'terminals' | 'threads' | 'timeline' | 'graph' | 'projects' | 'live'
 >;
 
 /** What the Tasks view shows instead of its list. A task here is always the
@@ -76,7 +80,7 @@ interface Place {
 
 export interface TwoViewsState extends Place {
   tasksMode: TasksMode;
-  /** What the list and graph show: All, or one question like Needs you or Failed. */
+  /** What the list and board show: All, or one question like Needs you or Failed. */
   tasksPreset: TasksPreset;
   peek: Peek | null;
   /** The open Settings page, or `null` while Settings is closed. */
@@ -125,8 +129,6 @@ export function projectViewDestination(view: ProjectView): TwoViewsDestination {
     case 'cockpit':
     case 'overview':
     case 'board':
-    case 'projects':
-    case 'live':
     case 'inbox':
     case 'landing':
     case 'runs':
@@ -139,6 +141,9 @@ export function projectViewDestination(view: ProjectView): TwoViewsDestination {
     case 'terminals':
     case 'threads':
     case 'timeline':
+    case 'graph':
+    case 'projects':
+    case 'live':
       return { kind: 'page', page: { kind: 'view', view } };
     // Retired pages: plans and notes live in the Overseer now; the rest had no successor.
     case 'plans':
@@ -206,6 +211,8 @@ export function twoViewsKeyAction(
       return { type: 'setProjectView', view: 'threads' };
     case 'goto-timeline':
       return { type: 'setProjectView', view: 'timeline' };
+    case 'goto-graph':
+      return { type: 'setProjectView', view: 'graph' };
     case 'goto-settings':
       return { type: 'tv/openSettings' };
     // ⌘3–⌘9 walk the status presets, in chip order.

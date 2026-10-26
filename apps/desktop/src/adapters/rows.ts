@@ -155,12 +155,34 @@ const BUCKET_CHIP: Partial<Record<TaskBucket, TaskChipData>> = {
   blocked: { label: 'Blocked', tone: 'warning' },
 };
 
+/**
+ * The overlay chip of a bucket, or none. The working bucket also covers a
+ * started status with no run (a person moved it): "Agent working" is only
+ * claimed over a live run, the state glyph says "Working" either way. The
+ * one table for the list's rows and the graph's boxes (graphOverlay.ts).
+ */
+export function bucketChip(
+  bucket: TaskBucket | null,
+  live: RunState | undefined
+): TaskChipData | undefined {
+  if (bucket === null || (bucket === 'working' && live === undefined)) {
+    return undefined;
+  }
+  return BUCKET_CHIP[bucket];
+}
+
 // A live run's state as a quiet chip, only where it says more than the bucket
 // does: "Agent working" already covers `running`.
 const RUN_STATE_CHIP: Partial<Record<RunState, string>> = {
   provisioning: 'Provisioning',
   'awaiting-approval': 'Awaiting approval',
 };
+
+/** A live run's state as a quiet word, where it says more than the bucket
+ * chip does ("Provisioning", "Awaiting approval"); none for `running`. */
+export function liveRunWord(live: RunState | undefined): string | undefined {
+  return live === undefined ? undefined : RUN_STATE_CHIP[live];
+}
 
 // A fan-out phase's hue, following the old pill's tints: motion blue, a pause
 // amber, a failure red.
@@ -273,21 +295,15 @@ function rowChips(
   if (!archived) {
     const landing = ctx.landingByTaskId?.get(id);
     const live = ctx.liveRunStateByTaskId?.get(id);
-    // The working bucket also covers a started status with no run (a person
-    // moved it); "Agent working" is only claimed over a live run, the state
-    // glyph says "Working" either way.
-    const bucketChip =
-      bucket === null || (bucket === 'working' && live === undefined)
-        ? undefined
-        : BUCKET_CHIP[bucket];
-    if (bucketChip !== undefined) {
+    const overlay = bucketChip(bucket, live);
+    if (overlay !== undefined) {
       chips.push(
         bucket === 'landing' && landing !== undefined
-          ? { ...bucketChip, label: landingBadgeTitle(landing) }
-          : bucketChip
+          ? { ...overlay, label: landingBadgeTitle(landing) }
+          : overlay
       );
     }
-    const runWord = live === undefined ? undefined : RUN_STATE_CHIP[live];
+    const runWord = liveRunWord(live);
     if (runWord !== undefined) chips.push({ label: runWord, tone: 'muted' });
     if (landing !== undefined && bucket !== 'landing') {
       chips.push({ label: landingBadgeTitle(landing), tone: 'info' });

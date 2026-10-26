@@ -53,6 +53,7 @@ import { LiveReady } from '../components/live/LiveReady';
 import { usePeople } from '../components/people/PeopleContext';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { DispatchDialog } from '../components/tasks/DispatchDialog';
+import { TasksBackButton } from '../components/tasks/TasksPageHeader';
 import {
   VirtualRows,
   type VirtualRowsHandle,
@@ -114,8 +115,8 @@ export interface LiveViewProps {
   onOpenTask: (taskId: string, tab?: TaskTab, runId?: string) => void;
   /** The quick-look slide-over (a card click, Enter, Space). */
   onPeekTask: (taskId: string) => void;
-  /** False drops the page header, for a host that draws its own (Tasks' Graph mode). */
-  showHeader?: boolean;
+  /** Two views: the page leads with "‹ tasks" back to the list. */
+  onBack?: () => void;
 }
 
 /**
@@ -138,7 +139,7 @@ export function LiveView({
   onDispatchFailed,
   onOpenTask,
   onPeekTask,
-  showHeader = true,
+  onBack,
 }: LiveViewProps) {
   const directory = usePeople();
   const me = directory.me;
@@ -648,7 +649,12 @@ export function LiveView({
 
   return (
     <div data-slot="live-view" className="flex h-full min-h-0 flex-col">
-      {showHeader && <PageHeader crumb={crumb} />}
+      <PageHeader
+        leading={
+          onBack === undefined ? undefined : <TasksBackButton onBack={onBack} />
+        }
+        crumb={crumb}
+      />
       <LiveHeader
         totals={totals}
         spendToday={today}

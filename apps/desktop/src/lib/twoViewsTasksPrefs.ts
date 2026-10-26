@@ -10,8 +10,6 @@ import {
   serializeTasksDisplay,
   type TasksDisplayPrefs,
 } from './tasksPrefs';
-import type { TasksViewMode } from './tasksViewMode';
-import type { TasksMode } from './twoViews';
 
 // Its own keys, so the retired board's by-status default never leaks in.
 const DISPLAY_KEY = 'dispatch:two-views-tasks-display-v1';
@@ -24,7 +22,8 @@ export const TWO_VIEWS_TASKS_DISPLAY: TasksDisplayPrefs = {
   grouping: 'milestone',
 };
 
-/** The Display model Two views' Tasks last used, or its milestone-grouped default. */
+/** The Display model Two views' Tasks last used, or its milestone-grouped default.
+ * A model saved with the retired Graph layout reads as the list (`parseTasksDisplay`). */
 export function readTwoViewsDisplay(): TasksDisplayPrefs {
   try {
     const raw = window.localStorage.getItem(DISPLAY_KEY);
@@ -57,14 +56,4 @@ export function writeTwoViewsFilters(filters: TaskFilterSet): void {
   } catch {
     // Kept for this session only.
   }
-}
-
-/** The saved-view layout a Two views mode stores: Graph is the milestone map. */
-export function layoutForMode(mode: TasksMode): TasksViewMode {
-  return mode === 'graph' ? 'milestones' : mode;
-}
-
-/** The Two views mode a saved view opens in; Milestones opens the graph. */
-export function modeForLayout(layout: TasksViewMode): TasksMode {
-  return layout === 'milestones' ? 'graph' : layout;
 }

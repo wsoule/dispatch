@@ -27,6 +27,7 @@ const EVERY_DESTINATION: readonly ShellDestination[] = [
   'issues',
   'needs-you',
   'timeline',
+  'graph',
   'threads',
   'docs',
   'runs',
@@ -56,8 +57,9 @@ describe('the route table', () => {
     expect(shellShortcut(shellRoute('issues'), 'Ctrl')).toEqual(['Ctrl', '2']);
     expect(shellShortcut(shellRoute('needs-you'), '⌘')).toEqual(['G', 'I']);
     expect(shellShortcut(shellRoute('threads'), '⌘')).toEqual(['G', 'M']);
-    // `g t` is Tasks, so the Timeline takes `g l`.
+    // `g t` is Tasks, so the Timeline takes `g l`; the Graph owns `g g`.
     expect(shellShortcut(shellRoute('timeline'), '⌘')).toEqual(['G', 'L']);
+    expect(shellShortcut(shellRoute('graph'), '⌘')).toEqual(['G', 'G']);
     expect(shellShortcut(shellRoute('settings'), '⌘')).toEqual(['G', 'S']);
     expect(shellShortcut(shellRoute('docs'), '⌘')).toBeUndefined();
     expect(shellShortcut(shellRoute('runs'), '⌘')).toBeUndefined();
@@ -79,6 +81,10 @@ describe('the route table', () => {
     expect(shellRoute('timeline').action).toEqual({
       type: 'setProjectView',
       view: 'timeline',
+    });
+    expect(shellRoute('graph').action).toEqual({
+      type: 'setProjectView',
+      view: 'graph',
     });
     expect(shellRoute('docs').action).toEqual({
       type: 'setProjectView',
@@ -206,6 +212,29 @@ describe('currentShellDestination', () => {
     expect(
       currentShellDestination(after([{ type: 'tv/closePage' }], timeline))
     ).toBe('issues');
+  });
+
+  test('the graph page is its own row', () => {
+    const graph = after([{ type: 'setProjectView', view: 'graph' }]);
+    expect(graph.tasksPage).toEqual({ kind: 'view', view: 'graph' });
+    expect(currentShellDestination(graph)).toBe('graph');
+    // A node quick-looked over the chart keeps the row.
+    expect(
+      currentShellDestination(
+        after([{ type: 'openPeek', taskId: 'p-1' }], graph)
+      )
+    ).toBe('graph');
+    expect(
+      currentShellDestination(after([{ type: 'tv/closePage' }], graph))
+    ).toBe('issues');
+  });
+
+  test('the projects tree and the live page have no row: Issues stays current', () => {
+    for (const view of ['projects', 'live'] as const) {
+      const page = after([{ type: 'setProjectView', view }]);
+      expect(page.tasksPage).toEqual({ kind: 'view', view });
+      expect(currentShellDestination(page)).toBe('issues');
+    }
   });
 
   test('the docs and threads pages are their own rows', () => {

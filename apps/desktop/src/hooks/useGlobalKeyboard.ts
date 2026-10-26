@@ -35,8 +35,9 @@ export function isTypingTarget(target: EventTarget | null): boolean {
  * mounted deep inside the Sessions hub). CommandPalette is one of these too, so a keydown
  * reaching this listener while the palette is open resolves `Escape` to `null` here — Base UI's
  * own dismiss handling on `Dialog` already owns it, and `CommandPalette`'s `onClose` prop is the
- * only thing that closes it (see `appNav.ts`'s `closePalette` case). */
-function isAnyModalOpen(): boolean {
+ * only thing that closes it (see `appNav.ts`'s `closePalette` case). Exported for a view whose own
+ * document-level Escape must let an open panel's go first (the Graph's lock, `views/GraphView.tsx`). */
+export function isAnyModalOpen(): boolean {
   return (
     document.querySelector(
       '[data-slot="dialog-content"][data-open], [data-slot="alert-dialog-content"][data-open], [aria-modal="true"]'

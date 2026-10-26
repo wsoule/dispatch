@@ -53,6 +53,7 @@ test('the app opens on Overseer inside the shell, with one set of numbers', asyn
     'Issues',
     'Needs you',
     'Timeline',
+    'Graph',
     'Threads',
     'Docs',
     'Runs',

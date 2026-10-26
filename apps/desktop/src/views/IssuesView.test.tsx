@@ -14,7 +14,7 @@ import {
   waitFor,
   within,
 } from '@testing-library/react';
-import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { type ReactNode, useState } from 'react';
 
 import { PeopleProvider } from '../components/people/PeopleContext';
@@ -43,15 +43,8 @@ import {
   TWO_VIEWS_TASKS_DISPLAY,
   writeTwoViewsDisplay,
 } from '../lib/twoViewsTasksPrefs';
+import { IssuesView } from './IssuesView';
 import { TooltipProvider } from '@/ui/tooltip';
-
-// The graph layout's Live view mounts the task page, whose Review mode pulls in
-// the Pierre diff; its worker import only Vite resolves.
-void mock.module('@/components/runs/PierreWorkerPool', () => ({
-  PierreWorkerPool: ({ children }: { children: ReactNode }) => children,
-}));
-
-const { IssuesView } = await import('./IssuesView');
 
 // The Issues hub end to end in happy-dom: the grouped table, its pickers, the
 // row menu, the selection and bulk bar, the keys, the presets, the chips, the
@@ -289,14 +282,9 @@ function Harness({
       onOpenDecision={noop}
       renderPage={() => null}
       onClosePage={noop}
-      onNewProject={noop}
-      onDispatchTask={() => Promise.resolve()}
-      onDispatchFailed={noop}
-      onPeekTask={noop}
       onOpenPr={noop}
       onOpenDoc={noop}
       onOpenAllDocs={noop}
-      projectKey={ROOT}
       speechByTask={new Map()}
       composer={null}
     />
@@ -812,10 +800,11 @@ test('a focused row stays the first the list offers to the keyboard', () => {
 
 // ---- layouts and saved views -------------------------------------------------------
 
-test('the layout control offers List, Board and Graph, and Board draws the columns', () => {
+test('the layout control offers List and Board, and Board draws the columns', () => {
   mount();
   const control = screen.getByRole('radiogroup', { name: 'Tasks layout' });
-  expect(control.textContent).toBe('ListBoardGraph');
+  // The graph is a sidebar destination of its own, not a layout here.
+  expect(control.textContent).toBe('ListBoard');
   fireEvent.click(screen.getByRole('radio', { name: 'Board' }));
   expect(screen.getByTestId('board-pane')).not.toBeNull();
   expect(

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+  isRetiredLayout,
   parseViewMode,
   TASKS_VIEW_TABS,
   VIEW_MODE_STORAGE_KEY,
@@ -11,12 +12,9 @@ describe('parseViewMode', () => {
     expect(parseViewMode(null)).toBe('board');
   });
 
-  test.each(['board', 'list', 'milestones'] as const)(
-    'a stored %s is honoured',
-    (mode) => {
-      expect(parseViewMode(mode)).toBe(mode);
-    }
-  );
+  test.each(['board', 'list'] as const)('a stored %s is honoured', (mode) => {
+    expect(parseViewMode(mode)).toBe(mode);
+  });
 
   test('a stored lanes preference lands on the board that absorbed it', () => {
     expect(parseViewMode('lanes')).toBe('board');
@@ -39,21 +37,26 @@ describe('storage key', () => {
 });
 
 describe('view tabs', () => {
-  test('the header offers Board, List and Milestones in that order', () => {
-    expect(TASKS_VIEW_TABS.map((t) => t.id)).toEqual([
-      'board',
-      'list',
-      'milestones',
-    ]);
-    expect(TASKS_VIEW_TABS.map((t) => t.label)).toEqual([
-      'Board',
-      'List',
-      'Milestones',
-    ]);
+  test('the header offers Board and List in that order', () => {
+    expect(TASKS_VIEW_TABS.map((t) => t.id)).toEqual(['board', 'list']);
+    expect(TASKS_VIEW_TABS.map((t) => t.label)).toEqual(['Board', 'List']);
   });
 
-  test('a stored Branches layout lands on Milestones, the layout it drew from', () => {
-    expect(parseViewMode('branches')).toBe('milestones');
+  // The milestone layouts (Branches, then Milestones, then the Graph mode) are
+  // a page of their own now; the list is the layout that still groups by
+  // milestone, so a window that last chose one of them opens there.
+  test.each(['branches', 'milestones', 'graph'])(
+    'a stored %s layout, now retired, lands on the list',
+    (stored) => {
+      expect(isRetiredLayout(stored)).toBe(true);
+      expect(parseViewMode(stored)).toBe('list');
+    }
+  );
+
+  test('the live layouts are not retired', () => {
+    expect(isRetiredLayout('board')).toBe(false);
+    expect(isRetiredLayout('list')).toBe(false);
+    expect(isRetiredLayout(null)).toBe(false);
   });
 
   test('every tab id parses back to itself', () => {

@@ -72,6 +72,7 @@ const NAV_DESTINATIONS: readonly ShellDestination[] = [
   'issues',
   'needs-you',
   'timeline',
+  'graph',
   'threads',
   'docs',
   'runs',
@@ -217,9 +218,10 @@ export function planningProjectMark(
 
 /**
  * The sidebar's Projects section: one row per project-kind container, in
- * list order, each opening the project's own page; "All" opens the Issues
- * graph, where every project is drawn. A project's mark is the planning's
- * (`statusOf`) when it has one, else its rolled-up container status.
+ * list order, each opening the project's own page; "All" opens the Projects
+ * page under Tasks, where every project is listed in its initiative's tree.
+ * A project's mark is the planning's (`statusOf`) when it has one, else its
+ * rolled-up container status.
  */
 export function buildProjectsSection(
   input: ProjectsSectionInput

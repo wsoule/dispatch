@@ -27,7 +27,6 @@ import {
   presetTabs,
   toTaskPriority,
 } from '../adapters/rows';
-import { MilestoneMapView } from '../components/graph/MilestoneMap';
 import { useSavedViewsContext } from '../components/shell/SavedViewsContext';
 import { BoardPane } from '../components/tasks/BoardPane';
 import { DisplayPopover } from '../components/tasks/DisplayPopover';
@@ -40,7 +39,6 @@ import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { useTaskFilterMenu } from '../hooks/useTaskFilterMenu';
 import type { TaskTab } from '../lib/appNav';
 import type { DecisionItem } from '../lib/decisionFeed';
-import { groupTasks } from '../lib/listGrouping';
 import type { NeedsYou } from '../lib/needsYou';
 import { hrefFor } from '../lib/shellRoutes';
 import { useStatusModelOf } from '../lib/statusModel';
@@ -65,8 +63,6 @@ import type { TaskStatusCounts } from '../lib/taskStatus';
 import type { RefAction } from '../lib/threadSources';
 import type { TasksMode, TasksPage } from '../lib/twoViews';
 import {
-  layoutForMode,
-  modeForLayout,
   readTwoViewsDisplay,
   readTwoViewsFilters,
   TWO_VIEWS_TASKS_DISPLAY,
@@ -76,23 +72,21 @@ import {
 import styles from './IssuesView.module.css';
 import { assigneeChoices } from './IssuesViewMenus';
 import { IssuesTable } from './IssuesViewTable';
-import { LiveView } from './LiveView';
-import { ProjectsView } from './ProjectsView';
 
 // The Issues hub in Gr8r's layout (architecture §8.4 "Issues"): the view
 // toolbar (search, the Filter menu, the Display popover, group by person,
-// List | Board | Graph, the saved views, New task), the preset tabs with their
-// counts, the applied filters as chips, every ask of mine pinned on top, then
-// the list (IssuesViewTable on @dispatch/ui's TaskGroupTable), the board or the
-// graph, and the composer at the foot. A row click quick-looks its task in the
-// shell's slide-over (App's peek slot, over this view); Enter, o and "Open" go
-// to the full page, which replaces the list here. The preset and the filter
-// clauses narrow every layout; Display shapes the list and board.
+// List | Board, the saved views, New task), the preset tabs with their counts,
+// the applied filters as chips, every ask of mine pinned on top, then the list
+// (IssuesViewTable on @dispatch/ui's TaskGroupTable) or the board, and the
+// composer at the foot. A row click quick-looks its task in the shell's
+// slide-over (App's peek slot, over this view); Enter, o and "Open" go to the
+// full page, which replaces the list here. The preset and the filter clauses
+// narrow both layouts; Display shapes them. The dependency graph is a sidebar
+// destination of its own (views/GraphView), not a layout here.
 
 const MODES: { id: TasksMode; label: string }[] = [
   { id: 'list', label: 'List' },
   { id: 'board', label: 'Board' },
-  { id: 'graph', label: 'Graph' },
 ];
 
 const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
@@ -153,25 +147,6 @@ const OWN_HEADER: ReadonlySet<TasksPage['kind']> = new Set([
   'file',
 ]);
 
-const GRAPH_NEEDS_FOLDED_KEY = 'dispatch:graph-needs-you-folded';
-
-// Graph mode keeps Needs you to its header unless it was opened there before.
-function storedGraphFold(): boolean {
-  try {
-    return localStorage.getItem(GRAPH_NEEDS_FOLDED_KEY) !== 'false';
-  } catch {
-    return true;
-  }
-}
-
-function storeGraphFold(folded: boolean): void {
-  try {
-    localStorage.setItem(GRAPH_NEEDS_FOLDED_KEY, String(folded));
-  } catch {
-    // Kept for this session only.
-  }
-}
-
 /** The live run states the Run state facet's chip offers. */
 const RUN_STATES: readonly RunState[] = [
   'provisioning',
@@ -209,7 +184,7 @@ export interface IssuesViewProps {
   page: TasksPage;
   mode: TasksMode;
   onModeChange: (mode: TasksMode) => void;
-  /** Narrows the list and graph to one question; All shows everything. */
+  /** Narrows the list and board to one question; All shows everything. */
   preset: TasksPreset;
   onPreset: (preset: TasksPreset) => void;
   presetContext: PresetContext;
@@ -221,12 +196,6 @@ export interface IssuesViewProps {
   /** The task in the quick-look drawer, marked current in the list. */
   peekTaskId: string | null;
   onNewTask: () => void;
-  /** The creator, set to make a project (Graph mode's Projects layout). */
-  onNewProject: () => void;
-  /** Graph mode's Live layout dispatches in place, rejecting on failure. */
-  onDispatchTask: (taskId: string) => Promise<void>;
-  onDispatchFailed: (taskId: string, message: string) => void;
-  onPeekTask: (taskId: string) => void;
   onOpenRef: (action: RefAction) => void;
   onOpenDecision: (item: DecisionItem) => void;
   renderPage: (page: TasksSidePage) => ReactNode;
@@ -235,8 +204,6 @@ export interface IssuesViewProps {
   onOpenPr: (number: number) => void;
   onOpenDoc: (docId: string) => void;
   onOpenAllDocs: () => void;
-  /** Keys per-project choices such as the graph's Milestones | Tasks. */
-  projectKey: string;
   speechByTask: ReadonlyMap<string, { count: number; mention: boolean }>;
   composer: ReactNode;
 }
@@ -245,7 +212,7 @@ export interface IssuesViewProps {
  * Issues: the toolbar, the preset tabs, the filter chips, every ask pinned on
  * top, the work by group, and its pages. The toolbar carries the board
  * controls: the Filter menu (AI filter included), the Display popover, group
- * by person, List | Board | Graph, the saved and starred views and New task.
+ * by person, List | Board, the saved and starred views and New task.
  */
 export function IssuesView({
   data,
@@ -262,10 +229,6 @@ export function IssuesView({
   onOpenTask,
   peekTaskId,
   onNewTask,
-  onNewProject,
-  onDispatchTask,
-  onDispatchFailed,
-  onPeekTask,
   onOpenRef,
   onOpenDecision,
   renderPage,
@@ -273,15 +236,9 @@ export function IssuesView({
   onOpenPr,
   onOpenDoc,
   onOpenAllDocs,
-  projectKey,
   speechByTask,
   composer,
 }: IssuesViewProps) {
-  const [graphFolded, setGraphFolded] = useState(storedGraphFold);
-  const onGraphFold = useCallback((folded: boolean) => {
-    setGraphFolded(folded);
-    storeGraphFold(folded);
-  }, []);
   const [filters, setFilters] = useState<TaskFilterSet>(readTwoViewsFilters);
   const [prefs, setPrefs] = useState<TasksDisplayPrefs>(readTwoViewsDisplay);
   const [search, setSearch] = useState('');
@@ -292,10 +249,7 @@ export function IssuesView({
   useEffect(() => writeTwoViewsFilters(filters), [filters]);
   useEffect(() => writeTwoViewsDisplay(prefs), [prefs]);
   // The model as a saved view stores it: the layout is the toggle's.
-  const display = useMemo(
-    () => ({ ...prefs, layout: layoutForMode(mode) }),
-    [prefs, mode]
-  );
+  const display = useMemo(() => ({ ...prefs, layout: mode }), [prefs, mode]);
   const full = page.kind !== 'list';
 
   // Applies the active saved view when a pick changes it — from the toolbar's menu or
@@ -310,7 +264,7 @@ export function IssuesView({
     if (view === undefined) return;
     setFilters(view.filters);
     setPrefs(view.display);
-    onModeChange(modeForLayout(view.display.layout));
+    onModeChange(view.display.layout);
     if (preset !== 'all') onPreset('all');
     if (full) onClosePage();
   };
@@ -339,25 +293,7 @@ export function IssuesView({
   const requestFilter = useCallback(() => setFilterOpen(true), []);
   const requestDisplay = useCallback(() => setDisplayOpen(true), []);
   const byPerson = groupedByPerson(prefs, mode);
-  const epicById = useMemo(
-    () => new Map(data.epics.map((e) => [e.meta.id, e])),
-    [data.epics]
-  );
   const model = useStatusModelOf(data.config);
-  // The list's milestone groups, so the map and the list agree on membership.
-  const graphGroups = useMemo(
-    () =>
-      mode !== 'graph' || data.config === null
-        ? []
-        : groupTasks(
-            taskFilter === undefined
-              ? data.tasks
-              : data.tasks.filter(taskFilter),
-            TWO_VIEWS_TASKS_DISPLAY,
-            { statuses: data.config.statuses, epics: data.epics, model }
-          ),
-    [mode, data.config, data.tasks, data.epics, taskFilter, model]
-  );
 
   // ---- the preset tabs ----------------------------------------------------
 
@@ -542,7 +478,6 @@ export function IssuesView({
                     byPerson ? 'Stop grouping by person' : 'Group by person'
                   }
                   aria-pressed={byPerson}
-                  disabled={mode === 'graph'}
                   onClick={() =>
                     setPrefs((prev) => toggleGroupByPerson(prev, mode))
                   }
@@ -611,8 +546,6 @@ export function IssuesView({
                 decided={decided}
                 onOpenRef={onOpenRef}
                 onOpenDecision={onOpenDecision}
-                folded={mode === 'graph' ? graphFolded : undefined}
-                onFoldedChange={mode === 'graph' ? onGraphFold : undefined}
               />
             </div>
             <div className={styles.main}>
@@ -624,57 +557,6 @@ export function IssuesView({
                   onSelectTask={(taskId) => onSelectTask(taskId)}
                   onRequestFilter={requestFilter}
                   onRequestDisplay={requestDisplay}
-                />
-              ) : mode === 'graph' ? (
-                <MilestoneMapView
-                  // A project switch remounts the chart, so its selection, view, display
-                  // toggles and framing come from the new project, not the last one.
-                  key={projectKey}
-                  groups={graphGroups}
-                  bucketOf={presetContext.bucketOf}
-                  asksByTask={needs.byTask}
-                  projectKey={projectKey}
-                  dueDateOf={(id) => epicById.get(id)?.meta.dueDate ?? null}
-                  layouts={{
-                    projects: {
-                      body: (
-                        <ProjectsView
-                          showHeader={false}
-                          projectName={null}
-                          data={data}
-                          onOpenTask={(id) => onSelectTask(id)}
-                        />
-                      ),
-                      actions: (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          icon={<Plus {...ICON} />}
-                          onClick={onNewProject}
-                        >
-                          New project
-                        </Button>
-                      ),
-                    },
-                    live: {
-                      body: (
-                        <LiveView
-                          showHeader={false}
-                          projectName={null}
-                          data={data}
-                          dispatchTask={onDispatchTask}
-                          onDispatchFailed={onDispatchFailed}
-                          onOpenTask={(id, tab, runId) =>
-                            tab === undefined
-                              ? onOpenTask(id)
-                              : onSelectTask(id, tab, runId)
-                          }
-                          onPeekTask={onPeekTask}
-                        />
-                      ),
-                    },
-                  }}
-                  onOpenTask={onSelectTask}
                 />
               ) : (
                 <IssuesTable

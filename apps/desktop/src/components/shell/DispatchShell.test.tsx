@@ -90,6 +90,7 @@ describe('DispatchShell', () => {
       '#/issues',
       '#/needs-you',
       '#/timeline',
+      '#/graph',
       '#/threads',
       '#/docs',
       '#/runs',
@@ -147,7 +148,9 @@ describe('DispatchShell', () => {
     expect(log.actions[2]).toEqual({ type: 'tv/openSettings', page: 'runs' });
     fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
     expect(log.actions[3]).toEqual({ type: 'tv/openSettings' });
-    // A project row opens its page; "All" opens the projects graph.
+    fireEvent.click(within(primaryNav()).getByRole('link', { name: 'Graph' }));
+    expect(log.actions[4]).toEqual({ type: 'setProjectView', view: 'graph' });
+    // A project row opens its page; "All" opens the Projects page under Tasks.
     fireEvent.click(
       screen.getByRole('link', { name: 'Checkout, Needs attention' })
     );

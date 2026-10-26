@@ -1,5 +1,5 @@
 import type { AgentSessionMeta, ApiClient, RunMeta } from '@dispatch/client';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import {
@@ -276,6 +276,18 @@ test('a run row shows its fan-out, and the Fan-out chip keeps only runs with sub
   expect(screen.getByText('Fleet')).toBeDefined();
   expect(screen.queryByText('Solo')).toBeNull();
   expect(screen.queryByText('plan the widget')).toBeNull();
+});
+
+// The Live page has no sidebar row; the Runs page is one of its two doors (the
+// palette's Open Live is the other).
+test('the header links to the Live page when the host offers it', () => {
+  const opened: string[] = [];
+  mount({ onOpenLive: () => opened.push('live') });
+  fireEvent.click(screen.getByRole('button', { name: 'Live' }));
+  expect(opened).toEqual(['live']);
+  cleanup();
+  mount();
+  expect(screen.queryByRole('button', { name: 'Live' })).toBeNull();
 });
 
 // The header: the page crumb on row 1, the state buckets as view-tab pills on row 2.

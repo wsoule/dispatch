@@ -7,11 +7,12 @@ import {
   Inbox,
   ListTodo,
   MessagesSquare,
+  Network,
   Settings,
 } from 'lucide-react';
 
 import type { NavAction } from './appNav';
-import type { TwoViewsAction, TwoViewsState } from './twoViews';
+import type { HostedView, TwoViewsAction, TwoViewsState } from './twoViews';
 
 // The shell's top-level destinations: what the sidebar lists, which Two views
 // place each one is, and the hash href that stands for it. The hrefs exist so
@@ -24,6 +25,7 @@ export type ShellDestination =
   | 'issues'
   | 'needs-you'
   | 'timeline'
+  | 'graph'
   | 'threads'
   | 'docs'
   | 'runs'
@@ -81,6 +83,16 @@ export const SHELL_ROUTES: readonly ShellRoute[] = [
     shortcut: ['G', 'L'],
     href: hrefFor('timeline'),
     action: { type: 'setProjectView', view: 'timeline' },
+  },
+  {
+    id: 'graph',
+    label: 'Graph',
+    icon: Network,
+    // The one chord letter the Graph owns outright; a second `g` completes the
+    // chord rather than re-arming it (lib/keyboard.ts).
+    shortcut: ['G', 'G'],
+    href: hrefFor('graph'),
+    action: { type: 'setProjectView', view: 'graph' },
   },
   {
     id: 'threads',
@@ -145,7 +157,8 @@ export function taskHref(taskId: string): string {
   return `#/task/${encodeURIComponent(taskId)}`;
 }
 
-/** The Projects section's "All": the Issues graph layout. */
+/** The Projects section's "All": the Projects page under Tasks (the
+ * initiative › project › milestone › issue tree), which has no sidebar row. */
 export const PROJECTS_HREF = '#/projects';
 
 const TASK_HREF = /^#\/task\/([^/]+)$/;
@@ -183,8 +196,9 @@ export function resolveShellHref(href: string): ShellLinkTarget | null {
 /**
  * Which destination the sidebar marks current. Settings is a dialog over the
  * views, so while it is open it (or Runs, its page with a row of its own) is
- * the place; under Tasks the Docs, Threads and Timeline pages are their own
- * rows, the Needs you preset is its row, and everything else is Issues.
+ * the place; under Tasks the Docs, Threads, Timeline and Graph pages are their
+ * own rows, the Needs you preset is its row, and everything else (the list, a
+ * task page, Files, Terminals, Projects, Live) is Issues.
  */
 export function currentShellDestination(
   state: TwoViewsState
@@ -195,7 +209,15 @@ export function currentShellDestination(
   if (state.mainView === 'overseer') return 'overseer';
   const page = state.tasksPage;
   if (page.kind === 'docs') return 'docs';
-  if (page.kind === 'view' && page.view === 'threads') return 'threads';
-  if (page.kind === 'view' && page.view === 'timeline') return 'timeline';
+  if (page.kind === 'view' && hasOwnRow(page.view)) return page.view;
   return state.tasksPreset === 'needs-you' ? 'needs-you' : 'issues';
+}
+
+/** Whether a hosted page is one of the sidebar's rows (Threads, Timeline,
+ * Graph), rather than a page reached another way (Files, Terminals, Projects,
+ * Live), which keeps the Issues row current. */
+function hasOwnRow(
+  view: HostedView
+): view is Extract<HostedView, ShellDestination> {
+  return view === 'threads' || view === 'timeline' || view === 'graph';
 }

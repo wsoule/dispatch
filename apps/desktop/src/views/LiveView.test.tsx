@@ -104,7 +104,7 @@ function dataWith(
 function mount(
   data: DispatchProjectData,
   dispatchTask: (taskId: string) => Promise<void> = () => Promise.resolve(),
-  showHeader?: boolean
+  onBack?: () => void
 ) {
   const calls = { opened: [] as string[], peeked: [] as string[] };
   const view = (d: DispatchProjectData) => (
@@ -117,7 +117,7 @@ function mount(
         calls.opened.push(tab === undefined ? id : `${id}:${tab}`)
       }
       onPeekTask={(id) => calls.peeked.push(id)}
-      showHeader={showHeader}
+      onBack={onBack}
     />
   );
   const result = render(view(data));
@@ -160,10 +160,17 @@ describe('LiveView', () => {
     expect(node('l-1')?.getAttribute('data-state')).toBe('running');
   });
 
-  test('a host drawing its own header drops the page header, bands intact', () => {
-    mount(dataWith(), undefined, false);
-    expect(document.querySelector('[data-slot=page-header]')).toBeNull();
+  test('hosted under Tasks, the header leads with "‹ tasks" back to the list, bands intact', () => {
+    const backs: string[] = [];
+    mount(dataWith(), undefined, () => backs.push('back'));
+    expect(document.querySelector('[data-slot=page-header]')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('tasks-back'));
+    expect(backs).toEqual(['back']);
     expect(bands()).toEqual(['m-1', '__loose', 'm-2', 'm-3']);
+    cleanup();
+    // On its own (no host) the header has no back chip.
+    mount(dataWith());
+    expect(screen.queryByTestId('tasks-back')).toBeNull();
   });
 
   test('the header adds every band up', () => {

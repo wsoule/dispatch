@@ -3,6 +3,7 @@ import type {
   AllocationPlan,
   DependencyGraph,
   EvalContext,
+  GraphScope,
   MilestoneAssessment,
   MilestoneDetail,
   Snapshot,
@@ -14,6 +15,7 @@ import {
   buildDependencyGraph,
   buildMilestoneDetail,
   buildTimelineView,
+  graphContainer,
   indexWorkspace,
   planAllocation,
 } from '@dispatch/planning';
@@ -39,8 +41,9 @@ import type { DispatchProjectData } from './useDispatchProject';
 // The planning chain over the open project, in the renderer: Dispatch's task
 // list synthesized into @dispatch/planning's WorkspaceData (adapters/
 // workspaceData), indexed, every milestone assessed, allocation planned, the
-// timeline built and the milestone-level dependency graph drawn (the
-// connectors between milestone bars). One useMemo runs the whole chain, keyed
+// timeline built and the dependency graph of any scope drawn on demand (the
+// milestone level of the whole workspace is the timeline's connectors; the
+// Graph destination asks for the scope on screen). One useMemo runs the whole chain, keyed
 // on the inputs that can change its answer: the task list's identity
 // (useDispatchProject keeps it stable while nothing changed), the status
 // model, the people and executors, who I am, the Linear links, each task's
@@ -50,7 +53,7 @@ import type { DispatchProjectData } from './useDispatchProject';
 // Timeline view or a milestone section reads comes from
 // here, so they never recompute an assessment of their own: App runs the hook
 // once and hands the result down through PlanningContext to the timeline, the
-// sidebar's project marks and the task drawer's Milestone section.
+// graph, the sidebar's project marks and the task drawer's Milestone section.
 
 /** What the planning reads from `useDispatchProject`'s data. */
 export type PlanningInput = Pick<
@@ -73,8 +76,30 @@ export interface Planning {
   assessments: Map<string, MilestoneAssessment>;
   allocation: AllocationPlan;
   timeline: TimelineView;
-  /** The milestone level of the whole workspace: the timeline's connectors. */
+  /** The milestone level of the whole workspace: the timeline's connectors
+   * (`graph({ level: 'milestone' })`, the same object). */
   milestoneGraph: DependencyGraph;
+  /**
+   * The dependency graph of a scope (a level inside the workspace, an
+   * initiative, a project, a milestone or one issue's chain), built on the
+   * first ask and kept for this planning: the Graph destination asks for
+   * the same scope on every render (the drawer opening, a highlight
+   * switch), and only a recompute of the chain (a task changed, the minute
+   * moved) starts the graphs over. Two scopes that mean the same graph
+   * (`{ level, projectId }` written in either key order) share one entry.
+   */
+  graph(scope: GraphScope): DependencyGraph;
+}
+
+/**
+ * The cache key of a scope: its level and its container, so the key does not
+ * depend on the order a scope object's keys were written in.
+ */
+function scopeKey(scope: GraphScope): string {
+  const container = graphContainer(scope);
+  return container.kind === 'workspace'
+    ? `${scope.level}@workspace`
+    : `${scope.level}@${container.kind}:${container.id}`;
 }
 
 /** How often the clock the planning reads may move. */
@@ -209,9 +234,16 @@ export function usePlanning(data: PlanningInput): Planning {
       assessments,
       allocationPlan: allocation,
     });
-    const milestoneGraph = buildDependencyGraph(snapshot, ctx, assessments, {
-      level: 'milestone',
-    });
+    // One graph per scope asked for, for the life of this planning.
+    const graphs = new Map<string, DependencyGraph>();
+    const graph = (scope: GraphScope): DependencyGraph => {
+      const key = scopeKey(scope);
+      const kept = graphs.get(key);
+      if (kept !== undefined) return kept;
+      const built = buildDependencyGraph(snapshot, ctx, assessments, scope);
+      graphs.set(key, built);
+      return built;
+    };
     return {
       workspace,
       snapshot,
@@ -219,7 +251,8 @@ export function usePlanning(data: PlanningInput): Planning {
       assessments,
       allocation,
       timeline,
-      milestoneGraph,
+      milestoneGraph: graph({ level: 'milestone' }),
+      graph,
     };
   }, [
     tasks,

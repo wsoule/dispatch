@@ -183,6 +183,46 @@ describe('usePlanning', () => {
     expect(result.current.workspace.projects[0]?.statusType).toBe('paused');
   });
 
+  test('graph(scope) builds a scope once per planning and shares the milestone level', () => {
+    const first = input();
+    const { result, rerender } = renderHook(
+      (props: PlanningInput) => usePlanning(props),
+      { initialProps: first }
+    );
+    const planning = result.current;
+    // The same scope, however its keys are written, is the same object.
+    const inProject = planning.graph({ level: 'issue', projectId: 'proj-1' });
+    expect(inProject.nodes.map((node) => node.id)).toEqual(['t-1']);
+    expect(planning.graph({ projectId: 'proj-1', level: 'issue' })).toBe(
+      inProject
+    );
+    expect(planning.graph({ level: 'milestone' })).toBe(
+      planning.milestoneGraph
+    );
+    // Another scope is another graph.
+    expect(planning.graph({ level: 'project' }).nodes.map((n) => n.id)).toEqual(
+      ['proj-1']
+    );
+    // A re-render with the same inputs keeps the graphs; a change starts over.
+    rerender({ ...first });
+    expect(result.current.graph({ level: 'issue', projectId: 'proj-1' })).toBe(
+      inProject
+    );
+    rerender({
+      ...first,
+      tasks: [
+        ...first.tasks,
+        taskDoc({ id: 't-2', title: 'Another', parent: 'ms-1' }),
+      ],
+    });
+    const rebuilt = result.current.graph({
+      level: 'issue',
+      projectId: 'proj-1',
+    });
+    expect(rebuilt).not.toBe(inProject);
+    expect(rebuilt.nodes.map((node) => node.id)).toEqual(['t-1', 't-2']);
+  });
+
   test('changes when the tasks change', () => {
     const first = input();
     const { result, rerender } = renderHook(

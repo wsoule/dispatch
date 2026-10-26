@@ -1,13 +1,17 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
 
-import { TASKS_VIEW_TABS, type TasksViewMode } from './tasksViewMode';
+import {
+  isRetiredLayout,
+  TASKS_VIEW_TABS,
+  type TasksViewMode,
+} from './tasksViewMode';
 
 /**
  * The Tasks page's persisted preferences: the status/priority filter chips and the one
- * display model the list, board and milestones layouts share (Linear's Display
- * popover — grouping, ordering, sub-task handling, which properties a row shows). Everything
- * is parsed defensively from localStorage — a bad or stale payload falls back to defaults
- * rather than throwing during render.
+ * display model the list and board layouts share (Linear's Display popover — grouping,
+ * ordering, sub-task handling, which properties a row shows). Everything is parsed
+ * defensively from localStorage — a bad or stale payload falls back to defaults rather
+ * than throwing during render.
  */
 
 export interface TaskFilters {
@@ -199,9 +203,10 @@ export function tasksDisplayFromValue(
         )
       )
     : d.properties;
-  // The retired Branches layout reads as Milestones, the layout it drew from.
+  // The retired milestone layouts (Branches, Milestones, Graph) read as the
+  // list, which still groups by milestone; the graph is a page of its own now.
   const layout = oneOf(
-    record.layout === 'branches' ? 'milestones' : record.layout,
+    isRetiredLayout(record.layout) ? 'list' : record.layout,
     LAYOUTS,
     d.layout
   );

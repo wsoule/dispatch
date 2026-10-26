@@ -1,0 +1,26 @@
+/* Layout of the too-large state (components/graph/GraphTooLarge.tsx), where
+   the Graph page's canvas would be. Colours and type come from @dispatch/ui's
+   components and tokens; this sheet only places them. */
+
+/* Past the draw limits, where the canvas would be: the neutral notice, then
+   a heading row (what the list is) over the narrower graphs' register. */
+.tooLarge {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.tooLargeText {
+  margin: 0;
+  font-size: var(--fs);
+  line-height: var(--lh);
+}
+
+.tooLargeTitle {
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
+.tooLargeNote {
+  color: var(--text-2);
+}

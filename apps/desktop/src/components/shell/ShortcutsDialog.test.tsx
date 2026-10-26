@@ -15,6 +15,7 @@ test('lists only the places the app has', () => {
     'Review',
     'Threads',
     'Timeline',
+    'Graph',
     'Settings',
   ]) {
     expect(screen.getByText(label)).toBeDefined();
@@ -31,7 +32,7 @@ test('lists only the places the app has', () => {
   expect(screen.queryByRole('region', { name: 'Home' })).toBeNull();
 });
 
-test("lists the Live graph's keys, since Tasks' graph hosts it", () => {
+test("lists the Live page's own keys", () => {
   render(<ShortcutsDialog open onOpenChange={() => undefined} />);
   expect(screen.getByRole('region', { name: 'Live' })).toBeDefined();
   expect(screen.getByText('Next / previous band')).toBeDefined();

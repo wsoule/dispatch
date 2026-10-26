@@ -37,6 +37,7 @@ const EVERY_PROJECT_VIEW: Record<ProjectView, true> = {
   inbox: true,
   threads: true,
   timeline: true,
+  graph: true,
   'brain-dump': true,
   design: true,
   files: true,
@@ -62,8 +63,6 @@ describe('projectViewDestination', () => {
     'cockpit',
     'overview',
     'board',
-    'projects',
-    'live',
     'inbox',
     'landing',
     'runs',
@@ -77,15 +76,22 @@ describe('projectViewDestination', () => {
     expect(projectViewDestination('docs')).toEqual({ kind: 'docs' });
   });
 
-  test.each(['files', 'terminals', 'timeline'] as const)(
-    '%p is a page under Tasks',
-    (view) => {
-      expect(projectViewDestination(view)).toEqual({
-        kind: 'page',
-        page: { kind: 'view', view },
-      });
-    }
-  );
+  // Timeline and Graph have sidebar rows; Projects (the tree) and Live (work
+  // in motion) are reached from the Projects section's "All", the palette and
+  // the Runs page. All of them are pages under Tasks, led by "‹ tasks".
+  test.each([
+    'files',
+    'terminals',
+    'timeline',
+    'graph',
+    'projects',
+    'live',
+  ] as const)('%p is a page under Tasks', (view) => {
+    expect(projectViewDestination(view)).toEqual({
+      kind: 'page',
+      page: { kind: 'view', view },
+    });
+  });
 
   test('threads is a page under Tasks, reached from the top bar', () => {
     expect(projectViewDestination('threads')).toEqual({
@@ -352,13 +358,28 @@ describe('twoViewsReducer', () => {
     expect(state.settings).toBeNull();
   });
 
-  test('graph mode is remembered across pages', () => {
+  test('the board layout is remembered across pages and project switches', () => {
     const state = run([
-      { type: 'tv/setTasksMode', mode: 'graph' },
+      { type: 'tv/setTasksMode', mode: 'board' },
       { type: 'openTask', taskId: 't-1' },
       { type: 'tv/closePage' },
+      { type: 'selectProject', projectId: '/other' },
     ]);
-    expect(state.tasksMode).toBe('graph');
+    expect(state.tasksMode).toBe('board');
+  });
+
+  test('the graph is a page under Tasks, not a layout of the list', () => {
+    const state = run([
+      { type: 'tv/setTasksMode', mode: 'board' },
+      { type: 'setProjectView', view: 'graph' },
+    ]);
+    expect(state.mainView).toBe('tasks');
+    expect(state.tasksPage).toEqual({ kind: 'view', view: 'graph' });
+    expect(state.tasksMode).toBe('board');
+    // Pressing Tasks, or closing the page, returns to the list as it was.
+    expect(twoViewsReducer(state, { type: 'tv/closePage' }).tasksPage).toEqual({
+      kind: 'list',
+    });
   });
 
   test('actions that are not navigation leave the state alone', () => {
@@ -491,6 +512,7 @@ describe('twoViewsKeyAction', () => {
     ['goto-projects', { type: 'tv/showTasks', preset: 'review' }],
     ['goto-threads', { type: 'setProjectView', view: 'threads' }],
     ['goto-timeline', { type: 'setProjectView', view: 'timeline' }],
+    ['goto-graph', { type: 'setProjectView', view: 'graph' }],
     ['goto-settings', { type: 'tv/openSettings' }],
   ] as const)('%p', (command, action) => {
     expect(twoViewsKeyAction(command)).toEqual(action);
@@ -502,7 +524,20 @@ describe('twoViewsKeyAction', () => {
       modalOpen: false,
       pendingPrefix: 'g' as const,
     };
-    for (const letter of ['h', 's', 'i', 'm', 't', 'r', 'f', 'c', 'a', 'o']) {
+    for (const letter of [
+      'h',
+      's',
+      'i',
+      'm',
+      't',
+      'l',
+      'g',
+      'r',
+      'f',
+      'c',
+      'a',
+      'o',
+    ]) {
       const command = resolveChordKey(
         { key: letter, metaKey: false, ctrlKey: false },
         ctx

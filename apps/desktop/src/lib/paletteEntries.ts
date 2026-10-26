@@ -62,10 +62,13 @@ export interface PaletteEntriesContext {
   };
 }
 
-// The pages under Tasks with no other way in from the top bar.
+// The pages under Tasks with no sidebar row: Files, Terminals, the Projects
+// tree (also the Projects section's "All") and Live (also the Runs page's link).
 const TASKS_PAGES: PaletteView[] = [
   { id: 'files', label: 'Files' },
   { id: 'terminals', label: 'Terminals' },
+  { id: 'projects', label: 'Projects' },
+  { id: 'live', label: 'Live' },
 ];
 
 /** The rows the command menu offers right now: actions (a `Copy link` when a task is up),
@@ -173,14 +176,24 @@ export function buildPaletteEntries(
     }
   );
   if (ctx.hasProject) {
-    entries.push({
-      id: 'go-timeline',
-      label: 'Go to Timeline',
-      kind: 'go to',
-      section: 'navigation',
-      shortcut: 'G L',
-      run: () => actions.setProjectView('timeline'),
-    });
+    entries.push(
+      {
+        id: 'go-timeline',
+        label: 'Go to Timeline',
+        kind: 'go to',
+        section: 'navigation',
+        shortcut: 'G L',
+        run: () => actions.setProjectView('timeline'),
+      },
+      {
+        id: 'go-graph',
+        label: 'Go to Graph',
+        kind: 'go to',
+        section: 'navigation',
+        shortcut: 'G G',
+        run: () => actions.setProjectView('graph'),
+      }
+    );
   }
   if (ctx.hasProject) {
     for (const page of TASKS_PAGES) {
