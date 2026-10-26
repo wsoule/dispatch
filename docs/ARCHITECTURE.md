@@ -78,8 +78,10 @@ team-server work has to cross.
 `config.yml` is hand-written and reviewed, so Settings (`PATCH /api/config`,
 core's `updateConfig`) edits it in place. Only the keys a save names change:
 comments, key order and keys Dispatch does not know stay as they are, a long
-line is not wrapped and CRLF line ends are kept. The loader checks the whole
-patched file before it is written.
+line is not wrapped and CRLF line ends are kept. One thing the YAML library
+rewrites anywhere in the file: an inline list or map comes back padded (`[a, b]`
+as `[ a, b ]`, `{a: 1}` as `{ a: 1 }`), the style this repo's own config.yml
+already uses. The loader checks the whole patched file before it is written.
 
 **Outside the repo, machine-local, never committed** —
 `$DISPATCH_HOME/.dispatch/runs/<sha256(rootDir)[:12]>/`:
@@ -331,6 +333,17 @@ so a run opened later starts from its detail's snapshot. A run's segment leaves
 the store when the `run.log` entry naming it arrives, and the run's key goes
 once a fetched detail shows the run ended.
 
+**View updates.** The client store applies each frame as it lands, so a read
+(`get`, the snapshot `useSyncExternalStore` takes) is always current, but it
+tells its views at most once per animation frame, or on the next macrotask where
+the host paints none. A turn sends a frame every few tokens, each in a websocket
+message of its own, and the Overseer's live text is read at the desktop's App
+root (`useOverseerSession`), so telling the views of every frame re-rendered the
+whole app per delta; a burst now renders once per painted frame. A hidden window
+paints no frames, so its views catch up on the first one it paints.
+`LiveTextStore` takes its scheduler as a constructor argument, and its `flush()`
+tells the views at once, so a test decides when frames happen.
+
 **Run log order.** A `run.log` frame carries `index`, its entry's place among
 the run's transcript entries, the same position `GET /api/runs/:id` lists it at.
 The desktop appends a frame that continues its cached detail, ignores one it
@@ -368,10 +381,14 @@ Session composer's turns, a daemon notice from docs or memory, which carries no
 socket and every request-tier caller: run detail already returns the agent's
 entries to all of them once they are written. Redaction happens on the way out;
 the stored transcript is whole, and the daemon's own readers (review summaries,
-judgments, memory) read it as stored. The desktop, `dispatch run show`,
-`--watch`, `run watch` and `dispatch share` show nothing for a redacted entry,
-and the CLI, which uses the shared agent token, gets every bus message's entry
-redacted.
+judgments, memory) read it as stored. The two sides reuse the bus's own two
+rules, so a run's chat shows a message where the bus does, and they differ at
+the edges as the bus's do: the socket rule also counts a message's `to`
+addresses and its recipients on a teammate's machine, and the read rule lets a
+run's token read for its whole task (its task's address and other runs). The
+desktop, `dispatch run show`, `--watch`, `run watch` and `dispatch share` show
+nothing for a redacted entry, and the CLI, which uses the shared agent token,
+gets every bus message's entry redacted.
 
 **Switches.** Two `.dispatch/config.yml` blocks, read when a turn or a run
 starts, so a change applies from the Overseer's next turn and to runs started

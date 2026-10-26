@@ -28,7 +28,8 @@ holds what a user upgrading needs to know.
   it.** A long line, such as a verify or preview command, is no longer wrapped
   onto a second line, a file with CRLF line ends keeps them, and a block whose
   keys are all commented out takes a save instead of refusing it with "Expected
-  YAML collection".
+  YAML collection". An inline list or map still comes back with spaces inside
+  its brackets: `[a, b]` as `[ a, b ]`.
 - **A run's messages stay between the people in them.** A message delivered to a
   run, a channel digest and a run's own message to a person now show in the
   run's chat only for the people the message is between and for teammates who
