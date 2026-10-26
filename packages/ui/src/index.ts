@@ -158,6 +158,7 @@ export type {
   KbdKeysProps,
   KbdProps,
   PaletteItem,
+  PaletteSectionCap,
   PaletteView,
   PropertyListItem,
   PropertyListProps,

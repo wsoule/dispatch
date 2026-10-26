@@ -1,6 +1,6 @@
 'use client';
 
-import { CircleAlert, Info, X } from 'lucide-react';
+import { CircleAlert, CircleCheck, Info, X } from 'lucide-react';
 import {
   createContext,
   type CSSProperties,
@@ -25,17 +25,33 @@ import type {
 
 // Toasts: a bottom-right stack (full width above the tab bar on phones) of
 // Gr8r's inverted cards, each an icon, a lead-in word and one sentence
-// (an error's icon is red). Auto-dismiss after
+// (an error's icon is red, a success's a green check; a label of '' drops
+// the lead-in so the sentence stands alone). Auto-dismiss after
 // 4s, paused while hovered or focused; at most three on screen. Screen
-// readers hear infos politely and errors assertively through two live
-// regions that mirror the stack.
+// readers hear infos and successes politely and errors assertively through
+// two live regions that mirror the stack.
 
 const DEFAULT_DURATION = 4000;
 const MAX_VISIBLE = 3;
 const DEFAULT_LABEL: Record<ToastKind, string> = {
   info: 'Info',
   error: 'Error',
+  success: 'Done',
 };
+
+const KIND_CLASS: Record<ToastKind, string | undefined> = {
+  info: undefined,
+  error: styles.error,
+  success: styles.success,
+};
+
+/** What a live region says for a toast: the lead-in, then the spoken
+    sentence. A toast shown without a lead-in still names its kind here, so
+    a listener knows a bare "Copied link" was a success. */
+function spoken(record: ToastRecord): string {
+  const label = record.label === '' ? DEFAULT_LABEL[record.kind] : record.label;
+  return `${label}: ${record.announce ?? record.message}`;
+}
 
 interface ToastRecord {
   id: string;
@@ -58,6 +74,23 @@ export function useToast(): ToastApi {
     throw new Error('useToast() must be used inside <ToastProvider>.');
   }
   return api;
+}
+
+/* The kind's glyph: an alert circle for an error, a check for a success,
+   the info circle otherwise. */
+function ToastIcon({ kind }: { kind: ToastKind }): ReactNode {
+  switch (kind) {
+    case 'error':
+      return <CircleAlert size={15} strokeWidth={1.8} />;
+    case 'success':
+      return <CircleCheck size={15} strokeWidth={1.8} />;
+    case 'info':
+      return <Info size={15} strokeWidth={1.8} />;
+    default: {
+      const exhaustive: never = kind;
+      return exhaustive;
+    }
+  }
 }
 
 /* One toast. Owns its timer so hover/focus can pause it: the remaining time
@@ -89,7 +122,8 @@ function ToastItem({
 
   return (
     <li
-      className={cx(styles.toast, record.kind === 'error' && styles.error)}
+      className={cx(styles.toast, KIND_CLASS[record.kind])}
+      data-kind={record.kind}
       data-paused={paused ? 'true' : undefined}
       style={timed ? style : undefined}
       onMouseEnter={() => setHovered(true)}
@@ -102,14 +136,15 @@ function ToastItem({
       }}
     >
       <span className={styles.icon} aria-hidden="true">
-        {record.kind === 'error' ? (
-          <CircleAlert size={15} strokeWidth={1.8} />
-        ) : (
-          <Info size={15} strokeWidth={1.8} />
-        )}
+        <ToastIcon kind={record.kind} />
       </span>
       <p className={styles.message}>
-        <span className={styles.label}>{record.label}</span> {record.message}
+        {record.label !== '' ? (
+          <>
+            <span className={styles.label}>{record.label}</span>{' '}
+          </>
+        ) : null}
+        {record.message}
       </p>
       {record.action !== undefined ? (
         <button
@@ -244,16 +279,16 @@ export function ToastProvider({
       </section>
       <div role="status" aria-live="polite" className="srOnly">
         {toasts
-          .filter((t) => t.kind === 'info')
+          .filter((t) => t.kind !== 'error')
           .map((t) => (
-            <p key={t.id}>{`${t.label}: ${t.announce ?? t.message}`}</p>
+            <p key={t.id}>{spoken(t)}</p>
           ))}
       </div>
       <div role="alert" aria-live="assertive" className="srOnly">
         {toasts
           .filter((t) => t.kind === 'error')
           .map((t) => (
-            <p key={t.id}>{`${t.label}: ${t.announce ?? t.message}`}</p>
+            <p key={t.id}>{spoken(t)}</p>
           ))}
       </div>
     </ToastContext.Provider>

@@ -494,3 +494,16 @@ describe('Errors are red (a failed write or load)', () => {
     ).toBe('color: var(--tone-ink);');
   });
 });
+
+describe('A success toast is green (a write that landed)', () => {
+  test('its check and countdown take the green inverse step, never the accent', () => {
+    const sheet = css('shell/toast.module.css');
+    expect(rule(sheet, '.success .icon')).toBe(
+      'color: var(--green-ink-inverse);'
+    );
+    expect(rule(sheet, '.success .timer')).toBe(
+      'background: var(--green-ink-inverse);'
+    );
+    expect(sheet).not.toMatch(/\.success[^{]*\{[^}]*--accent/);
+  });
+});

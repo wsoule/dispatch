@@ -34,6 +34,7 @@ import type {
   CommandPaletteProps,
   CommandPaletteProviderProps,
   PaletteItem,
+  PaletteSectionCap,
   PaletteView,
   ShortcutGroup,
   ShortcutSheetProps,
@@ -100,23 +101,46 @@ interface RankedSection {
   hidden: number;
 }
 
+/** A match with nothing to highlight: an item listed as given. */
+const AS_GIVEN = { score: 0, labelHits: [], hintHits: [] };
+
+/** The default rows per section before "keep typing". */
+const DEFAULT_SECTION_CAP = 50;
+
+/**
+ * The rows section `name` shows: the one number given for every section, or
+ * its own entry in a per-section record (the default when it has none). A cap
+ * below 1 would leave a headed section with no rows (and nothing for Tab to
+ * land on), so every section shows at least one.
+ */
+function sectionCap(name: string, maxPerSection: PaletteSectionCap): number {
+  const cap =
+    typeof maxPerSection === 'number'
+      ? maxPerSection
+      : (maxPerSection[name] ?? DEFAULT_SECTION_CAP);
+  return Math.max(1, Math.floor(cap));
+}
+
 /**
  * Groups items into ordered sections. With a query, only fuzzy matches stay
- * and each section is ranked best-first (ties keep their given order).
- * Sections follow `order`, then first appearance. One pass over the items.
+ * and each section is ranked best-first (ties keep their given order); an
+ * item the host marked `matched` is kept as given, nothing highlighted, after the
+ * ranked ones. Sections follow `order`, then first appearance. One pass over
+ * the items.
  */
 function rankSections(
   items: readonly PaletteItem[],
   query: string,
   order: readonly string[],
-  maxPerSection: number
+  maxPerSection: PaletteSectionCap
 ): RankedSection[] {
   const bySection = new Map<string, RankedItem[]>();
   const searching = query.trim() !== '';
   for (const item of items) {
-    const match = searching
-      ? fuzzyMatch(query, item.label, item.hint)
-      : { score: 0, labelHits: [], hintHits: [] };
+    const match =
+      searching && item.matched !== true
+        ? fuzzyMatch(query, item.label, item.hint)
+        : AS_GIVEN;
     if (match === null) continue;
     let list = bySection.get(item.section);
     if (list === undefined) {
@@ -129,15 +153,12 @@ function rankSections(
   for (const name of order) if (bySection.has(name)) ordered.add(name);
   for (const name of bySection.keys()) ordered.add(name);
 
-  // A cap below 1 would leave headed sections with no rows (and nothing
-  // for Tab to land on), so every section shows at least one.
-  const cap = Math.max(1, Math.floor(maxPerSection));
   let index = 0;
   const out: RankedSection[] = [];
   for (const name of ordered) {
     const list = bySection.get(name) ?? [];
     if (searching) list.sort((a, b) => b.score - a.score);
-    const shown = list.slice(0, cap);
+    const shown = list.slice(0, sectionCap(name, maxPerSection));
     for (const ranked of shown) ranked.index = index++;
     out.push({ name, items: shown, hidden: list.length - shown.length });
   }
@@ -188,10 +209,12 @@ export function CommandPalette({
   onShowShortcuts,
   placeholder = 'Type a command or search…',
   sectionOrder,
-  maxPerSection = 50,
+  maxPerSection = DEFAULT_SECTION_CAP,
+  emptyHint,
   refuseQuery,
   onSubmitFreeText,
   freeTextLabel = 'Use text',
+  onQueryChange,
 }: CommandPaletteProps): ReactNode {
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -307,7 +330,11 @@ export function CommandPalette({
         else cycleSection(event.shiftKey ? -1 : 1);
         break;
       case 'Escape':
+        // Owned here: stopped so a dismiss listener on the document (a host
+        // dialog library's, for a dialog this palette is open over) never
+        // sees the same keystroke and closes that dialog too.
         event.preventDefault();
+        event.stopPropagation();
         onClose();
         break;
       default:
@@ -332,6 +359,7 @@ export function CommandPalette({
           if (event.isDefaultPrevented()) return;
           if (event.key === 'Escape') {
             event.preventDefault();
+            event.stopPropagation();
             onClose();
             return;
           }
@@ -364,6 +392,7 @@ export function CommandPalette({
             onChange={(event) => {
               setQuery(event.target.value);
               setActive(0);
+              onQueryChange?.(event.target.value);
             }}
             onKeyDown={onInputKeyDown}
           />
@@ -510,11 +539,16 @@ export function CommandPalette({
               {refusal}
             </p>
           ) : count === 0 && !loading ? (
-            <p className={styles.empty}>
-              {query.trim() === ''
-                ? 'Nothing to jump to yet'
-                : `No matches for “${query.trim()}”`}
-            </p>
+            <div className={styles.empty}>
+              <p className={styles.emptyLine}>
+                {query.trim() === ''
+                  ? 'Nothing to jump to yet'
+                  : `No matches for “${query.trim()}”`}
+              </p>
+              {emptyHint !== undefined && query.trim() !== '' ? (
+                <p className={styles.emptyLine}>{emptyHint}</p>
+              ) : null}
+            </div>
           ) : null}
         </div>
 
@@ -579,7 +613,10 @@ export function ShortcutSheet({
         className={cx(styles.panel, styles.sheet)}
         onKeyDown={(event) => {
           if (event.key === 'Escape') {
+            // Owned here, as in the palette: never reaches a dismiss
+            // listener beneath (see onInputKeyDown).
             event.preventDefault();
+            event.stopPropagation();
             onClose();
             return;
           }

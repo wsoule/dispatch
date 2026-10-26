@@ -270,6 +270,15 @@
   text-align: center;
 }
 
+/* The sentence and, under it, the host's hint of what to try instead. */
+.emptyLine {
+  margin: 0;
+}
+
+.emptyLine + .emptyLine {
+  margin-top: 6px;
+}
+
 /* ---- footer: a recessed strip of key hints (Gr8r's .pal-f) ----------- */
 
 .footer {

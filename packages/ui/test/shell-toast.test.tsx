@@ -259,3 +259,58 @@ describe('toasts: spoken text and close callbacks', () => {
     expect(timedOut).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('toasts: success and a bare sentence', () => {
+  test('a success toast is a green check, led in by Done and spoken politely', () => {
+    setup();
+    show({ kind: 'success', message: 'Target date saved.' });
+    const item = stack().querySelector('li');
+    expect(item?.getAttribute('data-kind')).toBe('success');
+    // The glyph is lucide's circled check (the stylesheet colours it with
+    // --green-ink-inverse; CSS modules are empty objects under Bun).
+    expect(item?.querySelector('svg.lucide-circle-check')).not.toBeNull();
+    expect(stackText()).toBe('Done Target date saved.');
+    expect(screen.getByRole('status').textContent).toBe(
+      'Done: Target date saved.'
+    );
+    expect(screen.getByRole('alert').textContent).toBe('');
+    act(() => {
+      jest.advanceTimersByTime(4100);
+    });
+    expect(stackText()).toBe('');
+  });
+
+  test('an empty label drops the lead-in; the live region still names the kind', () => {
+    setup();
+    show({ kind: 'success', label: '', message: 'Copied link' });
+    show({ kind: 'info', label: '', message: 'Dispatch 1.2 is available' });
+    const items = stack().querySelectorAll('li');
+    expect(items[0]?.querySelector('p')?.textContent).toBe('Copied link');
+    expect(items[0]?.querySelector('p')?.querySelector('span')).toBeNull();
+    expect(items[1]?.querySelector('p')?.textContent).toBe(
+      'Dispatch 1.2 is available'
+    );
+    expect(screen.getByRole('status').textContent).toBe(
+      'Done: Copied linkInfo: Dispatch 1.2 is available'
+    );
+  });
+
+  test('an error keeps its lead-in by default and never times out at Infinity', () => {
+    setup();
+    show({
+      kind: 'error',
+      message: 'Linear did not answer.',
+      duration: Infinity,
+    });
+    const item = stack().querySelector('li');
+    expect(item?.getAttribute('data-kind')).toBe('error');
+    expect(item?.querySelector('svg.lucide-circle-alert')).not.toBeNull();
+    expect(stackText()).toBe('Error Linear did not answer.');
+    // No countdown: neither the duration property nor the timer line.
+    expect(item?.style.getPropertyValue('--toast-duration')).toBe('');
+    act(() => {
+      jest.advanceTimersByTime(60_000);
+    });
+    expect(stackText()).toBe('Error Linear did not answer.');
+  });
+});

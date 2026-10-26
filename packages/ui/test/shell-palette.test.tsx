@@ -9,6 +9,7 @@ import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { useState } from 'react';
 
 import {
+  CommandPalette,
   CommandPaletteProvider,
   useCommandPalette,
 } from '../src/shell/command-palette';
@@ -320,6 +321,44 @@ describe('CommandPalette over other overlays', () => {
     expect(document.activeElement).toBe(opener);
   });
 
+  test('Esc in the palette or the sheet never reaches a dismiss listener on the document', () => {
+    // A host dialog library (Base UI's useDismiss, say) closes its dialog on any
+    // Escape that bubbles to the document; the palette opened over such a
+    // dialog must close alone.
+    const seen = mock(() => undefined);
+    const listen = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') seen();
+    };
+    document.addEventListener('keydown', listen);
+    try {
+      setup();
+      const opener = screen.getByRole('button', { name: 'Open palette' });
+      fireEvent.click(opener);
+      fireEvent.click(screen.getByRole('button', { name: /Shortcuts/ }));
+      const sheet = screen.getByRole('dialog', {
+        name: 'Keyboard shortcuts',
+      });
+      // The provider shows the sheet in the palette's place; Esc there closes
+      // it without the keystroke leaving the sheet.
+      fireEvent.keyDown(sheet, { key: 'Escape' });
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(seen).not.toHaveBeenCalled();
+      // Esc in the input, and Esc anywhere else in the panel, both stay inside.
+      fireEvent.click(opener);
+      fireEvent.keyDown(input(), { key: 'Escape' });
+      expect(screen.queryByRole('dialog')).toBeNull();
+      fireEvent.click(opener);
+      fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(seen).not.toHaveBeenCalled();
+      // With nothing open the key reaches the document as usual.
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+      expect(seen).toHaveBeenCalledTimes(1);
+    } finally {
+      document.removeEventListener('keydown', listen);
+    }
+  });
+
   test("statusMuted draws a row's status mark in greys, still named", () => {
     setup({
       items: [
@@ -358,6 +397,40 @@ describe('CommandPalette over other overlays', () => {
     expect(screen.getAllByRole('option')).toHaveLength(3);
     fireEvent.keyDown(input(), { key: 'Tab' });
     expect(selectedLabel()).toContain('Atlas migration');
+  });
+
+  test('a cap per section heading leaves the others at the default, with "+N more" per section', () => {
+    setup({ maxPerSection: { Suggestions: 1, 'Jump to': 1 } });
+    fireEvent.keyDown(document.body, { key: 'k', ctrlKey: true });
+    const groups = screen.getAllByRole('group');
+    expect(groups).toHaveLength(3);
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Preview allocation (dry run)',
+      'Atlas migrationProject',
+      'Go to My weekGW',
+      'Go to TimelineGT',
+    ]);
+    expect(groups[0]?.textContent).toContain('+1 more · keep typing');
+    expect(groups[1]?.textContent).toContain('+1 more · keep typing');
+    expect(groups[2]?.textContent).not.toContain('keep typing');
+  });
+
+  test('emptyHint is a second line under "No matches", never while the query is empty', () => {
+    render(
+      <CommandPalette
+        items={[]}
+        onClose={() => undefined}
+        onRun={() => undefined}
+        emptyHint="Try another task id, or press Tab to ask your agent"
+      />
+    );
+    expect(screen.getByText('Nothing to jump to yet')).toBeTruthy();
+    expect(screen.queryByText(/Try another task id/)).toBeNull();
+    fireEvent.change(input(), { target: { value: 'zzz' } });
+    expect(screen.getByText('No matches for “zzz”')).toBeTruthy();
+    expect(
+      screen.getByText('Try another task id, or press Tab to ask your agent')
+    ).toBeTruthy();
   });
 
   test('locks the page scroll on a phone only', () => {
@@ -453,5 +526,106 @@ describe('CommandPalette: refused text', () => {
     // An ordinary query still matches.
     fireEvent.change(input(), { target: { value: 'atlas' } });
     expect(screen.getAllByRole('option').length).toBeGreaterThan(0);
+  });
+});
+
+describe('CommandPalette (controlled): a host search beside the fuzzy match', () => {
+  const HOST_ITEMS: PaletteItem[] = [
+    { id: 'atlas', label: 'Atlas migration', section: 'Jump to' },
+    { id: 'theme', label: 'Switch theme', section: 'Suggestions' },
+  ];
+
+  test('onQueryChange hears every edit, untrimmed, and the query starts empty on each mount', () => {
+    const onQueryChange = mock((_query: string) => undefined);
+    const view = render(
+      <CommandPalette
+        items={HOST_ITEMS}
+        onClose={() => undefined}
+        onRun={() => undefined}
+        onQueryChange={onQueryChange}
+      />
+    );
+    fireEvent.change(input(), { target: { value: 'kan' } });
+    fireEvent.change(input(), { target: { value: 'kanban ' } });
+    expect(onQueryChange.mock.calls).toEqual([['kan'], ['kanban ']]);
+    view.unmount();
+    render(
+      <CommandPalette
+        items={HOST_ITEMS}
+        onClose={() => undefined}
+        onRun={() => undefined}
+      />
+    );
+    expect(input().value).toBe('');
+  });
+
+  test('a matched item stays listed, not highlighted, after the ranked rows of its section', () => {
+    const onRun = mock((_item: PaletteItem) => undefined);
+    const view = render(
+      <CommandPalette
+        items={HOST_ITEMS}
+        onClose={() => undefined}
+        onRun={onRun}
+        sectionOrder={['Suggestions', 'Jump to', 'Docs']}
+      />
+    );
+    fireEvent.change(input(), { target: { value: 'kanban' } });
+    expect(screen.queryAllByRole('option')).toHaveLength(0);
+
+    // The host's hits for that query arrive: they show without matching it.
+    const hits: PaletteItem[] = [
+      {
+        id: 'doc-1',
+        label: 'Board spec › Columns',
+        hint: 'board',
+        section: 'Docs',
+        matched: true,
+      },
+      {
+        id: 'kanban-task',
+        label: 'Rework the kanban columns',
+        section: 'Docs',
+      },
+    ];
+    view.rerender(
+      <CommandPalette
+        items={[...HOST_ITEMS, ...hits]}
+        onClose={() => undefined}
+        onRun={onRun}
+        sectionOrder={['Suggestions', 'Jump to', 'Docs']}
+      />
+    );
+    const options = screen.getAllByRole('option');
+    expect(options).toHaveLength(2);
+    expect(options[0].textContent).toBe('Rework the kanban columns');
+    expect(options[1].textContent).toContain('Board spec › Columns');
+    expect(options[1].querySelector('mark')).toBeNull();
+    expect(options[0].querySelector('mark')).not.toBeNull();
+    expect(screen.getByRole('group', { name: 'Docs' })).toBeTruthy();
+    // Enter runs the active (ranked) row; the matched row runs from a click.
+    fireEvent.click(options[1]);
+    expect(onRun).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'doc-1' })
+    );
+  });
+
+  test('without a query, items keep their given order within a section', () => {
+    render(
+      <CommandPalette
+        items={[
+          { id: 'b', label: 'Beta', section: 'Jump to' },
+          { id: 'z', label: 'Zeta', section: 'Suggestions' },
+          { id: 'a', label: 'Alpha', section: 'Jump to' },
+        ]}
+        onClose={() => undefined}
+        onRun={() => undefined}
+        sectionOrder={['Suggestions', 'Jump to']}
+      />
+    );
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Zeta',
+      'Beta',
+      'Alpha',
+    ]);
   });
 });

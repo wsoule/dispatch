@@ -1,6 +1,7 @@
 /* Gr8r's toasts: an inverted card (--text fill, --text-inv ink) in both
    themes, 8px radius, the pop shadow, a leading 15px icon (red for an
-   error), the lead-in word in semibold, a soft-wash action and dismiss.
+   error, green for a success), the lead-in word in semibold, a soft-wash
+   action and dismiss.
    A thin line along the bottom counts the auto-dismiss down; it stops
    while the toast is hovered or focused. */
 
@@ -72,9 +73,13 @@
 
 /* An error's icon in the red for an inverted surface (--red-ink-inverse,
    4.5:1 on the toast's --text fill in both themes); the lead-in word says
-   it too. */
+   it too. A success's check takes the green's inverse step the same way. */
 .error .icon {
   color: var(--red-ink-inverse);
+}
+
+.success .icon {
+  color: var(--green-ink-inverse);
 }
 
 .message {
@@ -141,6 +146,10 @@
 
 .error .timer {
   background: var(--red-ink-inverse);
+}
+
+.success .timer {
+  background: var(--green-ink-inverse);
 }
 
 .toast[data-paused='true'] .timer {

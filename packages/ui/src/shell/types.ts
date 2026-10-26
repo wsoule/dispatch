@@ -202,6 +202,14 @@ export interface PaletteItem {
    * which is never loud); statusLabel still names the status. */
   statusMuted?: boolean;
   icon?: ShellIcon;
+  /**
+   * The host already matched this item against the typed text (a search it
+   * ran itself, such as a daemon's doc hits for the query): the row is
+   * listed in its section whatever the query, neither fuzzy-filtered nor
+   * highlighted. Items ranked by the palette keep their order ahead of it
+   * within a section.
+   */
+  matched?: true;
 }
 
 /** A row of the "?" shortcuts sheet. */
@@ -227,8 +235,8 @@ export interface CommandPaletteProviderProps {
   /** Extra groups for the "?" sheet. */
   shortcutGroups?: ShortcutGroup[];
   placeholder?: string;
-  /** Rows shown per section before "keep typing" (default 50). */
-  maxPerSection?: number;
+  /** Passed to the palette (CommandPaletteProps.maxPerSection). */
+  maxPerSection?: PaletteSectionCap;
   /** Passed to the palette (CommandPaletteProps.refuseQuery). */
   refuseQuery?: (query: string) => string | null;
   /** Passed to the palette (CommandPaletteProps.onSubmitFreeText); the
@@ -260,14 +268,17 @@ export interface CommandPaletteApi {
   isSequencePending: () => boolean;
 }
 
-export type ToastKind = 'info' | 'error';
+/** `success` is a green check, announced politely like `info`. */
+export type ToastKind = 'info' | 'error' | 'success';
 
 export interface ToastInput {
   kind: ToastKind;
   /** One sentence. */
   message: string;
   /** Lead-in word before the sentence ("Synced"); defaults to Info /
-   * Error. */
+   * Error / Done. An empty string shows no lead-in at all, for a caller
+   * whose sentence is the whole message ("Copied link"); screen readers
+   * still hear the kind's default word before it. */
   label?: string;
   action?: { label: string; onClick: () => void };
   /** Milliseconds before auto-dismiss (default 4000; Infinity keeps it). */
@@ -341,6 +352,10 @@ export interface AlertStripProps {
   action?: AlertStripAction;
 }
 
+/** How many rows a palette section shows: one cap for all, or one per
+ * section heading (CommandPaletteProps.maxPerSection). */
+export type PaletteSectionCap = number | Readonly<Record<string, number>>;
+
 /** The palette dialog itself, controlled (mount = open). */
 export interface CommandPaletteProps {
   items: PaletteItem[];
@@ -354,8 +369,20 @@ export interface CommandPaletteProps {
   onShowShortcuts?: () => void;
   placeholder?: string;
   sectionOrder?: string[];
-  /** Rows shown per section before "keep typing" (default 50, at least 1). */
-  maxPerSection?: number;
+  /**
+   * Rows shown per section before "+N more · keep typing" (default 50, at
+   * least 1): one number for every section, or a cap per section heading
+   * (a heading not in the record keeps the default), for a host whose
+   * long sections (tasks, projects) must not push its short ones (views,
+   * actions) out of sight.
+   */
+  maxPerSection?: PaletteSectionCap;
+  /**
+   * A second line under "No matches for …" when the typed text matches
+   * nothing: what to try instead ("Try another task id, or press Tab to ask
+   * your agent"). Not shown while the query is empty.
+   */
+  emptyHint?: string;
   /**
    * A sentence when the typed text must not be used at all (the planner
    * refuses text shaped like a Linear API key): nothing is matched or run,
@@ -374,6 +401,13 @@ export interface CommandPaletteProps {
   onSubmitFreeText?: (query: string) => void;
   /** The footer action's words for onSubmitFreeText. Default "Use text". */
   freeTextLabel?: string;
+  /**
+   * Called with the input's text on every change (untrimmed), so a host can
+   * run a search of its own and feed the hits back as `matched` items. The
+   * query starts empty on every mount: closing the palette (unmounting it)
+   * resets it.
+   */
+  onQueryChange?: (query: string) => void;
 }
 
 export interface ShortcutSheetProps {

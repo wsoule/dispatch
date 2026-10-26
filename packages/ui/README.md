@@ -353,9 +353,12 @@ The other shared vocabularies:
   corner ticks), `path-up` (accent ring), `path-down` (`--text` ring),
   `path-next` (the green "Ready next" dot pill) and `path-chain` (as
   `node-chain`), and the frames `cluster` and `cluster-muted`.
-- `ToastKind`: `info`, `error`. A `ToastInput` may carry `announce` (what the
-  live region says in place of the visible sentence) and `onClose` (called once
-  when the toast leaves the stack, however it goes).
+- `ToastKind`: `info`, `error`, `success` (a green check, spoken politely like
+  `info`; its default lead-in is "Done"). A `ToastInput` may carry `label: ''`
+  to show the sentence with no lead-in word (screen readers still hear the
+  kind's default), `announce` (what the live region says in place of the visible
+  sentence) and `onClose` (called once when the toast leaves the stack, however
+  it goes).
 
 Every status mark carries a text label for assistive tech (`label` /
 `statusLabel` props). Wording is the host's: components that print built-in
@@ -899,6 +902,14 @@ or middle click still opens the link.
   (`freeTextLabel`, default "Use text") for a pointer or a phone; Shift+Tab
   still cycles sections backwards, an empty query keeps Tab's section walk, and
   text `refuseQuery` refuses is never submitted.
+- `CommandPaletteProvider` / `CommandPalette` `maxPerSection` is one number for
+  every section or a cap per section heading (`PaletteSectionCap`, a heading not
+  in the record keeps the default 50), so a host's long sections (tasks,
+  projects) never push its short ones (views, actions) below the fold; the "+N
+  more · keep typing" count follows each section's own cap. `emptyHint` is a
+  second line under "No matches for …" saying what to try instead ("Try another
+  task id, or press Tab to ask your agent"); it never shows while the query is
+  empty.
 - `AssigneePicker` people (`PersonChoice`) may carry a `group` (a heading, e.g.
   "Agents"; ungrouped people list first) and a `mark` of their own (a
   `PickerMark`, e.g. `{ kind: 'node', node }` for an agent's glyph) in place of
