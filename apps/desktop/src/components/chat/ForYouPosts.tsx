@@ -156,6 +156,9 @@ function ForYouPost({
   }, [held, post, subject]);
 
   const from = label(post.latest.from);
+  // A question's reply answers it (see App's replyToPost), so the form says so.
+  const asks = post.latest.kind === 'question';
+  const verb = asks ? 'Answer' : 'Reply on';
   // A run writing about itself reads once, not "Title on Title".
   const byline = from === subject ? subject : `${from} on ${subject}`;
   const dismiss = (
@@ -188,7 +191,7 @@ function ForYouPost({
   return (
     <article
       data-testid="for-you-post"
-      className="bg-background border-border rounded-card flex flex-col gap-1.5 border-[0.5px] px-3 py-2 text-[13px]"
+      className="bg-background border-border rounded-card flex min-w-0 flex-col gap-1.5 border-[0.5px] px-3 py-2 text-[13px]"
     >
       <div className="text-muted-foreground flex items-center gap-2 text-[12px]">
         <span className="text-foreground font-medium">{from}</span>
@@ -205,7 +208,7 @@ function ForYouPost({
         </p>
       ) : held !== null ? (
         <div role="status" className="flex items-center gap-2 text-[12px]">
-          <span className="flex-1">Sending to {subject}…</span>
+          <span className="min-w-0 flex-1 truncate">Sending to {subject}…</span>
           <Button
             size="xs"
             variant="outline"
@@ -220,7 +223,7 @@ function ForYouPost({
         </div>
       ) : replying ? (
         <form
-          className="flex items-center gap-2"
+          className="flex min-w-0 items-center gap-2"
           onSubmit={(e) => {
             e.preventDefault();
             const text = body.trim();
@@ -233,13 +236,23 @@ function ForYouPost({
         >
           <Input
             ref={replyInputRef}
-            aria-label={`Reply on ${subject}`}
+            aria-label={`${verb} ${subject}`}
             value={body}
             onChange={(e) => setBody(e.target.value)}
-            placeholder={`Reply on ${subject}…`}
+            placeholder={`${verb} ${subject}…`}
+            className="min-w-0 flex-1"
           />
-          <Button size="xs" type="submit" disabled={body.trim() === ''}>
-            Send to {subject}
+          {/* A short label, so a long address never squeezes the input; the
+              full one stays in the accessible name and the tooltip. */}
+          <Button
+            size="xs"
+            type="submit"
+            disabled={body.trim() === ''}
+            aria-label={`${asks ? 'Answer' : 'Send to'} ${subject}`}
+            title={`${asks ? 'Answer' : 'Send to'} ${subject}`}
+            className="shrink-0"
+          >
+            {asks ? 'Answer' : 'Send'}
           </Button>
         </form>
       ) : (
@@ -248,12 +261,15 @@ function ForYouPost({
             Open
           </Button>
           <Button size="xs" variant="ghost" onClick={() => setReplying(true)}>
-            Reply…
+            {asks ? 'Answer…' : 'Reply…'}
           </Button>
         </div>
       )}
       {error !== null && (
-        <p role="alert" className="text-state-failed text-[12px]">
+        <p
+          role="alert"
+          className="text-state-failed text-[12px] break-words whitespace-normal"
+        >
           {error}
         </p>
       )}

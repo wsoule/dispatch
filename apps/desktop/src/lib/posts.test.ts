@@ -1,7 +1,7 @@
 import type { MailboxItem, Message } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
-import { buildPosts } from './posts';
+import { buildPosts, type Post, questionToAnswer } from './posts';
 
 const ME = 'human:wyat';
 
@@ -120,4 +120,40 @@ test('my own Overseer never becomes a post: its lines are the stream', () => {
       muted: new Set([overseer]),
     })
   ).toEqual([]);
+});
+
+describe('questionToAnswer', () => {
+  const postOf = (over: Partial<Message>): Post => {
+    const [built] = buildPosts(
+      [item('q-1', '2026-10-29T10:00:00.000Z', over)],
+      {
+        me: ME,
+        myTaskIds: new Set(),
+        followed: new Set(),
+        muted: new Set(),
+        authorOf: () => null,
+        now: Date.parse('2026-10-29T11:00:00.000Z'),
+      }
+    );
+    if (built === undefined) throw new Error('no post');
+    return built;
+  };
+
+  test('a question someone asked me is what a reply answers', () => {
+    const post = postOf({
+      kind: 'question',
+      from: 'agent:sam/a2a.ci-bot',
+      blocking: true,
+    });
+    expect(questionToAnswer(post, ME)?.id).toBe('q-1');
+  });
+
+  test('a plain message, or my own question, is not', () => {
+    expect(questionToAnswer(postOf({ kind: 'message' }), ME)).toBeNull();
+    const mine: Post = {
+      ...postOf({ kind: 'message' }),
+    };
+    mine.latest = { ...mine.latest, kind: 'question', from: ME };
+    expect(questionToAnswer(mine, ME)).toBeNull();
+  });
 });

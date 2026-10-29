@@ -144,7 +144,7 @@ import {
   docHitEntries,
 } from './lib/paletteEntries';
 import { PALETTE_SECTION_CAPS } from './lib/paletteSections';
-import { buildPosts, type Post } from './lib/posts';
+import { buildPosts, type Post, questionToAnswer } from './lib/posts';
 import { basename } from './lib/projectName';
 import { prNumberFromUrl } from './lib/reviewTarget';
 import { isTerminalRunState } from './lib/runState';
@@ -2015,12 +2015,18 @@ function App() {
     markNotificationRead(entry.id);
     setOverseerFocus({ kind: 'task', taskId });
   };
+  // A reply on a question answers it; on anything else it continues the thread.
   const replyToPost = async (post: Post, body: string) => {
     if (data.client === null) throw new Error('dispatchd client not ready');
-    await data.client.sendMessage(
-      { to: [post.subject], kind: 'message', body },
-      { continueThread: true }
-    );
+    const question = data.me === null ? null : questionToAnswer(post, data.me);
+    if (question !== null) {
+      await data.client.replyToMessage(question.id, { body });
+    } else {
+      await data.client.sendMessage(
+        { to: [post.subject], kind: 'message', body },
+        { continueThread: true }
+      );
+    }
     void queryClient.invalidateQueries({
       queryKey: threadListsKey(data.port),
     });
