@@ -677,11 +677,11 @@ describe('the task thread', () => {
       });
       fireEvent.click(screen.getByRole('button', { name: 'Thread' }));
       expect(
-        screen.getByText('Something went wrong rendering this tab')
+        screen.getByText("Dispatch couldn't display this tab.")
       ).not.toBeNull();
       fireEvent.click(screen.getByRole('button', { name: 'Thread' }));
       expect(modeOf()).toBe('spec');
-      expect(screen.queryByText(/Something went wrong/)).toBeNull();
+      expect(screen.queryByText(/couldn't display/)).toBeNull();
     } finally {
       console.error = quiet;
     }

@@ -1,7 +1,7 @@
 import { OctagonAlert } from 'lucide-react';
 import { Component, type ErrorInfo, Fragment, type ReactNode } from 'react';
 
-import { isStaleChunkError } from './errorBoundaryUtils';
+import { errorDetails, isStaleChunkError } from './errorBoundaryUtils';
 import { Button } from '@/ui/button';
 
 interface ErrorBoundaryProps {
@@ -67,8 +67,12 @@ export class ErrorBoundary extends Component<
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
         <OctagonAlert className="text-destructive size-5" />
-        <p className="text-muted-foreground max-w-sm text-[13px]">
-          Something went wrong rendering {this.props.label ?? 'this view'}
+        <p className="text-foreground max-w-sm text-[13px]">
+          Dispatch couldn&apos;t display {this.props.label ?? 'this view'}.
+        </p>
+        <p className="text-muted-foreground max-w-sm text-[12px]">
+          Your runs and tasks are unaffected. Try again, or reload the app if it
+          keeps happening.
         </p>
         <pre className="text-muted-foreground bg-secondary/50 max-h-48 max-w-lg overflow-auto rounded-md p-3 text-left font-mono text-[11px] whitespace-pre-wrap">
           {error.message}
@@ -77,15 +81,22 @@ export class ErrorBoundary extends Component<
           <Button variant="secondary" size="sm" onClick={this.reset}>
             Try again
           </Button>
-          {staleChunk && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => window.location.reload()}
-            >
-              Reload app
-            </Button>
-          )}
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => window.location.reload()}
+          >
+            Reload app
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              void navigator.clipboard?.writeText(errorDetails(error))
+            }
+          >
+            Copy error details
+          </Button>
         </div>
         {staleChunk && (
           <p className="text-muted-foreground/70 max-w-sm text-[11px]">

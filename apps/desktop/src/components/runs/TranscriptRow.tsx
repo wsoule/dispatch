@@ -2,6 +2,8 @@ import type { NormalizedEntry } from '@dispatch/client';
 import { Bot } from 'lucide-react';
 import { useState } from 'react';
 
+import { cardRaw } from '../../lib/cardContent';
+import { CardErrorBoundary } from '../shell/CardErrorBoundary';
 import { Markdown } from './Markdown';
 import { toolView } from './ToolCard';
 import type { GutterTone } from '@/lib/transcriptGutter';
@@ -41,7 +43,20 @@ const TONE: Record<GutterTone, string> = {
  * entry genuinely still arriving (`live`), so the reveal effect never fabricates streaming for
  * a transcript that's already settled.
  */
-export function TranscriptRow({
+export function TranscriptRow(props: {
+  entry: NormalizedEntry;
+  live?: boolean;
+}) {
+  // One entry that fails to draw becomes a compact fallback row; the rest of
+  // the transcript keeps rendering.
+  return (
+    <CardErrorBoundary raw={cardRaw(props.entry)}>
+      <TranscriptRowContent {...props} />
+    </CardErrorBoundary>
+  );
+}
+
+function TranscriptRowContent({
   entry,
   live = false,
 }: {

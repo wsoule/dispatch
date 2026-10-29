@@ -12,3 +12,14 @@ export function isStaleChunkError(message: string): boolean {
     message
   );
 }
+
+/**
+ * What "Copy error details" puts on the clipboard: the error's name and
+ * message, then its stack when it has one, so a bug report carries more than
+ * the one line the fallback shows.
+ */
+export function errorDetails(error: Error): string {
+  const head = `${error.name}: ${error.message}`;
+  const stack = error.stack ?? '';
+  return stack.includes(error.message) ? stack : `${head}\n${stack}`.trim();
+}
