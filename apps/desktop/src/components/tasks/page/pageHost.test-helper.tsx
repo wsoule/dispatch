@@ -132,6 +132,7 @@ export function fakeHost(
     port: 1,
     daemonBaseUrl: null,
     me,
+    messageAccess: { canDecide: true, canMessage: false, explanation: null },
     config: null,
     executors: null,
     health: undefined,

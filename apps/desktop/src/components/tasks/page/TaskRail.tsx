@@ -4,10 +4,13 @@ import {
   isDoneStatus,
   parseLinearExternal,
 } from '@dispatch-foo/core/browser';
+import { useQuery } from '@tanstack/react-query';
 import { ArrowUpRight, CalendarArrowUp, Link2, Move, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import type { TaskCommentsApi } from '../../../hooks/useTaskComments';
+import { threadListsKey } from '../../../hooks/useThreads';
+import { formatRelativeTimeFromIso } from '../../../lib/format';
 import { colorForLabel } from '../../../lib/labelColor';
 import {
   isLinearConfigured,
@@ -18,6 +21,7 @@ import {
   isTerminalRunState,
   tasksWithFinishedRun,
 } from '../../../lib/runState';
+import { partySummary, taskAgentParties } from '../../../lib/taskAgents';
 import { formatShortDate } from '../../../lib/taskDates';
 import { assigneeLabel, kindLabel } from '../../../lib/taskDisplay';
 import { pendingEnrichQuestions } from '../../../lib/taskEnrich';
@@ -51,6 +55,7 @@ import { ContainerIcon, kindIcon } from './ContainerIcon';
 import type { TaskPageModel } from './pageModel';
 import { RelationsEditor } from './RelationsEditor';
 import { cn } from '@/lib/utils';
+import { InitialsAvatar } from '@/ui/ai/initials-avatar';
 import { LabelPill, Pill } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
@@ -249,6 +254,67 @@ function PlannerQuestionsSection({ page }: { page: TaskPageModel }) {
 }
 
 /**
+ * The outside (A2A) agents this task has traded messages with, one row each: who they
+ * are, whether a question is waiting on you or on them, and when they last spoke. It
+ * reads the same "everything about this task" conversation the task's home shows, so a
+ * new message refreshes both. Hidden when no outside agent is involved.
+ */
+function OutsideAgentsSection({ page }: { page: TaskPageModel }) {
+  const { client, port, messageAccess } = page.project;
+  const query = { about: `task:${page.item.meta.id}` };
+  const conversation = useQuery({
+    queryKey: [...threadListsKey(port), 'conversation', query],
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.getConversation({ ...query, limit: 200 });
+    },
+    enabled: client !== null && messageAccess.canMessage,
+    retry: false,
+  });
+  const parties = useMemo(
+    () => taskAgentParties(conversation.data?.messages ?? []),
+    [conversation.data]
+  );
+  if (parties.length === 0) return null;
+  return (
+    <RailSection title="Outside agents">
+      <ul data-slot="outside-agents" className="flex flex-col">
+        {parties.map((party) => (
+          <li
+            key={party.address}
+            title={party.address}
+            className={cn(railRowClass({ readOnly: true }), 'h-auto py-1.5')}
+          >
+            <InitialsAvatar
+              name={party.label}
+              color="var(--state-landing-fg)"
+              className="size-6 text-[10px]"
+            />
+            <span className="flex min-w-0 flex-col">
+              <span className="truncate">{party.label}</span>
+              <span
+                data-slot="outside-agent-summary"
+                className={cn(
+                  'font-book truncate text-[12px]',
+                  party.waitingOnYou > 0
+                    ? 'text-(--state-waiting-fg)'
+                    : 'text-muted-foreground'
+                )}
+              >
+                {partySummary(party)}
+              </span>
+            </span>
+            <span className="font-book text-muted-foreground ml-auto shrink-0 text-[12px]">
+              {formatRelativeTimeFromIso(party.lastAt)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </RailSection>
+  );
+}
+
+/**
  * The task page's right rail, Linear's issue sidebar in Dispatch's grammar: a container's
  * icon and colour, every property on a 32px row you click to change (status, priority,
  * assignee, estimate, start date, due date, cycle, labels, self review), who created it,
@@ -336,6 +402,7 @@ export function TaskRail({
       )}
     >
       {showPlannerQuestions && <PlannerQuestionsSection page={page} />}
+      <OutsideAgentsSection page={page} />
       <RailSection title="Properties">
         {isContainerKind(meta.kind) && <ContainerRow meta={meta} />}
         <StatusControl
