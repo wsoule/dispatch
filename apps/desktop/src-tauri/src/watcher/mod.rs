@@ -1,7 +1,7 @@
 mod tail;
 
 use crate::db::Db;
-use crate::parser::{self, ParsedRecord};
+use crate::parser;
 use notify_debouncer_mini::new_debouncer;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -31,15 +31,12 @@ pub fn cursor_logs_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".cursor").join("logs"))
 }
 
-/// One entry per agent CLI this app knows how to tail. `parse_line` always takes the file's
-/// path as its second argument for a uniform fn-pointer type across every agent, even though
-/// only `codex`/`gemini` actually use it (they need it to recall per-file session context —
-/// see their module docs); `claude`/`cursor`'s closures just ignore it.
+/// Provider parsers share explicit, file-owned header context; stateless parsers ignore it.
 struct AgentSource {
     agent: &'static str,
     root: fn() -> Option<PathBuf>,
     extension: &'static str,
-    parse_line: fn(&str, &Path) -> Option<ParsedRecord>,
+    parse_line: tail::ParseLine,
 }
 
 const AGENT_SOURCES: &[AgentSource] = &[
@@ -47,25 +44,25 @@ const AGENT_SOURCES: &[AgentSource] = &[
         agent: "claude",
         root: claude_projects_dir,
         extension: "jsonl",
-        parse_line: |line, _path| parser::parse_line(line),
+        parse_line: |line, _context| parser::parse_line(line),
     },
     AgentSource {
         agent: "codex",
         root: codex_sessions_dir,
         extension: "jsonl",
-        parse_line: |line, path| parser::parse_codex_line(line, &path.to_string_lossy()),
+        parse_line: parser::codex_jsonl::parse_with_context,
     },
     AgentSource {
         agent: "gemini",
         root: gemini_logs_dir,
         extension: "jsonl",
-        parse_line: |line, path| parser::parse_gemini_line(line, &path.to_string_lossy()),
+        parse_line: parser::gemini_log::parse_with_context,
     },
     AgentSource {
         agent: "cursor",
         root: cursor_logs_dir,
         extension: "jsonl",
-        parse_line: |line, _path| parser::parse_cursor_line(line),
+        parse_line: |line, _context| parser::parse_cursor_line(line),
     },
 ];
 
@@ -83,15 +80,34 @@ pub fn start(app_handle: AppHandle) {
             );
             continue;
         };
-        backfill(&app_handle, &dir, source);
         roots.push((dir, source));
     }
 
-    std::thread::spawn(move || {
-        if let Err(e) = run_watcher(app_handle, roots) {
-            log::error!("agent log watcher exited with error: {e:#}");
+    // Register before scanning. Events queue during synchronous catch-up; the same owner
+    // drains them afterward, so an append cannot fall between scan and registration.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let debouncer = match new_debouncer(Duration::from_millis(DEBOUNCE_MS), tx) {
+        Ok(mut debouncer) => {
+            if let Err(e) = register_watches(&mut debouncer, &roots) {
+                log::error!("could not register history watches: {e}");
+            }
+            Some(debouncer)
         }
-    });
+        Err(e) => {
+            log::error!("could not create history watcher: {e}");
+            None
+        }
+    };
+    // Watcher failure must not prevent the synchronous history import.
+    for (dir, source) in &roots {
+        backfill(&app_handle, dir, source);
+    }
+    if let Some(debouncer) = debouncer {
+        std::thread::spawn(move || {
+            let _debouncer = debouncer;
+            run_watcher(app_handle, roots, rx);
+        });
+    }
 }
 
 fn backfill(app_handle: &AppHandle, watch_dir: &Path, source: &AgentSource) {
@@ -123,27 +139,24 @@ fn backfill(app_handle: &AppHandle, watch_dir: &Path, source: &AgentSource) {
     }
 }
 
-fn run_watcher(
-    app_handle: AppHandle,
-    roots: Vec<(PathBuf, &'static AgentSource)>,
+fn register_watches(
+    debouncer: &mut notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>,
+    roots: &[(PathBuf, &'static AgentSource)],
 ) -> notify::Result<()> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    let mut debouncer = new_debouncer(Duration::from_millis(DEBOUNCE_MS), tx)?;
-
     // Watch each root's parent instead if the root doesn't exist yet — notify can't watch a
     // nonexistent path, but a recursive watch on an existing ancestor still picks up the root
     // (and everything under it) the moment its owning agent creates it. Two sources can
     // resolve to the same ancestor (e.g. neither `~/.codex/sessions` nor `~/.gemini/tmp`
     // exists yet, but both fall back to `~`) — dedup so notify never gets the same path twice.
     let mut watched_targets: Vec<PathBuf> = Vec::new();
-    for (root, source) in &roots {
-        let target = if root.exists() {
-            root.clone()
-        } else {
-            root.parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| root.clone())
-        };
+    for (root, source) in roots {
+        let mut target = root.clone();
+        while !target.exists() {
+            let Some(parent) = target.parent() else {
+                break;
+            };
+            target = parent.to_path_buf();
+        }
         if !watched_targets.contains(&target) {
             debouncer
                 .watcher()
@@ -157,6 +170,14 @@ fn run_watcher(
         );
     }
 
+    Ok(())
+}
+
+fn run_watcher(
+    app_handle: AppHandle,
+    roots: Vec<(PathBuf, &'static AgentSource)>,
+    rx: std::sync::mpsc::Receiver<notify_debouncer_mini::DebounceEventResult>,
+) {
     for result in rx {
         match result {
             Ok(events) => {
@@ -172,8 +193,6 @@ fn run_watcher(
             Err(e) => log::warn!("watcher error: {e:?}"),
         }
     }
-
-    Ok(())
 }
 
 /// Finds which agent source's root a changed path falls under — needed since one debouncer
@@ -189,55 +208,63 @@ fn source_for_path<'a>(
         .map(|(_, source)| *source)
 }
 
-fn process_file(app_handle: &AppHandle, path: &Path, source: &AgentSource) {
-    let db = app_handle.state::<Db>();
-    let conn = db.0.lock().unwrap();
-
-    let lines = match tail::read_new_lines(&conn, path) {
-        Ok(lines) => lines,
-        Err(e) => {
-            log::warn!("failed to tail {}: {e:#}", path.display());
-            return;
-        }
-    };
-
-    if lines.is_empty() {
-        return;
-    }
-
-    let raw_log_path = path.to_string_lossy().to_string();
-    let mut anything_changed = false;
-    let mut session_created = false;
-
-    for line in lines {
-        let Some(record) = (source.parse_line)(&line, path) else {
+/// Applies one bounded segment atomically; errors roll back effects and continuation alike.
+fn apply_segment(
+    conn: &rusqlite::Connection,
+    path: &Path,
+    parse: tail::ParseLine,
+    segment: &mut tail::Segment,
+) -> anyhow::Result<(bool, bool)> {
+    let tx = conn.unchecked_transaction()?;
+    let mut batch = parser::session_builder::IngestBatch::default();
+    let mut changed = false;
+    let mut created = false;
+    for line in &segment.lines {
+        let Some(record) = parse(line, &mut segment.cursor.context) else {
             continue;
         };
-        match parser::ingest_record(&conn, &raw_log_path, record) {
-            Ok(outcome) => {
-                if outcome.project_touched.is_some()
-                    || outcome.session_created.is_some()
-                    || outcome.session_updated.is_some()
-                {
-                    anything_changed = true;
-                }
-                if outcome.session_created.is_some() {
-                    session_created = true;
-                }
-            }
-            Err(e) => log::warn!("failed to ingest record from {}: {e:#}", path.display()),
-        }
+        let outcome = batch.ingest(&tx, &path.to_string_lossy(), record)?;
+        changed |= outcome.project_touched.is_some()
+            || outcome.session_created.is_some()
+            || outcome.session_updated.is_some();
+        created |= outcome.session_created.is_some();
     }
+    batch.finish(&tx)?;
+    tail::checkpoint(&tx, path, segment)?;
+    tx.commit()?;
+    Ok((changed, created))
+}
 
-    drop(conn);
-
-    if anything_changed {
-        let _ = app_handle.emit(
-            "data-changed",
-            serde_json::json!({
-                "entity": "session",
-                "kind": if session_created { "created" } else { "updated" },
-            }),
-        );
+/// Backfill and queued live events call this serially: one logical cursor owner per file.
+fn process_file(app_handle: &AppHandle, path: &Path, source: &AgentSource) {
+    let db = app_handle.state::<Db>();
+    let result = (|| -> anyhow::Result<()> {
+        let mut reader = tail::Reader::open(path)?;
+        let mut cursor = tail::cursor(&db.0.lock().unwrap(), path)?;
+        if reader.recover_context(&mut cursor, source.parse_line)? {
+            tail::persist_context(&db.0.lock().unwrap(), path, &cursor)?;
+        }
+        while let Some(mut segment) = reader.read_segment(cursor)? {
+            let (changed, created) = {
+                let conn = db.0.lock().unwrap();
+                apply_segment(&conn, path, source.parse_line, &mut segment)?
+            };
+            if changed {
+                let _ = app_handle.emit(
+                    "data-changed",
+                    serde_json::json!({
+                        "entity": "session", "kind": if created { "created" } else { "updated" }
+                    }),
+                );
+            }
+            cursor = segment.cursor;
+        }
+        Ok(())
+    })();
+    if let Err(e) = result {
+        log::warn!("failed to ingest {}: {e:#}", path.display());
     }
 }
+
+#[cfg(test)]
+mod tests;

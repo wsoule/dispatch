@@ -479,6 +479,7 @@ rkbeef
 rlib
 rollups
 rscript
+rposition
 rsplit
 rusqlite
 rustls
