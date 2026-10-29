@@ -11,7 +11,7 @@ import {
   isUnstartedStatus,
   loadConfig,
   releasesFanoutDependents,
-  schedulableBatch,
+  tasksConflict,
 } from '@dispatch-foo/core';
 import type {
   ActorContext,
@@ -230,7 +230,12 @@ function childrenIndex<T extends TaskListItem>(
 function tasksWithRunBranch(runs: readonly RunMeta[]): Set<string> {
   const out = new Set<string>();
   for (const run of runs) {
-    if (TERMINAL_RUN_STATES.has(run.state) && run.reviewedAt === undefined) {
+    // `?? undefined` so a reviewedAt written as null (an older transcript)
+    // still reads as unreviewed instead of hiding the branch forever.
+    if (
+      TERMINAL_RUN_STATES.has(run.state) &&
+      (run.reviewedAt ?? undefined) === undefined
+    ) {
       out.add(run.taskId);
     }
   }
@@ -336,6 +341,11 @@ export class MilestoneEngine {
   // blockers, and its own tasks a teammate held (see onTasksChanged). Memory
   // only; the next fill rebuilds it.
   private readonly watching = new Map<string, Watched>();
+  // Why each ready task in a milestone's scope was last left unstarted, by
+  // milestone then task id. Lets noteFillHold write a reason once and again
+  // only when it changes; a task drops out once it starts or stops being
+  // ready.
+  private readonly fillHolds = new Map<string, Map<string, string>>();
 
   constructor(private readonly ctx: MilestoneEngineContext) {
     this.fillRetryDelayMs = ctx.fillRetryDelayMs ?? DEFAULT_FILL_RETRY_DELAY_MS;
@@ -953,8 +963,9 @@ export class MilestoneEngine {
   }
 
   // Dispatches ready work in the session's scope (the tasks the Flight Plan
-  // draws, see scopeOf) via schedulableBatch (conflicts.ts): concurrency cap,
-  // then the run and spend ceilings, no two overlapping `writes` in one batch.
+  // draws, see scopeOf) via startReady: concurrency cap, then the run and
+  // spend ceilings, no two overlapping `writes` started in one pass. Every
+  // ready task left unstarted is told why (noteFillHolds).
   // A teammate's task is never a candidate, and holds its dependents until it
   // is done (core's releasesFanoutDependents). Readiness runs over the FULL
   // task set first, since dispatchableTasks treats a blocker it wasn't given
@@ -973,8 +984,6 @@ export class MilestoneEngine {
       (r) => workIds.has(r.taskId) && !TERMINAL_RUN_STATES.has(r.state)
     ).length;
     let slots = session.concurrency - liveCount;
-    // A full session refills on its next terminal, which re-reads all this.
-    if (slots <= 0) return;
 
     const tasks = this.ctx.cache.query({ includeArchived: true });
     const statuses = statusModelFor(this.ctx.rootDir);
@@ -991,27 +1000,91 @@ export class MilestoneEngine {
     // The scope includes archived children (see scopeOf); dispatchability
     // must exclude them explicitly. dispatchableTasks releases a dependent at
     // a blocker's review role; a fan-out also wants a branch to stack on.
-    const ready = dispatchableTasks(tasks, statuses, (id) =>
+    const candidates = dispatchableTasks(tasks, statuses, (id) =>
       finished.has(id)
     ).filter(
       (t) =>
         mine.has(t.meta.id) &&
         t.meta.archivedAt === undefined &&
-        waitingOn(t).length === 0 &&
         !this.holdCritical(session, milestoneId, t)
     );
+    // Every candidate this pass leaves unstarted gets a reason (see
+    // noteFillHold), so a session that stops filling always says why.
+    const holds = new Map<string, string>();
+    const ready: TaskDoc[] = [];
+    for (const t of candidates) {
+      const waiting = waitingOn(t);
+      if (waiting.length === 0) ready.push(t);
+      else holds.set(t.meta.id, `waiting on ${waiting.join(', ')}`);
+    }
     // A live run's footprint can have grown past its task's declared writes
     // (see Orchestrator.liveClaims) — a newly-ready task must avoid that too.
-    const liveClaims = this.ctx.orchestrator.liveClaims().map((c) => c.claims);
+    const liveClaims = this.ctx.orchestrator.liveClaims();
     // An undeclared task (`writes: []`) therefore waits on ANY live claim until
     // that run goes terminal — nothing reaps one, so a parked run waits on a human.
-    const clearOfLiveRuns = ready.filter(
-      (t) =>
-        !liveClaims.some((claim) =>
-          claimConflictsWithWrites(claim, t.meta.writes)
-        )
+    const clearOfLiveRuns: TaskDoc[] = [];
+    for (const t of ready) {
+      const blocking = liveClaims.find((c) =>
+        claimConflictsWithWrites(c.claims, t.meta.writes)
+      );
+      if (blocking === undefined) clearOfLiveRuns.push(t);
+      else {
+        holds.set(
+          t.meta.id,
+          `waiting for live run ${blocking.runId} to finish with the files it touches`
+        );
+      }
+    }
+    const started = await this.startReady(
+      session,
+      milestoneId,
+      scope,
+      clearOfLiveRuns,
+      slots,
+      liveCount,
+      holds,
+      holder,
+      dispatcher,
+      statuses
     );
-    if (clearOfLiveRuns.length === 0) return;
+    this.noteFillHolds(milestoneId, holds);
+    if (started > 0) this.emitChanged(milestoneId);
+  }
+
+  // fillQueue's dispatch step: starts tasks from `ready` in order until the
+  // free slots are used, and records in `holds` why each one left behind was
+  // not started. Tasks are tried one at a time rather than as a batch fixed
+  // up front, so a refused dispatch hands its slot to the next task instead
+  // of ending the pass. Undeclared tasks (`writes: []`) conflict with
+  // everything, so before this a single refusal could stall a whole session
+  // with nothing left to trigger another fill. Returns how many started.
+  private async startReady(
+    session: MilestoneSessionRecord,
+    milestoneId: string,
+    scope: readonly TaskListItem[],
+    ready: readonly TaskDoc[],
+    freeSlots: number,
+    liveCount: number,
+    holds: Map<string, string>,
+    holder: (task: TaskListItem) => string | null,
+    dispatcher: string,
+    statuses: StatusModel
+  ): Promise<number> {
+    const waitForSlot = (from: number) => {
+      for (const t of ready.slice(from)) {
+        holds.set(
+          t.meta.id,
+          `waiting for a free slot (${session.concurrency} running at once)`
+        );
+      }
+    };
+    let slots = freeSlots;
+    // A full session refills on its next terminal, which re-reads all this.
+    if (slots <= 0) {
+      waitForSlot(0);
+      return 0;
+    }
+    if (ready.length === 0) return 0;
 
     if (session.maxRuns !== null || session.maxSpendUsd !== null) {
       // Read per pass, like the merge queue's verifyCommand, so a config edit
@@ -1030,7 +1103,7 @@ export class MilestoneEngine {
         // the human raises the ceiling.
         if (slots <= 0) {
           this.pauseFor(milestoneId, 'runs');
-          return;
+          return 0;
         }
       }
       if (session.maxSpendUsd !== null) {
@@ -1043,15 +1116,11 @@ export class MilestoneEngine {
           // A live run's settle can raise the allowance (its real cost is
           // usually below the estimate), so only pause once nothing is live.
           if (liveCount === 0) this.pauseFor(milestoneId, 'budget');
-          return;
+          return 0;
         }
       }
     }
 
-    const batch = schedulableBatch(
-      clearOfLiveRuns.map((t) => ({ id: t.meta.id, writes: t.meta.writes })),
-      slots
-    );
     // The orchestrator re-asks this of the task as it stands right before its
     // run registers: a Linear pull can hand it to a teammate mid-batch.
     const guard = (task: TaskDoc): string | null => {
@@ -1061,12 +1130,32 @@ export class MilestoneEngine {
         ? null
         : `status is now ${task.meta.status}`;
     };
-    for (const taskId of batch) {
-      const task = clearOfLiveRuns.find((t) => t.meta.id === taskId);
+    const startedTasks: TaskDoc[] = [];
+    for (const [index, task] of ready.entries()) {
+      if (startedTasks.length >= slots) {
+        waitForSlot(index);
+        break;
+      }
+      // No two overlapping `writes` in one pass (schedulableBatch's rule),
+      // checked against the tasks that actually started.
+      const overlap = startedTasks.find((t) =>
+        tasksConflict(t.meta.writes, task.meta.writes)
+      );
+      if (overlap !== undefined) {
+        // Worded without the other task's id, so a queue of undeclared tasks
+        // taking turns writes this once per task rather than once per turn.
+        holds.set(
+          task.meta.id,
+          task.meta.writes.length === 0
+            ? 'queued: it declares no writes, so it runs only while no other task in this pass does'
+            : 'queued behind a task started this pass that may write the same files'
+        );
+        continue;
+      }
       // MEM-R8(b): the run acts for the session's operator only on a task
       // that operator created and last wrote.
       const operator =
-        task === undefined || this.ctx.authorship === undefined
+        this.ctx.authorship === undefined
           ? null
           : this.ctx.authorship.actsFor(task, session.operator ?? null);
       try {
@@ -1076,22 +1165,67 @@ export class MilestoneEngine {
         // dispatchOrResume, not dispatch: a task whose last run a restart left
         // recoverable must be picked back up here too, since a fresh run would
         // strand that worktree and cancel the sweep still watching it.
-        await this.ctx.orchestrator.dispatchOrResume(taskId, {
+        await this.ctx.orchestrator.dispatchOrResume(task.meta.id, {
           executor: session.executor,
           actor: 'none',
           operator,
           dispatchedBy: dispatcher,
           guard,
         });
+        startedTasks.push(task);
       } catch (err) {
-        // A task that already picked up a live run outside this session, or
-        // that the guard refused (raced between the readiness snapshot and
-        // here), just gets skipped.
-        if (err instanceof OrchestratorConflictError) continue;
-        throw err;
+        // A task that already picked up a live run outside this session, that
+        // the guard refused (raced between the readiness snapshot and here),
+        // or whose base could not be built is skipped, with the refusal as
+        // its reason, and its slot goes to the next task.
+        if (!(err instanceof OrchestratorConflictError)) throw err;
+        holds.set(task.meta.id, `not started: ${err.message}`);
       }
     }
-    if (batch.length > 0) this.emitChanged(milestoneId);
+    return startedTasks.length;
+  }
+
+  // Writes why each task in `holds` was left unstarted to the milestone's
+  // Activity and to the task itself, once per distinct reason (the same
+  // write-once rule holdCritical follows), and forgets tasks that are no
+  // longer held so a later hold is reported afresh.
+  private noteFillHolds(
+    milestoneId: string,
+    holds: ReadonlyMap<string, string>
+  ): void {
+    const previous = this.fillHolds.get(milestoneId) ?? new Map();
+    for (const [taskId, reason] of holds) {
+      if (previous.get(taskId) === reason) continue;
+      try {
+        this.appendMilestoneActivity(
+          milestoneId,
+          `${taskId} not dispatched — ${reason}`,
+          'none'
+        );
+        this.appendTaskActivity(
+          taskId,
+          `milestone ${milestoneId} did not dispatch this task — ${reason}`
+        );
+      } catch (err) {
+        // Reporting a hold must not break the fill that found it.
+        console.error(
+          `dispatchd: failed to record a fill hold on ${taskId}: ${(err as Error).message}`
+        );
+      }
+    }
+    this.fillHolds.set(milestoneId, new Map(holds));
+  }
+
+  // One daemon-authored Activity line on a task.
+  private appendTaskActivity(taskId: string, text: string): void {
+    const now = new Date().toISOString();
+    this.ctx.store.update(
+      taskId,
+      { appendActivity: `${now} ${text}`, activityActor: 'none' },
+      now
+    );
+    this.ctx.cache.refresh(this.ctx.store, [taskId]);
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [taskId] });
   }
 
   // A critical-risk child (a publish, a release, a repo-settings change) is

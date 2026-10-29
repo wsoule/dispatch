@@ -1129,3 +1129,105 @@ describe('MilestoneEngine fill serialization', () => {
     );
   });
 });
+
+// DIS-449: a session on a board whose review status is the dispatched one,
+// with undeclared (`writes: []`) tasks, started one dependent and then went
+// idle for good. Undeclared tasks conflict with each other, so a pass picks
+// one at a time; when that one was refused (a dependent on three unmerged
+// blockers), the pass ended with nothing started and nothing left to trigger
+// another. The other ready dependent never ran, and nothing said why.
+describe('MilestoneEngine fill after a refused dispatch', () => {
+  const SHARED_REVIEW = `statuses:
+  - { name: Todo, type: unstarted }
+  - { name: In Progress, type: started }
+  - { name: Done, type: completed }
+  - { name: Canceled, type: canceled }
+statusRoles:
+  ready: Todo
+  dispatched: In Progress
+  review: In Progress
+  landing: null
+  landed: Done
+  dropped: Canceled
+`;
+
+  // Approves every run waiting at the fake executor's gate until `done`.
+  async function driveUntil(
+    harness: ReturnType<typeof makeHarness>,
+    done: () => boolean,
+    // Under bun's 5s test timeout, so a stall reports as this.
+    timeoutMs = 4500
+  ): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (!done()) {
+      if (Date.now() > deadline) throw new Error('driveUntil timed out');
+      for (const run of harness.orchestrator.list()) {
+        if (run.state === 'awaiting-approval') {
+          harness.orchestrator.approve(run.id, 'go', true);
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
+  it('dispatches every other ready dependent, and says why the refused one waits', async () => {
+    const harness = makeHarness();
+    writeFileSync(join(repo, '.dispatch', 'config.yml'), SHARED_REVIEW);
+    const milestone = harness.store.create({
+      title: 'Landing via PRs',
+      kind: 'milestone',
+      status: 'Todo',
+    });
+    const child = (title: string, blockedBy: string[] = []) => {
+      const doc = harness.store.create({
+        title,
+        parent: milestone.meta.id,
+        status: 'Todo',
+      });
+      if (blockedBy.length > 0)
+        harness.store.update(doc.meta.id, { blockedBy });
+      return doc.meta.id;
+    };
+    // The issue's shape: E and A first, B on E, C on A, D on all three.
+    const e = child('E');
+    const a = child('A');
+    const b = child('B', [e]);
+    const c = child('C', [a]);
+    const d = child('D', [e, a, b]);
+    harness.cache.rebuild(harness.store);
+
+    await harness.milestones.start(milestone.meta.id, {
+      concurrency: 3,
+      executor: 'fake',
+    });
+
+    const hasRun = (taskId: string) =>
+      harness.orchestrator.list().some((r) => r.taskId === taskId);
+    const reasonOn = (taskId: string) =>
+      (harness.store.get(taskId)?.body ?? '').includes(
+        'did not dispatch this task'
+      );
+    // C must start. D must either start or say on its own task why not.
+    await driveUntil(
+      harness,
+      () =>
+        [e, a, b, c].every(hasRun) &&
+        (hasRun(d) || reasonOn(d)) &&
+        harness.orchestrator
+          .list()
+          .every((r) => r.state !== 'awaiting-approval')
+    );
+
+    if (!hasRun(d)) {
+      const milestoneActivity =
+        harness.store.get(milestone.meta.id)?.body ?? '';
+      const holds = milestoneActivity
+        .split('\n')
+        .filter((line) => line.includes(`${d} not dispatched`))
+        .map((line) => line.slice(line.indexOf('not dispatched')));
+      expect(holds.some((h) => h.includes('not started:'))).toBe(true);
+      // Each reason written once, not on every pass that finds it again.
+      expect(new Set(holds).size).toBe(holds.length);
+    }
+  });
+});
