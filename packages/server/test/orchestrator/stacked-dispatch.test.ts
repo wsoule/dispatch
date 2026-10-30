@@ -13,10 +13,8 @@ import { join } from 'node:path';
 import { TaskCache } from '../../src/cache.js';
 import { EventBus } from '../../src/events.js';
 import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
-import { JjManager } from '../../src/orchestrator/jj.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
 import { transcriptPath } from '../../src/orchestrator/paths.js';
-import type { CommandResult } from '../../src/orchestrator/pr.js';
 import { replayTranscript } from '../../src/orchestrator/transcript.js';
 import { OrchestratorConflictError } from '../../src/orchestrator/types.js';
 import { initGitRepo, runGitSync } from './helpers.js';
@@ -51,22 +49,7 @@ async function waitFor(check: () => boolean, timeoutMs = 2000): Promise<void> {
   throw new Error('waitFor timed out');
 }
 
-// Records every jj command the orchestrator issues and replays canned
-// results, so the 2+-blocker path — the only path that mutates the user's
-// repository — can be driven without a jj binary. Same shape as
-// jj.test.ts's own runner.
-function fakeJj(results: Record<string, CommandResult> = {}) {
-  const calls: string[][] = [];
-  const run = (_cwd: string, cmd: string[]): Promise<CommandResult> => {
-    calls.push(cmd);
-    return Promise.resolve(
-      results[cmd.join(' ')] ?? { ok: true, stdout: '', stderr: '' }
-    );
-  };
-  return { calls, jj: new JjManager(repo, run) };
-}
-
-function makeHarness(jj?: JjManager) {
+function makeHarness() {
   const store = TaskStore.init(repo);
   const cache = new TaskCache();
   cache.rebuild(store);
@@ -76,7 +59,6 @@ function makeHarness(jj?: JjManager) {
     store,
     cache,
     events,
-    jj,
   });
   orchestrator.registerExecutor(
     'fake',
@@ -92,7 +74,10 @@ type Harness = ReturnType<typeof makeHarness>;
 // state that makes it an unmerged blocker worth stacking on.
 async function makeInReviewBlockers(
   h: Harness,
-  titles: string[]
+  titles: string[],
+  // The file each blocker writes its title into. Defaults to one file per
+  // blocker; give several the same file to make them conflict.
+  fileFor: (title: string) => string = (title) => `${title}.txt`
 ): Promise<{ ids: string[]; branches: string[] }> {
   const ids: string[] = [];
   const branches: string[] = [];
@@ -102,7 +87,7 @@ async function makeInReviewBlockers(
     await waitFor(
       () => h.orchestrator.getRun(run.id)?.meta.state === 'finished'
     );
-    await Bun.write(join(run.worktreePath, `${title}.txt`), title);
+    await Bun.write(join(run.worktreePath, fileFor(title)), title);
     runGitSync(run.worktreePath, ['add', '-A']);
     runGitSync(run.worktreePath, ['commit', '-m', `${title} work`]);
     h.store.update(
@@ -165,29 +150,13 @@ async function makeStackedPair(h: Harness): Promise<{
 // letters — see its call site for why the letters are deliberately not
 // compared.
 function statusPaths(dir: string): string[] {
-  // `-uall` so an untracked directory is always expanded to its files —
-  // otherwise git collapses it to `.dispatch/` before the jj conversion and
-  // lists each file after, which would compare unequal for no real reason.
+  // `-uall` so an untracked directory is always expanded to its files, and
+  // two listings compare equal path by path.
   return runGitSync(dir, ['status', '--porcelain', '-uall'])
     .split('\n')
     .map((line) => line.slice(3).trim())
     .filter((p) => p.length > 0)
     .sort();
-}
-
-// The real-jj test below is the only guard against the merge base relocating
-// the user's main checkout, but jj is not a build dependency — skip rather
-// than fail where the binary isn't installed.
-function hasJj(): boolean {
-  // Bun.spawnSync throws on a missing executable — absent jj means false.
-  try {
-    return (
-      Bun.spawnSync(['jj', '--version'], { stdout: 'pipe', stderr: 'pipe' })
-        .exitCode === 0
-    );
-  } catch {
-    return false;
-  }
 }
 
 describe('base selection', () => {
@@ -200,32 +169,6 @@ describe('base selection', () => {
     expect(meta.baseBranch).toBe('main');
     expect(meta.stackParents ?? []).toEqual([]);
     expect(meta.stackBaseCommit).toBeUndefined();
-  });
-
-  // The invariant the whole feature is gated on: an unblocked dispatch must
-  // behave exactly as it did before stacking existed. Converting a user's
-  // repo to jj is invasive, so "no jj involvement of any kind" is asserted
-  // directly rather than inferred from the base branch.
-  it('never shells out to jj on an unblocked dispatch', async () => {
-    const f = fakeJj();
-    const h = makeHarness(f.jj);
-    const task = h.store.create({ title: 'solo' });
-    h.cache.rebuild(h.store);
-
-    await h.orchestrator.dispatch(task.meta.id, 'fake');
-    expect(f.calls).toEqual([]);
-  });
-
-  it('never shells out to jj on a single-blocker dispatch', async () => {
-    const f = fakeJj();
-    const h = makeHarness(f.jj);
-    const { ids, branches } = await makeInReviewBlockers(h, ['A']);
-    const dependent = h.store.create({ title: 'dep', blockedBy: ids });
-    h.cache.rebuild(h.store);
-
-    const meta = await h.orchestrator.dispatch(dependent.meta.id, 'fake');
-    expect(meta.baseBranch).toBe(branches[0]);
-    expect(f.calls).toEqual([]);
   });
 
   it('branches off the blocker branch when one blocker is in-review', async () => {
@@ -390,156 +333,119 @@ describe('base selection when review shares the dispatched status', () => {
   });
 });
 
-// The 2+-blocker path is the only part of dispatch that mutates the user's
-// repository (it can convert it to a colocated jj repo and writes a merge
-// commit), so it gets its own coverage rather than being left to inspection.
+// The 2+-blocker path writes a branch and commits into the user's
+// repository, so it gets its own coverage against real git.
 describe('base selection with two or more unmerged blockers', () => {
-  // Spec §4.6: "under the git path a task with two or more unmerged blockers
-  // WAITS (today's behavior) rather than dispatching against a wrong base."
-  // Dispatching it off `main` would be strictly worse than today — §1 of the
-  // spec is the argument for exactly that — because the agent would see
-  // NEITHER blocker's work, and a run with no recorded stackParents is
-  // afterwards invisible to the merge queue: never restacked, never flagged.
-  // The refusal is an OrchestratorConflictError specifically so that
-  // MilestoneEngine.fillQueue's existing `continue` skips the task and retries it
-  // on the next pass, and a manual dispatch 409s with a readable reason.
-  it('refuses to dispatch when jj is unavailable, so the task waits, and says so on the task', async () => {
-    const f = fakeJj({
-      'jj --version': { ok: false, stdout: '', stderr: 'command not found' },
-      'jj git colocation status': { ok: false, stdout: '', stderr: 'no jj' },
-    });
-    const h = makeHarness(f.jj);
-    const { ids } = await makeInReviewBlockers(h, ['A', 'B']);
+  it('branches off one base holding every blocker, without touching the main checkout', async () => {
+    const h = makeHarness();
+    const { ids, branches } = await makeInReviewBlockers(h, ['A', 'B', 'C']);
     const dependent = h.store.create({ title: 'dep', blockedBy: ids });
     h.cache.rebuild(h.store);
+    const headBefore = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+    const pathsBefore = statusPaths(repo);
+
+    const meta = await h.orchestrator.dispatch(dependent.meta.id, 'fake');
+
+    const base = `dispatch/stack-base-${dependent.meta.id}`;
+    expect(meta.baseBranch).toBe(base);
+    expect(meta.stackParents).toEqual(branches);
+    expect(meta.stackBaseCommit).toBe(
+      runGitSync(repo, ['rev-parse', '--verify', base]).trim()
+    );
+    // One commit over all three blockers, so their history stays intact.
+    const parents = runGitSync(repo, ['rev-list', '--parents', '-n', '1', base])
+      .trim()
+      .split(' ')
+      .slice(1);
+    expect(parents).toEqual(
+      branches.map((b) => runGitSync(repo, ['rev-parse', b]).trim())
+    );
+    // The agent sees every blocker's work.
+    for (const title of ['A', 'B', 'C']) {
+      expect(
+        await Bun.file(join(meta.worktreePath, `${title}.txt`)).text()
+      ).toBe(title);
+    }
+    // The main checkout stays where it was, with nothing new in it.
+    expect(runGitSync(repo, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).toBe(
+      'main'
+    );
+    expect(runGitSync(repo, ['rev-parse', 'HEAD']).trim()).toBe(headBefore);
+    expect(existsSync(join(repo, 'A.txt'))).toBe(false);
+    expect(statusPaths(repo)).toEqual(pathsBefore);
+  });
+
+  it("rebuilds the base from the blockers' current tips on a re-dispatch", async () => {
+    const h = makeHarness();
+    const { ids, branches } = await makeInReviewBlockers(h, ['A', 'B']);
+    const dependent = h.store.create({ title: 'dep', blockedBy: ids });
+    h.cache.rebuild(h.store);
+    const first = await h.orchestrator.dispatch(dependent.meta.id, 'fake');
+    await waitFor(
+      () => h.orchestrator.getRun(first.id)?.meta.state === 'finished'
+    );
+    h.orchestrator.review(first.id, 'discard');
+
+    // Blocker A gains a commit after the first dispatch.
+    const blockerA = h.orchestrator
+      .list()
+      .find((r) => r.branch === branches[0]);
+    if (blockerA === undefined) throw new Error('blocker A has no run');
+    await Bun.write(join(blockerA.worktreePath, 'A2.txt'), 'A2');
+    runGitSync(blockerA.worktreePath, ['add', '-A']);
+    runGitSync(blockerA.worktreePath, ['commit', '-m', 'more A work']);
+
+    const second = await h.orchestrator.dispatch(dependent.meta.id, 'fake');
+    expect(second.baseBranch).toBe(first.baseBranch);
+    expect(second.stackBaseCommit).not.toBe(first.stackBaseCommit);
+    expect(await Bun.file(join(second.worktreePath, 'A2.txt')).text()).toBe(
+      'A2'
+    );
+  });
+
+  // The refusal is an OrchestratorConflictError so that
+  // MilestoneEngine.fillQueue's existing `continue` skips the task and
+  // retries it on the next pass, and a manual dispatch 409s with a readable
+  // reason. Dispatching off `main` instead would be strictly worse: the agent
+  // would see neither blocker's work, and a run with no stackParents is never
+  // restacked or flagged.
+  it('waits when two blockers conflict, naming both and leaving nothing behind', async () => {
+    const h = makeHarness();
+    const { ids, branches } = await makeInReviewBlockers(
+      h,
+      ['A', 'B'],
+      () => 'shared.txt'
+    );
+    const dependent = h.store.create({ title: 'dep', blockedBy: ids });
+    h.cache.rebuild(h.store);
+    const worktreesBefore = runGitSync(repo, ['worktree', 'list']);
 
     await expect(
       h.orchestrator.dispatch(dependent.meta.id, 'fake')
     ).rejects.toBeInstanceOf(OrchestratorConflictError);
     await expect(
       h.orchestrator.dispatch(dependent.meta.id, 'fake')
-    ).rejects.toThrow('2 unmerged blockers need a multi-parent base');
+    ).rejects.toThrow(
+      `blockers ${branches[0]} and ${branches[1]} conflict (shared.txt); waiting until they merge`
+    );
 
-    // No run was created, and nothing was branched off a wrong base.
+    // No run, no stack-base branch, no new worktree.
     expect(h.orchestrator.list()).not.toContainEqual(
       expect.objectContaining({ taskId: dependent.meta.id })
     );
-    expect(activityFor(h, dependent.meta.id)).toContain(
-      'which only jj can build'
-    );
-    // Recorded ONCE, not once per attempt. A waiting task is retried on every
-    // fill pass for as long as its blockers stay unmerged, so an append per
-    // attempt would fill the task file with identical lines. Two dispatches
-    // above, one line.
     expect(
-      activityFor(h, dependent.meta.id).split('which only jj can build')
+      runGitSync(repo, [
+        'branch',
+        '--list',
+        `dispatch/stack-base-${dependent.meta.id}`,
+      ]).trim()
+    ).toBe('');
+    expect(runGitSync(repo, ['worktree', 'list'])).toBe(worktreesBefore);
+    // Recorded ONCE, not once per attempt: a waiting task is retried on every
+    // fill pass for as long as its blockers stay unmerged.
+    expect(
+      activityFor(h, dependent.meta.id).split('conflict (shared.txt)')
     ).toHaveLength(2);
-    // It must never try to build the merge base after bailing out.
-    expect(f.calls.map((c) => c.join(' '))).not.toContain(
-      'jj new -r dispatch/a -r dispatch/b --no-edit'
-    );
-  });
-
-  it('builds a multi-parent base via jj and records both parents', async () => {
-    const f = fakeJj({
-      'jj git colocation status': { ok: true, stdout: 'colocated', stderr: '' },
-      'jj --version': { ok: true, stdout: 'jj 0.43.0', stderr: '' },
-    });
-    const h = makeHarness(f.jj);
-    const { ids, branches } = await makeInReviewBlockers(h, ['A', 'B']);
-    const dependent = h.store.create({ title: 'dep', blockedBy: ids });
-    h.cache.rebuild(h.store);
-
-    // The stub never runs real jj, so stand the bookmark up as a real git ref
-    // for `git worktree add` / resolveCommit to find. What the orchestrator is
-    // responsible for — the exact jj argument vector, and threading the
-    // resulting ref through as the base — is what's asserted here; that the
-    // vector does the right thing to a real repo is covered by jj.test.ts and
-    // by the real-jj test below.
-    const bookmark = `dispatch/stack-base-${dependent.meta.id}`;
-    runGitSync(repo, ['branch', bookmark, branches[0]]);
-
-    const meta = await h.orchestrator.dispatch(dependent.meta.id, 'fake');
-    expect(meta.baseBranch).toBe(bookmark);
-    expect(meta.stackParents).toEqual(branches);
-    expect(meta.stackBaseCommit).toBe(
-      runGitSync(repo, ['rev-parse', '--verify', bookmark]).trim()
-    );
-    expect(f.calls.map((c) => c.join(' '))).toEqual([
-      'jj git colocation status',
-      'jj --version',
-      'jj git colocation status',
-      `jj new -r ${branches[0]} -r ${branches[1]} --no-edit`,
-      `jj bookmark set ${bookmark} -r latest(children(${branches[0]}) & children(${branches[1]})) --allow-backwards`,
-      'jj git export',
-    ]);
-    // Already colocated — no conversion, so no conversion notice.
-    expect(activityFor(h, dependent.meta.id)).not.toContain(
-      'converted this repository'
-    );
-  });
-
-  it('records an Activity line when it converts the repository to colocated jj', async () => {
-    let colocated = false;
-    const calls: string[][] = [];
-    const run = (_cwd: string, cmd: string[]): Promise<CommandResult> => {
-      calls.push(cmd);
-      const key = cmd.join(' ');
-      if (key === 'jj git colocation status') {
-        return Promise.resolve({
-          ok: colocated,
-          stdout: '',
-          stderr: 'not colocated',
-        });
-      }
-      if (key === 'jj git init --colocate') colocated = true;
-      return Promise.resolve({ ok: true, stdout: '', stderr: '' });
-    };
-    const h = makeHarness(new JjManager(repo, run));
-    const { ids, branches } = await makeInReviewBlockers(h, ['A', 'B']);
-    const dependent = h.store.create({ title: 'dep', blockedBy: ids });
-    h.cache.rebuild(h.store);
-    const bookmark = `dispatch/stack-base-${dependent.meta.id}`;
-    runGitSync(repo, ['branch', bookmark, branches[0]]);
-
-    const meta = await h.orchestrator.dispatch(dependent.meta.id, 'fake');
-    expect(meta.baseBranch).toBe(bookmark);
-    expect(calls.map((c) => c.join(' '))).toContain('jj git init --colocate');
-    expect(activityFor(h, dependent.meta.id)).toContain(
-      'converted this repository to a colocated jj repo'
-    );
-  });
-
-  // No jj failure may turn an otherwise valid dispatch into an opaque 500 —
-  // every one converges on the same typed refusal the jj-unavailable case
-  // raises, carrying jj's own error text so the reason is actionable.
-  it('refuses with the jj error text when a jj command fails mid-way', async () => {
-    // `jj new` is stubbed to fail, which makes JjManager.mergeBase throw.
-    // Before this was contained, that rejection escaped dispatch() as a 500.
-    const h = makeHarness(
-      new JjManager(repo, (_cwd, cmd) =>
-        Promise.resolve(
-          cmd[1] === 'new'
-            ? {
-                ok: false,
-                stdout: '',
-                stderr: 'Error: Revision `dispatch/a` does not exist',
-              }
-            : { ok: true, stdout: '', stderr: '' }
-        )
-      )
-    );
-    const { ids } = await makeInReviewBlockers(h, ['A', 'B']);
-    const dependent = h.store.create({ title: 'dep', blockedBy: ids });
-    h.cache.rebuild(h.store);
-
-    await expect(
-      h.orchestrator.dispatch(dependent.meta.id, 'fake')
-    ).rejects.toBeInstanceOf(OrchestratorConflictError);
-    expect(activityFor(h, dependent.meta.id)).toContain(
-      '2 unmerged blockers need a multi-parent base'
-    );
-    expect(activityFor(h, dependent.meta.id)).toContain('jj new failed');
   });
 
   // The Activity write in that failure path is itself a task-file write, and
@@ -547,12 +453,12 @@ describe('base selection with two or more unmerged blockers', () => {
   // the real, actionable reason with an opaque filesystem error — same
   // swallow-and-log rule MilestoneEngine.recordFillFailure applies.
   it('still refuses with the real reason when recording it on the task fails', async () => {
-    const f = fakeJj({
-      'jj --version': { ok: false, stdout: '', stderr: 'command not found' },
-      'jj git colocation status': { ok: false, stdout: '', stderr: 'no jj' },
-    });
-    const h = makeHarness(f.jj);
-    const { ids } = await makeInReviewBlockers(h, ['A', 'B']);
+    const h = makeHarness();
+    const { ids } = await makeInReviewBlockers(
+      h,
+      ['A', 'B'],
+      () => 'shared.txt'
+    );
     const dependent = h.store.create({ title: 'dep', blockedBy: ids });
     h.cache.rebuild(h.store);
 
@@ -561,55 +467,11 @@ describe('base selection with two or more unmerged blockers', () => {
     try {
       await expect(
         h.orchestrator.dispatch(dependent.meta.id, 'fake')
-      ).rejects.toBeInstanceOf(OrchestratorConflictError);
+      ).rejects.toThrow('conflict (shared.txt)');
     } finally {
       chmodSync(file, 0o644);
     }
   });
-
-  // Real jj, real repo — the only thing that can actually catch a regression
-  // where building the merge base relocates or dirties the user's MAIN
-  // checkout, which a stubbed CommandRunner is blind to by construction.
-  it.skipIf(!hasJj())(
-    'builds the merge base without moving or dirtying the main checkout',
-    async () => {
-      const h = makeHarness();
-      const { ids, branches } = await makeInReviewBlockers(h, ['A', 'B']);
-      const dependent = h.store.create({ title: 'dep', blockedBy: ids });
-      h.cache.rebuild(h.store);
-
-      const headBefore = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
-      const pathsBefore = statusPaths(repo);
-
-      const meta = await h.orchestrator.dispatch(dependent.meta.id, 'fake');
-
-      // Critical: the main checkout must be exactly where it was — still on
-      // the same branch, still at the same commit. A bare `jj new` (no
-      // `--no-edit`) moves it onto the merge commit and detaches it, which
-      // then makes mergeRun's branch guard refuse every later merge.
-      expect(
-        runGitSync(repo, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()
-      ).toBe('main');
-      expect(runGitSync(repo, ['rev-parse', 'HEAD']).trim()).toBe(headBefore);
-
-      // And none of the blockers' files may be materialized into it.
-      expect(existsSync(join(repo, 'A.txt'))).toBe(false);
-      expect(existsSync(join(repo, 'B.txt'))).toBe(false);
-
-      // Dispatch introduces no new pending paths. NOTE: the colocation
-      // conversion itself does re-stage paths that were already untracked
-      // (jj snapshots the working copy on init), so the status *letters* can
-      // change; the set of affected paths must not.
-      expect(statusPaths(repo)).toEqual(pathsBefore);
-
-      // And the dependent really does get BOTH blockers' work — the point of
-      // the multi-parent base in the first place.
-      expect(meta.baseBranch).toBe(`dispatch/stack-base-${dependent.meta.id}`);
-      expect(meta.stackParents).toEqual(branches);
-      expect(await Bun.file(join(meta.worktreePath, 'A.txt')).text()).toBe('A');
-      expect(await Bun.file(join(meta.worktreePath, 'B.txt')).text()).toBe('B');
-    }
-  );
 });
 
 // Task 7: discarding a run means a human rejected the work its dependents

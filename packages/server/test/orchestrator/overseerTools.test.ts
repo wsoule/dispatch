@@ -95,9 +95,8 @@ async function waitFor(check: () => boolean, timeoutMs = 3000): Promise<void> {
 // Answers exactly the git/gh invocations the merge queue makes, so no test
 // here depends on a real rebase/verify/push. Copied in shape from
 // merge-queue.test.ts's StubRunner, including its `ok: false` default for
-// anything unrecognised: a runner that blanket-succeeds makes the queue think
-// jj is available and take a revision-resolving path that then fails on the
-// empty stdout. The queue's own mechanics are merge-queue.test.ts's subject;
+// anything unrecognised, so a command the queue starts making shows up as a
+// failure here rather than passing silently. The queue's own mechanics are merge-queue.test.ts's subject;
 // these tests only need entries that exist and settle predictably.
 function stubResult(cmd: string[]): CommandResult {
   const ok = { ok: true, stdout: '', stderr: '' };

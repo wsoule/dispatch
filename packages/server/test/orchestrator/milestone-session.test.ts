@@ -256,8 +256,8 @@ describe('MilestoneEngine run ceiling', () => {
     await waitFor(() =>
       readers.every((id) => h.store.get(id)?.meta.status === 'review')
     );
-    // Merged, not just reviewed: a worker with three unmerged blockers needs
-    // a multi-parent base, which the orchestrator only builds with jj.
+    // Merged, not just reviewed, so each worker is cut from the default base
+    // rather than a multi-parent stack base over three unmerged blockers.
     for (const run of readerRuns) h.orchestrator.review(run.id, 'merge');
     await waitFor(() => awaiting(h, workers).length === 3);
     expect(runsOn(h, synth === undefined ? [] : [synth])).toHaveLength(0);

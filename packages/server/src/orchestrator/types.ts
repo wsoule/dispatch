@@ -468,10 +468,11 @@ export interface RunMeta {
   stackParents?: string[];
   // The exact commit this run's worktree was branched from, resolved at
   // dispatch time. This is what says where the run's OWN commits begin, which
-  // is the one fact both restack paths need once the base branch has been
-  // rewritten out from under it: `git rebase --onto <newBase> <this> <branch>`
-  // and jj's `roots(<this>..<branch>)`. Only set for stacked runs — an
-  // unblocked run has nothing above its base to preserve.
+  // is the one fact a restack needs once the base branch has been rewritten
+  // out from under it: `git rebase --onto <newBase> <this> <branch>`. Only set
+  // for stacked runs — an unblocked run has nothing above its base to
+  // preserve. A restack that rebuilds a multi-parent base moves it to the new
+  // base commit.
   stackBaseCommit?: string;
   // Set when the base this run was stacked on can no longer be repaired
   // automatically. Nothing is rewritten or deleted — the run is flagged so the

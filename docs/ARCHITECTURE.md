@@ -263,7 +263,6 @@ Notable modules:
 | `../messaging/`                                | —     | Message bus host: questions, scope, approval and wake gates            |
 | `milestone.ts`/`milestoneBranch.ts`            | —     | Milestone sessions, progress, and their branches                       |
 | `repoDigest.ts`/`orientation.ts`/`hotspots.ts` | —     | Repo context handed to agents                                          |
-| `jj.ts`                                        | —     | Jujutsu support, including colocation with git                         |
 
 ## Live text, narration and tool results
 

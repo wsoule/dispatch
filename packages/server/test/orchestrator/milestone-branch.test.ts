@@ -11,7 +11,6 @@ import { MergeQueue } from '../../src/orchestrator/mergeQueue.js';
 import { milestoneBranchName } from '../../src/orchestrator/milestoneBranch.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
 import { transcriptPath } from '../../src/orchestrator/paths.js';
-import type { CommandRunner } from '../../src/orchestrator/pr.js';
 import { defaultCommandRunner } from '../../src/orchestrator/pr.js';
 import { replayTranscript } from '../../src/orchestrator/transcript.js';
 import { OrchestratorConflictError } from '../../src/orchestrator/types.js';
@@ -67,13 +66,6 @@ function makeHarness() {
 }
 
 type Harness = ReturnType<typeof makeHarness>;
-
-// A machine with no jj on PATH, so the queue's plain-git restack path runs —
-// same stub merge-queue.test.ts uses.
-const noJjRunner: CommandRunner = async (cwd, cmd) =>
-  cmd[0] === 'jj'
-    ? { ok: false, stdout: '', stderr: 'jj: command not found' }
-    : defaultCommandRunner(cwd, cmd);
 
 function makeMilestoneWithChild(
   h: Harness,
@@ -380,7 +372,7 @@ describe('milestone branch and the merge queue', () => {
     const metaBBefore = h.orchestrator.list().find((r) => r.id === runB)!;
     expect(metaBBefore.baseBranch).toBe(metaA.branch);
 
-    const queue = new MergeQueue(h, noJjRunner);
+    const queue = new MergeQueue(h, defaultCommandRunner);
     liveQueues.push(queue);
     queue.enqueue(runA);
     await waitFor(() =>
@@ -422,7 +414,7 @@ describe('milestone branch and the merge queue', () => {
     h.cache.rebuild(h.store);
     const runB = await dispatchWithWork(h, taskB.meta.id, 'b.txt');
 
-    const queue = new MergeQueue(h, noJjRunner);
+    const queue = new MergeQueue(h, defaultCommandRunner);
     liveQueues.push(queue);
     queue.enqueue(runA);
     await waitFor(() =>

@@ -141,7 +141,6 @@ import { CliExecutor } from './orchestrator/executors/cli.js';
 import { availableCliPresets } from './orchestrator/executors/cliPresets.js';
 import { CodexExecutor } from './orchestrator/executors/codex.js';
 import { FixLoop, FixLoopStore } from './orchestrator/fixLoop.js';
-import { JjManager } from './orchestrator/jj.js';
 import { MergeQueue } from './orchestrator/mergeQueue.js';
 import { MilestoneEngine } from './orchestrator/milestone.js';
 import { Orchestrator } from './orchestrator/orchestrator.js';
@@ -1439,13 +1438,6 @@ async function bootServer(
   // Tests override this default entirely via `registerExecutors` (see its
   // doc comment) to register a FakeExecutor without going through bin.ts at
   // all.
-  // One jj manager shared by the orchestrator's stacked-dispatch path and the
-  // merge queue's restack path, deliberately on the DEFAULT command runner
-  // rather than `opts.prCommandRunner`. The gh/git fake behind
-  // DISPATCH_FAKE_GH answers every unrecognized command `ok`, so a queue that
-  // probed jj through that seam would decide a demo repo was jj-colocated and
-  // take the jj rebase path against a repo with no jj at all.
-  const jj = new JjManager(rootDir);
   // The audit ledger: the daemon's receipts, plus lesson rows memory imports.
   // Backed by the same store the tasks came from (the database's ledger table,
   // or `.dispatch/ledger.jsonl`); both satisfy `LedgerStorePort`.
@@ -1537,7 +1529,6 @@ async function bootServer(
     cache,
     judgments,
     events,
-    jj,
     findingStore,
     comments: commentStore,
     // `null` on the file backend, where the run transcript is evidence's only
@@ -2018,7 +2009,6 @@ async function bootServer(
       cache,
       events,
       orchestrator,
-      jj,
       prState: (url) => prManager.cachedPrByUrl(url),
       cacheReady: () => prManager.cacheReady(),
       lander: new OriginLander({

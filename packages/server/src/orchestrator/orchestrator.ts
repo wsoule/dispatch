@@ -60,7 +60,6 @@ import type { LiveText } from '../liveText.js';
 import type { OperatorRouting } from '../messaging/operatorRouting.js';
 import { statusModelFor } from '../statuses.js';
 import { dirSizeBytes } from './dirSize.js';
-import { JjManager } from './jj.js';
 import { truncateReason } from './mergeQueue.js';
 import {
   isMilestoneBranch,
@@ -130,7 +129,7 @@ import {
 } from './types.js';
 import type { RunUsage } from './usage.js';
 import type { DiffResult, FollowResult } from './worktree.js';
-import { WorktreeManager } from './worktree.js';
+import { StackBaseConflictError, WorktreeManager } from './worktree.js';
 
 /**
  * The slice of the database's evidence store the orchestrator writes to.
@@ -149,17 +148,11 @@ export interface OrchestratorContext {
   store: TaskStorePort;
   cache: TaskCache;
   events: EventBus;
-  // Optional override for the 2+-blocker stacked-dispatch path — the only
-  // path that mutates the user's actual repository. Production never passes
-  // it (a real JjManager is built below); tests inject one wired to a stub
-  // CommandRunner so that path can be exercised without a jj binary, which is
-  // otherwise structurally untestable.
-  jj?: JjManager;
   // The task's comment thread, also injected into dispatch prompts. Absent,
   // prompts carry no comments.
   comments?: CommentStorePort;
   // Where blocking rulings are read from (see blockedFindingReason). Defaults
-  // to one over `rootDir`, same pattern as `jj`.
+  // to one over `rootDir`.
   findingStore?: FindingStorePort;
   // The database's evidence tables, on the sqlite backend only; `null` (or
   // absent) on the file backend, where the run transcript is the only home
@@ -191,7 +184,7 @@ export interface OrchestratorContext {
   autoResumeQuietMs?: number;
   autoResumeMaxAttempts?: number;
   // The repo-map cache injected into run prompts (see taskBrief). Defaults
-  // to one over `rootDir`, same pattern as `jj`. A test that wants no
+  // to one over `rootDir`. A test that wants no
   // model call at all can pass one built with a stubbed generator.
   digestCache?: RepoDigestCache;
   // How the orchestrator shells out to delete a retired PR review's head ref
@@ -278,6 +271,20 @@ const STATUS_RANK: Record<BranchEntryStatus, number> = {
 // `unref`d so a pending quiet window is never the reason a process stays
 // alive: the boot recovery sweep this serves is background work, and the
 // daemon's own server is what should be holding the event loop open.
+/**
+ * The branch a task with two or more unmerged blockers is cut from. The name
+ * is fixed per task so a re-dispatch or a restack rebuilds the same branch
+ * instead of leaving old ones behind.
+ */
+function stackBaseBranch(taskId: string): string {
+  return `dispatch/stack-base-${taskId}`;
+}
+
+// The commit message on a stack base, naming every blocker it combines.
+function stackBaseMessage(taskId: string, parents: readonly string[]): string {
+  return `dispatch: stack base for ${taskId} over ${parents.join(', ')}`;
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms).unref();
@@ -426,10 +433,6 @@ export class Orchestrator {
   private readonly prRefDeletes = new Map<string, Promise<void>>();
   private readonly runCommand: CommandRunner;
   private readonly worktrees: WorktreeManager;
-  // Only ever used on the multi-blocker dispatch path (see resolveBase):
-  // constructing it is inert — it shells out to jj lazily, per call — so an
-  // unblocked dispatch never touches jj at all.
-  private readonly jj: JjManager;
   private readonly findingStore: FindingStorePort;
   // The repo map injected into every run prompt (see taskBrief). Held on
   // the orchestrator rather than built per dispatch so its single-flight
@@ -540,7 +543,6 @@ export class Orchestrator {
 
   constructor(private readonly ctx: OrchestratorContext) {
     this.worktrees = new WorktreeManager(ctx.rootDir);
-    this.jj = ctx.jj ?? new JjManager(ctx.rootDir);
     this.findingStore = ctx.findingStore ?? new FindingStore(ctx.rootDir);
     this.digestCache = ctx.digestCache ?? new RepoDigestCache(ctx.rootDir);
     this.claimsRefreshCooldownMs =
@@ -1543,14 +1545,15 @@ export class Orchestrator {
    * shares the dispatched status, a blocker is in review only once its latest
    * run has ended.
    *
-   * Two or more unmerged blockers need a base containing all of their work,
-   * which only jj can express (`jj new -r A -r B`). When jj isn't available
-   * there is no correct base to pick, so the dispatch is REFUSED (spec §4.6):
-   * the task waits, exactly as it did before stacking existed, and is retried
-   * on the next fill. Dispatching it against the default base instead would be
-   * strictly worse than today's behavior — the agent would see neither
-   * blocker's work, and with no `stackParents` recorded the run would never be
-   * restacked and never be flagged.
+   * Two or more unmerged blockers need a base containing all of their work:
+   * `dispatch/stack-base-<task>`, one merge commit over every blocker's branch
+   * (see WorktreeManager.buildStackBase). When the blockers conflict with each
+   * other there is no correct base to pick, so the dispatch is REFUSED: the
+   * task waits and is retried on the next fill, and once the blockers merge
+   * it is cut from the default base like any other task. Dispatching it
+   * against the default base instead would be strictly worse — the agent
+   * would see neither blocker's work, and with no `stackParents` recorded the
+   * run would never be restacked and never be flagged.
    */
   private async resolveBase(
     task: TaskDoc
@@ -1580,7 +1583,7 @@ export class Orchestrator {
     if (parents.length === 0) {
       const milestoneBase = this.ensureMilestoneBranchFor(task);
       return {
-        base: milestoneBase ?? this.worktrees.defaultBaseBranch(),
+        base: milestoneBase ?? (await this.worktrees.defaultBaseBranchAsync()),
         stackParents: [],
       };
     }
@@ -1588,40 +1591,27 @@ export class Orchestrator {
       return { base: parents[0], stackParents: parents };
     }
 
-    // Only reached with 2+ unmerged blockers — the one case that genuinely
-    // needs jj, so converting the user's repo never happens for a dispatch
-    // that could have been served by plain git.
-    //
-    // The jj calls are wrapped because this is the only part of dispatch that
-    // shells out to a tool the user may not have, in a repo shape jj may
-    // refuse: no jj failure may turn this into an opaque 500. Every failure
-    // converges on the same outcome the jj-unavailable case takes — refuse,
-    // and say why on the task — so the task simply waits (fillQueue skips an
-    // OrchestratorConflictError and retries on the next pass; a manual
-    // dispatch 409s with the reason).
-    let base: string;
+    // Only reached with 2+ unmerged blockers. A conflict between them is the
+    // one expected failure: it is recorded on the task and refused, and
+    // fillQueue skips an OrchestratorConflictError and retries on the next
+    // pass (a manual dispatch 409s with the reason). Any other git failure is
+    // refused the same way rather than turning into an opaque 500.
+    const base = stackBaseBranch(task.meta.id);
     try {
-      const wasColocated = await this.jj.isColocated();
-      if (!(await this.jj.ensureColocated())) {
-        throw new Error('jj is unavailable');
-      }
-      if (!wasColocated) {
-        // Converting a user's repo is never silent — §4.2 of the spec.
-        this.noteTaskActivity(
-          task.meta.id,
-          'stacked dispatch: converted this repository to a colocated jj repo (reversible with `jj git colocation disable`)'
-        );
-      }
-      const bookmark = `dispatch/stack-base-${task.meta.id}`;
-      base = await this.jj.mergeBase(parents, bookmark);
+      this.worktrees.buildStackBase(
+        base,
+        parents,
+        stackBaseMessage(task.meta.id, parents)
+      );
     } catch (err) {
-      const reason = `${parents.length} unmerged blockers need a multi-parent base, which only jj can build (${(err as Error).message}) — waiting until they merge`;
+      const reason =
+        err instanceof StackBaseConflictError
+          ? `${err.message}; waiting until they merge`
+          : `could not build a base over ${parents.length} unmerged blockers (${(err as Error).message}); waiting until they merge`;
       // Once per distinct reason, not once per fill pass. A waiting task is
       // re-attempted on every pass for as long as its blockers stay unmerged,
-      // and the old fallback wrote its line exactly once because it never
-      // retried; an unbounded run of identical lines in the task file would be
-      // pure noise. A reason that CHANGES (a different jj failure) is new
-      // information and is recorded.
+      // and an unbounded run of identical lines in the task file would be
+      // pure noise. A reason that CHANGES is new information and is recorded.
       this.noteTaskActivityOnce(task.meta.id, `stacked dispatch: ${reason}`);
       throw new OrchestratorConflictError(reason);
     }
@@ -1631,7 +1621,7 @@ export class Orchestrator {
   // Appends one Activity line to a task, mirroring MilestoneEngine's
   // appendMilestoneActivity (milestone.ts) so stack decisions leave the same durable
   // trail every other orchestrator lifecycle event does. Every caller
-  // (stacked-dispatch jj bookkeeping, the merge queue's own restack notes via
+  // (stacked-dispatch bookkeeping, the merge queue's own restack notes via
   // appendRunTaskActivity) is the daemon narrating its own mechanics, not a
   // human or agent decision — so this always credits 'none'.
   private appendTaskActivity(taskId: string, text: string): void {
@@ -4220,6 +4210,33 @@ export class Orchestrator {
     return this.worktrees.writeBackupRef(meta.branch, runId);
   }
 
+  /**
+   * Rebuilds a stacked run's multi-parent base over `parents` (the new
+   * default base first, then the blockers still unmerged) and returns the
+   * new base commit. Used by the merge queue after one of the run's blockers
+   * lands; throws StackBaseConflictError when the parents clash.
+   */
+  rebuildStackBase(runId: string, parents: readonly string[]): string {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) throw new Error(`unknown run ${runId}`);
+    return this.worktrees.buildStackBase(
+      stackBaseBranch(meta.taskId),
+      parents,
+      stackBaseMessage(meta.taskId, parents)
+    );
+  }
+
+  // The commit a ref points at in the project's main checkout.
+  resolveRef(ref: string): string {
+    return this.worktrees.resolveCommit(ref);
+  }
+
+  // Deletes a branch nothing is checked out on, ignoring a missing one — used
+  // to drop a stack base once a run no longer sits on it.
+  deleteBranchRef(branch: string): void {
+    this.worktrees.removeBranchRef(branch);
+  }
+
   // Replays a run's OWN commits (everything after `oldTip`, the commit it was
   // branched from) onto `newBase`, leaving behind the blocker commits the new
   // base already contains in squashed form.
@@ -4340,7 +4357,11 @@ export class Orchestrator {
    * run's meta straight back onto the merged-away branch, with nothing left
    * to notice or re-run the restack (see TranscriptStateLine.baseBranch).
    */
-  repointRunBase(runId: string, newBase: string): void {
+  repointRunBase(
+    runId: string,
+    newBase: string,
+    stack?: { parents: string[]; baseCommit?: string }
+  ): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
     const mergedAway = meta.baseBranch;
@@ -4348,17 +4369,26 @@ export class Orchestrator {
     for (const sibling of this.registry.list()) {
       if (sibling.branch !== meta.branch) continue;
       if (sibling.reviewedAt !== undefined) continue;
-      const remaining = (sibling.stackParents ?? []).filter(
-        (branch) => branch !== mergedAway
-      );
+      // A run still stacked after the restack (a multi-parent base rebuilt
+      // over the blockers left) gets its new parents and base commit from the
+      // caller. Otherwise the merged base simply drops out of the parents.
+      const remaining =
+        stack?.parents ??
+        (sibling.stackParents ?? []).filter((branch) => branch !== mergedAway);
       this.registry.updateMeta(sibling.id, {
         baseBranch: newBase,
         stackParents: remaining.length > 0 ? remaining : undefined,
+        ...(stack?.baseCommit !== undefined
+          ? { stackBaseCommit: stack.baseCommit }
+          : {}),
         updatedAt: now,
       });
       this.transcriptFor(sibling.id).appendState(sibling.state, now, {
         baseBranch: newBase,
         stackParents: remaining,
+        ...(stack?.baseCommit !== undefined
+          ? { stackBaseCommit: stack.baseCommit }
+          : {}),
       });
     }
     this.ctx.events.broadcast({ type: 'run.changed' });

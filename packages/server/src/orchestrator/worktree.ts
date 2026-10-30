@@ -41,6 +41,23 @@ export type FollowResult =
   | { outcome: 'updated' | 'current' | 'skipped' }
   | { outcome: 'behind'; reason: string };
 
+/**
+ * Thrown by WorktreeManager.buildStackBase when two of a task's unmerged
+ * blockers can't be combined into one base. Names the two branches so the
+ * task can say which blockers it is waiting on.
+ */
+export class StackBaseConflictError extends Error {
+  constructor(
+    readonly branches: [string, string],
+    readonly paths: string[]
+  ) {
+    super(
+      `blockers ${branches[0]} and ${branches[1]} conflict${paths.length > 0 ? ` (${paths.join(', ')})` : ''}`
+    );
+    this.name = 'StackBaseConflictError';
+  }
+}
+
 // A follow step's git result as a FollowResult: 'updated' on success,
 // otherwise 'behind' with git's own words for why.
 function gitOutcome(result: {
@@ -558,13 +575,12 @@ export class WorktreeManager {
    * Brings a worktree back in line with `branch` after a restack rewrote that
    * branch from the main checkout. Two different broken states have to be
    * repaired, which is why this is two commands and not one. Which one you get
-   * depends on WHO moved the ref — both were measured against jj 0.43.0:
+   * depends on how the ref was moved:
    *
-   * - Detached HEAD at the pre-restack commit, with a CLEAN `git status`. This
-   *   is what **jj** produces: rewriting a commit whose bookmark is checked out
-   *   in a git worktree detaches that worktree rather than moving it. `git
-   *   checkout <branch>` reattaches it and brings the content across, and the
-   *   hard reset that follows is then a no-op.
+   * - Detached HEAD at the pre-restack commit, with a CLEAN `git status`: the
+   *   worktree was left behind by a rewrite done somewhere else. `git checkout
+   *   <branch>` reattaches it and brings the content across, and the hard
+   *   reset that follows is then a no-op.
    * - HEAD still on `branch` but the REF moved underneath the worktree. This is
    *   what a raw **`git update-ref`** produces: git writes a branch ref that is
    *   checked out elsewhere without complaint — only `git branch -f` refuses.
@@ -655,10 +671,9 @@ export class WorktreeManager {
   }
 
   /**
-   * The plain-git restack, used when jj isn't available: replays exactly the
-   * commits in `oldTip..branch` (a dependent's own work) onto `newBase`,
-   * dropping the blocker commits that `newBase` now already contains in
-   * squashed form. Without the explicit `--onto`, a plain `git rebase newBase`
+   * The restack: replays exactly the commits in `oldTip..branch` (a
+   * dependent's own work) onto `newBase`, dropping the blocker commits that
+   * `newBase` now already contains in squashed form. Without the explicit `--onto`, a plain `git rebase newBase`
    * would try to replay the blocker's commits too and conflict against their
    * own squashed copies.
    *
@@ -900,6 +915,136 @@ export class WorktreeManager {
     );
   }
 
+  /**
+   * Points `refs/heads/<branch>` at one commit whose parents are every ref in
+   * `parents` and whose tree merges all of their work, and returns that
+   * commit. This is the base a task with two or more unmerged blockers is
+   * branched from, so its agent sees every blocker's work at once.
+   *
+   * Built in the object database with `merge-tree` and `commit-tree`, the same
+   * way squashMergeIntoRef lands a run: nothing is checked out, so neither the
+   * user's checkout nor any run's worktree is touched. `merge-tree` merges two
+   * sides at a time, so the parents are folded in one by one. Each step merges
+   * the next parent into the result so far, through a throwaway two-parent
+   * commit that gives the following step the right merge base. Only the final
+   * commit is kept, and it records all of the parents.
+   *
+   * An existing `branch` is overwritten: a re-dispatch or a restack rebuilds
+   * the base from the parents' current tips. On a conflict nothing is written
+   * and StackBaseConflictError names two branches that clash.
+   */
+  buildStackBase(
+    branch: string,
+    parents: readonly string[],
+    message: string
+  ): string {
+    if (parents.length < 2) {
+      throw new Error(
+        `a stack base needs at least two parents, got ${parents.length}`
+      );
+    }
+    const commits = parents.map((p) => this.resolveCommit(p));
+    let tip = commits[0];
+    let tree = '';
+    for (let i = 1; i < commits.length; i++) {
+      const merged = this.writeMergeTree(tip, commits[i]);
+      if ('conflicts' in merged) {
+        throw new StackBaseConflictError(
+          this.conflictingPair(parents, commits, i),
+          merged.conflicts
+        );
+      }
+      tree = merged.tree;
+      if (i < commits.length - 1) {
+        tip = this.commitTree(tree, [tip, commits[i]], message);
+      }
+    }
+    const base = this.commitTree(tree, commits, message);
+    const update = runGit(this.mainRepoDir, [
+      'update-ref',
+      `refs/heads/${branch}`,
+      base,
+    ]);
+    if (!update.ok) {
+      throw new Error(
+        `git update-ref ${branch} failed: ${update.stderr.trim()}`
+      );
+    }
+    return base;
+  }
+
+  // Which two blockers to name when parent `i` would not merge into the
+  // ones before it: the first earlier parent it conflicts with on its own,
+  // else its immediate predecessor (the clash only shows once several are
+  // combined).
+  private conflictingPair(
+    parents: readonly string[],
+    commits: readonly string[],
+    i: number
+  ): [string, string] {
+    for (let j = 0; j < i; j++) {
+      if ('conflicts' in this.writeMergeTree(commits[j], commits[i])) {
+        return [parents[j], parents[i]];
+      }
+    }
+    return [parents[i - 1], parents[i]];
+  }
+
+  // A three-way merge of two commits computed in memory: the merged tree, or
+  // the conflicted paths when the two sides clash.
+  private writeMergeTree(
+    ours: string,
+    theirs: string
+  ): { tree: string } | { conflicts: string[] } {
+    const mergeTree = runGit(this.mainRepoDir, [
+      'merge-tree',
+      '--write-tree',
+      '--name-only',
+      ours,
+      theirs,
+    ]);
+    const lines = mergeTree.stdout.split('\n');
+    if (mergeTree.exitCode === 1) {
+      // With --name-only the OID line is followed by the conflicted paths,
+      // then a blank line and informational messages — the paths are the part
+      // worth naming.
+      const conflicts: string[] = [];
+      for (const line of lines.slice(1)) {
+        if (line.trim() === '') break;
+        conflicts.push(line.trim());
+      }
+      return { conflicts };
+    }
+    if (!mergeTree.ok) {
+      throw new Error(`git merge-tree failed: ${mergeTree.stderr.trim()}`);
+    }
+    const tree = lines[0]?.trim() ?? '';
+    if (tree === '') {
+      throw new Error('git merge-tree produced no tree');
+    }
+    return { tree };
+  }
+
+  // One commit carrying `tree` with exactly `parents`, created without
+  // touching any ref.
+  private commitTree(
+    tree: string,
+    parents: readonly string[],
+    message: string
+  ): string {
+    const commit = runGit(this.mainRepoDir, [
+      'commit-tree',
+      tree,
+      ...parents.flatMap((p) => ['-p', p]),
+      '-m',
+      message,
+    ]);
+    if (!commit.ok) {
+      throw new Error(`git commit-tree failed: ${commit.stderr.trim()}`);
+    }
+    return commit.stdout.trim();
+  }
+
   // The tree a commit records — used to tell a squash that changed nothing
   // (same tree as its parent) from one worth pushing.
   treeOf(commit: string): string {
@@ -1133,57 +1278,20 @@ export class WorktreeManager {
     message: string,
     mode: 'squash' | 'merge'
   ): string {
-    const mergeTree = runGit(this.mainRepoDir, [
-      'merge-tree',
-      '--write-tree',
-      '--name-only',
-      oldTip,
-      sourceBranch,
-    ]);
-    const lines = mergeTree.stdout.split('\n');
-    if (mergeTree.exitCode === 1) {
-      // With --name-only the OID line is followed by the conflicted paths,
-      // then a blank line and informational messages — the paths are the part
-      // worth naming.
-      const conflicted: string[] = [];
-      for (const line of lines.slice(1)) {
-        if (line.trim() === '') break;
-        conflicted.push(line.trim());
-      }
+    const merged = this.writeMergeTree(oldTip, sourceBranch);
+    if ('conflicts' in merged) {
       throw new Error(
-        `merge into ${target} has conflicts: ${conflicted.join(', ')}`
+        `merge into ${target} has conflicts: ${merged.conflicts.join(', ')}`
       );
-    }
-    if (!mergeTree.ok) {
-      throw new Error(`git merge-tree failed: ${mergeTree.stderr.trim()}`);
-    }
-    const tree = lines[0]?.trim() ?? '';
-    if (tree === '') {
-      throw new Error('git merge-tree produced no tree');
     }
     // Squash: the target's old tip is the only parent, so the source's
     // commits are folded into one. Merge: the source tip rides along as the
     // second parent, making this a real merge commit.
-    const parentArgs =
+    const parents =
       mode === 'squash'
-        ? ['-p', oldTip]
-        : [
-            '-p',
-            oldTip,
-            '-p',
-            this.resolveCommit(`refs/heads/${sourceBranch}`),
-          ];
-    const commit = runGit(this.mainRepoDir, [
-      'commit-tree',
-      tree,
-      ...parentArgs,
-      '-m',
-      message,
-    ]);
-    if (!commit.ok) {
-      throw new Error(`git commit-tree failed: ${commit.stderr.trim()}`);
-    }
-    return commit.stdout.trim();
+        ? [oldTip]
+        : [oldTip, this.resolveCommit(`refs/heads/${sourceBranch}`)];
+    return this.commitTree(merged.tree, parents, message);
   }
 
   // The merge base of `baseBranch` and `HEAD` in `worktreePath` — a base
