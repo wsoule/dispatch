@@ -8,6 +8,7 @@ import {
   hasStatusRole,
   isContainerKind,
   isReviewStatus,
+  isStartedStatus,
   isUnstartedStatus,
   loadConfig,
   releasesFanoutDependents,
@@ -256,6 +257,14 @@ interface Watched {
   waiting: Set<string>;
   /** Its unstarted tasks a teammate holds. */
   held: Set<string>;
+  /**
+   * Its own tasks parked outside the run lifecycle: a draft, or a landed or
+   * dropped task. One a human sets back to ready is new work for the session.
+   * A task in a started status (working, review) is left out on purpose:
+   * discarding its run returns it to ready, and that must not re-dispatch the
+   * same prompt on its own.
+   */
+  parked: Set<string>;
 }
 
 // Active or paused: a session that still claims its scope.
@@ -1304,10 +1313,22 @@ export class MilestoneEngine {
     statuses: StatusModel,
     waitingOn: (task: TaskDoc) => string[]
   ): void {
-    const watched: Watched = { waiting: new Set(), held: new Set() };
+    const watched: Watched = {
+      waiting: new Set(),
+      held: new Set(),
+      parked: new Set(),
+    };
     for (const task of work) {
       if (task.meta.archivedAt !== undefined) continue;
-      if (!isUnstartedStatus(task.meta.status, statuses)) continue;
+      if (!isUnstartedStatus(task.meta.status, statuses)) {
+        if (
+          mine.has(task.meta.id) &&
+          !isStartedStatus(task.meta.status, statuses)
+        ) {
+          watched.parked.add(task.meta.id);
+        }
+        continue;
+      }
       if (!mine.has(task.meta.id)) {
         watched.held.add(task.meta.id);
         continue;
@@ -1320,12 +1341,14 @@ export class MilestoneEngine {
   // Work can free up outside any run: a teammate's issue landing through
   // Linear, a hand edit, or a teammate handing their task back. Runs fire
   // onRunTerminal; this catches the rest, refilling a session only when a
-  // blocker it waited on now lets go or a task it held back is now its own.
+  // blocker it waited on now lets go, a task it held back is now its own, or
+  // one of its own tasks is ready to start again (a draft moved to ready, or a
+  // task whose run was cancelled set back to ready).
   private onTasksChanged(ids: readonly string[] | undefined): void {
     let statuses: StatusModel | null = null;
     let withRunBranch: Set<string> | null = null;
     let finished: Set<string> | null = null;
-    for (const [milestoneId, { waiting, held }] of this.watching) {
+    for (const [milestoneId, { waiting, held, parked }] of this.watching) {
       if (!this.armed.has(milestoneId)) continue;
       const session = this.sessions.get(milestoneId);
       if (session?.state !== 'active') continue;
@@ -1333,7 +1356,14 @@ export class MilestoneEngine {
         ids === undefined ? [...set] : ids.filter((id) => set.has(id));
       const blockers = touched(waiting);
       const holding = touched(held);
-      if (blockers.length === 0 && holding.length === 0) continue;
+      const parkedTouched = touched(parked);
+      if (
+        blockers.length === 0 &&
+        holding.length === 0 &&
+        parkedTouched.length === 0
+      ) {
+        continue;
+      }
       statuses ??= statusModelFor(this.ctx.rootDir);
       if (withRunBranch === null || finished === null) {
         const runs = this.ctx.orchestrator.list();
@@ -1350,6 +1380,15 @@ export class MilestoneEngine {
           releasesFanoutDependents(blocker.meta.status, model, view(blocker))
         );
       });
+      // Back to ready: the session's own task again, so it is now work to fill.
+      const readyAgain = parkedTouched.some((id) => {
+        const task = this.ctx.cache.get(id);
+        return (
+          task !== null &&
+          holder(task) === null &&
+          isUnstartedStatus(task.meta.status, model)
+        );
+      });
       const handedBack = holding.some((id) => {
         const task = this.ctx.cache.get(id);
         return (
@@ -1358,7 +1397,7 @@ export class MilestoneEngine {
           isUnstartedStatus(task.meta.status, model)
         );
       });
-      if (released || handedBack) this.scheduleFill(milestoneId);
+      if (released || handedBack || readyAgain) this.scheduleFill(milestoneId);
     }
   }
 

@@ -1129,3 +1129,51 @@ describe('MilestoneEngine fill serialization', () => {
     );
   });
 });
+
+// DIS-135: a task moved back to draft and its run cancelled, then set ready
+// again later, was never dispatched again. Between runs a session refills only
+// on a run ending or a watched board change, and its own task turning ready
+// was neither, so with nothing live it waited forever.
+describe('MilestoneEngine refill when its own task is ready again', () => {
+  it('re-dispatches a task set back to ready after its run was cancelled', async () => {
+    const harness = makeHarness();
+    // F2 waits on F1, which keeps the session open while F1 sits in draft,
+    // as the issue's milestone had other work left.
+    const { milestoneId, childIds } = createMilestoneWithChildren(
+      harness.store,
+      2,
+      (i, ids) => (i === 1 ? [ids[0]] : [])
+    );
+    const [f1] = childIds;
+    await harness.milestones.start(milestoneId, {
+      concurrency: 1,
+      executor: 'fake',
+    });
+    await waitFor(() => harness.orchestrator.list().length === 1);
+    const first = harness.orchestrator.list()[0];
+
+    // Back to draft first, so the fill the cancelled run triggers finds
+    // nothing to start: the later move to ready is the only signal left.
+    harness.store.update(f1, { status: 'draft' });
+    await harness.orchestrator.cancel(first.id);
+    await waitFor(
+      () => harness.orchestrator.getRun(first.id)?.meta.state === 'cancelled'
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(harness.orchestrator.list()).toHaveLength(1);
+    expect(harness.milestones.progress(milestoneId).active).toBe(true);
+
+    // A hand edit, as the file watcher reports it.
+    harness.store.update(f1, { status: 'ready' });
+    harness.events.broadcast({ type: 'task.changed', ids: [f1] });
+    await waitFor(
+      () =>
+        harness.orchestrator.list().filter((r) => r.taskId === f1).length === 2
+    );
+    const second = harness.orchestrator
+      .list()
+      .find((r) => r.taskId === f1 && r.id !== first.id);
+    expect(second).toBeDefined();
+    harness.orchestrator.approve(second!.id, 'go', true);
+  });
+});
