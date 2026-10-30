@@ -93,6 +93,9 @@ export interface DecisionItem {
   messageId?: string;
   /** The Overseer conversation an overseer-action or tool-approval gate is parked on. */
   conversation?: string;
+  /** The address that asked, on a gate item: lets a surface tell a question
+   *  from an outside A2A agent from one a teammate asked. */
+  from?: string;
   disposition: DecisionDisposition;
 }
 
@@ -498,6 +501,7 @@ export class DecisionFeed {
         id: `${kind}:${message.id}`,
         kind,
         messageId: message.id,
+        from: message.from,
         runId,
         taskId,
         taskTitle,

@@ -266,6 +266,21 @@ export function rowControl(
   return { kind: 'choices', choices: message.choices ?? fallback, gate: false };
 }
 
+/**
+ * Whether `message` is someone else's open question that only free text can
+ * answer: no gate behind it and no choices to click. A row control draws
+ * nothing for such a question, so a surface that lists it (Needs you, the
+ * middle conversation) offers an answer box instead.
+ */
+export function answersWithText(message: Message, me: string): boolean {
+  return (
+    message.kind === 'question' &&
+    message.from !== me &&
+    gateOf(message) === null &&
+    (message.choices ?? []).length === 0
+  );
+}
+
 /** A row control that draws something to answer with. */
 type AnswerControl = Extract<
   RowControl,

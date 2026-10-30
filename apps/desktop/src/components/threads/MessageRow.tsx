@@ -12,6 +12,7 @@ import type {
 } from '../../lib/threadSources';
 import {
   addressAction,
+  answersWithText,
   kindLabel,
   participantLabel,
   refAction,
@@ -19,6 +20,7 @@ import {
 } from '../../lib/threadSources';
 import type { GateClient, GateReply } from '../gates/GateCard';
 import { GateCard } from '../gates/GateCard';
+import { QuestionAnswerForm } from '../gates/QuestionAnswerForm';
 import { Markdown } from '../runs/Markdown';
 import { A2ADeclineAction } from './A2ADeclineAction';
 import { cn } from '@/lib/utils';
@@ -57,6 +59,9 @@ export interface MessageRowProps {
   availability: DecideAvailability;
   onRestartDaemon: () => Promise<void>;
   onAnswer: (message: Message, reply: Reply) => Promise<void>;
+  /** Offer an answer box on an open free-text question, for a surface with no
+   *  reply box of its own aimed at it (the middle conversation). */
+  inlineAnswer?: boolean;
   onOpen: (action: RefAction) => void;
   /** Reads a parked call's full input, for a tool-approval preview that was cut short. */
   loadApprovalInput: (call: ParkedCall) => Promise<unknown>;
@@ -98,6 +103,7 @@ export const MessageRow = memo(function MessageRow({
   availability,
   onRestartDaemon,
   onAnswer,
+  inlineAnswer = false,
   onOpen,
   loadApprovalInput,
   remoteDeliveries = [],
@@ -239,6 +245,15 @@ export const MessageRow = memo(function MessageRow({
             client={client ?? null}
             port={port}
           />
+          {open &&
+            inlineAnswer &&
+            access.canMessage &&
+            answersWithText(message, me) && (
+              <QuestionAnswerForm
+                asker={sender}
+                onAnswer={(body) => onAnswer(message, { body })}
+              />
+            )}
           {open && (
             <A2ADeclineAction
               message={message}

@@ -57,6 +57,8 @@ export interface DecisionItem {
   messageId?: string;
   /** The Overseer conversation an overseer-action or tool-approval gate is parked on. */
   conversation?: string;
+  /** The address that asked, on a gate or mailbox ask. */
+  from?: string;
   /** The policy engine's split: `blocking` items demand an answer, `recorded`
    * ones land quietly. Everything is `blocking` until milestone e-ad1978 ships. */
   disposition: 'blocking' | 'recorded';

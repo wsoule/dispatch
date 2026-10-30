@@ -1,5 +1,6 @@
 import type { MailboxItem } from '@dispatch/client';
 
+import { isA2AAddress } from './a2a';
 import type { DecisionItem } from './decisionFeed';
 
 /** A mailbox entry, as `getMailbox` returns it. */
@@ -56,7 +57,9 @@ export function askGroup(item: DecisionItem): AskGroup | null {
     case 'run-stalled':
       return item.reason === 'failed' ? null : 'work';
     case 'question':
-      // A run's question is work; one with no run came from a person.
+      // An outside A2A agent's question sits with its proposals under Outside;
+      // a run's question is work; any other came from a person.
+      if (item.from !== undefined && isA2AAddress(item.from)) return 'outside';
       return item.runId === undefined ? 'people' : 'work';
     case 'doc':
     case 'memory':
@@ -123,6 +126,7 @@ function mailboxAsk(
     reason: message.kind,
     summary: oneLine(message.body),
     messageId: message.id,
+    from: message.from,
     ...(runId === undefined ? {} : { runId }),
     ...(taskId === undefined ? {} : { taskId }),
     since: message.createdAt,

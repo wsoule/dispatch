@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
@@ -191,5 +197,68 @@ describe('receipts and batches', () => {
     );
     expect(screen.getByText('Review 3 restored lessons')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Approve all' })).toBeTruthy();
+  });
+});
+
+// DIS-128: a free-text question in Needs you has no card to draw, so the row
+// itself offers an answer box, and sending it answers that question.
+describe('answering a question from its row', () => {
+  const CLIENT = 'agent:wyat/a2a.ci-bot';
+  const question = {
+    id: 'q-1',
+    thread: 'q-1',
+    replyTo: null,
+    from: CLIENT,
+    to: [ME],
+    kind: 'question',
+    body: 'Can the refund change hit staging tonight?',
+    refs: [],
+    urgent: false,
+    blocking: true,
+    wake: 'none',
+    createdAt: '2026-10-06T09:00:00.000Z',
+  };
+
+  test('Answer… opens a box whose text goes out as the reply to that question', async () => {
+    const replies: { id: string; body: string }[] = [];
+    const client = {
+      openDecisions: () => Promise.resolve({ items: [question] }),
+      replyToMessage: (id: string, input: { body: string }) => {
+        replies.push({ id, body: input.body });
+        return Promise.resolve({ message: question, deliveries: [] });
+      },
+    };
+    const needs = needsYou(
+      [
+        item({
+          id: 'question:q-1',
+          kind: 'question',
+          messageId: 'q-1',
+          from: CLIENT,
+          summary: question.body,
+        }),
+      ],
+      ME
+    );
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <NeedsYouBlock
+          data={{ ...data, client } as unknown as DispatchProjectData}
+          needs={needs}
+          onOpenRef={() => {}}
+          onOpenDecision={() => {}}
+        />
+      </QueryClientProvider>
+    );
+    // An outside agent's question sits under Outside (DIS-129).
+    expect(screen.getByTestId('needs-you-group-outside')).toBeDefined();
+    fireEvent.click(await screen.findByRole('button', { name: 'Answer…' }));
+    fireEvent.change(screen.getByPlaceholderText('Type your answer'), {
+      target: { value: 'Yes, tonight' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send answer' }));
+    await waitFor(() =>
+      expect(replies).toEqual([{ id: 'q-1', body: 'Yes, tonight' }])
+    );
   });
 });
