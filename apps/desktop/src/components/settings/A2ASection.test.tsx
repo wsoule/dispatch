@@ -20,7 +20,7 @@ import {
 import { expect, mock, test } from 'bun:test';
 
 import { A2ASection } from './A2ASection';
-import { dataWith } from './fixtures.test-helper';
+import { chooseOption, dataWith, selectTrigger } from './fixtures.test-helper';
 
 const OFF: A2AListenerSettings = {
   enabled: false,
@@ -246,11 +246,12 @@ test('the listener is off by default and turning it on sends loopback on the pro
 
 test('only the operator can change the listener', async () => {
   mount('decide');
-  expect(await screen.findByText(/needs the operator tier/i)).toBeTruthy();
+  // Written on the page, not only in the lock's (hidden) tooltip.
+  const reasons = await screen.findAllByText(/needs the operator tier/i);
+  expect(reasons.some((el) => el.closest('[hidden]') === null)).toBe(true);
   expect(
-    screen
-      .getByRole('switch', { name: 'A2A listener' })
-      .hasAttribute('data-disabled')
+    screen.getByRole<HTMLButtonElement>('switch', { name: 'A2A listener' })
+      .disabled
   ).toBe(true);
   expect(
     screen.getByRole<HTMLButtonElement>('button', { name: 'Save listener' })
@@ -285,13 +286,6 @@ test('turning a running listener off disables it', async () => {
   expect(client.setA2AListener).not.toHaveBeenCalled();
 });
 
-// Base UI commits a select item on a click that began on it, so press first.
-function chooseOption(name: string) {
-  const option = screen.getByRole('option', { name });
-  fireEvent.pointerDown(option);
-  fireEvent.click(option);
-}
-
 const valueOf = (label: string) =>
   screen.getByLabelText<HTMLInputElement>(label).value;
 
@@ -306,7 +300,7 @@ test('shows a network listener as stored and saves it back unchanged', async () 
     },
   });
   await screen.findByText('Listening at https://agent.example.com');
-  expect(screen.getByRole('combobox', { name: 'Host' }).textContent).toContain(
+  expect(selectTrigger('Host').textContent).toContain(
     'Every network interface'
   );
   expect(valueOf('Port')).toBe('8443');
@@ -343,7 +337,7 @@ test('moving to every network interface proposes the team-local cert', async () 
   });
   await screen.findByText(/Off/);
   expect(valueOf('TLS certificate')).toBe('');
-  fireEvent.click(screen.getByRole('combobox', { name: 'Host' }));
+  fireEvent.click(selectTrigger('Host'));
   chooseOption('Every network interface');
   expect(valueOf('TLS certificate')).toBe('/team/cert.pem');
   expect(valueOf('TLS key')).toBe('/team/key.pem');
@@ -633,8 +627,10 @@ test('the operator turns standalone hosts on and off; others see the state only'
   mount('decide');
   expect(
     (
-      await screen.findByRole('switch', { name: 'Standalone hosts' })
-    ).hasAttribute('data-disabled')
+      await screen.findByRole<HTMLButtonElement>('switch', {
+        name: 'Standalone hosts',
+      })
+    ).disabled
   ).toBe(true);
 });
 

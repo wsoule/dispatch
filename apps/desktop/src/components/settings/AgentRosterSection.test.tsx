@@ -13,7 +13,7 @@ import { describe, expect, mock, test } from 'bun:test';
 import { agentRosterKey } from '../../lib/agentRoster';
 import { accessFor, NEEDS_DECIDE, SettingsAccessProvider } from './access';
 import { AgentRosterSection } from './AgentRosterSection';
-import { dataWith } from './fixtures.test-helper';
+import { dataWith, visibleText } from './fixtures.test-helper';
 
 const PORT = 4321;
 const PENDING = 'agent:wyat/cursor.macbook';
@@ -107,7 +107,7 @@ function mount(
 // The roster row naming `address`; the row's own text holds every cell.
 async function row(address: string): Promise<HTMLElement> {
   const title = await screen.findByText(address);
-  const element = title.closest<HTMLElement>('[data-slot="list-row"]');
+  const element = title.closest<HTMLElement>('[role="row"]');
   if (element === null) throw new Error(`no row for ${address}`);
   return element;
 }
@@ -118,7 +118,7 @@ describe('AgentRosterSection', () => {
     await row(APPROVED);
     const rows = screen
       .getAllByRole('row')
-      .map((r) => r.querySelector('[data-slot="list-row-title"]')?.textContent);
+      .map((r) => r.querySelector('[data-roster-title]')?.textContent);
     expect(rows).toEqual([
       `${PENDING}cursor`,
       `${APPROVED}claude-code`,
@@ -260,13 +260,15 @@ describe('AgentRosterSection', () => {
   test('without decide, the reason is written on the page, not only in tooltips', async () => {
     mount(rosterClient(), 'request');
     await row(PENDING);
-    expect(screen.queryByText(NEEDS_DECIDE)?.textContent).toBe(NEEDS_DECIDE);
+    const written = visibleText(NEEDS_DECIDE);
+    expect(written).toHaveLength(1);
+    expect(written[0]?.textContent).toBe(NEEDS_DECIDE);
   });
 
   test('with decide, no reason is written out', async () => {
     mount(rosterClient());
     await row(PENDING);
-    expect(screen.queryByText(NEEDS_DECIDE)?.textContent).toBeUndefined();
+    expect(visibleText(NEEDS_DECIDE)).toEqual([]);
   });
 
   // The pressed button leaves the row once the change lands; focus must not fall to the page.
