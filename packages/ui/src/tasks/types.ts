@@ -39,9 +39,16 @@ export interface ButtonAsButtonProps extends ButtonCommonProps {
   type?: 'button' | 'submit' | 'reset';
   disabled?: boolean;
   onClick?: (event: MouseEvent<HTMLButtonElement>) => void;
+  /** For a popup trigger (Menu, Popover): its arrow keys open the popup. */
+  onKeyDown?: (event: KeyboardEvent<HTMLButtonElement>) => void;
+  /** React 19 ref as a prop: a popup anchors to and refocuses the button. */
+  ref?: Ref<HTMLButtonElement>;
+  id?: string;
   'aria-pressed'?: boolean;
   'aria-expanded'?: boolean;
   'aria-controls'?: string;
+  'aria-haspopup'?: 'menu' | 'dialog' | 'listbox';
+  'aria-describedby'?: string;
 }
 
 export interface ButtonAsLinkProps extends ButtonCommonProps {

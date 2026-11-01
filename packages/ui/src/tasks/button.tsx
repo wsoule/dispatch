@@ -76,11 +76,16 @@ export function Button(props: ButtonProps) {
 
   return (
     <button
+      ref={props.ref}
+      id={props.id}
       type={props.type ?? 'button'}
       className={classes}
       disabled={props.disabled}
       onClick={props.onClick}
+      onKeyDown={props.onKeyDown}
       aria-label={props['aria-label']}
+      aria-haspopup={props['aria-haspopup']}
+      aria-describedby={props['aria-describedby']}
       aria-pressed={props['aria-pressed']}
       aria-expanded={props['aria-expanded']}
       aria-controls={props['aria-controls']}

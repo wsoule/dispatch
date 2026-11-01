@@ -233,6 +233,71 @@
   opacity: 0.85;
 }
 
+/* A field select fills the width its host gives the picker. */
+.fieldRoot {
+  display: flex;
+  align-items: stretch;
+}
+
+.fieldRoot > .triggerRow {
+  display: flex;
+}
+
+/* field: a form select (Select), Gr8r's bordered field (.input's edge,
+   radius and ring) at 30px with the chevron at its end. */
+.field {
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: var(--h-md);
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--control-border);
+  background: var(--surface);
+  font-size: var(--fs);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.field .face {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.field .faceText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+}
+
+.fieldChevron {
+  flex: none;
+  color: var(--text-3);
+}
+
+.field:focus-visible {
+  border-color: var(--accent);
+  outline: 2px solid transparent;
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 0 4px var(--accent-soft);
+}
+
+.field[aria-expanded='true'] {
+  border-color: var(--accent);
+}
+
+.field:disabled {
+  background: var(--surface-2);
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .field:not(:disabled, [aria-expanded='true']):hover {
+    border-color: var(--text-3);
+  }
+}
+
 /* brand: the app shell's brand row as the trigger (AppShell's workspace
    switcher, Gr8r's .ws): as wide as its container, padded like the brand
    link (5px 6px, 6px radius), the --surface-3 fill on hover and while

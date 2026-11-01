@@ -1,0 +1,48 @@
+/* Gr8r's popover card (.pop), placed by script and hidden until placed. */
+
+.layer {
+  position: fixed;
+  inset: auto;
+  z-index: 80;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  margin: 0;
+  padding: var(--s-3);
+  overflow: auto;
+  border: 0;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: var(--fs);
+  line-height: var(--lh);
+  visibility: hidden;
+}
+
+.layer[data-placed='true'] {
+  visibility: visible;
+}
+
+.layer:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .layer[data-placed='true'] {
+    animation: pop-in 0.16s var(--ease) both;
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

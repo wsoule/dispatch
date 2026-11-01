@@ -1,0 +1,30 @@
+/* A form row: a 12.5px medium label, the control, then a quiet hint and
+   a red error line, 6px apart. */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.label {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+.hint,
+.error {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+}
+
+.hint {
+  color: var(--text-3);
+}
+
+.error {
+  color: var(--red);
+}

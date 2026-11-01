@@ -1,0 +1,186 @@
+/* Gr8r's modal: the native <dialog> is a transparent full-screen frame over
+   the --overlay ::backdrop, holding a 12px-radius panel. */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  padding: var(--s-6) var(--s-4);
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  overflow: hidden;
+}
+
+.modal[open] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal[data-placement='top'][open] {
+  align-items: flex-start;
+  padding-top: 12vh;
+}
+
+.modal::backdrop {
+  background: var(--overlay);
+}
+
+.modal:focus-visible {
+  outline: 2px solid transparent;
+}
+
+.panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 100%);
+  max-height: 100%;
+  overflow: hidden;
+  border-radius: var(--r-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  font-family: var(--font-body);
+  font-size: var(--fs);
+  line-height: var(--lh);
+}
+
+.panel[data-size='sm'] {
+  width: min(420px, 100%);
+}
+
+.panel[data-size='lg'] {
+  width: min(680px, 100%);
+}
+
+.panel[data-size='xl'] {
+  width: min(920px, 100%);
+}
+
+.panel[data-size='full'] {
+  width: min(1080px, 100%);
+  height: min(780px, 100%);
+}
+
+.chrome {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  height: 40px;
+  padding: 0 8px 0 16px;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+
+.crumb {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 16px 8px;
+}
+
+.headerWithClose {
+  padding-right: 48px;
+}
+
+.cornerClose {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  line-height: 1.35;
+  letter-spacing: var(--ls-section);
+  overflow-wrap: anywhere;
+}
+
+.description {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-height: 0;
+  padding: 8px 16px 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.body:empty {
+  display: none;
+}
+
+.footer {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 12px 16px;
+  border-top: 1px solid var(--divider);
+}
+
+.footerStart {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .modal[open] .panel {
+    animation: modal-in 0.16s var(--ease) both;
+  }
+
+  .modal[open]::backdrop {
+    animation: scrim-in 0.16s ease both;
+  }
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+}

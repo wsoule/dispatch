@@ -366,6 +366,8 @@ export { InlineTextField } from './edit/inline-text-field';
 export { PickerMarkView, type PickerMarkViewProps } from './edit/picker-mark';
 export { PickerPopover } from './edit/picker-popover';
 export {
+  type BesidePlacement,
+  placeBeside,
   type Placement,
   type PlacementInput,
   placePopover,
@@ -425,3 +427,46 @@ export type {
   TaskSearchResult,
   TextAreaEditorProps,
 } from './edit/types';
+
+// ---- controls family (src/controls): general-purpose form and overlay
+// controls — text field and area, the labelled Field, radio group, the form
+// Select (a PickerPopover), Menu, Popover, Tooltip, Dialog and
+// ConfirmDialog, Disclosure and Spinner. Menu and Popover hand their
+// trigger props to a render function; spread them onto a Button. Props are
+// typed in ./controls/types.
+export { ConfirmDialog, Dialog } from './controls/dialog';
+export { Disclosure } from './controls/disclosure';
+export { Field } from './controls/field';
+export { Menu } from './controls/menu';
+export { Popover } from './controls/popover';
+export { RadioGroup } from './controls/radio-group';
+export { Select } from './controls/select';
+export { Spinner } from './controls/spinner';
+export { TextArea } from './controls/text-area';
+export { TextField } from './controls/text-field';
+export { Tooltip } from './controls/tooltip';
+export type {
+  ConfirmDialogProps,
+  DialogProps,
+  DialogSize,
+  DisclosureProps,
+  FieldProps,
+  MenuActionItem,
+  MenuEntry,
+  MenuGroup,
+  MenuProps,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuSubmenu,
+  PopoverProps,
+  PopupTriggerProps,
+  RadioGroupProps,
+  RadioOption,
+  SelectProps,
+  SpinnerProps,
+  SpinnerSize,
+  TextAreaProps,
+  TextFieldProps,
+  TextFieldVariant,
+  TooltipProps,
+} from './controls/types';

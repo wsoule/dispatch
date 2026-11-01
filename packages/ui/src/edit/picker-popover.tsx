@@ -1,6 +1,6 @@
 'use client';
 
-import { Check, Search } from 'lucide-react';
+import { Check, ChevronDown, Search } from 'lucide-react';
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -12,6 +12,7 @@ import {
 } from 'react';
 import { flushSync } from 'react-dom';
 
+import { showInTopLayer } from '../controls/anchored';
 import { useMediaQuery, useScrollLock } from '../shell/dom';
 import { Kbd } from '../shell/kbd';
 import { cx } from '../tasks/class-names';
@@ -69,6 +70,7 @@ const OUTSETS: Record<PickerAppearance, Outset> = {
   cell: { x: 7, y: 4 },
   bar: { x: 0, y: 0 },
   brand: { x: 0, y: 0 },
+  field: { x: 0, y: 0 },
 };
 
 function isList(value: PickerValue): value is readonly string[] {
@@ -77,19 +79,6 @@ function isList(value: PickerValue): value is readonly string[] {
 
 function optionKey(option: PickerOption): string {
   return `o:${option.value}`;
-}
-
-/** Puts the popover in the browser's top layer when the Popover API is
-    there, so no overflow, transform or z-index of the host can clip or
-    cover it; otherwise it stays a fixed layer (see positionLayer). */
-function showInTopLayer(layer: HTMLElement): void {
-  if (typeof layer.showPopover !== 'function') return;
-  try {
-    if (!layer.matches(':popover-open')) layer.showPopover();
-  } catch {
-    // An engine without :popover-open, or a detached node: the fixed
-    // fallback still positions it.
-  }
 }
 
 /**
@@ -966,6 +955,7 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
       className={cx(
         styles.root,
         appearance === 'brand' ? styles.brandRoot : undefined,
+        appearance === 'field' ? styles.fieldRoot : undefined,
         className
       )}
       data-picker=""
@@ -989,6 +979,14 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
           onKeyDown={onTriggerKeyDown}
         >
           <span className={styles.face}>{face}</span>
+          {appearance === 'field' ? (
+            <ChevronDown
+              className={styles.fieldChevron}
+              size={14}
+              strokeWidth={1.8}
+              aria-hidden="true"
+            />
+          ) : null}
         </button>
         {control.pending ? <PendingNote text={labels.saving} /> : null}
       </span>

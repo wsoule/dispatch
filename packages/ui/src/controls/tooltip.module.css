@@ -1,0 +1,47 @@
+/* The inverted slab, 12px text wrapping at 256px, placed by script. */
+
+.anchor {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.tip {
+  position: fixed;
+  inset: auto;
+  z-index: 90;
+  max-width: 256px;
+  margin: 0;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--text);
+  color: var(--text-inv);
+  font-family: var(--font-body);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 1.4;
+  text-align: start;
+  white-space: normal;
+  pointer-events: auto;
+  visibility: hidden;
+}
+
+.tip[hidden] {
+  display: none;
+}
+
+.tip[data-placed='true'] {
+  visibility: visible;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tip[data-placed='true'] {
+    animation: tip-in 0.12s ease both;
+  }
+}
+
+@keyframes tip-in {
+  from {
+    opacity: 0;
+  }
+}

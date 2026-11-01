@@ -1,0 +1,78 @@
+/* A folding section: row is full width with a turning leading chevron;
+   button is a small quiet button with a trailing one. */
+
+.disclosure {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.row {
+  width: 100%;
+  min-height: var(--h-sm);
+  padding: 0;
+  border-radius: var(--r-xs);
+}
+
+.button {
+  align-self: flex-start;
+  min-height: var(--h-sm);
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .button:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+}
+
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.button .text {
+  flex: none;
+}
+
+.chevron {
+  flex: none;
+  color: var(--text-3);
+  transition: transform var(--dur) ease;
+}
+
+.summary[aria-expanded='true'] .chevron {
+  transform: rotate(90deg);
+}
+
+.region {
+  min-width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron,
+  .button {
+    transition: none;
+  }
+}

@@ -1,0 +1,54 @@
+/* A ring in currentColor with one quarter open, turning once a second.
+   xs 12px, sm 14px, md 16px, lg 20px. */
+
+.spinner {
+  display: inline-flex;
+  flex: none;
+  vertical-align: middle;
+}
+
+.ring {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.xs {
+  width: 12px;
+  height: 12px;
+}
+
+.sm {
+  width: 14px;
+  height: 14px;
+}
+
+.md {
+  width: 16px;
+  height: 16px;
+}
+
+.lg {
+  width: 20px;
+  height: 20px;
+}
+
+.lg .ring {
+  border-width: 2px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ring {
+    animation-duration: 2.4s;
+  }
+}

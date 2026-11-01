@@ -1,0 +1,29 @@
+/* field is the global .textarea; grow hides the handle and scroll bar while
+   the script fits the height; inline drops the box. */
+
+.grow {
+  overflow: hidden;
+  resize: none;
+}
+
+.inline {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: var(--lh-long);
+}
+
+.inline::placeholder {
+  color: var(--text-3);
+}
+
+.inline:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
