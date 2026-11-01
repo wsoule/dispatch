@@ -509,6 +509,7 @@ const CONFIG_PAGES: PageLocks[] = [
     page: 'agents',
     locked: [
       'Models',
+      'Streaming',
       'Limits',
       'Permissions',
       'Defaults',
@@ -516,6 +517,7 @@ const CONFIG_PAGES: PageLocks[] = [
     ],
     controls: () => [
       screen.getByRole('combobox', { name: 'Coding runs model' }),
+      ...within(group('Streaming')).getAllByRole('button'),
       screen.getByLabelText('Runs at once'),
       screen.getByLabelText('Spend per run'),
       screen.getByLabelText('Ask me every time'),

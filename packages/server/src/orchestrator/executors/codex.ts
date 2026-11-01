@@ -32,6 +32,7 @@ import type {
   ExecutorStartOptions,
   NormalizedEntry,
 } from '../types.js';
+import { capToolResult } from '../types.js';
 import type { RunUsage } from '../usage.js';
 
 const STOP_MESSAGE =
@@ -254,7 +255,9 @@ function itemFrom(message: CodexAppServerMessage): CodexItem | undefined {
     | undefined;
 }
 
-function statusForItem(status: unknown): 'running' | 'done' | 'error' {
+/** How a Codex tool item (a command, an edit, an MCP call) stands: `done`
+ *  once it completed, `error` once it failed or was declined. */
+export function codexItemStatus(status: unknown): 'running' | 'done' | 'error' {
   if (status === 'completed') return 'done';
   if (status === 'failed' || status === 'declined') return 'error';
   return 'running';
@@ -263,8 +266,10 @@ function statusForItem(status: unknown): 'running' | 'done' | 'error' {
 // Maps one item notification to its entry. A tool item is logged when it
 // starts and again when it completes, both under the item's id as
 // `toolUseId`, so a reader folds the completed copy into the started one.
-// A finished agentMessage of a run that streams carries its id as `streamId`:
-// its `item/agentMessage/delta` text was keyed by it.
+// A completed command keeps its output, capped (capToolResult): the run's
+// chat has always shown it, unlike a Claude call's result, which keeps only
+// how it ended. A finished agentMessage of a run that streams carries its id
+// as `streamId`: its `item/agentMessage/delta` text was keyed by it.
 function entryForItem(
   item: CodexItem,
   completed: boolean,
@@ -299,10 +304,16 @@ function entryForItem(
         command: item.command,
         cwd: item.cwd,
         ...(completed
-          ? { output: item.aggregatedOutput, exitCode: item.exitCode }
+          ? {
+              output:
+                typeof item.aggregatedOutput === 'string'
+                  ? capToolResult(item.aggregatedOutput)
+                  : item.aggregatedOutput,
+              exitCode: item.exitCode,
+            }
           : {}),
       },
-      status: statusForItem(item.status),
+      status: codexItemStatus(item.status),
       ...callId,
     };
   }
@@ -312,7 +323,7 @@ function entryForItem(
       kind: 'tool',
       toolName: 'codex.fileChange',
       toolInput: { changes: item.changes },
-      status: statusForItem(item.status),
+      status: codexItemStatus(item.status),
       ...callId,
     };
   }
@@ -324,7 +335,7 @@ function entryForItem(
       kind: 'tool',
       toolName: `mcp.${server}.${tool}`,
       toolInput: item.arguments,
-      status: statusForItem(item.status),
+      status: codexItemStatus(item.status),
       ...callId,
     };
   }

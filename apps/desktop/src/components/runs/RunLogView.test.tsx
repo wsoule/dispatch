@@ -322,9 +322,12 @@ test('renders the sub-agent tree and the spawn/finish rows from agent entries', 
   expect(
     screen.getByRole('treeitem', { name: 'Map the server, done' })
   ).toBeDefined();
-  expect(screen.getByText('Spawned')).toBeDefined();
-  expect(screen.getByText('Agent finished')).toBeDefined();
-  expect(screen.getAllByText('agent')).toHaveLength(2);
+  // Both lifecycle lines are timeline rows, not loose text.
+  for (const verb of ['Spawned', 'Agent finished']) {
+    expect(
+      screen.getByText(verb).closest('[data-slot="tool-chip"]')
+    ).not.toBeNull();
+  }
 });
 
 function renderEntries(
@@ -676,12 +679,12 @@ test('a resumable failed run can ask its agent to fix the failure', async () => 
   expect(sent).toEqual([askAgentToFix(error)]);
 });
 
-// A tool chip's state as ToolChip draws it: a failed chip washes red, a running one
-// shimmers its label.
+// A tool chip's state as ToolChip draws it: failed is stamped on the chip, a running
+// one shimmers its label.
 function chipState(target: string): 'running' | 'done' | 'failed' {
-  const chip = screen.getByText(target).closest('[class*="rounded-chip"]');
+  const chip = screen.getByText(target).closest('[data-slot="tool-chip"]');
   if (chip === null) throw new Error(`no chip shows ${target}`);
-  if (chip.className.includes('text-red')) return 'failed';
+  if (chip.getAttribute('data-state') === 'failed') return 'failed';
   return chip.querySelector('[class*="shimmer-text"]') === null
     ? 'done'
     : 'running';
@@ -831,4 +834,82 @@ test('a run with nothing logged yet shows its first words instead of the spinner
   renderLive([], [{ id: 'msg_1:0', text: 'Looking around.' }]);
   expect(screen.getByText('Looking around.')).toBeDefined();
   expect(screen.queryByText('Working…')).toBeNull();
+});
+
+// A CLI agent's stdout lands one read at a time, cut wherever each read fell:
+// the chat shows the reads as the one text they are, so a code block or a
+// list split between them still renders whole.
+test("a CLI agent's output renders as one text however its reads cut it", () => {
+  const chunk = (text: string): NormalizedEntry => ({
+    ts: '2026-10-26T10:00:00.000Z',
+    kind: 'assistant',
+    text,
+    chunk: true,
+  });
+  renderEntries([
+    chunk('Here is the fix:\n\n```ts\nconst a = 1;\n'),
+    chunk('const b = 2;\n```\n\nThen:\n\n- one\n'),
+    chunk('- two\n'),
+  ]);
+
+  const log = screen.getByRole('region', { name: 'Run log' });
+  const blocks = log.querySelectorAll('pre');
+  expect(blocks).toHaveLength(1);
+  expect(blocks[0]?.textContent).toContain('const a = 1;');
+  expect(blocks[0]?.textContent).toContain('const b = 2;');
+  const lists = log.querySelectorAll('ul');
+  expect(lists).toHaveLength(1);
+  expect(lists[0]?.querySelectorAll('li')).toHaveLength(2);
+  expect(within(log).queryByText(/```/)).toBeNull();
+});
+
+// That text grows with every read, so while the run is live it is drawn one
+// Markdown block at a time (a read redraws the open block, not all of it);
+// once the run ends it is one Markdown again.
+test("a live CLI agent's output is drawn block by block", () => {
+  const chunk = (text: string): NormalizedEntry => ({
+    ts: '2026-10-26T10:00:00.000Z',
+    kind: 'assistant',
+    text,
+    chunk: true,
+  });
+  const entries = [
+    chunk('First paragraph.\n\n```sh\nbun test\n\n'),
+    chunk('bun run lint\n```\n\nStill wri'),
+  ];
+  const { rerender } = renderEntries(entries);
+  const log = screen.getByRole('region', { name: 'Run log' });
+  const drawn = () =>
+    Array.from(log.querySelectorAll('[data-slot="markdown"]'), (md) =>
+      md.textContent?.trim()
+    );
+  expect(log.querySelector('[data-slot="streaming-blocks"]')).not.toBeNull();
+  const blocks = drawn();
+  expect(blocks).toHaveLength(3);
+  expect(blocks[0]).toBe('First paragraph.');
+  // The blank line inside the code block does not end it.
+  expect(blocks[1]).toContain('bun test');
+  expect(blocks[1]).toContain('bun run lint');
+  expect(blocks[2]).toBe('Still wri');
+
+  rerender(
+    <RunLogView
+      meta={meta({ state: 'finished' })}
+      entries={entries}
+      pendingApprovals={[]}
+      onApprove={noop}
+      onSendMessage={noop}
+      openQuestions={[]}
+      onAnswerQuestion={noop}
+      pendingScopeRequest={null}
+      onDecideScopeRequest={noop}
+      scopeDecide={CAN_DECIDE}
+      onRestartDaemon={noop}
+      onRequestChanges={noop}
+      onOpenMessage={null}
+      me={null}
+      readsAllThreads
+    />
+  );
+  expect(drawn()).toHaveLength(1);
 });

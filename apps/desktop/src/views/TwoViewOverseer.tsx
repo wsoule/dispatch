@@ -14,6 +14,7 @@ import { TakeOverDaemon } from '../components/settings/TakeOverDaemon';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { OverseerSession } from '../hooks/useOverseerSession';
+import { revokedLocksComposer } from '../lib/agentPresence';
 import { docked, restored, useOverseerDock } from '../lib/overseerDock';
 import type { OverseerDoor } from '../lib/overseerThread';
 import { cn } from '@/lib/utils';
@@ -355,8 +356,10 @@ export function TwoViewOverseer({
                 {columnDoors}
               </>
             }
-            disabled={revoked || attached}
-            durable
+            disabled={
+              revokedLocksComposer({ revoked, conversationId: open }) ||
+              attached
+            }
             onOpenDoor={onOpenDoor}
           />
         )}

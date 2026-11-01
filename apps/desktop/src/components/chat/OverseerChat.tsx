@@ -3,12 +3,12 @@ import type {
   OverseerAction,
   OverseerApproval,
   OverseerAttachment,
+  OverseerRecordView,
 } from '@dispatch/client';
 import {
   Check,
   CircleAlert,
   FileIcon,
-  Plus,
   Search,
   Shield,
   Wrench,
@@ -22,12 +22,7 @@ import type {
 } from '../../hooks/useOverseerSession';
 import { cardRaw } from '../../lib/cardContent';
 import { formatRelativeTimeFromIso } from '../../lib/format';
-import {
-  DEFAULT_EFFORT_ID,
-  effortOptions,
-  modelLabel,
-  MODELS,
-} from '../../lib/models';
+import { DEFAULT_EFFORT_ID, effortOptions, MODELS } from '../../lib/models';
 import {
   buildOverseerThread,
   doorLabel,
@@ -36,6 +31,7 @@ import {
   groupToolRows,
   type OverseerDoor,
   type OverseerStreamItem,
+  type ToolCallState,
 } from '../../lib/overseerThread';
 import { slashSuggestions } from '../../lib/slashCommands';
 import { askAgentToFix, FailureNotice } from '../failure/FailureNotice';
@@ -49,6 +45,7 @@ import { StreamingText } from '@/ui/ai/streaming-text';
 import { ToolApprovalCard } from '@/ui/ai/tool-approval-card';
 import { ToolChip, ToolChipGroup } from '@/ui/ai/tool-chips';
 import { Button } from '@/ui/button';
+import { ProgressGlyph } from '@/ui/chrome';
 import {
   Collapsible,
   CollapsibleContent,
@@ -200,16 +197,15 @@ function AgentProse({
   );
 }
 
-/** One turn of the overseer conversation — the same bubble treatment as the plan
- * thread: the assistant's replies are markdown (it's an agent transcript), the
- * user's own words render verbatim. A `streaming` reply is the running turn's
+/** One turn of the overseer conversation: your words verbatim in a pill on the
+ * right, the agent's reply as bare Markdown across the column (it's an agent
+ * transcript), the time on hover. A `streaming` reply is the running turn's
  * text still arriving: it has no time yet. */
 function OverseerMessageBubble({
   speaker,
   text,
   at,
   streaming = false,
-  plain = false,
   attachments = [],
   fetchAttachment,
 }: {
@@ -217,38 +213,15 @@ function OverseerMessageBubble({
   text: string;
   at?: string;
   streaming?: boolean;
-  /** Two views: a pill for you, bare text for the agent, the time on hover. */
-  plain?: boolean;
   attachments?: OverseerAttachment[];
   fetchAttachment: (attachment: OverseerAttachment) => Promise<Blob>;
 }) {
-  const fromUser = speaker === 'user';
-  const live = streaming ? 'overseer-live' : undefined;
-  const files =
-    attachments.length > 0 ? (
-      <SentAttachments
-        attachments={attachments}
-        fetchAttachment={fetchAttachment}
-      />
-    ) : null;
-  if (plain) {
-    const when = at === undefined ? undefined : new Date(at).toLocaleString();
-    return fromUser ? (
-      <>
-        {files}
-        {text.trim() !== '' && (
-          <p
-            title={when}
-            className="bg-surface-secondary shadow-hairline rounded-card font-book max-w-[85%] self-end px-3 py-1.5 text-[13px] whitespace-pre-wrap"
-          >
-            {text}
-          </p>
-        )}
-      </>
-    ) : (
+  const when = at === undefined ? undefined : new Date(at).toLocaleString();
+  if (speaker === 'assistant') {
+    return (
       <div
         title={when}
-        data-testid={live}
+        data-testid={streaming ? 'overseer-live' : undefined}
         className="max-w-full self-stretch px-1"
       >
         <AgentProse text={text} streaming={streaming} />
@@ -256,54 +229,34 @@ function OverseerMessageBubble({
     );
   }
   return (
-    <div
-      data-testid={live}
-      className={cn(
-        'rounded-card flex max-w-[85%] flex-col gap-1 px-3 py-2',
-        fromUser
-          ? 'bg-surface-secondary shadow-hairline self-end'
-          : 'bg-surface-quaternary shadow-card self-start'
+    <>
+      {attachments.length > 0 && (
+        <SentAttachments
+          attachments={attachments}
+          fetchAttachment={fetchAttachment}
+        />
       )}
-    >
-      <div className="text-muted-foreground flex items-baseline gap-1.5 text-[12px] font-medium">
-        {fromUser ? 'You' : 'Assistant'}
-        {at !== undefined && (
-          <span className="font-book">{formatRelativeTimeFromIso(at)}</span>
-        )}
-      </div>
-      {fromUser ? (
-        <>
-          {files}
-          {text.trim() !== '' && (
-            <p className="font-book text-[13px] whitespace-pre-wrap">{text}</p>
-          )}
-        </>
-      ) : (
-        <AgentProse text={text} streaming={streaming} />
+      {text.trim() !== '' && (
+        <p
+          title={when}
+          className="bg-surface-inset rounded-card font-book max-w-[80%] self-end p-3 text-[13px] leading-relaxed whitespace-pre-wrap"
+        >
+          {text}
+        </p>
       )}
-    </div>
+    </>
   );
 }
 
 /** Prose the agent wrote between tool calls (or before a Stop): the agent's
  * own voice, so Markdown in its column with no speaker line of its own, and
  * muted, so the reply stays what the eye lands on. */
-function OverseerNarration({
-  text,
-  at,
-  plain,
-}: {
-  text: string;
-  at: string;
-  plain: boolean;
-}) {
+function OverseerNarration({ text, at }: { text: string; at: string }) {
   return (
     <div
       title={new Date(at).toLocaleString()}
       data-testid="overseer-narration"
-      className={
-        plain ? 'max-w-full self-stretch px-1' : 'max-w-[85%] self-start px-3'
-      }
+      className="max-w-full self-stretch px-1"
     >
       <AgentProse text={text} className="text-muted-foreground" />
     </div>
@@ -552,7 +505,7 @@ function OverseerQueuedBubble({
   return (
     <div
       data-testid="overseer-queued"
-      className="rounded-control bg-surface-quaternary/60 text-muted-foreground font-book flex max-w-[85%] flex-col gap-1 self-end border-[0.5px] border-dashed px-3 py-1.5 text-[13px]"
+      className="rounded-card text-muted-foreground font-book flex max-w-[80%] flex-col gap-1 self-end border border-dashed p-3 text-[13px]"
     >
       {editing === null ? (
         <span className="whitespace-pre-wrap">{text}</span>
@@ -678,7 +631,7 @@ const FOLLOW_SLACK_PX = 48;
 function ToolRun({
   calls,
 }: {
-  calls: { tool: string; text: string; failed: boolean }[];
+  calls: { tool: string; text: string; state: ToolCallState }[];
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -695,7 +648,7 @@ function ToolRun({
               key={`${call.tool}-${i}`}
               icon={Wrench}
               label={call.tool}
-              state={call.failed ? 'failed' : 'done'}
+              state={call.state}
             />
           ))}
         </ToolChipGroup>
@@ -718,59 +671,78 @@ function ToolRun({
   );
 }
 
+/** How full the conversation's context is, as a whole percent of the context
+ *  its next turn starts over from a recap at; null until the daemon says both
+ *  (a daemon older than `contextLimit`, or no turn has reported yet). */
+function contextPercent(record: OverseerRecordView | undefined): number | null {
+  const used = record?.contextTokens;
+  const limit = record?.contextLimit;
+  if (used === undefined || used <= 0 || limit === undefined || limit <= 0) {
+    return null;
+  }
+  return Math.min(100, Math.round((used / limit) * 100));
+}
+
+/** The status line's context meter: a pie and its percent, the rule on hover. */
+function ContextMeter({ percent }: { percent: number }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            data-testid="overseer-context"
+            className="inline-flex items-center gap-1 align-middle tabular-nums"
+          />
+        }
+      >
+        <ProgressGlyph fraction={percent / 100} />
+        {percent}% context
+      </TooltipTrigger>
+      <TooltipContent className="max-w-64">
+        How full the agent's context is. When it is full, the agent's next turn
+        starts afresh from a recap of the latest lines.
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 interface OverseerChatProps {
   overseer: OverseerSession;
-  /**
-   * Rail-sized: drops the card chrome and the long intro copy, stacks the
-   * composer under the transcript, and adds its own "New" reset (the full page
-   * keeps that in its header). Every conversation row — bubbles, confirm
-   * cards, outcomes — is the same component either way, so approving a
-   * mutation from the rail goes through exactly the path the full page uses.
-   */
-  compact?: boolean;
   /** Replaces both composers' placeholders (Two views says "say something"). */
   placeholder?: string;
   /** Sits between the transcript and the composer: Two views' door to the asks. */
   aboveComposer?: ReactNode;
   /** Locks the composer, as for a revoked Overseer. */
   disabled?: boolean;
-  /**
-   * Two views' one conversation: typing during a turn queues, Stop ends the
-   * turn, the stream shows its spend, and ⌘F searches it.
-   */
-  durable?: boolean;
   /** Opens a show_tasks door; without it a door reads as a plain line. */
   onOpenDoor?: (door: OverseerDoor) => void;
 }
 
 /**
  * The overseer conversation itself — transcript, composer, and the approve/deny
- * confirm cards — so every surface that shows it renders the one
- * `useOverseerSession` the App mounts. Status
+ * confirm cards — rendering the one `useOverseerSession` the App mounts. Status
  * questions are answered directly; anything mutating shows up as a confirm
- * card in the transcript and runs only once approved there.
+ * card in the transcript and runs only once approved there. It is Two views'
+ * one conversation: typing during a turn queues, Stop ends the turn, the
+ * status line shows its spend, and ⌘F searches it.
  */
 export function OverseerChat({
   overseer,
-  compact = false,
   placeholder,
   aboveComposer,
   disabled = false,
-  durable = false,
   onOpenDoor,
 }: OverseerChatProps) {
-  // The composer's text is the session's, not this component's: the rail
-  // unmounts this chat on a tab flip and on collapse, and navigating to the
-  // Overseer page unmounts the rail entirely. Only one of the two textareas
-  // below is ever on screen (which one depends on `conversationId`), so a
-  // single draft is unambiguous.
+  // The composer's text is the session's, not this component's: leaving the
+  // Overseer page unmounts this chat, and the session outlives it. Only one of
+  // the two textareas below is ever on screen (which one depends on
+  // `conversationId`), so a single draft is unambiguous.
   const { draft, setDraft } = overseer;
 
   // Sending state is the session's too, and for the same reason as the draft:
-  // the rail's tab flip unmounts this panel, so a `setState` from a call that
-  // fails after the flip would land on an unmounted component and report the
-  // failure to nobody. One flag and one error cover both composers — only one
-  // of them is ever on screen, and `conversationId` decides which.
+  // a `setState` from a call that fails after the chat unmounted would report
+  // the failure to nobody. One flag and one error cover both composers — only
+  // one of them is ever on screen, and `conversationId` decides which.
   const { sending, sendError } = overseer;
 
   // Pasted, dropped or picked files waiting on the next send — the session's,
@@ -816,7 +788,6 @@ export function OverseerChat({
   // ⌘F searches the stream while it is on screen; a view kept mounted but
   // hidden has no layout box, so it never takes the key.
   useEffect(() => {
-    if (!durable) return;
     const onKey = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'f')
         return;
@@ -827,7 +798,7 @@ export function OverseerChat({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [durable]);
+  }, []);
 
   // Pin the transcript to the newest row — keyed on the last row's identity as
   // well as the count, since a turn settling in place (pending spinner → reply)
@@ -875,27 +846,17 @@ export function OverseerChat({
       el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_SLACK_PX;
   }
 
-  // A turn is in flight — dispatchd 409s a second message until it settles.
-  // Confirm cards stay live on purpose: the server accepts a decision mid-turn.
-  // `recordError` only decides the no-record case (fetch never succeeded →
-  // broken conversation showing its 404 banner, not the overseer answering);
-  // with a record cached, one failed *background* refetch mid-turn must not
-  // flip the composer open against a turn the server would still 409.
+  // A turn is in flight: the status line says so and offers Stop, and what is
+  // sent now waits behind it. Confirm cards stay live on purpose: the server
+  // accepts a decision mid-turn. `recordError` only decides the no-record case
+  // (fetch never succeeded → broken conversation showing its 404 banner, not
+  // the overseer answering); with a record cached, one failed *background*
+  // refetch mid-turn must not read as the turn having ended.
   const busy =
     overseer.conversationId !== null &&
     (overseer.record === undefined
       ? overseer.recordError === null
       : overseer.record.state === 'running');
-
-  // A queued mutation nobody has decided on, or a built-in call the turn is
-  // parked on. Gates the compact reset: dropping the conversation is the only
-  // way to lose the card in the UI, and a parked call would block its session
-  // for good. No `recordError` guard needed — useOverseerSession clears
-  // `record` when the daemon says the conversation is gone, so this cannot
-  // lock on a ghost.
-  const hasPendingAction =
-    (overseer.record?.pendingActions.length ?? 0) > 0 ||
-    (overseer.record?.pendingApprovals.length ?? 0) > 0;
 
   /**
    * Both composers' submit. Everything past the guard — clearing the draft,
@@ -903,16 +864,13 @@ export function OverseerChat({
    * `overseer.submit`, which picks `start` or `sendMessage` off `conversationId`
    * exactly as the branch below picks which composer to render.
    *
-   * `busy` is re-checked here rather than only on the button because the
-   * composer stays editable mid-turn: Enter must not slip a message past a
-   * turn the server would 409.
+   * A message sent mid-turn is fine: the daemon queues it behind the turn.
    */
   function submitDraft() {
     const text = draft.trim();
     // A pasted screenshot alone is a message; an upload still running is not.
     const empty = text === '' && overseer.attachments.length === 0;
-    // A durable conversation takes a message mid-turn: the daemon queues it.
-    if (empty || sending || overseer.attaching || (busy && !durable)) return;
+    if (empty || sending || overseer.attaching) return;
     // The reader asked for a reply, so their message and the answer should be
     // in view even if they had scrolled up to read.
     followRef.current = true;
@@ -961,19 +919,13 @@ export function OverseerChat({
             speaker={item.role}
             text={item.text}
             at={item.at}
-            plain={durable}
             attachments={item.attachments}
             fetchAttachment={overseer.fetchAttachment}
           />
         );
       case 'narration':
         return (
-          <OverseerNarration
-            key={item.key}
-            text={item.text}
-            at={item.at}
-            plain={durable}
-          />
+          <OverseerNarration key={item.key} text={item.text} at={item.at} />
         );
       case 'live':
         return (
@@ -982,21 +934,8 @@ export function OverseerChat({
             speaker="assistant"
             text={item.text}
             streaming
-            plain={durable}
             fetchAttachment={overseer.fetchAttachment}
           />
-        );
-      case 'tool':
-        return (
-          <div
-            key={item.key}
-            className="text-muted-foreground font-book flex items-start gap-1.5 self-start px-1 text-[12px]"
-          >
-            <Wrench className="size-3 shrink-0 translate-y-0.5" />
-            <span className="line-clamp-2">
-              <span className="font-medium">{item.tool}</span> — {item.text}
-            </span>
-          </div>
         );
       case 'tools':
         return <ToolRun key={item.key} calls={item.calls} />;
@@ -1124,30 +1063,26 @@ export function OverseerChat({
     return (
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
-          {!compact && (
-            <p className="text-[15px] font-medium">What should we work on?</p>
-          )}
+          <p className="text-[15px] font-medium">What should we work on?</p>
           <p className="text-muted-foreground font-book text-[13px]">
             Ask about runs, tasks or the code. Anything that changes the project
             waits for your approval.
           </p>
         </div>
-        {!compact && (
-          <div
-            className="flex flex-wrap gap-1.5"
-            aria-label="Starter questions"
-            role="group"
-          >
-            {STARTERS.map((starter) => (
-              <PillButton
-                key={starter.label}
-                onClick={() => setDraft(starter.text)}
-              >
-                {starter.label}
-              </PillButton>
-            ))}
-          </div>
-        )}
+        <div
+          className="flex flex-wrap gap-1.5"
+          aria-label="Starter questions"
+          role="group"
+        >
+          {STARTERS.map((starter) => (
+            <PillButton
+              key={starter.label}
+              onClick={() => setDraft(starter.text)}
+            >
+              {starter.label}
+            </PillButton>
+          ))}
+        </div>
         {sendError !== null && <ErrorLine>{sendError}</ErrorLine>}
         {aboveComposer}
         {/* Which model the conversation opens on — remembered per device, so
@@ -1172,16 +1107,11 @@ export function OverseerChat({
   }
 
   const spend = overseer.record?.spendUsd ?? 0;
+  const context = contextPercent(overseer.record);
   const suggestions = slashSuggestions(draft, overseer.record?.commands ?? []);
 
   return (
-    <div
-      ref={rootRef}
-      className={cn(
-        'flex min-h-0 flex-1 flex-col',
-        compact ? 'gap-2' : 'gap-3'
-      )}
-    >
+    <div ref={rootRef} className="flex min-h-0 flex-1 flex-col gap-3">
       {query !== null && (
         <InputGroup>
           <InputGroupAddon>
@@ -1225,10 +1155,7 @@ export function OverseerChat({
         onScroll={onLogScroll}
         className="flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto [overflow-wrap:anywhere] [&>*]:shrink-0"
       >
-        {(durable
-          ? groupConfirmRows(groupToolRows(thread))
-          : groupToolRows(thread)
-        ).map(renderRow)}
+        {groupConfirmRows(groupToolRows(thread)).map(renderRow)}
       </div>
 
       {aboveComposer}
@@ -1238,26 +1165,21 @@ export function OverseerChat({
         )}
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground font-book min-w-0 flex-1 truncate text-[12px]">
-            {busy
-              ? durable
-                ? 'Working · what you send now goes when it finishes'
-                : 'The overseer is answering…'
-              : durable
-                ? null
-                : compact
-                  ? 'Actions wait for your approval.'
-                  : 'Ask a follow-up. Actions always wait for your approval.'}
-            {/* A durable conversation's picker names the model; otherwise it is named here. */}
-            {!durable && overseer.record?.model !== undefined && (
-              <> · {modelLabel(overseer.record.model)}</>
-            )}
-            {durable && spend > 0 && (
+            {busy && 'Working · what you send now goes when it finishes'}
+            {/* The model is named by the composer's picker, not here. */}
+            {spend > 0 && (
               <span data-testid="overseer-spend">
                 {busy ? ' · ' : ''}${spend.toFixed(2)} so far
               </span>
             )}
+            {context !== null && (
+              <>
+                {busy || spend > 0 ? ' · ' : ''}
+                <ContextMeter percent={context} />
+              </>
+            )}
           </span>
-          {durable && busy && (
+          {busy && (
             <Button
               variant="outline"
               size="xs"
@@ -1268,39 +1190,13 @@ export function OverseerChat({
               Stop
             </Button>
           )}
-          {compact && (
-            // The full page's "New conversation" lives in its header; the rail
-            // has no header of its own, so the reset rides the composer row.
-            // Disabled while an action awaits a decision: reset() drops the
-            // only UI handle on this conversation, and a pending mutation must
-            // stay decidable. Its accessible name deliberately omits the word
-            // "overseer": the sidebar's global nav has a button named exactly
-            // "Overseer", and role-name matching is case-insensitive substring
-            // by default, so any rail button carrying the word would make that
-            // name ambiguous.
-            <Button
-              variant="ghost"
-              size="xs"
-              disabled={hasPendingAction}
-              onClick={() => overseer.reset()}
-              aria-label="Start a new conversation"
-              title={
-                hasPendingAction ? 'Decide the pending action first' : undefined
-              }
-              className="shrink-0"
-            >
-              <Plus className="size-3" /> New
-            </Button>
-          )}
         </div>
-        {/* Disabled for the whole turn, not just the send: the composer is the
-            primitive's, and a Send that looks live against a turn the server
-            would 409 is the worse of the two. */}
+        {/* Open mid-turn: what is sent then waits for the turn to end. */}
         <PromptBar
           value={draft}
           onChange={setDraft}
           onSubmit={submitDraft}
-          disabled={disabled || (busy && !durable) || sending}
+          disabled={disabled || sending}
           placeholder={
             placeholder ??
             'Ask about runs, tasks, the queue — or ask it to act…'

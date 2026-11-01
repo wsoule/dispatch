@@ -44,20 +44,23 @@ describe('RunStatePill', () => {
     expect(pills[0]?.textContent).toBe('Working');
   });
 
-  test('compact is the 14px mark alone, named by state and disposition', () => {
+  test('compact is the 9px status dot alone, named by state and disposition', () => {
     const { container } = render(<RunStatePill meta={run()} compact />);
     const mark = screen.getByRole('img', { name: 'Review · Needs review' });
     expect(mark.dataset['slot']).toBe('run-state-mark');
     expect(mark.dataset['runState']).toBe('finished');
     expect(mark.title).toBe('Review · Needs review');
     expect(container.querySelector('[data-slot=pill]')).toBeNull();
-    expect(mark.querySelector('svg')?.classList.contains('size-3.5')).toBe(
-      true
-    );
+    const dot = mark.querySelector('[data-slot=state-dot]');
+    expect(dot?.classList.contains('size-[9px]')).toBe(true);
+    expect(dot?.className).not.toContain('animate-status-pulse');
   });
 
-  test('a compact live run is named by its state alone', () => {
+  test('a compact live run is named by its state alone, and pulses', () => {
     render(<RunStatePill meta={run({ state: 'running' })} compact />);
-    expect(screen.getByRole('img', { name: 'Working' })).not.toBeNull();
+    const mark = screen.getByRole('img', { name: 'Working' });
+    expect(mark.querySelector('[data-slot=state-dot]')?.className).toContain(
+      'animate-status-pulse'
+    );
   });
 });

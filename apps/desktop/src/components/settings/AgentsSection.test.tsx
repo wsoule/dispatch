@@ -1,6 +1,7 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
+import { accessFor, SettingsAccessProvider } from './access';
 import { AgentsSection } from './AgentsSection';
 import { testConfig as config } from './fixtures.test-helper';
 
@@ -173,8 +174,8 @@ test('choosing Default effort clears the role', () => {
   expect(r.saved).toEqual([{ effort: { execute: null } }]);
 });
 
-// Models first, then the limits runs work under, then what they may do, then
-// which agent a dispatch uses.
+// Models first, then how their chats stream, the limits runs work under,
+// what they may do, then which agent a dispatch uses.
 test('the page is sentence-case groups in order', () => {
   renderAgents();
   expect(
@@ -182,6 +183,7 @@ test('the page is sentence-case groups in order', () => {
   ).toEqual([
     'Models',
     'Judgments',
+    'Streaming',
     'Limits',
     'Permissions',
     'Defaults',
@@ -207,4 +209,81 @@ test('the permission radios paint with the primary accent', () => {
     expect(radio.className).toContain('accent-primary');
     expect(radio.className).not.toContain('accent-accent');
   }
+});
+
+// The two streaming switches: every mode in view, the chosen one pressed,
+// and the line under each saying what the chosen mode does.
+function streamMode(row: string, mode: string): HTMLElement {
+  return within(screen.getByRole('group', { name: row })).getByRole('button', {
+    name: mode,
+  });
+}
+
+test('both chats stream live when config.yml says nothing', () => {
+  renderAgents();
+  expect(streamMode('Assistant', 'Live').getAttribute('aria-pressed')).toBe(
+    'true'
+  );
+  expect(streamMode('Runs', 'Live').getAttribute('aria-pressed')).toBe('true');
+  expect(
+    screen.getByText(
+      'Its reply appears as it writes, and what it says between steps stays in the chat.'
+    )
+  ).toBeTruthy();
+  // Narration is the Assistant's alone.
+  expect(
+    within(screen.getByRole('group', { name: 'Runs' }))
+      .getAllByRole('button')
+      .map((b) => b.textContent)
+  ).toEqual(['Live', 'Off']);
+});
+
+test('pressing a mode saves it under its own block', () => {
+  const r = recorder();
+  renderAgents({ onSave: r.onSave });
+  fireEvent.click(streamMode('Assistant', 'Narration'));
+  fireEvent.click(streamMode('Runs', 'Off'));
+  expect(r.saved).toEqual([
+    { overseer: { stream: 'narration' } },
+    { runs: { stream: 'off' } },
+  ]);
+});
+
+test('the configured mode is pressed and described, and pressing it again saves nothing', () => {
+  const r = recorder();
+  renderAgents({
+    config: { ...config, overseer: { stream: 'off' }, runs: { stream: 'off' } },
+    onSave: r.onSave,
+  });
+  expect(streamMode('Assistant', 'Off').getAttribute('aria-pressed')).toBe(
+    'true'
+  );
+  expect(
+    screen.getByText('One reply per turn, shown when the turn is done.')
+  ).toBeTruthy();
+  expect(
+    screen.getByText(
+      "Each part of the agent's text appears once it is finished."
+    )
+  ).toBeTruthy();
+  fireEvent.click(streamMode('Assistant', 'Off'));
+  expect(r.saved).toEqual([]);
+});
+
+test('a viewer who may not save config cannot press a mode', () => {
+  const r = recorder();
+  render(
+    <SettingsAccessProvider access={accessFor('request', false)}>
+      <AgentsSection
+        config={config}
+        executors={null}
+        onSave={r.onSave}
+        canOperate={false}
+      />
+    </SettingsAccessProvider>
+  );
+  const narration = streamMode('Assistant', 'Narration');
+  expect(narration.hasAttribute('disabled')).toBe(true);
+  fireEvent.click(narration);
+  expect(r.saved).toEqual([]);
 });

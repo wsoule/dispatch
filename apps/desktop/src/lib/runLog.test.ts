@@ -63,6 +63,18 @@ describe('groupLogEntries', () => {
       { kind: 'message', entries: [entries[1]] },
     ]);
   });
+
+  test('shows nothing for a message entry redacted for this viewer', () => {
+    const entries = [
+      entry({ kind: 'message', from: 'user', text: 'mine', messageId: 'm-1' }),
+      entry({ kind: 'message', messageId: 'm-2', redacted: true }),
+      entry({ kind: 'assistant', text: 'on it' }),
+    ];
+    expect(groupLogEntries(entries)).toEqual([
+      { kind: 'message', entries: [entries[0]] },
+      { kind: 'message', entries: [entries[2]] },
+    ]);
+  });
 });
 
 describe('liveCostUsd', () => {
@@ -207,5 +219,63 @@ describe('groupLogEntries — tool results', () => {
     expect(
       reportsToolResults([{ ...call, status: 'done', toolUseId: 'tu-3' }])
     ).toBe(true);
+  });
+});
+
+describe('groupLogEntries — a CLI agent’s output chunks', () => {
+  // One read of a CLI agent's stdout each, cut mid-line and inside a code block.
+  const chunk = (text: string) =>
+    entry({ kind: 'assistant', text, chunk: true });
+
+  test("joins consecutive chunks into one entry, in the first one's place", () => {
+    const first = chunk('```ts\nconst a = 1;\n');
+    const entries = [
+      first,
+      chunk('const b = 2;\n```\n\n- one\n'),
+      chunk('- tw'),
+    ];
+    expect(groupLogEntries(entries)).toEqual([
+      {
+        kind: 'message',
+        entries: [
+          {
+            ...first,
+            text: '```ts\nconst a = 1;\nconst b = 2;\n```\n\n- one\n- tw',
+          },
+        ],
+      },
+    ]);
+  });
+
+  test('keeps a lone chunk as it was logged', () => {
+    const entries = [chunk('done\n')];
+    expect(groupLogEntries(entries)[0]?.entries[0]).toBe(entries[0]);
+  });
+
+  test('starts a new text after anything else the log shows', () => {
+    const entries = [
+      chunk('a'),
+      entry({ kind: 'system', text: 'stderr' }),
+      chunk('b'),
+      entry({ kind: 'tool', toolName: 'Bash' }),
+      chunk('c'),
+    ];
+    expect(
+      groupLogEntries(entries).map((g) => g.entries.map((e) => e.text))
+    ).toEqual([['a'], ['stderr'], ['b'], [undefined], ['c']]);
+  });
+
+  // Claude's and Codex's entries are whole text blocks: two in a row are two texts.
+  test('never joins whole assistant entries', () => {
+    const entries = [
+      entry({ kind: 'assistant', text: 'one' }),
+      entry({ kind: 'assistant', text: 'two' }),
+      chunk('three'),
+    ];
+    expect(groupLogEntries(entries)).toEqual([
+      { kind: 'message', entries: [entries[0]] },
+      { kind: 'message', entries: [entries[1]] },
+      { kind: 'message', entries: [entries[2]] },
+    ]);
   });
 });

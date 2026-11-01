@@ -1485,6 +1485,9 @@ async function decideAgent(
     });
   }
   ctx.memory.host.agentDecided(address, ctx.ownerCredential === true);
+  // The Overseer's records say whether it is revoked; tell their windows.
+  if (address === ctx.actorContext.agentRef('overseer'))
+    ctx.overseerManager.agentDecided();
   const updated = ctx.messaging.store.getAgent(address) ?? agent;
   return jsonResponse(stripTokenHash(updated));
 }

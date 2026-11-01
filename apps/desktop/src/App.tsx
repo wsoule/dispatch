@@ -122,7 +122,12 @@ import {
   describeError,
   withActionFeedback,
 } from './lib/actionFeedback';
-import { orbLabel, orbState, overseerTurnLive } from './lib/agentPresence';
+import {
+  orbLabel,
+  orbState,
+  overseerTurnLive,
+  revokedLocksComposer,
+} from './lib/agentPresence';
 import { overseerOf } from './lib/agentRoster';
 import {
   type GlobalView,
@@ -2426,7 +2431,8 @@ function App() {
                 overseer={overseer}
                 about={aboutTask}
                 onOpenOverseer={() => dispatchNav({ type: 'showOverseer' })}
-                disabled={overseer.revoked}
+                disabled={revokedLocksComposer(overseer)}
+                project={activeProject?.path ?? ''}
               />
             }
           />

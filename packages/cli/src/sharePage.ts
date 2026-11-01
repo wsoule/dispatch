@@ -157,12 +157,15 @@ function renderEvidence(packet: RunPacket): string {
  *  second is accounting already summarised in the header. So is a tool
  *  call's result (a `tool` entry with no `toolName`): the call's own row is
  *  already there, and the result's text is the tool's raw output, which a
- *  page meant to be handed to anyone must not carry (`printenv`, `.env`). */
+ *  page meant to be handed to anyone must not carry (`printenv`, `.env`).
+ *  A `redacted` message entry has nothing to show: the daemon withheld the
+ *  message from the token the page was built with. */
 function renderTranscript(packet: RunPacket): string {
   const shown = packet.entries.filter(
     (e) =>
       e.kind !== 'thinking' &&
       e.kind !== 'usage' &&
+      e.redacted !== true &&
       !(e.kind === 'tool' && e.toolName === undefined && e.status !== 'running')
   );
   if (shown.length === 0) return '';

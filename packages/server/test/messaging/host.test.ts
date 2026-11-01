@@ -48,7 +48,8 @@ afterEach(() => {
 // only the methods it exercises.
 function makeHost(
   orchestratorOverrides: Partial<DaemonHostDeps['orchestrator']> = {},
-  routing?: DaemonHostDeps['routing']
+  routing?: DaemonHostDeps['routing'],
+  audience?: DaemonHostDeps['audience']
 ): { host: DaemonMessagingHost; calls: Record<string, unknown[][]> } {
   const calls: Record<string, unknown[][]> = {
     deliverToRun: [],
@@ -61,11 +62,21 @@ function makeHost(
     isRunLive: () => false,
     taskIdOfRun: () => null,
     list: () => [],
-    deliverToRun: (runId, text, from) => {
-      calls.deliverToRun.push([runId, text, from]);
+    deliverToRun: (runId, text, from, scope) => {
+      calls.deliverToRun.push([
+        runId,
+        text,
+        from,
+        ...(scope === undefined ? [] : [scope]),
+      ]);
     },
-    notifyRun: (runId, digest, messageId) => {
-      calls.notifyRun.push([runId, digest, messageId]);
+    notifyRun: (runId, digest, messageId, scope) => {
+      calls.notifyRun.push([
+        runId,
+        digest,
+        messageId,
+        ...(scope === undefined ? [] : [scope]),
+      ]);
     },
     wakeTask: (taskId, opts) => {
       calls.wakeTask.push([taskId, opts]);
@@ -85,6 +96,7 @@ function makeHost(
     gates: new GateHandlers(),
     onHumanMessage: () => {},
     ...(routing === undefined ? {} : { routing }),
+    ...(audience === undefined ? {} : { audience }),
   });
   return { host, calls };
 }
@@ -172,6 +184,19 @@ describe('DaemonMessagingHost.push', () => {
     const { host, calls } = makeHost();
     await host.notify('r-000001', '📬 digest', stubMessage({ id: 'm-333' }));
     expect(calls.notifyRun).toEqual([['r-000001', '📬 digest', 'm-333']]);
+  });
+
+  it("scopes a pushed or digested message's transcript entry to the message's audience", async () => {
+    const scopes = new Map<string, () => boolean>();
+    const { host, calls } = makeHost({}, undefined, (message) => {
+      const scope = () => true;
+      scopes.set(message.id, scope);
+      return scope;
+    });
+    await host.push('r-000001', 'rendered', stubMessage({ id: 'm-1' }));
+    await host.notify('r-000001', 'digest', stubMessage({ id: 'm-2' }));
+    expect(calls.deliverToRun[0][3]).toBe(scopes.get('m-1'));
+    expect(calls.notifyRun[0][3]).toBe(scopes.get('m-2'));
   });
 });
 

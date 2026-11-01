@@ -31,16 +31,18 @@ export type ServerEvent =
   // `index` is the entry's place among the transcript's entries (how many came
   // before it), so a client can tell a frame it already holds, or one it
   // missed, from the next one. Absent when the entry could not be written; a
-  // run.changed follows such a frame so clients refetch the run.
+  // run.changed follows such a frame so clients refetch the run. A bus
+  // message's entry is whole only for that message's audience; every other
+  // socket gets it `redacted`, at the same index.
   | { type: 'run.log'; runId: string; entry: NormalizedEntry; index?: number }
   // A live run's text as the model writes it: `text` extends segment
   // `segmentId` of turn `turnId` (one per run). View-only, never stored; the
   // finished text arrives as a run.log `assistant` entry whose `streamId` is
   // the segment. `seq` counts one run's frames, so a gap means a missed frame,
-  // which GET /api/runs/:id's `live` snapshot repairs. Sent to the same
-  // sockets as run.log. `abandoned` (with empty `text`) ends a segment no
-  // entry will finish: the model's stream broke off and sent the text again
-  // under a new segment, so the view drops it.
+  // which GET /api/runs/:id's `live` snapshot repairs. Sent to every socket,
+  // as run.log sends the agent's own entries. `abandoned` (with empty `text`)
+  // ends a segment no entry will finish: the model's stream broke off and
+  // sent the text again under a new segment, so the view drops it.
   | {
       type: 'run.delta';
       runId: string;
@@ -256,17 +258,23 @@ export class EventBus {
     return () => this.listeners.delete(listener);
   }
 
-  // With an audience, only sockets it accepts get the frame; in-process
-  // listeners always get every event.
+  // With an audience, only sockets it accepts get the frame, and with
+  // `otherwise` every other socket gets that frame instead (a redacted copy,
+  // so their view keeps in step). In-process listeners always get `event`,
+  // once.
   broadcast(
     event: ServerEvent,
-    audience?: (who: SocketAudience | undefined) => boolean
+    audience?: (who: SocketAudience | undefined) => boolean,
+    otherwise?: ServerEvent
   ): void {
     const payload = JSON.stringify(event);
+    let fallback: string | undefined;
     for (const client of this.clients) {
       const who = this.current(client);
       if (who === null) continue;
       if (audience === undefined || audience(who)) client.send(payload);
+      else if (otherwise !== undefined)
+        client.send((fallback ??= JSON.stringify(otherwise)));
     }
     for (const listener of this.listeners) listener(event);
   }

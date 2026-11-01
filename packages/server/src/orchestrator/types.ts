@@ -1,9 +1,11 @@
 import type {
+  DISPATCH_MCP_TOOLS,
   EffortLevel,
   RunStep,
   SubagentEvent,
   SubagentSummary,
 } from '@dispatch-foo/core';
+import { isAbsolute, relative, sep } from 'node:path';
 
 import type { RunUsage } from './usage.js';
 
@@ -63,13 +65,192 @@ export interface NormalizedEntry {
   // was keyed by, so a client showing that text live drops it once the
   // entry lands.
   streamId?: string;
+  // `assistant` entries of an agent that only prints (a CLI executor): one
+  // read of its stdout, cut wherever the read fell, mid-line or inside a
+  // code block. Consecutive chunks are one text, which a reader joins before
+  // rendering it as Markdown.
+  chunk?: true;
+  // A `message` entry its reader may not read: only `ts` and `messageId`
+  // are left (redactMessageEntry). Never stored; the daemon redacts a
+  // message entry for a socket outside its message's audience and for a
+  // GET /api/runs/:id caller who cannot read that message.
+  redacted?: true;
 }
 
-// How much of a tool's result a transcript keeps: a run's tool result entry,
+// A message entry as a reader who may not read its bus message gets it: when
+// and which message, nothing it said or who said it. It keeps the entry's
+// place, so every reader counts a transcript's entries (run.log's `index`)
+// the same way.
+export function redactMessageEntry(
+  entry: NormalizedEntry,
+  messageId: string
+): NormalizedEntry {
+  return { ts: entry.ts, kind: 'message', messageId, redacted: true };
+}
+
+// What a transcript keeps of a Dispatch tool call's input, given the input.
+type KeptInput = (input: Record<string, unknown>) => Record<string, unknown>;
+
+// Keeps the named input fields that are present, and nothing else.
+function onlyFields(...names: string[]): KeptInput {
+  return (input) => {
+    const kept: Record<string, unknown> = {};
+    for (const name of names) {
+      if (input[name] !== undefined) kept[name] = input[name];
+    }
+    return kept;
+  };
+}
+
+// Where a msg_send / msg_reply message went and how it was sent.
+const MESSAGE_ROUTING = onlyFields(
+  'to',
+  'kind',
+  'messageId',
+  'blocking',
+  'urgent',
+  'wake'
+);
+
+// The Dispatch tools whose calls write text that fewer readers may read than
+// a run transcript reaches (every socket and every request-tier caller, the
+// shared agent token included), and what a transcript keeps of each call:
+// what names the call's target, never the text.
+//
+// - msg_send / msg_reply: a bus message, read by its audience alone. A
+//   message to a human still lands whole as its logOutgoing message entry,
+//   which follows that audience.
+// - doc_save: a personal doc is its owner's, a run's edit to an accepted
+//   team doc a proposal for deciders and its author's operator, and the
+//   docs routes refuse the shared agent token for any doc. A ref such as
+//   `doc-…` does not say which, so every call loses its body, title and each
+//   op's text; an op keeps its kind.
+// - memory_save: a personal memory is its operator's, a shared one a
+//   proposal until a human accepts it, and the memory routes refuse the
+//   shared agent token too. The title is the lesson itself.
+// - memory_forget: the reason is kept with the memory it retires.
+//
+// The other tools stay whole: their input is ids and queries, or text every
+// transcript reader may already read (a task, a task comment, an inbox item,
+// evidence) or that leaves Dispatch (a Linear comment). A file write into a
+// Claude memory export is the one call of another tool that loses its text
+// (keptFileWrite).
+const SCOPED_TOOL_INPUTS = {
+  msg_send: MESSAGE_ROUTING,
+  msg_reply: MESSAGE_ROUTING,
+  doc_save: (input) => {
+    const kept = onlyFields('doc', 'slug', 'scope', 'baseRev', 'links')(input);
+    if (Array.isArray(input.ops)) {
+      kept.ops = input.ops.map((op: unknown) =>
+        typeof op === 'object' &&
+        op !== null &&
+        typeof (op as { op?: unknown }).op === 'string'
+          ? { op: (op as { op: string }).op }
+          : {}
+      );
+    }
+    return kept;
+  },
+  memory_save: onlyFields(
+    'scope',
+    'kind',
+    'refs',
+    'milestone',
+    'appliesTo',
+    'supersedes',
+    'projectOnly'
+  ),
+  memory_forget: onlyFields('id'),
+} satisfies Partial<Record<(typeof DISPATCH_MCP_TOOLS)[number], KeptInput>>;
+
+// SCOPED_TOOL_INPUTS under each executor's name for a call to the tool:
+// Claude's `mcp__dispatch__<tool>`, Codex's `mcp.dispatch.<tool>`.
+const SCOPED_TOOL_NAMES: ReadonlyMap<string, KeptInput> = new Map(
+  Object.entries(SCOPED_TOOL_INPUTS).flatMap(([tool, keep]) => [
+    [`mcp__dispatch__${tool}`, keep],
+    [`mcp.dispatch.${tool}`, keep],
+  ])
+);
+
+// Claude Code's tools that write a file, and the input field naming the file.
+const FILE_WRITE_TOOLS: ReadonlyMap<string, string> = new Map([
+  ['Write', 'file_path'],
+  ['Edit', 'file_path'],
+  ['MultiEdit', 'file_path'],
+  ['NotebookEdit', 'notebook_path'],
+]);
+
+// Whether `path` names something inside `dir`.
+function isInside(path: string, dir: string): boolean {
+  const rel = relative(dir, path);
+  return (
+    rel !== '' &&
+    rel !== '..' &&
+    !rel.startsWith(`..${sep}`) &&
+    !isAbsolute(rel)
+  );
+}
+
+// What a transcript keeps of a file write's input: the file alone, when the
+// file is inside `memoryRoot` (claudeMemoryRoot, which holds every Claude
+// auto-memory export of the project). Export mode tells a Claude run to save
+// memories there as usual, with Write and Edit, and Dispatch keeps a new file
+// there as the operator's personal memory; an edit's old text is one already
+// exported to them. Null for any other call.
+function keptFileWrite(
+  entry: NormalizedEntry,
+  input: Record<string, unknown>,
+  memoryRoot: string
+): Record<string, unknown> | null {
+  const field = FILE_WRITE_TOOLS.get(entry.toolName ?? '');
+  const path = field === undefined ? undefined : input[field];
+  if (field === undefined || typeof path !== 'string') return null;
+  return isInside(path, memoryRoot) ? { [field]: path } : null;
+}
+
+// A run's tool entry as its transcript keeps it: a call to a tool in
+// SCOPED_TOOL_INPUTS keeps only what names its target, and a file write into
+// a Claude memory export under `memoryRoot` only the file it wrote. The
+// executor logs a call as it starts, before anything says where its text was
+// stored, so the entry has no messageId or doc id to redact it by on the way
+// out; the text goes no further than the executor, and a reader finds it
+// where it was stored, under that store's own rule. Applying it twice gives
+// the same entry, so a reader of a transcript written before a call was
+// scoped can apply it again.
+export function withoutScopedText(
+  entry: NormalizedEntry,
+  memoryRoot: string
+): NormalizedEntry {
+  if (
+    entry.kind !== 'tool' ||
+    entry.toolName === undefined ||
+    entry.toolInput === undefined
+  ) {
+    return entry;
+  }
+  const input =
+    typeof entry.toolInput === 'object' && entry.toolInput !== null
+      ? (entry.toolInput as Record<string, unknown>)
+      : {};
+  const keep = SCOPED_TOOL_NAMES.get(entry.toolName);
+  if (keep !== undefined) return { ...entry, toolInput: keep(input) };
+  const file = keptFileWrite(entry, input, memoryRoot);
+  return file === null ? entry : { ...entry, toolInput: file };
+}
+
+// How much of a tool's result a transcript keeps: a Codex command's output,
 // an Overseer status tool's row. The model gets the whole payload; this copy
 // exists so the human can see what the agent went on, and a whole file or a
 // full test log would swamp the chat.
 export const MAX_TOOL_RESULT_TEXT = 2000;
+
+// A tool result's text as a transcript keeps it: the first
+// MAX_TOOL_RESULT_TEXT characters, marked when it was cut.
+export function capToolResult(text: string): string {
+  return text.length <= MAX_TOOL_RESULT_TEXT
+    ? text
+    : `${text.slice(0, MAX_TOOL_RESULT_TEXT)}… (truncated)`;
+}
 
 // A live handle to a running executor invocation — the orchestrator holds
 // one of these per live run so API calls (approval, mid-run message, cancel)

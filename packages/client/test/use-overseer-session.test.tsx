@@ -1,7 +1,7 @@
 import './dom-env';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, spyOn, test } from 'bun:test';
 import { type ReactNode, StrictMode } from 'react';
 
 import {
@@ -28,8 +28,10 @@ const PORT = 4321;
 
 afterEach(() => {
   cleanup();
-  // The live text store is one per window, so each test starts it empty.
+  // The live text store is one per window, so each test starts it empty, and
+  // with no notification waiting for a frame.
   resetLiveText(PORT);
+  liveTextStore.flush();
 });
 
 function overseerRecord(): OverseerRecord {
@@ -472,6 +474,50 @@ test('a reply from another surface rejects on failure and leaves the draft alone
   expect(result.current.draft).toBe('half typed');
 });
 
+// The Tasks composer keeps its own text and files too: its first message opens
+// the conversation, and neither its files nor the upload of them touch the
+// Overseer page's pending ones.
+test('a reply with no conversation open starts one with its own files', async () => {
+  const started: { prompt: string; files: unknown }[] = [];
+  const client = {
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    startOverseer: (prompt: string, opts: { attachments?: unknown }) => {
+      started.push({ prompt, files: opts.attachments });
+      return Promise.resolve(overseerRecord());
+    },
+    getOverseer: () => Promise.resolve(overseerRecord()),
+    uploadOverseerAttachments: (files: File[]) =>
+      Promise.resolve(
+        files.map((f) => ({
+          name: f.name,
+          path: `.dispatch/attachments/${f.name}`,
+          size: 1,
+          mimeType: 'text/plain',
+        }))
+      ),
+  } as unknown as ApiClient;
+  const { result } = renderHook(
+    () => useOverseerSession(client, PORT, '/repo'),
+    { wrapper }
+  );
+  await act(async () => {
+    await result.current.attachFiles([new File(['x'], 'page.txt')]);
+  });
+  let own: Awaited<ReturnType<typeof result.current.upload>> = [];
+  await act(async () => {
+    own = await result.current.upload([new File(['y'], 'tasks.txt')]);
+  });
+  expect(own.map((a) => a.name)).toEqual(['tasks.txt']);
+
+  await act(async () => {
+    await result.current.reply('from Tasks', own);
+  });
+
+  expect(result.current.conversationId).toBe('w-1');
+  expect(started).toEqual([{ prompt: 'from Tasks', files: own }]);
+  expect(result.current.attachments.map((a) => a.name)).toEqual(['page.txt']);
+});
+
 // The decide failure belongs to the session for exactly the reason the send
 // failure does. While an approval is queued the Runs tab shows a waiting
 // overseer row, so flipping there is the path the rail encourages — and the rail
@@ -732,6 +778,96 @@ test('a refusal coded overseer_revoked marks the session revoked until a send wo
   expect(result.current.revoked).toBe(false);
 });
 
+// The daemon says on every record whether its Overseer is off, so the banner
+// needs no refused send, and goes when it is approved again, which no send
+// could show: the composer is locked while the agent is off.
+test('the record says when the Overseer is off and when it is back', async () => {
+  let off = true;
+  const { result, queryClient } = openWithClient({
+    getOverseer: () => Promise.resolve({ ...overseerRecord(), revoked: off }),
+  });
+  await waitFor(() => expect(result.current.record).toBeDefined());
+  expect(result.current.revoked).toBe(true);
+
+  off = false;
+  await act(async () => {
+    invalidateOverseerEvent(queryClient, PORT, 'w-1');
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(result.current.revoked).toBe(false));
+});
+
+// With no conversation open, no record can say the agent came back, so the
+// desktop keeps the composer and the next send decides, from the Overseer
+// page or from Tasks (reply).
+test('with the conversation set aside, the next reply decides whether the Overseer is off', async () => {
+  // `refuse` is the daemon's state: its records and its sends agree on it.
+  let refuse = true;
+  const fetched: string[] = [];
+  const { result } = openWithClient({
+    getOverseer: (id: string) => {
+      fetched.push(id);
+      return Promise.resolve({ ...overseerRecord(), id, revoked: refuse });
+    },
+    startOverseer: () =>
+      refuse
+        ? Promise.reject(
+            new ApiError('the overseer is revoked', 409, 'overseer_revoked')
+          )
+        : Promise.resolve({ ...overseerRecord(), id: 'w-2' }),
+  });
+  await waitFor(() => expect(result.current.revoked).toBe(true));
+  act(() => {
+    result.current.reset();
+  });
+  expect(result.current.conversationId).toBeNull();
+  expect(result.current.revoked).toBe(true);
+
+  await act(async () => {
+    await result.current.reply('still off?').catch(() => {});
+  });
+  expect(result.current.revoked).toBe(true);
+  refuse = false;
+  await act(async () => {
+    await result.current.reply('back on?');
+  });
+  expect(result.current.revoked).toBe(false);
+  // The new conversation's record, fetched after the start, agrees.
+  await waitFor(() => {
+    expect(fetched).toContain('w-2');
+    expect(result.current.record?.revoked).toBeDefined();
+  });
+  expect(result.current.revoked).toBe(false);
+});
+
+// A refused send is newer than the record on screen: the session believes it,
+// and fetches the record, whose word then holds both ways.
+test('a send refused as revoked refetches the record, whose word then holds', async () => {
+  let off = false;
+  let fetched = 0;
+  const { result } = openWithClient({
+    getOverseer: () => {
+      fetched += 1;
+      return Promise.resolve({ ...overseerRecord(), revoked: off });
+    },
+    sendOverseerMessage: () =>
+      Promise.reject(
+        new ApiError('the overseer is revoked', 409, 'overseer_revoked')
+      ),
+  });
+  await waitFor(() => expect(result.current.record).toBeDefined());
+  expect(result.current.revoked).toBe(false);
+
+  off = true;
+  const before = fetched;
+  await act(async () => {
+    await result.current.submit('hello');
+  });
+  expect(result.current.revoked).toBe(true);
+  await waitFor(() => expect(fetched).toBeGreaterThan(before));
+  expect(result.current.revoked).toBe(true);
+});
+
 test('another 409 is not a revocation', async () => {
   const client = {
     baseUrl: `http://127.0.0.1:${PORT}`,
@@ -980,6 +1116,26 @@ function runningRecord(live?: LiveText): OverseerRecordView {
   };
 }
 
+// A hook over the given client calls with w-1 open, and the QueryClient it reads.
+function openWithClient(calls: Partial<ApiClient>) {
+  const client = {
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    ...calls,
+  } as unknown as ApiClient;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const rendered = renderHook(() => useOverseerSession(client, PORT, '/repo'), {
+    wrapper: ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    ),
+  });
+  act(() => {
+    rendered.result.current.open('w-1');
+  });
+  return { ...rendered, queryClient };
+}
+
 // A hook over `getOverseer` answers handed out in order (the last one repeats),
 // with the conversation open, and the QueryClient it reads.
 function openWith(answers: OverseerRecordView[]) {
@@ -1008,6 +1164,16 @@ function openWith(answers: OverseerRecordView[]) {
 
 function delta(seq: number, segmentId: string, text: string) {
   return { conversationId: 'w-1', turnId: 't1', seq, segmentId, text };
+}
+
+// Runs `deliver` and then the animation frame the live text store waits for
+// before it tells its views (see LiveTextStore), under act, so the view shows
+// what was delivered once this returns.
+function inFrame(deliver: () => void): void {
+  act(() => {
+    deliver();
+    liveTextStore.flush();
+  });
 }
 
 test('live shows the snapshot’s text minus the segments the record already holds', async () => {
@@ -1047,7 +1213,7 @@ test('live follows delta frames, and is null once the turn is not running', asyn
       { id: 't1:b', text: 'Two' },
     ]);
   });
-  act(() => {
+  inFrame(() => {
     applyOverseerDelta(queryClient, PORT, delta(2, 't1:b', ' runs'));
   });
   expect(result.current.live?.segments).toEqual([
@@ -1079,7 +1245,7 @@ test('an abandoning frame takes its segment off the live text at once', async ()
       { id: 't1:x', text: 'Let me lo' },
     ]);
   });
-  act(() => {
+  inFrame(() => {
     applyOverseerDelta(queryClient, PORT, {
       ...delta(2, 't1:x', ''),
       abandoned: true,
@@ -1110,7 +1276,7 @@ test('a missed frame refetches the record once, and its snapshot repairs the tex
   expect(calls()).toBe(1);
 
   // Frame 2 never arrives: 3 and 4 wait, and only one refetch goes out.
-  act(() => {
+  inFrame(() => {
     applyOverseerDelta(queryClient, PORT, delta(3, 't1:b', ' are'));
     applyOverseerDelta(queryClient, PORT, delta(4, 't1:b', ' live'));
   });
@@ -1123,7 +1289,7 @@ test('a missed frame refetches the record once, and its snapshot repairs the tex
   expect(calls()).toBe(2);
 
   // Back in step: the next frame appends without a fetch.
-  act(() => {
+  inFrame(() => {
     applyOverseerDelta(queryClient, PORT, delta(5, 't1:b', ' now'));
   });
   expect(result.current.live?.segments).toEqual([
@@ -1219,7 +1385,7 @@ test('a segment never vanishes between its live text and its row', async () => {
 
   // The reply streams, then lands as the turn settles.
   watch = 't1:c';
-  act(() => {
+  inFrame(() => {
     applyOverseerDelta(queryClient, PORT, delta(3, 't1:c', 'Both wait'));
   });
   expect(result.current.live?.segments).toEqual([
@@ -1245,6 +1411,7 @@ const NONE: ReadonlySet<string> = new Set();
 
 afterEach(() => {
   resetLiveText(LIVE_PORT);
+  liveTextStore.flush();
 });
 
 function frame(seq: number, segmentId: string, text: string) {
@@ -1252,7 +1419,7 @@ function frame(seq: number, segmentId: string, text: string) {
 }
 
 function apply(seq: number, segmentId: string, text: string): void {
-  act(() => {
+  inFrame(() => {
     liveTextStore.applyDelta(
       LIVE_PORT,
       LIVE_KEY,
@@ -1299,7 +1466,7 @@ test('keeps a shown segment until the record holds its row', () => {
   apply(1, 'a', 'Said');
   expect(result.current?.segments).toEqual([{ id: 'a', text: 'Said' }]);
 
-  act(() => {
+  inFrame(() => {
     liveTextStore.mergeSnapshot(
       LIVE_PORT,
       LIVE_KEY,
@@ -1321,7 +1488,7 @@ test('drops a shown segment at once when its stream abandons it', () => {
   );
   apply(1, 'a', 'Half a sen');
   expect(result.current?.segments).toEqual([{ id: 'a', text: 'Half a sen' }]);
-  act(() => {
+  inFrame(() => {
     liveTextStore.applyDelta(
       LIVE_PORT,
       LIVE_KEY,
@@ -1330,6 +1497,49 @@ test('drops a shown segment at once when its stream abandons it', () => {
     );
   });
   expect(result.current?.segments).toEqual([]);
+});
+
+// A burst of deltas, each a websocket message of its own, renders the view
+// once per painted frame (it rendered once per delta before), while the store
+// itself holds every delta at once.
+test('renders a burst of deltas once per animation frame', () => {
+  const frames: FrameRequestCallback[] = [];
+  const raf = spyOn(globalThis, 'requestAnimationFrame').mockImplementation(
+    (cb) => frames.push(cb)
+  );
+  try {
+    let renders = 0;
+    const { result } = renderHook(() => {
+      renders += 1;
+      return useLiveText(LIVE_PORT, LIVE_KEY, true, NONE);
+    });
+    const mounted = renders;
+    for (let seq = 1; seq <= 100; seq += 1) {
+      act(() => {
+        liveTextStore.applyDelta(
+          LIVE_PORT,
+          LIVE_KEY,
+          frame(seq, 'a', 'x'),
+          () => {}
+        );
+      });
+      expect(
+        liveTextStore.get(LIVE_PORT, LIVE_KEY)?.segments[0]?.text
+      ).toHaveLength(seq);
+      // The window paints a frame after every fourth delta.
+      if (seq % 4 === 0) {
+        act(() => {
+          for (const paint of frames.splice(0)) paint(0);
+        });
+      }
+    }
+    expect(renders - mounted).toBe(25);
+    expect(result.current?.segments).toEqual([
+      { id: 'a', text: 'x'.repeat(100) },
+    ]);
+  } finally {
+    raf.mockRestore();
+  }
 });
 
 test('reads nothing for no key', () => {

@@ -1,5 +1,6 @@
 import { CornerDownLeftIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { memo, useMemo } from 'react';
 
 import { useStreamedText } from './use-streamed-text';
 
@@ -19,6 +20,13 @@ export type StreamingTextProps = {
    * that replaces it. No caret is drawn, since a rendered block has no inline end to put
    * one on. Without it the text is a plain paragraph with a typing caret. */
   render?: (text: string) => ReactNode;
+  /** With `render`, for a text that keeps growing (a CLI agent's whole output): each
+   * finished Markdown block (see `splitSettledMarkdown`) is drawn once through `render`,
+   * and only the open one is revealed, so a change redraws one block rather than the whole
+   * text. Pass a `render` that stays the same function, or every block is drawn again.
+   * The blocks are siblings in one column, with nothing between them, under
+   * `data-slot="streaming-blocks"` for the caller's stylesheet to space. */
+  blocks?: boolean;
   sources?: StreamingTextSource[];
   followUps?: string[];
   onFollowUp?: (followUp: string) => void;
@@ -64,6 +72,24 @@ function SourceChip({
 // backticks or tildes, then (for an opener) an info string.
 const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 
+// The code fence open after `line`, given the one open before it (null outside a code
+// block): a fence line outside one opens one, and a long enough fence of the same kind
+// with nothing after it closes it.
+function fenceAfter(open: string | null, line: string): string | null {
+  const match = FENCE.exec(line);
+  if (match === null) return open;
+  const [, fence, rest] = match;
+  if (open === null) {
+    // A backtick fence's info string may not hold a backtick (CommonMark).
+    return fence[0] !== '`' || !rest.includes('`') ? fence : null;
+  }
+  return fence[0] === open[0] &&
+    fence.length >= open.length &&
+    rest.trim() === ''
+    ? null
+    : open;
+}
+
 /** `markdown` with a code fence that is still open at its end closed, for showing text
  * that is still arriving: a half-written block then renders as the code block it is going
  * to be. A trailing line that is the start of the closing fence (two of its three
@@ -74,19 +100,9 @@ export function closeOpenFence(markdown: string): string {
   let open: { fence: string; at: number } | null = null;
   const lines = markdown.split('\n');
   for (const [at, line] of lines.entries()) {
-    const match = FENCE.exec(line);
-    if (match === null) continue;
-    const [, fence, rest] = match;
-    if (open === null) {
-      // A backtick fence's info string may not hold a backtick (CommonMark).
-      if (fence[0] !== '`' || !rest.includes('`')) open = { fence, at };
-    } else if (
-      fence[0] === open.fence[0] &&
-      fence.length >= open.fence.length &&
-      rest.trim() === ''
-    ) {
-      open = null;
-    }
+    const fence = fenceAfter(open?.fence ?? null, line);
+    if (fence === null) open = null;
+    else if (open === null) open = { fence, at };
   }
   if (open === null) return markdown;
   const { fence, at } = open;
@@ -98,6 +114,51 @@ export function closeOpenFence(markdown: string): string {
   return `${markdown}${markdown.endsWith('\n') ? '' : '\n'}${fence}`;
 }
 
+/** `markdown` that is still arriving, split into the Markdown blocks that are finished
+ * and the one still open (`tail`). A block ends at a blank line outside a code fence once
+ * the line after it starts at the left margin: an indented line (a list item's next
+ * paragraph, an indented code block) continues what is above it. Each finished block
+ * keeps its blank lines, so the blocks and the tail joined with line breaks are the text,
+ * and a block never changes as the text grows by appending, so it can be drawn once. */
+export function splitSettledMarkdown(markdown: string): {
+  settled: string[];
+  tail: string;
+} {
+  const lines = markdown.split('\n');
+  const settled: string[] = [];
+  let start = 0;
+  // Whether the open block has a line that is not blank yet, and whether the last line
+  // was a blank one outside a code fence.
+  let content = false;
+  let blank = false;
+  let open: string | null = null;
+  for (const [at, line] of lines.entries()) {
+    if (blank && content && line !== '' && !/^\s/.test(line)) {
+      settled.push(lines.slice(start, at).join('\n'));
+      start = at;
+      content = false;
+    }
+    open = fenceAfter(open, line);
+    blank = open === null && line.trim() === '';
+    if (line.trim() !== '') content = true;
+  }
+  return { settled, tail: lines.slice(start).join('\n') };
+}
+
+// One finished block of a `blocks` text, drawn again only when its text or the caller's
+// render function changes.
+const SettledBlock = memo(function SettledBlock({
+  text,
+  render,
+}: {
+  text: string;
+  render: (text: string) => ReactNode;
+}) {
+  return render(text);
+});
+
+const NO_BLOCKS: string[] = [];
+
 /** Streamed answer text: a word-boundary-aware reveal of what `text` grows by (the text
  * it mounts with shows at once — see `useStreamedText`) with a blinking caret (hidden once
  * done or under reduced motion), or the caller's own `render` of it, inline numbered
@@ -108,16 +169,31 @@ export function StreamingText({
   text,
   streaming,
   render,
+  blocks = false,
   sources = [],
   followUps = [],
   onFollowUp,
   actions,
 }: StreamingTextProps) {
-  const shown = useStreamedText(text, { enabled: streaming });
-  const done = shown.length >= text.length;
+  const { settled, tail } = useMemo(
+    () =>
+      blocks && render !== undefined
+        ? splitSettledMarkdown(text)
+        : { settled: NO_BLOCKS, tail: text },
+    [blocks, render, text]
+  );
+  const shown = useStreamedText(tail, { enabled: streaming });
+  const done = shown.length >= tail.length;
 
   return (
-    <div className="flex w-full flex-col">
+    <div
+      className="flex w-full flex-col"
+      data-slot={blocks ? 'streaming-blocks' : undefined}
+    >
+      {render !== undefined &&
+        settled.map((block, index) => (
+          <SettledBlock key={index} text={block} render={render} />
+        ))}
       {render !== undefined ? (
         render(closeOpenFence(shown))
       ) : (

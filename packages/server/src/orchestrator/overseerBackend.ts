@@ -113,9 +113,19 @@ export interface OverseerTurnOptions {
    * Reports a tool call the model made mid-turn, built-in tools included, so
    * the transcript can show what the reply was derived from. Registry tools
    * already record themselves through `toolset.call`, so a backend reports
-   * only the calls that did not go through it.
+   * only the calls that did not go through it. `toolUseId` is the backend's
+   * id for the call (Claude's tool_use id, Codex's item id), when it has one:
+   * the row then shows the call as running until `onToolResult` names it.
    */
-  onToolUse?: (toolName: string, input: unknown) => void;
+  onToolUse?: (toolName: string, input: unknown, toolUseId?: string) => void;
+  /**
+   * How a call `onToolUse` reported with a `toolUseId` ended: `error` when
+   * the tool failed or was refused. Status only, never the output: the
+   * transcript reaches more people than its owner (the operator, for one),
+   * and a result can carry what the call read. A call whose result never
+   * comes stays running on the row.
+   */
+  onToolResult?: (toolUseId: string, status: 'done' | 'error') => void;
   /**
    * Text as the model writes it, keyed by the segment it belongs to: one
    * Claude text block, or one Codex agentMessage item. View-only: the manager

@@ -142,8 +142,11 @@ export const Markdown = memo(function Markdown({
   variant = 'inline',
   urlTransform,
   img,
+  streaming = false,
 }: {
   content: string;
+  /** The reply is still arriving: new blocks fade in (see `.dispatch-md[data-streaming]`). */
+  streaming?: boolean;
   className?: string;
   variant?: 'inline' | 'prose';
   /** Replaces react-markdown's URL filter (the docs preview keeps `asset:`). */
@@ -165,6 +168,7 @@ export const Markdown = memo(function Markdown({
     <div
       data-slot="markdown"
       data-variant={variant}
+      data-streaming={streaming || undefined}
       className={cn(
         'dispatch-md',
         variant === 'prose' && 'dispatch-md-prose',

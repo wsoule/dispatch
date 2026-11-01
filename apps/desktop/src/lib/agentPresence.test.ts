@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 
-import { type OrbInput, orbLabel, orbState } from './agentPresence';
+import {
+  type OrbInput,
+  orbLabel,
+  orbState,
+  revokedLocksComposer,
+} from './agentPresence';
 
 const quiet: OrbInput = {
   revoked: false,
@@ -108,5 +113,19 @@ describe('orbLabel', () => {
         review: 0,
       })
     ).toBe('Overseer · nothing waiting on you');
+  });
+});
+
+describe('revokedLocksComposer', () => {
+  test('locks an open conversation, never a fresh one', () => {
+    expect(revokedLocksComposer({ revoked: true, conversationId: 'c-1' })).toBe(
+      true
+    );
+    expect(revokedLocksComposer({ revoked: true, conversationId: null })).toBe(
+      false
+    );
+    expect(
+      revokedLocksComposer({ revoked: false, conversationId: 'c-1' })
+    ).toBe(false);
   });
 });

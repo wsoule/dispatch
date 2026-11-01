@@ -1,7 +1,11 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 
-import { closeOpenFence, StreamingText } from './streaming-text';
+import {
+  closeOpenFence,
+  splitSettledMarkdown,
+  StreamingText,
+} from './streaming-text';
 
 describe('closeOpenFence', () => {
   test('leaves text with no open fence alone', () => {
@@ -40,6 +44,56 @@ describe('closeOpenFence', () => {
   });
 });
 
+describe('splitSettledMarkdown', () => {
+  test('ends a block at a blank line before a new one, keeping the open one as the tail', () => {
+    const text = 'One.\n\nTwo,\nstill two.\n\n- a list';
+    expect(splitSettledMarkdown(text)).toEqual({
+      settled: ['One.\n', 'Two,\nstill two.\n'],
+      tail: '- a list',
+    });
+  });
+
+  test('every block and the tail add up to the text', () => {
+    for (const text of [
+      '',
+      'no break',
+      'trailing\n\n',
+      'a\n\n\n\nb\n\nc\n',
+      '```\nx\n\ny\n```\n\nafter',
+    ]) {
+      const { settled, tail } = splitSettledMarkdown(text);
+      expect([...settled, tail].join('\n')).toBe(text);
+    }
+  });
+
+  test('waits for what follows a blank line before ending the block', () => {
+    expect(splitSettledMarkdown('Done.\n\n')).toEqual({
+      settled: [],
+      tail: 'Done.\n\n',
+    });
+  });
+
+  test('never ends a block inside a code fence', () => {
+    const text = 'Run:\n\n```sh\nbun test\n\nbun run lint\n```\n\nDone.';
+    expect(splitSettledMarkdown(text)).toEqual({
+      settled: ['Run:\n', '```sh\nbun test\n\nbun run lint\n```\n'],
+      tail: 'Done.',
+    });
+    // A fence still open keeps everything after it in the tail.
+    expect(splitSettledMarkdown('A.\n\n```\nx\n\ny').tail).toBe('```\nx\n\ny');
+  });
+
+  // A list item's next paragraph and an indented code block continue what
+  // is above them.
+  test('keeps an indented line with the block it continues', () => {
+    const text = '1. Step one\n\n   more on step one\n\n2. Step two';
+    expect(splitSettledMarkdown(text)).toEqual({
+      settled: ['1. Step one\n\n   more on step one\n'],
+      tail: '2. Step two',
+    });
+  });
+});
+
 describe('StreamingText', () => {
   test('without render, the text is a paragraph', () => {
     const { container } = render(<StreamingText text="All quiet." streaming />);
@@ -64,5 +118,49 @@ describe('StreamingText', () => {
     expect(screen.getByTestId('rendered')).toBeDefined();
     expect(container.querySelector('p')).toBeNull();
     expect(container.querySelector('[aria-hidden="true"]')).toBeNull();
+  });
+
+  // A text that keeps growing (a CLI agent's whole output) draws each block
+  // once: a read redraws the open block, not everything before it.
+  test('blocks draws each finished block once and reveals only the open one', () => {
+    const drawn: string[] = [];
+    const draw = (text: string) => {
+      drawn.push(text);
+      return <div data-testid="block">{text}</div>;
+    };
+    const { rerender } = render(
+      <StreamingText
+        text={'One.\n\nTwo.\n\nThr'}
+        streaming
+        blocks
+        render={draw}
+      />
+    );
+    expect(screen.getAllByTestId('block').map((b) => b.textContent)).toEqual([
+      'One.\n',
+      'Two.\n',
+      'Thr',
+    ]);
+
+    drawn.length = 0;
+    act(() => {
+      rerender(
+        <StreamingText
+          text={'One.\n\nTwo.\n\nThree.\n\nFo'}
+          streaming
+          blocks
+          render={draw}
+        />
+      );
+    });
+    expect(drawn).not.toContain('One.\n');
+    expect(drawn).not.toContain('Two.\n');
+    expect(drawn).toContain('Three.\n');
+    expect(screen.getAllByTestId('block').map((b) => b.textContent)).toEqual([
+      'One.\n',
+      'Two.\n',
+      'Three.\n',
+      'Fo',
+    ]);
   });
 });

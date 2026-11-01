@@ -331,9 +331,11 @@ function readStoredInbox(root: string | null): InboxState {
 }
 
 /**
- * `GET /api/plan/:id` as a query, polled until the plan settles — the "Add detail" draft on a
- * task. `retry: false`: a stale `planId` mid project-switch should never retry against the
- * wrong daemon — see I5.
+ * `GET /api/plan/:id` as a query — the "Add detail" draft on a task. Not polled: the daemon
+ * sends `plan.changed` for every change to a plan, its turn settling ready or failed
+ * included, and the WS effect below reads the record again on that event and on every
+ * `hello` (a restart fails a running plan before the new socket exists). `retry: false`: a
+ * stale `planId` mid project-switch should never retry against the wrong daemon — see I5.
  */
 function usePlanRecord(
   client: ApiClient | null,
@@ -350,11 +352,6 @@ function usePlanRecord(
     },
     enabled: client !== null && planId !== null,
     retry: false,
-    // A running plan is worth polling — nothing on the WS event stream tells us when the
-    // planner call itself finishes (only `plan.changed`, which fires once it's already
-    // done), so a short poll while `state === 'running'` is the simplest way to notice.
-    refetchInterval: (query) =>
-      query.state.data?.state === 'running' ? 2000 : false,
   });
   return data;
 }
@@ -1736,6 +1733,12 @@ export function useDispatchProject(
           // brings back any run.log entry sent while the socket was down.
           void queryClient.invalidateQueries({
             queryKey: ['dispatch-run', port],
+          });
+          // And for plans, which nothing polls: a turn that settled while the
+          // socket was down, or one a restart booted as failed, sent no
+          // `plan.changed` this socket heard.
+          void queryClient.invalidateQueries({
+            queryKey: ['dispatch-plan', port],
           });
           // Who this window is: the answer never goes stale, so a whoami that
           // failed while the daemon was coming up is asked again here.

@@ -112,6 +112,10 @@ let judgeCalls = 0;
 // Every `updateTask` the hook sent, by task id and patch.
 const taskUpdates: [string, object][] = [];
 
+// The state `GET /api/plan/:id` reports, and how many times it was read.
+let planState: 'running' | 'ready' | 'failed' = 'ready';
+let planFetches = 0;
+
 // What `createRun` answers; a test swaps in a held or refused promise.
 let createRunResult: () => Promise<RunMeta> = () =>
   Promise.reject(new Error('no runs in this test'));
@@ -242,18 +246,21 @@ void mock.module('@dispatch/client', () => ({
       });
     },
     startPlan: () => Promise.resolve({ planId: 'p-1' }),
-    fetchPlan: (planId: string) =>
-      Promise.resolve({
+    enrichTask: () => Promise.resolve({ planId: 'p-enrich' }),
+    fetchPlan: (planId: string) => {
+      planFetches += 1;
+      return Promise.resolve({
         id: planId,
         prompt: 'split the auth rewrite',
         plannerName: 'fake',
         role: 'plan',
-        state: 'ready',
+        state: planState,
         messages: [],
         questions: [],
         createdAt: '2026-09-20T00:00:00Z',
         updatedAt: '2026-09-20T00:00:00Z',
-      }),
+      });
+    },
     confirmPlan: () =>
       Promise.resolve({ milestoneId: 'e-1', taskIds: ['t-1'] }),
     fetchLiveWork: () =>
@@ -632,6 +639,63 @@ test('hello refetches every cached run detail for this daemon', async () => {
   expect(
     queryClient.getQueryState(['dispatch-run', PORT, 'r-1'])?.isInvalidated
   ).toBe(true);
+});
+
+// Starts an "Add detail" pass on t-1 and waits for its plan to read running.
+async function mountEnriching() {
+  planState = 'running';
+  planFetches = 0;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(sink).not.toBeNull();
+  });
+  await act(async () => {
+    await result.current.handleEnrichTask('t-1');
+  });
+  await waitFor(() => {
+    expect(result.current.enrichPlanRecord?.state).toBe('running');
+  });
+  return result;
+}
+
+// The daemon sends `plan.changed` once a turn has settled (and for every other
+// change to the record), so a running plan is read again when that arrives and
+// not on a timer while it waits.
+test('a running plan is read again on plan.changed, not on a timer', async () => {
+  const result = await mountEnriching();
+  expect(planFetches).toBe(1);
+
+  await Bun.sleep(2_500);
+  expect(planFetches).toBe(1);
+
+  planState = 'ready';
+  act(() => {
+    sink?.onEvent({ type: 'plan.changed', planId: 'p-enrich' });
+  });
+  await waitFor(() => {
+    expect(result.current.enrichPlanRecord?.state).toBe('ready');
+  });
+  expect(planFetches).toBe(2);
+});
+
+// A daemon that restarts mid-turn boots the plan as failed before this socket
+// exists, so no `plan.changed` reports it; the reconnect's hello has to.
+test('hello reads a cached plan again, since a restart fails it unannounced', async () => {
+  const result = await mountEnriching();
+
+  planState = 'failed';
+  act(() => {
+    sink?.onEvent({ type: 'hello', version: '0.0.1' });
+  });
+  await waitFor(() => {
+    expect(result.current.enrichPlanRecord?.state).toBe('failed');
+  });
 });
 
 // A new message joins the open thread from the event itself, without a refetch.

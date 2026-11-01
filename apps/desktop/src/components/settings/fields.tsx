@@ -13,12 +13,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/ui/select';
+import { ToggleGroup, ToggleGroupItem } from '@/ui/toggle-group';
 
-// The four kinds of setting most Settings pages are made of, each saving the
-// way General's fields always have: text and numbers on blur, only when the
+// The kinds of setting most Settings pages are made of, each saving the way
+// General's fields always have: text and numbers on blur, only when the
 // value actually changed, snapping back when it is not one the config could
-// hold; switches and choices at once. Save feedback (and a refused save's
-// reason) is shown by the Settings shell, not here.
+// hold; switches, choices and modes at once. Save feedback (and a refused
+// save's reason) is shown by the Settings shell, not here.
 
 interface FieldBase {
   id: string;
@@ -240,6 +241,59 @@ export function ChoiceSetting<T extends string>({
             ))}
           </SelectContent>
         </Select>
+      }
+    />
+  );
+}
+
+/** A choice of two or three short modes with every one in view: a toggle
+ *  group, like the app's other mode switches, where ChoiceSetting's select
+ *  would hide the rest. Pressing the current mode again saves nothing. */
+export function ModeSetting<T extends string>({
+  id,
+  title,
+  subtitle,
+  keywords,
+  locked,
+  value,
+  choices,
+  onSave,
+}: FieldBase & {
+  value: T;
+  choices: { value: T; label: string }[];
+  onSave: (next: T) => void;
+}) {
+  // Read like SettingsSwitch does: Base UI keeps its own disabled state, which
+  // a disabled fieldset around a locked group never sets.
+  const groupLocked = useGroupLocked();
+  return (
+    <SettingsRow
+      title={title}
+      subtitle={subtitle}
+      keywords={keywords}
+      locked={locked !== undefined}
+      control={
+        <ToggleGroup
+          id={id}
+          aria-label={title}
+          variant="outline"
+          size="sm"
+          value={[value]}
+          disabled={groupLocked || locked !== undefined}
+          onValueChange={([next]) => {
+            // Re-pressing the current mode hands back an empty list.
+            const picked = choices.find((c) => c.value === next);
+            if (picked !== undefined && picked.value !== value) {
+              onSave(picked.value);
+            }
+          }}
+        >
+          {choices.map((c) => (
+            <ToggleGroupItem key={c.value} value={c.value}>
+              {c.label}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
       }
     />
   );

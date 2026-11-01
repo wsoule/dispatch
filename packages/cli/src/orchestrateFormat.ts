@@ -40,7 +40,8 @@ export function formatEntry(
     case 'usage':
       return entry.text !== undefined ? `[usage] ${entry.text}` : null;
     case 'message':
-      if (entry.text === undefined) return null;
+      // A redacted entry stands for a message this caller may not read.
+      if (entry.redacted === true || entry.text === undefined) return null;
       return `[message ${messageSender(entry)}] ${entry.text}`;
     case 'agent':
       return formatAgentEntry(entry);

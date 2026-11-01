@@ -19,6 +19,7 @@ import type {
   WakeResult,
 } from '@dispatch-foo/protocol';
 
+import type { SocketAudience } from '../events.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import { actingOperator, runOperator } from '../orchestrator/types.js';
 import { consultProjectPolicy } from '../policyEngine.js';
@@ -56,6 +57,10 @@ export interface DaemonHostDeps {
   // Who a run's notices and wake gates name (XH-R9); omitted, the owner.
   routing?: Pick<OperatorRouting, 'humanFor' | 'gateFor'>;
   gates: GateHandlers;
+  // The sockets that may hear `message` whole (messaging's messageAudience);
+  // a run's transcript entry for it reaches every other socket redacted.
+  // Omitted, the entry reaches every socket whole.
+  audience?: (message: Message) => (who: SocketAudience | undefined) => boolean;
   onHumanMessage: (actor: string, message: Message) => void;
   // Told when a wake could not start a run, so the caller can retry it later.
   onWakeFailed?: (target: Address, message: Message, acting: WakeActor) => void;
@@ -149,17 +154,27 @@ export class DaemonMessagingHost implements MessagingHost {
   // and the engine then holds the message.
   push(runId: string, rendered: string, message: Message): Promise<void> {
     return settle(() =>
-      this.deps.orchestrator.deliverToRun(runId, rendered, {
-        label: message.from,
-        messageId: message.id,
-        human: message.from.startsWith('human:'),
-      })
+      this.deps.orchestrator.deliverToRun(
+        runId,
+        rendered,
+        {
+          label: message.from,
+          messageId: message.id,
+          human: message.from.startsWith('human:'),
+        },
+        this.deps.audience?.(message)
+      )
     );
   }
 
   notify(runId: string, digest: string, message: Message): Promise<void> {
     return settle(() =>
-      this.deps.orchestrator.notifyRun(runId, digest, message.id)
+      this.deps.orchestrator.notifyRun(
+        runId,
+        digest,
+        message.id,
+        this.deps.audience?.(message)
+      )
     );
   }
 

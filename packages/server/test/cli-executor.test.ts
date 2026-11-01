@@ -159,6 +159,35 @@ describe('CliExecutor', () => {
     expect(textOf(rec.entries, 'assistant')).not.toContain('err');
   });
 
+  // A read ends wherever the pipe had data, so a reader must know the entries
+  // continue one another: here a code block is cut in two.
+  it('marks each read of stdout as a chunk of one text', async () => {
+    const executor = new CliExecutor({
+      command: {
+        run: [
+          'sh',
+          '-c',
+          "printf '```sh\\necho a\\n'; sleep 0.2; printf 'echo b\\n```\\n'; echo err 1>&2",
+        ],
+      },
+    });
+    const rec = recorder();
+    executor.start(
+      { cwd: process.cwd(), prompt: 'x', permissionMode: 'bypassPermissions' },
+      rec.events
+    );
+    await rec.finished;
+
+    const said = rec.entries.filter((entry) => entry.kind === 'assistant');
+    expect(said.length).toBeGreaterThan(1);
+    expect(said.every((entry) => entry.chunk === true)).toBe(true);
+    expect(textOf(said, 'assistant')).toBe('```sh\necho a\necho b\n```\n');
+    // stderr and Dispatch's own notes are not the agent's text.
+    const others = rec.entries.filter((entry) => entry.kind === 'system');
+    expect(textOf(others, 'system')).toContain('err');
+    expect(others.some((entry) => entry.chunk !== undefined)).toBe(false);
+  });
+
   it('says up front that nothing holds an irreversible command', async () => {
     const executor = new CliExecutor({
       command: { run: ['sh', '-c', 'exit 0', 'sh', '{prompt}'] },
