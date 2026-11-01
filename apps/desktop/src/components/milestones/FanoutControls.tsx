@@ -1,6 +1,7 @@
 import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
 import { isCompletedStatus } from '@dispatch-foo/core/browser';
 import type { MilestoneProgress, MilestoneSession } from '@dispatch/client';
+import { Button, Chip } from '@dispatch/ui';
 import {
   ChevronsUp,
   GitMerge,
@@ -18,18 +19,65 @@ import {
   PHASE_CHIP_ORDER,
   PHASE_LABEL,
   phaseCounts,
-  phaseTint,
+  phaseTone,
   rulingsWaiting,
   spendPillLabel,
   spendTitle,
   spendTone,
   waveSteps,
 } from '../../lib/milestoneSession';
-import { IconButton } from '@/ui/ai/icon-button';
-import { LabelPill, PillButton } from '@/ui/ai/pill';
-import { ProgressGlyph } from '@/ui/chrome';
-import { CountChip } from '@/ui/chrome/CountChip';
-import { StepStrip } from '@/ui/chrome/StepStrip';
+import { ProgressPie } from '../gr8r/ProgressPie';
+import { StepStrip } from '../gr8r/StepStrip';
+import styles from './FanoutControls.module.css';
+
+const ICON = { size: 12, strokeWidth: 1.8 } as const;
+
+/** A verb in the row: a small secondary button with its leading icon. */
+function Verb({
+  icon,
+  disabled,
+  onClick,
+  children,
+}: {
+  icon: ReactNode;
+  disabled: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      icon={icon}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {children}
+    </Button>
+  );
+}
+
+/** A pill with a hook for tests and a hover title: a status chip in a wrapper that carries
+    both, since Chip takes neither a data attribute nor a role. */
+function Pill({
+  slot,
+  title,
+  tone,
+  role,
+  children,
+}: {
+  slot?: string;
+  title?: string;
+  tone: 'info' | 'warning' | 'danger';
+  role?: 'alert';
+  children: ReactNode;
+}) {
+  return (
+    <span data-slot={slot} title={title} role={role} className={styles.pill}>
+      <Chip tone={tone}>{children}</Chip>
+    </span>
+  );
+}
 
 export interface FanoutControlsProps {
   milestone: TaskListItem;
@@ -143,11 +191,9 @@ export function FanoutControls({
     const spend = progress.spend;
     const nearCeiling = spendTone(spend) === 'warning';
     spendPill = (
-      <LabelPill
-        data-slot="spend-pill"
-        color={
-          nearCeiling ? 'var(--state-waiting-fg)' : 'var(--state-working-fg)'
-        }
+      <Pill
+        slot="spend-pill"
+        tone={nearCeiling ? 'warning' : 'info'}
         title={
           nearCeiling
             ? `${spendTitle(spend)} · near ceiling`
@@ -155,7 +201,7 @@ export function FanoutControls({
         }
       >
         {spendPillLabel(spend)}
-      </LabelPill>
+      </Pill>
     );
   }
 
@@ -167,46 +213,46 @@ export function FanoutControls({
     const rulings = rulingsWaiting(progressChildren);
     controls = (
       <>
-        {PHASE_CHIP_ORDER.filter((phase) => counts[phase] > 0).map((phase) => {
-          const tint = phaseTint(phase);
-          return (
-            <span
-              key={phase}
-              data-slot="phase-chip"
-              data-phase={phase}
-              className="text-muted-foreground flex shrink-0 items-center gap-1 text-[12px] font-medium"
-              style={tint !== null ? { color: tint } : undefined}
-            >
-              <CountChip count={counts[phase]} className="text-current" />
-              {PHASE_LABEL[phase]}
-            </span>
-          );
-        })}
+        {PHASE_CHIP_ORDER.filter((phase) => counts[phase] > 0).map((phase) => (
+          <span
+            key={phase}
+            data-slot="phase-chip"
+            data-phase={phase}
+            data-tone={phaseTone(phase) ?? undefined}
+            className={styles.phase}
+          >
+            <span className={styles.count}>{counts[phase]}</span>
+            {PHASE_LABEL[phase]}
+          </span>
+        ))}
         {spendPill}
         {spend.liveCount === 0 && rulings > 0 && (
-          <LabelPill color="var(--state-waiting-fg)">
+          <Pill tone="warning">
             Waiting on {rulings} ruling{rulings === 1 ? '' : 's'}
-          </LabelPill>
+          </Pill>
         )}
         {waves && progress.waves.length > 1 && (
-          <StepStrip steps={waveSteps(progress.waves)} className="w-16" />
+          <StepStrip
+            steps={waveSteps(progress.waves)}
+            className={styles.waves}
+          />
         )}
         {onPause !== undefined && (
-          <PillButton
+          <Verb
             disabled={busy}
             onClick={() => void run(() => onPause(milestoneId))}
+            icon={<Pause {...ICON} />}
           >
-            <Pause className="size-3" />
             Pause
-          </PillButton>
+          </Verb>
         )}
-        <PillButton
+        <Verb
           disabled={busy}
           onClick={() => void run(() => onStop(milestoneId))}
+          icon={<Square {...ICON} />}
         >
-          <Square className="size-3" />
           Stop
-        </PillButton>
+        </Verb>
       </>
     );
   } else if (paused && session !== null) {
@@ -214,51 +260,47 @@ export function FanoutControls({
     controls = (
       <>
         {spendPill}
-        <LabelPill
-          data-slot="paused-pill"
-          color="var(--state-waiting-fg)"
-          title={session.pausedDetail}
-        >
+        <Pill slot="paused-pill" tone="warning" title={session.pausedDetail}>
           {session.pausedReason === undefined
             ? 'Paused'
             : pausedReasonLabel(session.pausedReason)}
-        </LabelPill>
+        </Pill>
         {onResume !== undefined && (
-          <PillButton
+          <Verb
             disabled={busy}
             onClick={() => void run(() => onResume(milestoneId))}
+            icon={<Play {...ICON} />}
           >
-            <Play className="size-3" />
             Resume
-          </PillButton>
+          </Verb>
         )}
         {onRaiseCeiling !== undefined && (
-          <PillButton
+          <Verb
             disabled={busy}
             onClick={() => onRaiseCeiling(milestoneId)}
+            icon={<ChevronsUp {...ICON} />}
           >
-            <ChevronsUp className="size-3" />
             Raise ceiling…
-          </PillButton>
+          </Verb>
         )}
-        <PillButton
+        <Verb
           disabled={busy}
           onClick={() => void run(() => onStop(milestoneId))}
+          icon={<Square {...ICON} />}
         >
-          <Square className="size-3" />
           Stop
-        </PillButton>
+        </Verb>
       </>
     );
   } else if (landable && onLand !== undefined) {
     controls = (
-      <PillButton
+      <Verb
         disabled={busy}
         onClick={() => void run(() => onLand(milestoneId))}
+        icon={<GitMerge {...ICON} />}
       >
-        <GitMerge className="size-3" />
         Land
-      </PillButton>
+      </Verb>
     );
   } else if (
     isCompletedStatus(milestone.meta.status, model) ||
@@ -271,17 +313,17 @@ export function FanoutControls({
     controls = (
       <>
         {concurrencyPicker}
-        <PillButton
+        <Verb
           disabled={busy}
           onClick={() => {
             // Opening the dialog is synchronous and never busy; only a direct dispatch is.
             const result = onSendAgents(milestoneId);
             if (result instanceof Promise) void run(() => result);
           }}
+          icon={<Zap {...ICON} />}
         >
-          <Zap className="size-3" />
           Send agents…
-        </PillButton>
+        </Verb>
       </>
     );
   }
@@ -292,9 +334,9 @@ export function FanoutControls({
         <span
           data-slot="milestone-progress"
           aria-label={`${count.done} of ${count.total} landed`}
-          className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-(--text-secondary)"
+          className={styles.progress}
         >
-          <ProgressGlyph
+          <ProgressPie
             fraction={count.total === 0 ? 0 : count.done / count.total}
           />
           {count.done}/{count.total}
@@ -303,22 +345,19 @@ export function FanoutControls({
       {children}
       {controls}
       {error !== null && (
-        <LabelPill
-          role="alert"
-          color="var(--state-failed-fg)"
-          title={error}
-          className="max-w-40"
-        >
+        <Pill role="alert" tone="danger" title={error}>
           {error}
-        </LabelPill>
+        </Pill>
       )}
       {showOpen && (
-        <IconButton
-          label={`Open ${milestone.meta.title}`}
+        <Button
+          variant="quiet"
+          size="sm"
+          icon={<Target size={14} strokeWidth={1.8} />}
+          aria-label={`Open ${milestone.meta.title}`}
+          title={`Open ${milestone.meta.title}`}
           onClick={() => onOpenMilestone(milestoneId)}
-        >
-          <Target aria-hidden />
-        </IconButton>
+        />
       )}
     </>
   );

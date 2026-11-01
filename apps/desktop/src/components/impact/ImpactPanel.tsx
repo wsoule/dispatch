@@ -1,21 +1,12 @@
 import type { ApiClient, ImpactSubjectKind } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
+import { Chip, EmptyState, Skeleton, Tooltip } from '@dispatch/ui';
 import { useQuery } from '@tanstack/react-query';
-import { Waypoints } from 'lucide-react';
+import { Minus, TrendingDown, TrendingUp, Waypoints } from 'lucide-react';
 
 import { DEFAULT_REVIEW_CAP, summarizeImpact } from '../../lib/impactSummary';
-import type { InsightDelta } from '@/ui/ai/insight-cards';
-import { InsightCard } from '@/ui/ai/insight-cards';
-import { Pill } from '@/ui/ai/pill';
-import {
-  EmptyState,
-  HintText,
-  Panel,
-  PanelHeader,
-  PanelRow,
-} from '@/ui/chrome';
-import { Skeleton } from '@/ui/skeleton';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
+import { Panel } from '../gr8r/Panel';
+import styles from './ImpactPanel.module.css';
 
 // The scanner only understands .ts/.tsx imports, so a scanner-backed result
 // can look complete on a polyglot repo while missing most of it. Shown as a
@@ -109,38 +100,39 @@ export function ImpactPanel({
   const pending = !isError && data === undefined;
 
   return (
-    <Panel className={className}>
-      <PanelHeader
-        count={resolved ? resolved.summary.total : undefined}
-        actions={
-          resolved ? (
-            <ImpactBadges
-              summary={resolved.summary}
-              sources={resolved.reach.sources}
-              degraded={resolved.reach.degraded}
-              truncated={resolved.reach.truncated}
-            />
-          ) : null
-        }
-      >
-        Impact
-      </PanelHeader>
-
+    <Panel
+      title="Impact"
+      className={className}
+      count={resolved ? resolved.summary.total : undefined}
+      actions={
+        resolved ? (
+          <ImpactBadges
+            summary={resolved.summary}
+            sources={resolved.reach.sources}
+            degraded={resolved.reach.degraded}
+            truncated={resolved.reach.truncated}
+          />
+        ) : null
+      }
+    >
       {pending && (
-        <div className="flex flex-col gap-2 p-3">
-          <Skeleton className="h-3.5 w-2/3" />
-          <Skeleton className="h-1.5 w-full" />
+        <div className={styles.loading} role="status">
+          <span className="srOnly">Loading the blast radius</span>
+          <Skeleton width="66%" height={14} />
+          <Skeleton height={6} />
         </div>
       )}
 
-      {isError && <EmptyState message={impactErrorMessage(error)} />}
+      {isError && (
+        <EmptyState icon={null}>{impactErrorMessage(error)}</EmptyState>
+      )}
 
       {!pending && !isError && message !== null && (
-        <EmptyState message={message} />
+        <EmptyState icon={null}>{message}</EmptyState>
       )}
 
       {!pending && !isError && resolved && resolved.summary.total === 0 && (
-        <EmptyState message={resolved.summary.zeroMessage} />
+        <EmptyState icon={null}>{resolved.summary.zeroMessage}</EmptyState>
       )}
 
       {!pending && !isError && resolved && resolved.summary.total > 0 && (
@@ -162,41 +154,66 @@ function ImpactBadges({
   truncated: boolean;
 }) {
   // A caveat is worth a hover explanation whenever the scanner is doing some
-  // or all of the work — carto-only or carto+scanner results have nothing to
+  // or all of the work; carto-only or carto+scanner results have nothing to
   // qualify, since carto is the broader, cross-language graph.
   const hasCaveat =
     degraded || (sources.includes('scanner') && !sources.includes('carto'));
 
   const badge = (
-    <Pill>
-      <Waypoints className="size-3" />
-      {summary.sourceLabel}
-    </Pill>
+    <span className={styles.source}>
+      <Waypoints size={12} strokeWidth={1.8} aria-hidden="true" />
+      <Chip>{summary.sourceLabel}</Chip>
+    </span>
   );
 
   return (
     <>
       {hasCaveat ? (
-        <Tooltip>
-          <TooltipTrigger render={badge} />
-          <TooltipContent>{SCANNER_CAVEAT}</TooltipContent>
+        // Focusable so the caveat reaches a keyboard too, not just a hover.
+        <Tooltip content={SCANNER_CAVEAT}>
+          <span tabIndex={0} className={styles.caveat}>
+            {badge}
+          </span>
         </Tooltip>
       ) : (
         badge
       )}
-      {truncated && <Pill>Capped</Pill>}
+      {truncated && <Chip>Capped</Chip>}
     </>
   );
 }
 
+type Direction = 'up' | 'down' | 'flat';
+
 // Reads the direct-vs-downstream split as a direction: more downstream than direct means
 // the reach keeps fanning out past the immediate dependents ('up'), more direct means it's
 // mostly contained to one hop ('down'), equal is 'flat'. Derived straight from the two
-// counts `summarizeImpact` already computed — not a fabricated trend.
-function blastRadiusDelta(direct: number, downstream: number): InsightDelta {
-  const direction =
-    downstream > direct ? 'up' : downstream < direct ? 'down' : 'flat';
-  return { value: `${downstream} downstream`, direction };
+// counts `summarizeImpact` already computed, not a fabricated trend.
+function blastDirection(direct: number, downstream: number): Direction {
+  return downstream > direct ? 'up' : downstream < direct ? 'down' : 'flat';
+}
+
+const DELTA = {
+  up: { tone: 'success', Icon: TrendingUp },
+  down: { tone: 'danger', Icon: TrendingDown },
+  flat: { tone: 'muted', Icon: Minus },
+} as const;
+
+const CHART_W = 264;
+const CHART_H = 64;
+
+/** The line through the two counts, direct then downstream, scaled into the chart box. */
+function linePoints(direct: number, downstream: number): [number, number][] {
+  const max = Math.max(direct, downstream);
+  const min = Math.min(direct, downstream);
+  const y = (value: number): number =>
+    max === min
+      ? CHART_H / 2
+      : CHART_H - ((value - min) / (max - min)) * CHART_H;
+  return [
+    [0, y(direct)],
+    [CHART_W, y(downstream)],
+  ];
 }
 
 function ImpactBody({
@@ -204,20 +221,55 @@ function ImpactBody({
 }: {
   summary: ReturnType<typeof summarizeImpact>;
 }) {
+  const direction = blastDirection(summary.direct, summary.downstream);
+  const { tone, Icon } = DELTA[direction];
+  const [[x1, y1], [x2, y2]] = linePoints(summary.direct, summary.downstream);
   return (
-    <PanelRow className="flex-col items-stretch gap-2">
-      <InsightCard
-        title="Blast radius"
-        summary={summary.label}
-        series={[summary.direct, summary.downstream]}
-        unit="files"
-        delta={blastRadiusDelta(summary.direct, summary.downstream)}
-        page={0}
-        pageCount={1}
-        onPageChange={() => {}}
-      />
-      {summary.analysisNote && <HintText>{summary.analysisNote}</HintText>}
-      {summary.coverage && <HintText>{summary.coverage}</HintText>}
-    </PanelRow>
+    <>
+      <div className={styles.card}>
+        <div className={styles.cardHead}>
+          <div className={styles.cardText}>
+            <p className={styles.cardTitle}>Blast radius</p>
+            <p className={styles.cardSummary}>{summary.label}</p>
+          </div>
+          <span className={styles.delta} data-tone={tone}>
+            <Icon size={12} strokeWidth={1.8} aria-hidden="true" />
+            {summary.downstream} downstream
+          </span>
+        </div>
+        <figure className={styles.chart}>
+          <figcaption className={styles.chartHead}>
+            <span>
+              {summary.direct} direct → {summary.downstream} downstream
+            </span>
+            <span>files</span>
+          </figcaption>
+          <svg
+            viewBox={`0 0 ${CHART_W} ${CHART_H}`}
+            preserveAspectRatio="none"
+            className={styles.line}
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              d={`M${x1},${y1} L${x2},${y2} L${CHART_W},${CHART_H} L0,${CHART_H} Z`}
+              className={styles.area}
+            />
+            <path
+              d={`M${x1},${y1} L${x2},${y2}`}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.5}
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          </svg>
+        </figure>
+      </div>
+      {summary.analysisNote && (
+        <p className={styles.hint}>{summary.analysisNote}</p>
+      )}
+      {summary.coverage && <p className={styles.hint}>{summary.coverage}</p>}
+    </>
   );
 }

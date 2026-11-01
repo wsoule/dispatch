@@ -1035,7 +1035,7 @@ describe('PierreReviewDiff — where the bar hangs', () => {
     // Both boxes are viewport-absolute, so the bar's offsets are their difference.
     expect(selectionBar()?.style.top).toBe('300px');
     expect(selectionBar()?.style.left).toBe('40px');
-    expect(selectionBar()?.className).toContain('-translate-y-full');
+    expect(selectionBar()?.dataset['place']).toBe('above');
   });
 
   it('drops the bar below the line when it is against the top of the pane', () => {
@@ -1051,7 +1051,7 @@ describe('PierreReviewDiff — where the bar hangs', () => {
 
     // 10px of room above is not enough for the bar, so it goes under the line instead.
     expect(selectionBar()?.style.top).toBe('30px');
-    expect(selectionBar()?.className).not.toContain('-translate-y-full');
+    expect(selectionBar()?.dataset['place']).toBe('below');
   });
 });
 

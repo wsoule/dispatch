@@ -1,0 +1,47 @@
+/* A milestone header's fan-out controls (FanoutControls.tsx): inline pieces of the header's
+   action row, so nothing here sets the row's own layout. */
+.progress {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-1);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+/* A phase count ("3 Working"), in its tone's text colour when it has one. */
+.phase {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-1);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-3);
+}
+
+.phase[data-tone] {
+  color: var(--tone-ink);
+}
+
+.count {
+  font-variant-numeric: tabular-nums;
+}
+
+.pill {
+  display: inline-flex;
+  flex: none;
+  min-width: 0;
+}
+
+/* A failed verb's message: kept short in the row, whole in its hover title. */
+.pill[role='alert'] {
+  max-width: 160px;
+  overflow: hidden;
+}
+
+.waves {
+  width: 64px;
+}

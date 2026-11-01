@@ -1,7 +1,7 @@
 // Every label, tint, default and piece of copy the milestone fan-out surfaces
 // print — the header pills, the row pills, the dialog defaults, the paused
 // toast and the live-rail readout all read from here so board and milestone
-// headers cannot drift apart. Pure and relative-import only (the `@/ui`
+// headers cannot drift apart. Pure and relative-import only (the StepStrip
 // import is type-only) so it stays bun-test-able without a DOM.
 
 import type {
@@ -13,8 +13,8 @@ import type {
   ServerEvent,
 } from '@dispatch/client';
 
+import type { Step } from '../components/gr8r/StepStrip';
 import type { TaskTab } from './appNav';
-import type { Step } from '@/ui/chrome/StepStrip';
 
 /** What the fan-out dialog hands `handleWorkMilestone`/`handleResumeMilestone`. `null`
  * lifts a ceiling; `undefined` leaves the server default (start) or the
@@ -48,25 +48,26 @@ export const PHASE_LABEL: Record<MilestoneChildPhase, string> = {
   dropped: 'Dropped',
 };
 
-/** The colour a phase pill or chip carries, as a CSS token; `null` for the
- * phases the status glyph already says everything about. */
-export function phaseTint(phase: MilestoneChildPhase): string | null {
+/** The status tone a phase chip carries (its `data-tone`): info while agents
+ * work, warning while it waits on someone, danger once it broke; `null` for
+ * the phases the status glyph already says everything about. */
+export function phaseTone(
+  phase: MilestoneChildPhase
+): 'info' | 'warning' | 'danger' | null {
   switch (phase) {
     case 'working':
     case 'reviewing':
     case 'fixing':
-      return 'var(--state-working-fg)';
+    case 'needs-review':
+    case 'landing':
+      return 'info';
     case 'capped':
     case 'held':
     case 'waiting':
-      return 'var(--state-waiting-fg)';
+      return 'warning';
     case 'failed':
     case 'blocked':
-      return 'var(--state-failed-fg)';
-    case 'needs-review':
-      return 'var(--state-review-fg)';
-    case 'landing':
-      return 'var(--state-landing-fg)';
+      return 'danger';
     default:
       return null;
   }

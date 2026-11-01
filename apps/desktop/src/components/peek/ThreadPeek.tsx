@@ -1,4 +1,4 @@
-import { Button } from '@dispatch/ui';
+import { Button, EmptyState, Spinner } from '@dispatch/ui';
 import { useEffect, useMemo } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
@@ -15,8 +15,7 @@ import type { RefAction } from '../../lib/threadSources';
 import { replyRoute } from '../../lib/threadSources';
 import { ThreadPane } from '../threads/ThreadPane';
 import { PeekSlideOver } from './PeekSlideOver';
-import { EmptyState } from '@/ui/chrome';
-import { Spinner } from '@/ui/spinner';
+import styles from './ThreadPeek.module.css';
 
 export interface ThreadPeekProps {
   data: DispatchProjectData;
@@ -78,13 +77,13 @@ export function ThreadPeek({
         )
       }
     >
-      <div className="min-h-0 flex-1">
+      <div className={styles.body}>
         {!access.canMessage ? (
-          <EmptyState
-            className="h-full"
-            heading="Threads are not available in this window."
-            description={access.explanation}
-          />
+          <div className={styles.centred}>
+            <EmptyState label="Threads are not available in this window.">
+              {access.explanation}
+            </EmptyState>
+          </div>
         ) : ready && me !== null ? (
           <ThreadPane
             key={open.thread}
@@ -118,10 +117,12 @@ export function ThreadPeek({
             overseerVoice="agent"
           />
         ) : open.error !== null ? (
-          <EmptyState className="h-full" heading={open.error.message} />
+          <div className={styles.centred}>
+            <EmptyState>{open.error.message}</EmptyState>
+          </div>
         ) : (
-          <div className="flex h-full items-center justify-center">
-            <Spinner className="text-muted-foreground size-4" />
+          <div className={styles.centred}>
+            <Spinner size="md" label="Loading the thread" />
           </div>
         )}
       </div>

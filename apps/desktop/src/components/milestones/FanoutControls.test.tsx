@@ -216,18 +216,17 @@ test('active: phase chips in order, the spend pill against its ceiling, Pause an
     '2Queued',
     '1Capped',
   ]);
-  expect(chips[0]?.style.color).toBe('var(--state-working-fg)');
-  expect(chips[2]?.style.color).toBe('var(--state-waiting-fg)');
+  expect(chips[0]?.dataset['tone']).toBe('info');
+  expect(chips[1]?.dataset['tone']).toBeUndefined();
+  expect(chips[2]?.dataset['tone']).toBe('warning');
 
   const spend = screen
     .getByText('$41.20 / $100')
     .closest('[data-slot=spend-pill]');
   expect(spend?.getAttribute('title')).toBe('+~$30.00 in flight · 7/20 runs');
-  expect(
-    spend
-      ?.querySelector<HTMLElement>('span[aria-hidden]')
-      ?.style.backgroundColor.replace(/\s/g, '')
-  ).toBe('var(--state-working-fg)');
+  expect(spend?.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe(
+    'info'
+  );
   // Three live runs, so no ruling pill and no Send agents… while it runs.
   expect(screen.queryByText(/Waiting on/)).toBeNull();
   expect(screen.queryByRole('button', { name: 'Send agents…' })).toBeNull();
@@ -261,11 +260,9 @@ test('the spend pill turns amber from 80 % of the ceiling, in-flight estimate in
   expect(spend?.getAttribute('title')).toBe(
     '+~$20.00 in flight · 3 runs · near ceiling'
   );
-  expect(
-    spend
-      ?.querySelector<HTMLElement>('span[aria-hidden]')
-      ?.style.backgroundColor.replace(/\s/g, '')
-  ).toBe('var(--state-waiting-fg)');
+  expect(spend?.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe(
+    'warning'
+  );
 });
 
 test('active with nothing live and a capped loop: Waiting on N rulings', () => {
@@ -314,7 +311,6 @@ test('a multi-wave session shows a wave strip; a single wave does not', () => {
     })
   );
   const strip = document.querySelector('ol');
-  expect(strip?.className).toContain('w-16');
   expect(
     Array.from(strip?.querySelectorAll('li') ?? []).map((li) =>
       li.getAttribute('title')

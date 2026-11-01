@@ -1,0 +1,103 @@
+/* The blast-radius panel (ImpactPanel.tsx): the source badges in the title row; the body is
+   the blast-radius card (counts, a direction chip, the direct → downstream line) and notes. */
+.loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.source {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  color: var(--text-3);
+}
+
+.caveat {
+  display: inline-flex;
+  border-radius: var(--r-chip);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  max-width: 384px;
+}
+
+.cardHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+
+.cardText {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cardTitle {
+  font-size: var(--fs);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
+.cardSummary {
+  margin-top: var(--s-1);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-long);
+  color: var(--text-2);
+}
+
+/* The direction chip: the tone's text on its soft tint. */
+.delta {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-1);
+  height: var(--h-xs);
+  padding: 0 var(--s-2);
+  border-radius: var(--r-chip);
+  background: var(--tone-soft);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--tone-ink);
+}
+
+.chart {
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--sunken);
+}
+
+.chartHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--divider);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.line {
+  display: block;
+  width: 100%;
+  height: 64px;
+  color: var(--accent);
+}
+
+.area {
+  fill: var(--accent-soft);
+  stroke: none;
+}
+
+.hint {
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}

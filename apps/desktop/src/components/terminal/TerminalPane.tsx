@@ -1,13 +1,7 @@
 import type { ApiClient, TerminalInfo } from '@dispatch/client';
-import {
-  ChevronDown,
-  Columns2,
-  Plus,
-  Rows2,
-  Search,
-  Trash2,
-  X,
-} from 'lucide-react';
+import { Button, Select, TextField } from '@dispatch/ui';
+import { Columns2, Plus, Rows2, Search, Trash2, X } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { TerminalSubscribe } from '../../hooks/useTerminalOutput';
@@ -15,8 +9,9 @@ import { useTerminalOutput } from '../../hooks/useTerminalOutput';
 import { createInputQueue } from '../../lib/terminalInput';
 import { encodeKey } from '../../lib/terminalKeys';
 import { TerminalCanvas } from './TerminalCanvas';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
+import styles from './TerminalPane.module.css';
+
+const ICON = { size: 14, strokeWidth: 1.8 } as const;
 
 /**
  * One pane of the terminal view: a session's screen, its keyboard, and the
@@ -128,105 +123,67 @@ export function TerminalPane({
     if (searching) searchRef.current?.focus();
   }, [searching]);
 
+  // A pane-level button: icon only, named by the same words as its hover title.
+  const paneButton = (label: string, icon: ReactNode, onClick: () => void) => (
+    <Button
+      variant="quiet"
+      size="sm"
+      icon={icon}
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+    />
+  );
+
   return (
     <div
-      className={`flex h-full min-h-0 flex-col overflow-hidden rounded-md border ${
-        focused ? 'border-[var(--color-ring)]' : 'border-[var(--color-border)]'
-      }`}
+      className={styles.pane}
+      data-focused={focused ? '' : undefined}
       onMouseDown={onFocus}
       data-testid={`terminal-pane-${paneId}`}
     >
-      <div className="flex items-center gap-1 border-b border-[var(--color-border)] bg-[var(--color-muted)] px-2 py-1">
-        <div className="relative min-w-0 flex-1">
-          <select
-            className="w-full min-w-0 appearance-none truncate bg-transparent pr-5 text-xs outline-none"
-            value={terminalId ?? ''}
-            onChange={(event) =>
-              onAttach(event.target.value === '' ? null : event.target.value)
-            }
-            aria-label="Session shown in this pane"
-          >
-            <option value="">No session</option>
-            {terminals.map((terminal) => (
-              <option key={terminal.id} value={terminal.id}>
-                {terminal.title}
-                {terminal.state === 'running' ? '' : ` · ${terminal.state}`}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="pointer-events-none absolute top-1/2 right-0 size-3 -translate-y-1/2 opacity-60" />
-        </div>
-        <span className="shrink-0 text-[10px] text-[var(--color-muted-foreground)]">
-          {stateLabel(info)}
-        </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-6"
-          title="New session"
-          onClick={onOpenSession}
-        >
-          <Plus className="size-3" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-6"
-          title="Search scrollback"
-          onClick={() => {
-            setSearching((value) => !value);
-            setFollow(searching);
-          }}
-        >
-          <Search className="size-3" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-6"
-          title="Split right"
-          onClick={() => onSplit('row')}
-        >
-          <Columns2 className="size-3" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-6"
-          title="Split down"
-          onClick={() => onSplit('column')}
-        >
-          <Rows2 className="size-3" />
-        </Button>
-        {terminalId !== null && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            title="End and forget this session"
-            onClick={() => onRemoveSession(terminalId)}
-          >
-            <Trash2 className="size-3" />
-          </Button>
+      <div className={styles.toolbar}>
+        <Select
+          label="Session shown in this pane"
+          className={styles.session}
+          value={terminalId ?? ''}
+          options={[
+            { value: '', label: 'No session' },
+            ...terminals.map((terminal) => ({
+              value: terminal.id,
+              label:
+                terminal.state === 'running'
+                  ? terminal.title
+                  : `${terminal.title} · ${terminal.state}`,
+            })),
+          ]}
+          onChange={(value) => onAttach(value === '' ? null : value)}
+        />
+        <span className={styles.state}>{stateLabel(info)}</span>
+        {paneButton('New session', <Plus {...ICON} />, onOpenSession)}
+        {paneButton('Search scrollback', <Search {...ICON} />, () => {
+          setSearching((value) => !value);
+          setFollow(searching);
+        })}
+        {paneButton('Split right', <Columns2 {...ICON} />, () =>
+          onSplit('row')
         )}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-6"
-          title="Close pane"
-          onClick={onClose}
-        >
-          <X className="size-3" />
-        </Button>
+        {paneButton('Split down', <Rows2 {...ICON} />, () => onSplit('column'))}
+        {terminalId !== null &&
+          paneButton('End and forget this session', <Trash2 {...ICON} />, () =>
+            onRemoveSession(terminalId)
+          )}
+        {paneButton('Close pane', <X {...ICON} />, onClose)}
       </div>
 
       {searching && (
-        <div className="border-b border-[var(--color-border)] px-2 py-1">
-          <Input
+        <div className={styles.search}>
+          <TextField
             ref={searchRef}
+            size="sm"
             value={search}
             placeholder="Find in scrollback"
-            className="h-7 text-xs"
+            aria-label="Find in scrollback"
             onChange={(event) => setSearch(event.target.value)}
           />
         </div>
@@ -240,15 +197,15 @@ export function TerminalPane({
         tabIndex={0}
         role="textbox"
         aria-label="Terminal"
-        className="min-h-0 flex-1 outline-none"
+        className={styles.surface}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
         onFocus={onFocus}
       >
         {terminalId === null ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-[var(--color-muted-foreground)]">
+          <div className={styles.empty}>
             <span>No session in this pane.</span>
-            <Button size="sm" variant="outline" onClick={onOpenSession}>
+            <Button size="sm" variant="secondary" onClick={onOpenSession}>
               Open a shell
             </Button>
           </div>

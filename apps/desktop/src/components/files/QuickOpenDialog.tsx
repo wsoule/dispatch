@@ -1,9 +1,9 @@
 import type { ApiClient, WorkspaceSearchHit } from '@dispatch/client';
+import { Dialog, TextField } from '@dispatch/ui';
 import { useEffect, useRef, useState } from 'react';
 
 import { runsFromPositions } from '../../lib/highlight';
-import { Dialog, DialogContent, DialogTitle } from '@/ui/dialog';
-import { Input } from '@/ui/input';
+import styles from './QuickOpenDialog.module.css';
 
 /**
  * Quick open: type a few letters, get the file.
@@ -28,15 +28,16 @@ interface QuickOpenDialogProps {
 // `runsFromPositions` expects.
 function Highlighted({ hit }: { hit: WorkspaceSearchHit }) {
   return (
-    <span className="truncate font-mono text-xs">
-      {runsFromPositions(hit.path, hit.positions).map((run, index) => (
-        <span
-          key={index}
-          className={run.hit ? 'font-semibold text-[var(--color-primary)]' : ''}
-        >
-          {run.text}
-        </span>
-      ))}
+    <span className={styles.path}>
+      {runsFromPositions(hit.path, hit.positions).map((run, index) =>
+        run.hit ? (
+          <mark key={index} className={styles.match}>
+            {run.text}
+          </mark>
+        ) : (
+          <span key={index}>{run.text}</span>
+        )
+      )}
     </span>
   );
 }
@@ -90,53 +91,51 @@ export function QuickOpenDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl p-0">
-        <DialogTitle className="sr-only">Quick open</DialogTitle>
-        <div className="border-b border-[var(--color-border)] p-2">
-          <Input
-            ref={inputRef}
-            value={query}
-            placeholder="Go to file"
-            className="h-8"
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              // Arrow keys move the selection rather than the text cursor, and
-              // Enter opens — the whole dialog is driven from this one field.
-              if (event.key === 'ArrowDown') {
-                event.preventDefault();
-                setActive((value) => Math.min(value + 1, hits.length - 1));
-              } else if (event.key === 'ArrowUp') {
-                event.preventDefault();
-                setActive((value) => Math.max(value - 1, 0));
-              } else if (event.key === 'Enter') {
-                event.preventDefault();
-                choose(hits[active]?.path);
-              }
-            }}
-          />
-        </div>
-        <div className="max-h-80 overflow-auto py-1">
-          {hits.length === 0 && (
-            <p className="px-3 py-2 text-xs text-[var(--color-muted-foreground)]">
-              No matching files.
-            </p>
-          )}
-          {hits.map((hit, index) => (
-            <button
-              key={hit.path}
-              type="button"
-              onMouseEnter={() => setActive(index)}
-              onClick={() => choose(hit.path)}
-              className={`flex w-full px-3 py-1 text-left ${
-                index === active ? 'bg-[var(--color-accent)]' : ''
-              }`}
-            >
-              <Highlighted hit={hit} />
-            </button>
-          ))}
-        </div>
-      </DialogContent>
+    <Dialog
+      open={open}
+      onClose={() => onOpenChange(false)}
+      title="Quick open"
+      titleHidden
+      closeButton={false}
+      placement="top"
+      initialFocusRef={inputRef}
+    >
+      <TextField
+        ref={inputRef}
+        value={query}
+        placeholder="Go to file"
+        aria-label="Go to file"
+        onChange={(event) => setQuery(event.target.value)}
+        onKeyDown={(event) => {
+          // Arrow keys move the selection rather than the text cursor, and
+          // Enter opens: the whole dialog is driven from this one field.
+          if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            setActive((value) => Math.min(value + 1, hits.length - 1));
+          } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            setActive((value) => Math.max(value - 1, 0));
+          } else if (event.key === 'Enter') {
+            event.preventDefault();
+            choose(hits[active]?.path);
+          }
+        }}
+      />
+      <div className={styles.results}>
+        {hits.length === 0 && <p className={styles.none}>No matching files.</p>}
+        {hits.map((hit, index) => (
+          <button
+            key={hit.path}
+            type="button"
+            className={styles.hit}
+            data-active={index === active ? '' : undefined}
+            onMouseEnter={() => setActive(index)}
+            onClick={() => choose(hit.path)}
+          >
+            <Highlighted hit={hit} />
+          </button>
+        ))}
+      </div>
     </Dialog>
   );
 }

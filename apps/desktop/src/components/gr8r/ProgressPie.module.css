@@ -1,0 +1,8 @@
+/* The progress pie (ProgressPie.tsx): 12px, in the secondary ink unless the caller recolours
+   it through `color`. */
+.pie {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--text-2);
+}
