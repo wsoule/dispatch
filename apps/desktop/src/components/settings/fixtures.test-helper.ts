@@ -157,7 +157,7 @@ export function dataWith(
   } as unknown as DispatchProjectData;
 }
 
-type RoleQueries = Pick<typeof screen, 'getByRole' | 'queryByRole'>;
+type RoleQueries = Pick<typeof screen, 'getByRole'>;
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -170,16 +170,6 @@ export function selectTrigger(
   root: RoleQueries = screen
 ): HTMLElement {
   return root.getByRole('button', {
-    name: new RegExp(`^${escapeRegExp(name)}(: |$)`),
-  });
-}
-
-/** The same trigger, or null when the setting shows no Select. */
-export function querySelectTrigger(
-  name: string,
-  root: RoleQueries = screen
-): HTMLElement | null {
-  return root.queryByRole('button', {
     name: new RegExp(`^${escapeRegExp(name)}(: |$)`),
   });
 }

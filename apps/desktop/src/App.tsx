@@ -225,6 +225,7 @@ import { TerminalsView } from './views/TerminalsView';
 import { ThreadsView } from './views/ThreadsView';
 import { TimelineView } from './views/TimelineView';
 import { type OverseerFocus, TwoViewOverseer } from './views/TwoViewOverseer';
+import { PageHeaderEmbeddedContext } from '@/ui/ai/page-header';
 // The legacy views' tooltips share its zero delay until they move onto Gr8r's Tooltip.
 import { TooltipProvider } from '@/ui/tooltip';
 
@@ -1952,7 +1953,12 @@ function App() {
       label: 'Usage',
       icon: Coins,
       intro: 'Every agent session and what it cost.',
-      render: () => <SessionsHubView />,
+      // Embedded: the hosted view keeps only its tabs row under Settings' own title.
+      render: () => (
+        <PageHeaderEmbeddedContext.Provider value>
+          <SessionsHubView />
+        </PageHeaderEmbeddedContext.Provider>
+      ),
     },
     {
       id: 'runs',
@@ -1960,26 +1966,28 @@ function App() {
       icon: Bot,
       intro: 'Every run, including archived ones.',
       render: () => (
-        <AllAgentsView
-          runs={data.visibleRuns}
-          sessions={data.agentSessions}
-          archivedRunCount={archivedRunCount}
-          showArchived={data.showArchived}
-          onSetShowArchived={data.setShowArchived}
-          onArchiveRun={(runId, archived) =>
-            void data.handleArchiveRun(runId, archived)
-          }
-          portLoading={data.portLoading}
-          portError={data.portError}
-          portErrorDetail={data.portErrorDetail}
-          client={data.client}
-          onRetry={data.retryEnsureDispatchd}
-          onJumpToRun={jumpToRun}
-          // The Live page under Tasks; any navigation closes Settings.
-          onOpenLive={() =>
-            dispatchNav({ type: 'setProjectView', view: 'live' })
-          }
-        />
+        <PageHeaderEmbeddedContext.Provider value>
+          <AllAgentsView
+            runs={data.visibleRuns}
+            sessions={data.agentSessions}
+            archivedRunCount={archivedRunCount}
+            showArchived={data.showArchived}
+            onSetShowArchived={data.setShowArchived}
+            onArchiveRun={(runId, archived) =>
+              void data.handleArchiveRun(runId, archived)
+            }
+            portLoading={data.portLoading}
+            portError={data.portError}
+            portErrorDetail={data.portErrorDetail}
+            client={data.client}
+            onRetry={data.retryEnsureDispatchd}
+            onJumpToRun={jumpToRun}
+            // The Live page under Tasks; any navigation closes Settings.
+            onOpenLive={() =>
+              dispatchNav({ type: 'setProjectView', view: 'live' })
+            }
+          />
+        </PageHeaderEmbeddedContext.Provider>
       ),
     },
   ];

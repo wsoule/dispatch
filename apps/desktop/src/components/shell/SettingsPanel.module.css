@@ -1,0 +1,27 @@
+/* The settings panel (SettingsPanel.tsx): a fixed scrim holding a large card. It stays under
+   the legacy dialogs (z-index 50) a hosted page can still open, and under Gr8r's top layer. */
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 56px 48px;
+  background: var(--overlay);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  width: min(1080px, 100%);
+  height: min(780px, 100%);
+  overflow: hidden;
+  border-radius: var(--r-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+
+.panel:focus-visible {
+  outline: 2px solid transparent;
+}

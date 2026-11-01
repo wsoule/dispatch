@@ -137,14 +137,13 @@ const GR8R_SCOPE: readonly string[] = [
   'components/ledger/PolicyReceiptBadge.tsx',
   'lib/milestoneSession.ts',
   'lib/milestoneSession.test.ts',
-  'components/settings/settings.module.css',
-  'components/settings/SettingsGroup.tsx',
-  'components/settings/fields.tsx',
-  'components/settings/search.tsx',
-  'components/settings/search.test.tsx',
-  'components/settings/access.tsx',
-  'components/settings/access.test.tsx',
-  'components/settings/fixtures.test-helper.ts',
+  'components/settings',
+  'components/shell/SettingsPanel.tsx',
+  'components/shell/SettingsPanel.module.css',
+  'components/shell/SettingsPanel.test.tsx',
+  'views/SettingsView.tsx',
+  'views/SettingsView.module.css',
+  'views/SettingsView.test.tsx',
 ];
 
 /** GR8R_SCOPE directory entries allowed to be absent. Every other directory entry must exist
