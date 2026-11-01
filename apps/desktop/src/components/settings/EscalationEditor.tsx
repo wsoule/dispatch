@@ -1,17 +1,10 @@
 import type { EscalationStep } from '@dispatch-foo/core/browser';
+import { Button, Select } from '@dispatch/ui';
 
+import styles from './EscalationEditor.module.css';
 import { SettingsSearchable } from './search';
+import kit from './settings.module.css';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
-import { PillButton } from '@/ui/ai/pill';
-import { Button } from '@/ui/button';
-import { PanelRow } from '@/ui/chrome';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/ui/select';
 
 interface EscalationEditorProps {
   steps: EscalationStep[];
@@ -64,11 +57,11 @@ export function EscalationEditor({ steps, onChange }: EscalationEditorProps) {
     >
       {steps.length === 0 && (
         <SettingsSearchable text="no escalation steps">
-          <PanelRow>
+          <div className={kit.row}>
             <SettingsHint>
               No steps: every round keeps the same agent on the usual model.
             </SettingsHint>
-          </PanelRow>
+          </div>
         </SettingsSearchable>
       )}
       {steps.map((step, index) => (
@@ -78,52 +71,31 @@ export function EscalationEditor({ steps, onChange }: EscalationEditorProps) {
           control={
             <>
               <Select
+                label={`Round ${String(step.round)} strategy`}
                 value={step.strategy}
-                onValueChange={(value) =>
-                  updateStep(index, {
-                    strategy: value as EscalationStep['strategy'],
-                  })
-                }
-              >
-                <SelectTrigger
-                  aria-label={`Round ${String(step.round)} strategy`}
-                  className="w-[124px]"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {STRATEGIES.map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                options={STRATEGIES.map(([value, label]) => ({ value, label }))}
+                className={styles.strategy}
+                onChange={(value) => {
+                  const strategy = STRATEGIES.find(([v]) => v === value)?.[0];
+                  if (strategy !== undefined) updateStep(index, { strategy });
+                }}
+              />
               <Select
+                label={`Round ${String(step.round)} model tier`}
                 value={step.modelTier}
-                onValueChange={(value) =>
-                  updateStep(index, {
-                    modelTier: value as EscalationStep['modelTier'],
-                  })
-                }
-              >
-                <SelectTrigger
-                  aria-label={`Round ${String(step.round)} model tier`}
-                  className="w-[136px]"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {MODEL_TIERS.map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                options={MODEL_TIERS.map(([value, label]) => ({
+                  value,
+                  label,
+                }))}
+                className={styles.tier}
+                onChange={(value) => {
+                  const modelTier = MODEL_TIERS.find(([v]) => v === value)?.[0];
+                  if (modelTier !== undefined) updateStep(index, { modelTier });
+                }}
+              />
               <Button
                 type="button"
-                variant="ghost"
+                variant="quiet"
                 size="sm"
                 aria-label={`Remove round ${String(step.round)}`}
                 onClick={() => removeStep(index)}
@@ -135,11 +107,13 @@ export function EscalationEditor({ steps, onChange }: EscalationEditorProps) {
         />
       ))}
       <SettingsSearchable text="add escalation step round">
-        <PanelRow>
-          <PillButton type="button" onClick={addStep}>
-            Add round
-          </PillButton>
-        </PanelRow>
+        <div className={kit.row}>
+          <span>
+            <Button variant="secondary" size="sm" onClick={addStep}>
+              Add round
+            </Button>
+          </span>
+        </div>
       </SettingsSearchable>
     </SettingsGroup>
   );

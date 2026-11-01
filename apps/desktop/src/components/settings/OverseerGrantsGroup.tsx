@@ -1,9 +1,9 @@
 import type { ApiClient, OverseerGrant } from '@dispatch/client';
+import { Button } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { overseerKeyPrefix } from '../../hooks/useOverseerSession';
 import { SettingsGroup, SettingsRow } from './SettingsGroup';
-import { Button } from '@/ui/button';
 
 // When a grant lapses, as a wall-clock time.
 function lapsesAt(grant: OverseerGrant): string {
@@ -57,7 +57,7 @@ export function OverseerGrantsGroup({
             control={
               <Button
                 size="sm"
-                variant="outline"
+                variant="secondary"
                 onClick={() => {
                   if (conversationId === null) return;
                   void client

@@ -1,12 +1,11 @@
 import type { ApiClient, JudgmentStatus } from '@dispatch/client';
+import type { ChipTone } from '@dispatch/ui';
+import { Button, Chip, Spinner, Tooltip } from '@dispatch/ui';
 import { useEffect, useState } from 'react';
 
 import { formatRelativeTimeFromIso } from '../../lib/format';
+import kit from './settings.module.css';
 import { SettingsRow } from './SettingsGroup';
-import { Badge } from '@/ui/badge';
-import { Button } from '@/ui/button';
-import { Spinner } from '@/ui/spinner';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 type Probe = NonNullable<JudgmentStatus['probe']>;
 
@@ -41,6 +40,12 @@ const TONE: Record<'ok' | 'off' | 'bad', string> = {
   ok: 'connected',
   off: 'off',
   bad: 'failing',
+};
+
+const CHIP_TONE: Record<'ok' | 'off' | 'bad', ChipTone> = {
+  ok: 'default',
+  off: 'default',
+  bad: 'danger',
 };
 
 /** Jev's status under Settings › Agents, with a Test that makes one tiny call. */
@@ -97,32 +102,27 @@ export function JudgmentStatusRow({
       subtitle={summary.text}
       keywords="typesafe judgments topic reachable status"
       control={
-        <div className="flex items-center gap-2">
-          <Badge
-            variant={summary.tone === 'bad' ? 'destructive' : 'secondary'}
-            data-testid="jev-status"
-          >
-            {TONE[summary.tone]}
-          </Badge>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  size="xs"
-                  variant="outline"
-                  disabled={
-                    client === null || testing || status?.configured !== true
-                  }
-                  onClick={() => void test()}
-                >
-                  {testing ? <Spinner className="size-3" /> : null}
-                  Test
-                </Button>
+        <div className={kit.inline}>
+          <span data-testid="jev-status">
+            <Chip
+              tone={CHIP_TONE[summary.tone]}
+              filled={summary.tone === 'bad'}
+            >
+              {TONE[summary.tone]}
+            </Chip>
+          </span>
+          <Tooltip content="Makes one tiny Jev call and times it">
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={
+                client === null || testing || status?.configured !== true
               }
-            />
-            <TooltipContent>
-              Makes one tiny Jev call and times it
-            </TooltipContent>
+              icon={testing ? <Spinner size="xs" label={null} /> : undefined}
+              onClick={() => void test()}
+            >
+              Test
+            </Button>
           </Tooltip>
         </div>
       }

@@ -1,3 +1,5 @@
+import { Select } from '@dispatch/ui';
+
 import { useDiffDisplaySettings } from '../../hooks/useDiffDisplaySettings';
 import type {
   DiffIndicatorStyle,
@@ -5,17 +7,19 @@ import type {
   DiffLayout,
 } from '../../lib/diffDisplay';
 import { DiffSurface } from '../code/DiffSurface';
+import styles from './DiffsSection.module.css';
+import { SettingsSwitch } from './fields';
 import { SettingsSearchable } from './search';
+import kit from './settings.module.css';
 import { SettingsGroup, SettingsRow } from './SettingsGroup';
-import { Switch } from '@/ui/ai/switch';
-import { PanelRow } from '@/ui/chrome';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/ui/select';
+
+/** The option of `options` whose value is `value`, or undefined. */
+function pick<T extends string>(
+  options: readonly { value: T }[],
+  value: string
+): T | undefined {
+  return options.find((option) => option.value === value)?.value;
+}
 
 const DIFF_LAYOUT_OPTIONS: { value: DiffLayout; label: string }[] = [
   { value: 'split', label: 'Split' },
@@ -90,22 +94,15 @@ export function DiffsSection() {
           title="Layout"
           control={
             <Select
+              label="Diff layout"
               value={settings.layout}
-              onValueChange={(layout) =>
-                updateSettings({ layout: layout as DiffLayout })
-              }
-            >
-              <SelectTrigger aria-label="Diff layout" className="w-[120px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {DIFF_LAYOUT_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              options={DIFF_LAYOUT_OPTIONS}
+              className={styles.select}
+              onChange={(value) => {
+                const next = pick(DIFF_LAYOUT_OPTIONS, value);
+                if (next !== undefined) updateSettings({ layout: next });
+              }}
+            />
           }
         />
 
@@ -113,25 +110,15 @@ export function DiffsSection() {
           title="Change indicators"
           control={
             <Select
+              label="Diff change indicators"
               value={settings.indicators}
-              onValueChange={(indicators) =>
-                updateSettings({ indicators: indicators as DiffIndicatorStyle })
-              }
-            >
-              <SelectTrigger
-                aria-label="Diff change indicators"
-                className="w-[120px]"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {DIFF_INDICATOR_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              options={DIFF_INDICATOR_OPTIONS}
+              className={styles.select}
+              onChange={(value) => {
+                const next = pick(DIFF_INDICATOR_OPTIONS, value);
+                if (next !== undefined) updateSettings({ indicators: next });
+              }}
+            />
           }
         />
 
@@ -139,27 +126,16 @@ export function DiffsSection() {
           title="Inline highlighting"
           control={
             <Select
+              label="Inline highlighting"
               value={settings.inlineHighlight}
-              onValueChange={(value) =>
-                updateSettings({
-                  inlineHighlight: value as DiffInlineHighlight,
-                })
-              }
-            >
-              <SelectTrigger
-                aria-label="Inline highlighting"
-                className="w-[120px]"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {DIFF_INLINE_HIGHLIGHT_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              options={DIFF_INLINE_HIGHLIGHT_OPTIONS}
+              className={styles.select}
+              onChange={(value) => {
+                const next = pick(DIFF_INLINE_HIGHLIGHT_OPTIONS, value);
+                if (next !== undefined)
+                  updateSettings({ inlineHighlight: next });
+              }}
+            />
           }
         />
 
@@ -167,7 +143,7 @@ export function DiffsSection() {
           title="Show backgrounds on changed lines"
           htmlFor="diff-show-backgrounds"
           control={
-            <Switch
+            <SettingsSwitch
               id="diff-show-backgrounds"
               checked={settings.showBackgrounds}
               onCheckedChange={(checked) =>
@@ -181,7 +157,7 @@ export function DiffsSection() {
           title="Show line numbers"
           htmlFor="diff-show-line-numbers"
           control={
-            <Switch
+            <SettingsSwitch
               id="diff-show-line-numbers"
               checked={settings.showLineNumbers}
               onCheckedChange={(checked) =>
@@ -195,7 +171,7 @@ export function DiffsSection() {
           title="Wrap long lines"
           htmlFor="diff-wrap-lines"
           control={
-            <Switch
+            <SettingsSwitch
               id="diff-wrap-lines"
               checked={settings.wrapLines}
               onCheckedChange={(checked) =>
@@ -213,17 +189,17 @@ export function DiffsSection() {
         requires="none"
       >
         <SettingsSearchable text="diff preview sample">
-          <PanelRow className="p-3">
+          <div className={kit.row}>
             {/* A fixed height with the surface as its own scroller: `CodeView` must be the
             element that scrolls (see `DiffSurface`'s `className` note), and the settings page
             should not grow by the length of the sample. */}
-            <div className="border-border rounded-control flex h-72 min-h-0 w-full flex-col overflow-hidden border-[0.5px]">
+            <div className={styles.preview}>
               <DiffSurface
                 patch={PREVIEW_PATCH}
                 cacheKeyPrefix="settings-preview"
               />
             </div>
-          </PanelRow>
+          </div>
         </SettingsSearchable>
       </SettingsGroup>
     </>
