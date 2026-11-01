@@ -153,7 +153,11 @@
      hairline ring in light; dark uses white alpha fills and no ring. */
   --sidebar-row-hover: rgb(0 0 0 / 0.04);
   --sidebar-row-active: #ffffff;
-  --sidebar-row-ring: color-mix(in srgb, var(--border-default) 70%, transparent);
+  --sidebar-row-ring: color-mix(
+    in srgb,
+    var(--border-default) 70%,
+    transparent
+  );
 
   /* Thin overlay-style scrollbar thumb. */
   --scrollbar-thumb: #d9d9d9;

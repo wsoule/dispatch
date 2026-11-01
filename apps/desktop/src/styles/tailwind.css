@@ -244,7 +244,9 @@
     transparent
   );
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-  box-shadow: var(--shadow-overlay), 0 24px 64px -24px rgb(0 0 0 / 65%);
+  box-shadow:
+    var(--shadow-overlay),
+    0 24px 64px -24px rgb(0 0 0 / 65%);
 }
 
 /* A blurred scrim behind dialogs. */
