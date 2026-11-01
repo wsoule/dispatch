@@ -35,6 +35,32 @@ button {
   cursor: pointer;
 }
 
+/* Lucide's 2px default stroke reads heavy at 14-16px; T3 Code draws icons at 1.75. An explicit
+   `stroke-2` class still wins. */
+:where(svg.lucide[stroke-width='2']) {
+  stroke-width: 1.75;
+}
+
+/* Thin overlay-style scrollbars everywhere: 6px, rounded, no track. */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* One global focus ring for every interactive element, `:focus-visible` only so a mouse click
    doesn't trigger it. Indigo is reserved for exactly this kind of interactive signal. No
    forced radius — controls keep their own 8px / 9999px. */
@@ -106,6 +132,50 @@ button {
   }
   100% {
     background-position: -50%;
+  }
+}
+
+/* The working dot: a stepped dim, cheap on the GPU (`animate-status-pulse`). */
+@keyframes status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* A highlight swept through a live label's text (`animate-live-shine` with
+   `.live-shine`). */
+@keyframes live-shine {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+.live-shine {
+  background-image: linear-gradient(
+    90deg,
+    currentColor 0%,
+    currentColor 40%,
+    var(--text-primary) 50%,
+    currentColor 60%,
+    currentColor 100%
+  );
+  background-size: 250% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-shine {
+    animation: none;
+    -webkit-text-fill-color: currentColor;
   }
 }
 

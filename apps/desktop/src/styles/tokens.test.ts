@@ -43,33 +43,25 @@ test('accent and focus ring are Linear indigo in both blocks', () => {
   }
 });
 
-// Linear's measured dark values, verbatim.
-test('dark surfaces, text and borders are the measured Linear values', () => {
+// T3 Code's dark: a true-black canvas whose edges are white alpha hairlines.
+test('dark surfaces, text and borders are the T3 Code values', () => {
   for (const decl of [
-    '--surface-frame: #08080a;',
-    '--surface-panel: #131313;',
-    '--surface-secondary: #161617;',
-    '--surface-tertiary: #17181a;',
-    '--surface-quaternary: #1b1a1a;',
-    '--surface-popover: #202022;',
-    '--surface-control: #1a1d1d;',
-    '--surface-selected: #232224;',
-    '--surface-active: #28292a;',
-    '--text-primary: #fefeff;',
-    '--text-secondary: #e2e5e6;',
-    '--text-muted: #949497;',
-    '--text-ghost: #575659;',
-    '--border-subtle: #1a1b1d;',
-    '--border-default: #232426;',
-    '--border-strong: #29292b;',
-    '--border-panel: #202324;',
-    '--border-chip: #2e3133;',
-    '--border-popover: #3c3d40;',
+    '--surface-frame: #000000;',
+    '--surface-panel: #050505;',
+    '--surface-quaternary: #111111;',
+    '--surface-popover: #141414;',
+    '--text-primary: #f5f5f5;',
+    '--text-muted: #a3a3a3;',
+    '--border-subtle: rgb(255 255 255 / 0.05);',
+    '--border-default: rgb(255 255 255 / 0.08);',
+    '--border-strong: rgb(255 255 255 / 0.11);',
+    '--border-popover: rgb(255 255 255 / 0.1);',
   ]) {
     expect(dark).toContain(decl);
   }
-  expect(light).toContain('--surface-frame: #efeff0;');
-  expect(light).toContain('--surface-panel: #f9f9fa;');
+  expect(light).toContain('--surface-frame: #f4f4f5;');
+  expect(light).toContain('--surface-panel: #fdfdfd;');
+  expect(light).toContain('--text-primary: #18181b;');
 });
 
 // Every token that carries a per-theme value must exist in both blocks.
@@ -113,6 +105,8 @@ const perTheme = [
   '--amber',
   '--teal',
   '--teal-bg',
+  '--sky',
+  '--sky-bg',
   '--gray',
   '--tooltip-bg',
   '--shadow-panel',
@@ -120,6 +114,14 @@ const perTheme = [
   '--shadow-card',
   '--shadow-raised',
   '--shadow-overlay',
+  '--shadow-composer',
+  '--glass-blur',
+  '--glass-saturation',
+  '--glass-edge',
+  '--surface-message',
+  '--composer-outline',
+  '--scrollbar-thumb',
+  '--scrollbar-thumb-hover',
 ];
 test('per-theme tokens exist in light and dark blocks', () => {
   for (const t of perTheme) {
@@ -172,10 +174,10 @@ test('hairlines and rings are 0.5px', () => {
   expect(tokens.match(/0 0 0 0\.5px/g)?.length ?? 0).toBeGreaterThan(8);
 });
 
-// Working is Linear's in-progress yellow and landing is teal, so indigo stays
-// the accent and nothing else.
+// Working is T3 Code's sky and landing is teal, so indigo stays the accent and
+// nothing else.
 test('run-state hues stay off the accent', () => {
-  expect(light).toContain('--state-working-fg: var(--status-progress);');
+  expect(light).toContain('--state-working-fg: var(--sky);');
   expect(light).toContain('--state-landing-fg: var(--teal);');
   expect(tokens).not.toContain('--state-working-fg: var(--accent)');
   expect(tokens).not.toMatch(/--state-[a-z]+-(fg|surface|edge): var\(--violet/);
@@ -189,6 +191,8 @@ test('structural tokens declared once', () => {
     '--radius-card',
     '--radius-popover',
     '--radius-pill',
+    '--radius-bubble',
+    '--chat-lane-w',
     '--control-h',
     '--row-h',
     '--header-h',
@@ -222,6 +226,8 @@ test('radii and sizes are the Linear values', () => {
     '--radius-card: 8px;',
     '--radius-popover: 12px;',
     '--radius-pill: 9999px;',
+    '--radius-bubble: 16px;',
+    '--chat-lane-w: 736px;',
     '--control-h: 28px;',
     '--row-h: 36px;',
     '--header-h: 44px;',
@@ -257,7 +263,7 @@ test('type scale and spacing are fixed px', () => {
     '--text-title2: 24px;',
     '--space-1: 4px;',
     '--space-10: 40px;',
-    '--weight-body: 450;',
+    '--weight-body: 400;',
   ]) {
     expect(tokens).toContain(decl);
   }
@@ -285,7 +291,10 @@ test('tailwind.css exports the Linear tokens', () => {
     '--radius-pill: var(--radius-pill);',
     '--radius-popover: var(--radius-popover);',
     '--shadow-panel: var(--shadow-panel);',
-    '--font-weight-book: 450;',
+    '--font-weight-book: 400;',
+    '--radius-bubble: var(--radius-bubble);',
+    '--shadow-composer: var(--shadow-composer);',
+    '--color-sky: var(--sky);',
     '--text-xs: 11px;',
     '--text-sm: 13px;',
     '--text-base: 15px;',

@@ -84,11 +84,11 @@
   --color-ring: var(--ring);
 
   --font-sans:
-    'Inter Variable', 'SF Pro Display', -apple-system, BlinkMacSystemFont,
-    system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
-  /* Inter Variable's optical body weight: `font-book`. */
-  --font-weight-book: 450;
+    -apple-system, BlinkMacSystemFont, 'Inter Variable', 'Segoe UI', system-ui,
+    sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, 'JetBrains Mono', monospace;
+  /* The body weight, matching tokens.css's `--weight-body`: `font-book`. */
+  --font-weight-book: 400;
 
   /* Tailwind's stock sizes snapped onto the Linear scale (micro/small/regular) so a bare
      `text-xs`/`text-sm`/`text-base` sits on the same steps as the tokens.css scale. */
@@ -128,6 +128,8 @@
   --color-red: var(--red);
   --color-blue: var(--blue);
   --color-teal: var(--teal);
+  --color-amber: var(--amber);
+  --color-sky: var(--sky);
 
   /* Status and priority glyph colours (Linear's status vocabulary), forwarded from
      tokens.css. */
@@ -172,6 +174,7 @@
      `text-text-secondary` — `text-secondary` is already shadcn's control surface. */
   --color-text-secondary: var(--text-secondary);
   --color-accent-tint: var(--accent-tint);
+  --color-message: var(--surface-message);
   --color-focus-ring: var(--focus-ring);
   --color-tooltip-bg: var(--tooltip-bg);
   --color-tooltip-fg: var(--tooltip-fg);
@@ -183,6 +186,7 @@
   --radius-card: var(--radius-card);
   --radius-popover: var(--radius-popover);
   --radius-pill: var(--radius-pill);
+  --radius-bubble: var(--radius-bubble);
 
   --shadow-panel: var(--shadow-panel);
   --shadow-btn: var(--shadow-btn);
@@ -190,6 +194,13 @@
   --shadow-raised: var(--shadow-raised);
   --shadow-overlay: var(--shadow-overlay);
   --shadow-inset-field: var(--shadow-inset-field);
+  --shadow-composer: var(--shadow-composer);
+  --inset-shadow-control-highlight: var(--control-highlight);
+  --inset-shadow-control-pressed: var(--control-pressed);
+
+  /* T3 Code's stepped loops: a working-dot pulse and the sweep across a live tool label. */
+  --animate-status-pulse: status-pulse 2s steps(6) infinite;
+  --animate-live-shine: live-shine 2.2s steps(30) infinite;
 
   --ease-out-expo: var(--ease-out-expo);
 
@@ -201,6 +212,43 @@
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar: var(--sidebar);
+}
+
+/* Film grain (T3 Code's `surface-grain`): a 256px feTurbulence tile at `--grain-opacity`,
+   layered over the element's own background colour. */
+@utility surface-grain {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 1 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  background-size: 256px 256px;
+}
+
+/* Frosted glass for floating chrome (menus, popovers, tooltips): the popover surface at
+   `--glass-opacity` with a blurred, slightly saturated backdrop and a hairline edge. */
+@utility dropdown-glass {
+  background-color: color-mix(
+    in srgb,
+    var(--surface-popover) var(--glass-opacity),
+    transparent
+  );
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  border: 0.5px solid var(--glass-edge);
+}
+
+/* The dialog flavour: same glass, deeper drop. */
+@utility dialog-glass {
+  background-color: color-mix(
+    in srgb,
+    var(--surface-popover) var(--glass-opacity),
+    transparent
+  );
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  border: 0.5px solid var(--glass-edge);
+  box-shadow: var(--shadow-overlay), 0 24px 64px -24px rgb(0 0 0 / 65%);
+}
+
+/* A blurred scrim behind dialogs. */
+@utility dialog-backdrop {
+  background-color: var(--overlay);
+  backdrop-filter: blur(4px);
 }
 
 @layer base {

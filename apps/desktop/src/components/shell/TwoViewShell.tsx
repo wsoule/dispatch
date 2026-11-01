@@ -76,7 +76,7 @@ export function TwoViewShell({
       {banner}
       <main
         ref={mainRef}
-        className="bg-background border-border-panel shadow-panel rounded-popover relative mx-2 mb-2 min-h-0 flex-1 overflow-hidden border-[0.5px]"
+        className="bg-background surface-grain border-border-panel shadow-panel rounded-popover relative mx-2 mb-2 min-h-0 flex-1 overflow-hidden border-[0.5px]"
       >
         <NarrowMainContext.Provider value={narrow}>
           <ErrorBoundary label="this view">
