@@ -11,10 +11,19 @@ let rendererLoad: Promise<Renderer | null> | null = null;
 // Each diagram type is its own chunk: a chat with one flowchart loads only that parser.
 const typeLoads = new Map<DiagramType, Promise<boolean>>();
 
-// CSS that can reach the network or run code: any url() except a local `#id` fragment,
-// @import, image-set() and IE's expression().
-const REMOTE_CSS =
-  /url\(\s*(?!['"]?#)|@import|image-set\(|expression\(|\\[0-9a-f]/i;
+// CSS that can reach the network or run code. Any backslash is refused outright, since
+// CSS escapes (`ur\\l(`, `u\\72l(`) would otherwise hide a url() from these checks.
+const ACTIVE_CSS = /\\|@import|image-set\(|expression\(/i;
+const ANY_URL = /url\(/gi;
+const LOCAL_URL = /url\(\s*(['"]?)#[\w-]+\1\s*\)/gi;
+
+// Allowlist: a value may only reference this SVG's own `#id`s (pele's arrow markers).
+function fetchesRemotely(value: string): boolean {
+  if (ACTIVE_CSS.test(value)) return true;
+  const urls = value.match(ANY_URL)?.length ?? 0;
+  const local = value.match(LOCAL_URL)?.length ?? 0;
+  return urls !== local;
+}
 
 // A DOMPurify instance for diagram SVG. Mermaid `style`/`classDef` lines land in style,
 // fill, filter, mask and the like, so any attribute that could fetch is dropped (pele
@@ -22,7 +31,7 @@ const REMOTE_CSS =
 function diagramPurifier(createPurify: Purify): ReturnType<Purify> {
   const purify = createPurify(window);
   purify.addHook('uponSanitizeAttribute', (_node, data) => {
-    if (REMOTE_CSS.test(data.attrValue)) data.keepAttr = false;
+    if (fetchesRemotely(data.attrValue)) data.keepAttr = false;
   });
   return purify;
 }
