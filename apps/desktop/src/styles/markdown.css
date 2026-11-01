@@ -18,7 +18,7 @@
 
 .dispatch-md p,
 .dispatch-md blockquote,
-.dispatch-md table {
+.dispatch-md-table {
   margin: 0.65em 0;
 }
 
@@ -172,10 +172,66 @@
   font-weight: 600;
 }
 
+/* A wide table scrolls inside its own box instead of widening the message. */
+.dispatch-md-table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* Fenced code (MarkdownCodeFence). Shiki emits both themes as `--shiki-light/-dark`
+   variables, so the color scheme switch recolors a fence without re-highlighting it. */
+.dispatch-md-code pre {
+  margin: 0;
+  white-space: pre;
+}
+
+.dispatch-md-code[data-wrap] pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dispatch-md-code .shiki {
+  background: transparent;
+}
+
+.dispatch-md-code .shiki span {
+  color: var(--shiki-light);
+}
+
+@media (prefers-color-scheme: dark) {
+  .dispatch-md-code .shiki span {
+    color: var(--shiki-dark);
+  }
+}
+
+/* Mermaid diagrams (pele) read their colors from these, so they theme with the app. */
+.pele {
+  --pele-bg: transparent;
+  --pele-fg: var(--foreground);
+  --pele-muted: var(--muted-foreground);
+  --pele-line: var(--muted-foreground);
+  --pele-surface: var(--background);
+  --pele-surface-alt: var(--secondary);
+  --pele-border: color-mix(in srgb, var(--foreground) 28%, transparent);
+  --pele-accent: var(--primary);
+  --pele-critical: var(--destructive);
+}
+
+.pele svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.dispatch-md-diagram-expanded svg {
+  width: 100%;
+  max-height: 80vh;
+}
+
 /* While a reply streams, each new block fades in once instead of popping. Gated on
    `data-streaming` so a settled transcript never replays it. */
 @media (prefers-reduced-motion: no-preference) {
-  .dispatch-md[data-streaming] > * {
+  .dispatch-md[data-streaming] > *,
+  .dispatch-md[data-streaming] [data-slot='code-fence'] {
     transition: opacity 600ms ease-out;
 
     @starting-style {

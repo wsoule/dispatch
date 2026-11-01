@@ -1,5 +1,5 @@
 import { untrustedFenced } from '@dispatch-foo/core/browser';
-import { render } from '@testing-library/react';
+import { fireEvent, render } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 import { useEffect } from 'react';
 
@@ -17,7 +17,7 @@ describe('Markdown', () => {
     );
     const mounted = () => ({
       link: container.querySelector('a'),
-      block: container.querySelector('[data-slot="code-block"]'),
+      block: container.querySelector('[data-slot="code-fence"]'),
     });
     const before = mounted();
     expect(before.link).not.toBeNull();
@@ -68,8 +68,13 @@ describe('Markdown', () => {
     );
     expect(container.textContent).toContain('const x = 1;');
     expect(container.textContent).not.toContain('[object Object]');
-    // Rendered through the CodeBlock primitive, which labels the language in its header.
-    expect(container.textContent).toContain('typescript');
+    // The fence header labels the language as authored.
+    expect(container.textContent).toContain('ts');
+    expect(
+      container
+        .querySelector('[data-slot="code-fence"]')
+        ?.getAttribute('data-language')
+    ).toBe('ts');
   });
 
   test('a multi-line fenced block keeps every line', () => {
@@ -138,6 +143,48 @@ describe('Markdown', () => {
     );
     expect(container.querySelector('img')).toBeNull();
     expect(container.textContent).toContain('![b](https://evil/b.gif)');
+  });
+
+  test('$$…$$ is math, a single dollar stays prose', () => {
+    const { container } = render(
+      <Markdown
+        content={'costs $5 to $10, and $$a^2$$ inline\n\n$$\nx = 1\n$$'}
+      />
+    );
+    const math = container.querySelectorAll('[data-slot="markdown-math"]');
+    expect(math).toHaveLength(2);
+    expect(math[0]?.getAttribute('data-display')).toBeNull();
+    expect(math[1]?.getAttribute('data-display')).toBe('true');
+    expect(container.textContent).toContain('costs $5 to $10');
+  });
+
+  test('a mermaid fence shows its source while the reply streams', () => {
+    const { container } = render(
+      <Markdown content={'```mermaid\ngraph TD\n  A --> B\n```'} streaming />
+    );
+    expect(container.querySelector('[data-slot="mermaid-diagram"]')).toBeNull();
+    expect(container.textContent).toContain('A --> B');
+  });
+
+  test('a mermaid fence draws a diagram once settled, with a code toggle', () => {
+    const { container, getByRole } = render(
+      <Markdown content={'```mermaid\ngraph TD\n  A --> B\n```'} />
+    );
+    expect(
+      container.querySelector('[data-slot="mermaid-diagram"]')
+    ).not.toBeNull();
+    fireEvent.click(getByRole('button', { name: 'Show code' }));
+    expect(container.querySelector('[data-slot="mermaid-diagram"]')).toBeNull();
+    expect(container.textContent).toContain('A --> B');
+  });
+
+  test('a wide table sits in its own scroll box', () => {
+    const { container } = render(
+      <Markdown content={'| a | b |\n| - | - |\n| 1 | 2 |'} />
+    );
+    expect(
+      container.querySelector('.dispatch-md-table > table')
+    ).not.toBeNull();
   });
 
   test('keeps a custom image mounted across rerenders with the same renderer', () => {

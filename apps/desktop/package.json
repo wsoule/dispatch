@@ -33,12 +33,17 @@
     "@tauri-apps/plugin-notification": "catalog:",
     "@tauri-apps/plugin-process": "catalog:",
     "@tauri-apps/plugin-updater": "catalog:",
+    "dompurify": "catalog:",
     "elkjs": "catalog:",
+    "katex": "catalog:",
     "lucide-react": "catalog:",
+    "pele": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-markdown": "catalog:",
     "remark-gfm": "catalog:",
+    "remark-math": "catalog:",
+    "shiki": "catalog:",
     "sonner": "catalog:"
   },
   "devDependencies": {
