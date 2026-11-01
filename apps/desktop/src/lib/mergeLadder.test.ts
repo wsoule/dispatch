@@ -103,10 +103,10 @@ describe('mergeLadderLabel', () => {
           reviewAction: 'merge',
           mergeCommit: 'abc',
           landsOn: 'local',
-          baseBranch: 'epic/e-1',
+          baseBranch: 'milestone/e-1',
         })
       )
-    ).toBe('Landed on epic/e-1 (local epic branch)');
+    ).toBe('Landed on milestone/e-1 (local milestone branch)');
   });
 
   test('a PR landing names the PR rather than printing "undefined"', () => {

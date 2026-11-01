@@ -16,7 +16,7 @@
         { "op": "parseAddress", "input": "agent:wyat/claude-code.macbook" },
         { "op": "parseAddress", "input": "task:t-4a8cce" },
         { "op": "parseAddress", "input": "run:r-9f2c01" },
-        { "op": "parseAddress", "input": "channel:epic/e-c25f9c" }
+        { "op": "parseAddress", "input": "channel:milestone/e-c25f9c" }
       ],
       "then": {
         "steps": [
@@ -57,8 +57,8 @@
             "ok": true,
             "result": {
               "kind": "channel",
-              "name": "epic/e-c25f9c",
-              "address": "channel:epic/e-c25f9c"
+              "name": "milestone/e-c25f9c",
+              "address": "channel:milestone/e-c25f9c"
             }
           }
         ]
@@ -110,8 +110,8 @@
       }
     },
     {
-      "id": "env.address.dispatch-grammar-admits-epic-ids",
-      "title": "The Dispatch profile admits epic ids as work item ids",
+      "id": "env.address.dispatch-grammar-admits-milestone-ids",
+      "title": "The Dispatch profile admits milestone ids as work item ids",
       "class": "envelope",
       "level": "MUST",
       "profile": "dispatch",

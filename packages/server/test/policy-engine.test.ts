@@ -354,7 +354,7 @@ describe('the verify-retry gate', () => {
     expect(h.ledger).toHaveLength(1);
     expect(h.ledger[0].kind).toBe('decision');
     expect(h.ledger[0].sourceTaskId).toBe('t-000001');
-    expect(h.ledger[0].epicId).toBe('e-000001');
+    expect(h.ledger[0].milestoneId).toBe('e-000001');
     expect(h.ledger[0].detail).toContain('policy rung 3');
     h.stop();
   });

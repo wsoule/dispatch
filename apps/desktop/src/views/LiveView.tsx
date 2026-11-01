@@ -4,7 +4,7 @@ import {
   isUnstartedStatus,
   statusModelOf,
 } from '@dispatch-foo/core/browser';
-import type { EpicProgressChild } from '@dispatch/client';
+import type { MilestoneProgressChild } from '@dispatch/client';
 import {
   type KeyboardEvent,
   useCallback,
@@ -63,11 +63,12 @@ import { isTypingTarget } from '../hooks/useGlobalKeyboard';
 import { useOptimisticDispatch } from '../hooks/useOptimisticDispatch';
 import type { TaskTab } from '../lib/appNav';
 import { liveClaimsFrom } from '../lib/dispatchPreview';
-import type { WorkEpicOptions } from '../lib/epicSession';
 import { landingStateByTaskId } from '../lib/landingBadge';
 import { resolveLinearLink } from '../lib/linearSettings';
 import { liveCeilingsOf, spendToday } from '../lib/liveSpend';
+import type { WorkMilestoneOptions } from '../lib/milestoneSession';
 import { pendingStarts } from '../lib/optimisticDispatch';
+import { tasksWithFinishedRun } from '../lib/runState';
 import { assigneeRef } from '../lib/taskDisplay';
 import { PageHeader } from '@/ui/ai/page-header';
 import {
@@ -100,7 +101,7 @@ function useNow(intervalMs: number): number {
 // The fan-out dialog, open for one container: `start` sends a fresh session, `raise`
 // edits a paused one's ceilings.
 interface FanoutDialogState {
-  epicId: string;
+  milestoneId: string;
   mode: 'start' | 'raise';
 }
 
@@ -196,13 +197,17 @@ export function LiveView({
     }
     return out;
   }, [data.attentionByTaskId]);
-  const sessions = data.liveEpicSessions;
+  const sessions = data.liveMilestoneSessions;
   const sessionById = useMemo(
-    () => new Map(sessions.map((p) => [p.epicId, p])),
+    () => new Map(sessions.map((p) => [p.milestoneId, p])),
     [sessions]
   );
   const withRunBranch = useMemo(
     () => tasksWithRunBranch(data.runs),
+    [data.runs]
+  );
+  const withFinishedRun = useMemo(
+    () => tasksWithFinishedRun(data.runs),
     [data.runs]
   );
   // A teammate's task as this window reads it: `d` never sends one, and the fan-out
@@ -234,6 +239,7 @@ export function LiveView({
       local: data.localHuman,
       sessions: sessionById,
       withRunBranch,
+      withFinishedRun,
       landing,
     }),
     [
@@ -245,6 +251,7 @@ export function LiveView({
       data.localHuman,
       sessionById,
       withRunBranch,
+      withFinishedRun,
       landing,
     ]
   );
@@ -295,14 +302,14 @@ export function LiveView({
     let capped = 0;
     for (const progress of sessions) {
       const session = progress.session;
-      if (session?.state === 'active') active.push(progress.epicId);
+      if (session?.state === 'active') active.push(progress.milestoneId);
       else if (session?.state === 'paused') {
         if (
           session.pausedReason === 'budget' ||
           session.pausedReason === 'runs'
         ) {
           capped++;
-        } else resumable.push(progress.epicId);
+        } else resumable.push(progress.milestoneId);
       }
     }
     return { active, resumable, capped };
@@ -318,7 +325,7 @@ export function LiveView({
     [taskById, data.linearLinks]
   );
   const phases = useMemo(() => {
-    const out = new Map<string, EpicProgressChild>();
+    const out = new Map<string, MilestoneProgressChild>();
     for (const progress of sessions) {
       for (const child of progress.children) out.set(child.id, child);
     }
@@ -434,34 +441,34 @@ export function LiveView({
     });
   }, []);
   const {
-    epicProgressById,
-    handlePauseEpic,
-    handleResumeEpic,
-    handleStopEpic,
-    handleLandEpic,
-    handleWorkEpic,
+    milestoneProgressById,
+    handlePauseMilestone,
+    handleResumeMilestone,
+    handleStopMilestone,
+    handleLandMilestone,
+    handleWorkMilestone,
   } = data;
   const actions = useMemo<LiveBandActions>(
     () => ({
       model,
-      progressOf: (id) => epicProgressById.get(id),
-      onSendAgents: (id) => setDialog({ epicId: id, mode: 'start' }),
-      onRaiseCeiling: (id) => setDialog({ epicId: id, mode: 'raise' }),
-      onPause: handlePauseEpic,
-      onResume: handleResumeEpic,
-      onStop: handleStopEpic,
-      onLand: handleLandEpic,
+      progressOf: (id) => milestoneProgressById.get(id),
+      onSendAgents: (id) => setDialog({ milestoneId: id, mode: 'start' }),
+      onRaiseCeiling: (id) => setDialog({ milestoneId: id, mode: 'raise' }),
+      onPause: handlePauseMilestone,
+      onResume: handleResumeMilestone,
+      onStop: handleStopMilestone,
+      onLand: handleLandMilestone,
       onOpenPlan: openPlan,
       onToggleFold: toggleFold,
       onActivate: activate,
     }),
     [
       model,
-      epicProgressById,
-      handlePauseEpic,
-      handleResumeEpic,
-      handleStopEpic,
-      handleLandEpic,
+      milestoneProgressById,
+      handlePauseMilestone,
+      handleResumeMilestone,
+      handleStopMilestone,
+      handleLandMilestone,
       openPlan,
       toggleFold,
       activate,
@@ -510,7 +517,7 @@ export function LiveView({
     setBusy(true);
     const ids = fleet.active;
     const results = await Promise.allSettled(
-      ids.map((id) => handlePauseEpic(id))
+      ids.map((id) => handlePauseMilestone(id))
     );
     results.forEach((result, i) => {
       const id = ids[i];
@@ -524,12 +531,12 @@ export function LiveView({
       }
     });
     setBusy(false);
-  }, [fleet.active, handlePauseEpic, onDispatchFailed]);
+  }, [fleet.active, handlePauseMilestone, onDispatchFailed]);
   const resumeAll = useCallback(async () => {
     setBusy(true);
     const ids = fleet.resumable;
     const results = await Promise.allSettled(
-      ids.map((id) => handleResumeEpic(id))
+      ids.map((id) => handleResumeMilestone(id))
     );
     results.forEach((result, i) => {
       const id = ids[i];
@@ -543,7 +550,7 @@ export function LiveView({
       }
     });
     setBusy(false);
-  }, [fleet.resumable, handleResumeEpic, onDispatchFailed]);
+  }, [fleet.resumable, handleResumeMilestone, onDispatchFailed]);
 
   function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     if (isTypingTarget(e.target)) return;
@@ -640,10 +647,11 @@ export function LiveView({
     );
   }
 
-  const dialogEpic = dialog === null ? undefined : taskById.get(dialog.epicId);
+  const dialogMilestone =
+    dialog === null ? undefined : taskById.get(dialog.milestoneId);
   const dialogSession =
     dialog?.mode === 'raise'
-      ? (epicProgressById.get(dialog.epicId)?.session ?? null)
+      ? (milestoneProgressById.get(dialog.milestoneId)?.session ?? null)
       : null;
   const crumb = [...(projectName === null ? [] : [projectName]), 'Live'];
 
@@ -674,7 +682,7 @@ export function LiveView({
         <LiveReady
           containers={ready}
           refFor={refFor}
-          onSendAgents={(id) => setDialog({ epicId: id, mode: 'start' })}
+          onSendAgents={(id) => setDialog({ milestoneId: id, mode: 'start' })}
           onOpenPlan={openPlan}
         />
       ) : (
@@ -747,11 +755,11 @@ export function LiveView({
           </AlertDialogContent>
         </AlertDialog>
       )}
-      {dialog !== null && dialogEpic !== undefined && (
+      {dialog !== null && dialogMilestone !== undefined && (
         <DispatchDialog
-          title={`${dialog.mode === 'raise' ? 'Raise ceiling' : 'Send agents'} · ${dialogEpic.meta.title}`}
+          title={`${dialog.mode === 'raise' ? 'Raise ceiling' : 'Send agents'} · ${dialogMilestone.meta.title}`}
           tasks={fanoutScope(
-            dialog.epicId,
+            dialog.milestoneId,
             (id) => children.get(id) ?? []
           ).filter((t) => !containerIds.has(t.meta.id))}
           // A teammate's task never starts in a fan-out, so the dialog never says it will.
@@ -765,7 +773,9 @@ export function LiveView({
           }
           runningNow={data.liveRunStateByTaskId.size}
           liveClaims={liveClaims}
-          defaultConcurrency={data.config?.orchestrator.epicConcurrency ?? 3}
+          defaultConcurrency={
+            data.config?.orchestrator.milestoneConcurrency ?? 3
+          }
           maxConcurrency={data.config?.orchestrator.maxConcurrency}
           runCostEstimateUsd={data.config?.orchestrator.runCostEstimateUsd}
           fixLoopAuto={data.config?.fixLoop.auto}
@@ -780,11 +790,11 @@ export function LiveView({
               : undefined
           }
           onCancel={() => setDialog(null)}
-          onConfirm={async (opts: WorkEpicOptions) => {
+          onConfirm={async (opts: WorkMilestoneOptions) => {
             if (dialog.mode === 'raise') {
-              await handleResumeEpic(dialog.epicId, opts);
+              await handleResumeMilestone(dialog.milestoneId, opts);
             } else {
-              await handleWorkEpic(dialog.epicId, opts);
+              await handleWorkMilestone(dialog.milestoneId, opts);
             }
             setDialog(null);
           }}

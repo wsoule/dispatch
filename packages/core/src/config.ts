@@ -122,7 +122,7 @@ const KNOWN_PERMISSION_MODES = [
 const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
   // No default turn cap — maxBudgetUsd is the real guard.
   permissionMode: 'auto',
-  epicConcurrency: 3,
+  milestoneConcurrency: 3,
   executor: DEFAULT_EXECUTOR_NAME,
   // 10 minutes: above a real install+build+test verify, still bounded.
   verifyTimeoutSec: 600,
@@ -568,15 +568,15 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
     );
   }
 
-  const { epicConcurrency } = obj;
+  const { milestoneConcurrency } = obj;
   if (
-    epicConcurrency !== undefined &&
-    (typeof epicConcurrency !== 'number' ||
-      !Number.isInteger(epicConcurrency) ||
-      epicConcurrency < 1)
+    milestoneConcurrency !== undefined &&
+    (typeof milestoneConcurrency !== 'number' ||
+      !Number.isInteger(milestoneConcurrency) ||
+      milestoneConcurrency < 1)
   ) {
     throw new ConfigError(
-      'invalid .dispatch/config.yml: orchestrator.epicConcurrency must be an integer >= 1'
+      'invalid .dispatch/config.yml: orchestrator.milestoneConcurrency must be an integer >= 1'
     );
   }
 
@@ -605,15 +605,15 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
     );
   }
 
-  // Checked on the resolved values so a raised epicConcurrency alone cannot
+  // Checked on the resolved values so a raised milestoneConcurrency alone cannot
   // slip past the default cap.
-  const resolvedEpicConcurrency =
-    epicConcurrency ?? DEFAULT_ORCHESTRATOR.epicConcurrency;
+  const resolvedMilestoneConcurrency =
+    milestoneConcurrency ?? DEFAULT_ORCHESTRATOR.milestoneConcurrency;
   const resolvedMaxConcurrency =
     maxConcurrency ?? DEFAULT_ORCHESTRATOR.maxConcurrency;
-  if (resolvedEpicConcurrency > resolvedMaxConcurrency) {
+  if (resolvedMilestoneConcurrency > resolvedMaxConcurrency) {
     throw new ConfigError(
-      `invalid .dispatch/config.yml: orchestrator.epicConcurrency (${resolvedEpicConcurrency}) must not exceed orchestrator.maxConcurrency (${resolvedMaxConcurrency})`
+      `invalid .dispatch/config.yml: orchestrator.milestoneConcurrency (${resolvedMilestoneConcurrency}) must not exceed orchestrator.maxConcurrency (${resolvedMaxConcurrency})`
     );
   }
 
@@ -631,7 +631,7 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
     maxTurns: maxTurns ?? DEFAULT_ORCHESTRATOR.maxTurns,
     maxBudgetUsd,
     permissionMode: permissionMode ?? DEFAULT_ORCHESTRATOR.permissionMode,
-    epicConcurrency: resolvedEpicConcurrency,
+    milestoneConcurrency: resolvedMilestoneConcurrency,
     verifyTimeoutSec: verifyTimeoutSec ?? DEFAULT_ORCHESTRATOR.verifyTimeoutSec,
     maxConcurrency: resolvedMaxConcurrency,
     runCostEstimateUsd:
@@ -1351,6 +1351,13 @@ function parseLinearConfig(raw: unknown): LinearConfig {
     );
   }
 
+  const { archiveFinished } = obj;
+  if (archiveFinished !== undefined && typeof archiveFinished !== 'boolean') {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: linear.archiveFinished must be a boolean'
+    );
+  }
+
   const { statusMap } = obj;
   const mergedStatusMap = { ...defaults.statusMap };
   if (statusMap !== undefined) {
@@ -1382,6 +1389,7 @@ function parseLinearConfig(raw: unknown): LinearConfig {
     direction: (direction as LinearConfig['direction']) ?? defaults.direction,
     includeAcceptanceCriteria:
       includeAcceptanceCriteria ?? defaults.includeAcceptanceCriteria,
+    archiveFinished: archiveFinished ?? defaults.archiveFinished,
   };
 }
 
@@ -2013,6 +2021,14 @@ function applyLinearPatch(
       patch.includeAcceptanceCriteria
     );
   }
+  if (patch.archiveFinished !== undefined) {
+    if (typeof patch.archiveFinished !== 'boolean') {
+      throw new ConfigError(
+        'invalid linear.archiveFinished: must be a boolean'
+      );
+    }
+    doc.setIn(['linear', 'archiveFinished'], patch.archiveFinished);
+  }
   if (patch.statusMap !== undefined) {
     if (
       typeof patch.statusMap !== 'object' ||
@@ -2184,7 +2200,7 @@ export function updateConfig(
   if (patch.autoCommit !== undefined) doc.set('autoCommit', patch.autoCommit);
 
   for (const key of [
-    'epicConcurrency',
+    'milestoneConcurrency',
     'verifyTimeoutSec',
     'maxConcurrency',
   ] as const) {
@@ -2197,12 +2213,14 @@ export function updateConfig(
   }
 
   // Checked before the write, like permissionMode: a cap over the hard limit
-  // or below epicConcurrency on disk would make every later loadConfig throw.
+  // or below milestoneConcurrency on disk would make every later loadConfig throw.
   if (
     patch.maxConcurrency !== undefined ||
-    patch.epicConcurrency !== undefined
+    patch.milestoneConcurrency !== undefined
   ) {
-    const effective = (key: 'epicConcurrency' | 'maxConcurrency'): number => {
+    const effective = (
+      key: 'milestoneConcurrency' | 'maxConcurrency'
+    ): number => {
       const onDisk = doc.getIn(['orchestrator', key]);
       return typeof onDisk === 'number' ? onDisk : DEFAULT_ORCHESTRATOR[key];
     };
@@ -2212,10 +2230,10 @@ export function updateConfig(
         `invalid maxConcurrency: must be an integer between 1 and ${MAX_CONCURRENCY_HARD_CAP}`
       );
     }
-    const epicConcurrency = effective('epicConcurrency');
-    if (epicConcurrency > maxConcurrency) {
+    const milestoneConcurrency = effective('milestoneConcurrency');
+    if (milestoneConcurrency > maxConcurrency) {
       throw new ConfigError(
-        `invalid epicConcurrency: ${epicConcurrency} exceeds maxConcurrency (${maxConcurrency})`
+        `invalid milestoneConcurrency: ${milestoneConcurrency} exceeds maxConcurrency (${maxConcurrency})`
       );
     }
   }

@@ -20,7 +20,7 @@ function mount(preset: CreateTaskPreset | null) {
     portLoading: false,
     portError: false,
     client: {},
-    epics: [
+    milestones: [
       { meta: { id: 'e-1', title: 'Payments › Beta', kind: 'milestone' } },
     ] as unknown as TaskDoc[],
   } as unknown as DispatchProjectData;
@@ -34,7 +34,7 @@ function mount(preset: CreateTaskPreset | null) {
           return Promise.resolve({ id: 'd-1' } as DraftRecord);
         }}
         onQuickAdd={(next) =>
-          quickAdds.push({ status: next.status, epic: next.epic })
+          quickAdds.push({ status: next.status, milestone: next.milestone })
         }
         onClose={() => {}}
       />
@@ -53,7 +53,7 @@ async function draft(text: string) {
 }
 
 test("a container's + drafts the task inside it", async () => {
-  const { started } = mount({ epic: 'e-1' });
+  const { started } = mount({ milestone: 'e-1' });
   expect(document.querySelector('[data-slot=draft-parent]')?.textContent).toBe(
     'In Payments › Beta'
   );
@@ -62,7 +62,7 @@ test("a container's + drafts the task inside it", async () => {
 });
 
 test('the parent chip can be dropped before drafting', async () => {
-  const { started } = mount({ epic: 'e-1' });
+  const { started } = mount({ milestone: 'e-1' });
   fireEvent.click(
     screen.getByRole('button', { name: 'Not in Payments › Beta' })
   );
@@ -79,13 +79,13 @@ test('without a preset nothing is pinned', async () => {
 });
 
 test('Quick add carries the parent the composer still holds', () => {
-  const { quickAdds } = mount({ status: 'ready', epic: 'e-1' });
+  const { quickAdds } = mount({ status: 'ready', milestone: 'e-1' });
   fireEvent.click(screen.getByRole('button', { name: /Quick add/ }));
-  expect(quickAdds).toEqual([{ status: 'ready', epic: 'e-1' }]);
+  expect(quickAdds).toEqual([{ status: 'ready', milestone: 'e-1' }]);
 });
 
 test('a dropped parent chip stays dropped in Quick add', () => {
-  const { quickAdds } = mount({ status: 'ready', epic: 'e-1' });
+  const { quickAdds } = mount({ status: 'ready', milestone: 'e-1' });
   fireEvent.click(
     screen.getByRole('button', { name: 'Not in Payments › Beta' })
   );

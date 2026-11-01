@@ -108,6 +108,7 @@ import {
   usePlanning,
 } from './hooks/usePlanning';
 import { useSavedViews } from './hooks/useSavedViews';
+import { useSidePanelNotifications } from './hooks/useSidePanelNotifications';
 import { tasksKey } from './hooks/useTaskDoc';
 import {
   threadListsKey,
@@ -144,6 +145,12 @@ import { mentions, subjectOf } from './lib/conversationScope';
 import { type DecisionItem, decisionTarget } from './lib/decisionFeed';
 import { draftTrayViewModel } from './lib/draftTray';
 import { formTaskInput, guideProvider } from './lib/firstTaskGuide';
+import {
+  dismissPosts,
+  readDismissedPosts,
+  visiblePosts,
+  writeDismissedPosts,
+} from './lib/forYouDismissed';
 import type { InboxEntry, InboxTarget } from './lib/inbox';
 import { projectViewForInboxTarget, unreadCount } from './lib/inbox';
 import { liveCeilingsOf, spendToday } from './lib/liveSpend';
@@ -157,7 +164,7 @@ import {
   buildPaletteEntries,
   docHitEntries,
 } from './lib/paletteEntries';
-import { buildPosts, type Post } from './lib/posts';
+import { buildPosts, type Post, questionToAnswer } from './lib/posts';
 import { basename } from './lib/projectName';
 import { prNumberFromUrl } from './lib/reviewTarget';
 import { isTerminalRunState } from './lib/runState';
@@ -253,7 +260,7 @@ function App() {
   const [navState, dispatchNav] = useReducer(navReducer, initialNavState);
   const [showCreate, setShowCreate] = useState(false);
   // What a board column's or list group's "+" pre-fills into the creator (status today;
-  // epic/milestone once the creator reads them); `null` leaves every field to its default.
+  // milestone/milestone once the creator reads them); `null` leaves every field to its default.
   const [createPreset, setCreatePreset] = useState<CreateTaskPreset | null>(
     null
   );
@@ -586,15 +593,27 @@ function App() {
     }),
     [toasts]
   );
+  // A board drag's status change is not a `handle*`, so it reports its own
+  // refusal (a 409 while this machine lacks the team's key, say).
+  const rawMoveTaskStatus = rawData.moveTaskStatus;
+  const moveTaskStatus = useCallback(
+    (id: string, status: string): Promise<void> =>
+      rawMoveTaskStatus(id, status).catch((err: unknown) => {
+        feedback.onError('Change status', describeError(err));
+      }),
+    [rawMoveTaskStatus, feedback]
+  );
   const data = useMemo(
-    () =>
-      withActionFeedback(
+    () => ({
+      ...withActionFeedback(
         rawData,
         feedback.onError,
         feedback.onSuccess,
         feedback.cache
       ),
-    [rawData, feedback]
+      moveTaskStatus,
+    }),
+    [rawData, feedback, moveTaskStatus]
   );
   // Settings reports its own save failures (its save line, a refusal's reason,
   // a kept draft), which the toast wrapper above would swallow first.
@@ -729,8 +748,8 @@ function App() {
   // The live fan-outs summed for the status strip: settled spend across them and their
   // spend ceilings added up — `null` ceilings when no live session set one.
   const liveCeilings = useMemo(
-    () => liveCeilingsOf(data.liveEpicSessions),
-    [data.liveEpicSessions]
+    () => liveCeilingsOf(data.liveMilestoneSessions),
+    [data.liveMilestoneSessions]
   );
 
   // How many runs the archive filter is holding back, computed off the *unfiltered* list so
@@ -983,7 +1002,6 @@ function App() {
   // task with: the project and where its links go. Absent until the config has loaded.
   const rawHandleDispatch = rawData.handleDispatch;
   const rawHandleUpdate = rawData.handleUpdate;
-  const rawMoveTaskStatus = rawData.moveTaskStatus;
   const projectRuns = data.runs;
   const taskPageHost: TaskPageHost | null =
     data.config === null
@@ -1068,7 +1086,11 @@ function App() {
     notificationInbox,
     markNotificationInboxRead,
     markNotificationRead,
+    dismissNotification,
+    clearNotifications,
   } = data;
+  const [sidePanelNotifications, setSidePanelNotifications] =
+    useSidePanelNotifications();
 
   // Every label in use across the project — the create dialog's Labels picker candidates.
   const labelCatalogue = useMemo(() => {
@@ -1131,7 +1153,7 @@ function App() {
   // stay-in-place dispatch.
   // Plans' "Create & send agents…": the milestone's Plan tab opens Send agents once.
   const [sendAgents, setSendAgents] = useState<{
-    epicId: string;
+    milestoneId: string;
     nonce: number;
   } | null>(null);
   const onSendAgentsServed = useCallback(
@@ -2028,7 +2050,19 @@ function App() {
     }
     return out;
   }, [data.me, mailbox]);
-  const posts = useMemo(
+  const forYouRoot = activeProject?.path ?? null;
+  const [dismissedPosts, setDismissedPosts] = useState(() =>
+    readDismissedPosts(forYouRoot)
+  );
+  useEffect(() => {
+    setDismissedPosts(readDismissedPosts(forYouRoot));
+  }, [forYouRoot]);
+  const dismissForYou = (dismissed: readonly Post[]) => {
+    const next = dismissPosts(dismissedPosts, dismissed, Date.now());
+    writeDismissedPosts(forYouRoot, next);
+    setDismissedPosts(next);
+  };
+  const allPosts = useMemo(
     () =>
       data.me === null
         ? []
@@ -2042,6 +2076,10 @@ function App() {
             now: Date.now(),
           }),
     [data.me, mailbox, myTaskIds, followedRooms]
+  );
+  const posts = useMemo(
+    () => visiblePosts(allPosts, dismissedPosts),
+    [allPosts, dismissedPosts]
   );
   const captures = useMemo(() => openCaptures(data.inbox), [data.inbox]);
   // An agent or narrator door: Tasks on a task, a milestone or a preset.
@@ -2059,8 +2097,12 @@ function App() {
   const [overseerFocus, setOverseerFocus] = useState<OverseerFocus | null>(
     null
   );
+  // A run address names its task, so a run's post reads as the work it is on.
   const addressName = (address: string) =>
     data.people.find((p) => p.ref === address)?.name ??
+    (address.startsWith('run:')
+      ? data.runs.find((r) => r.id === address.slice('run:'.length))?.taskTitle
+      : undefined) ??
     address.replace(/^(human|a2a|run|agent):/, '');
   // Messages to me not yet read, the quiet count beside "threads".
   const unreadToMe = (mailbox ?? []).filter(
@@ -2115,12 +2157,18 @@ function App() {
     markNotificationRead(entry.id);
     setOverseerFocus({ kind: 'task', taskId });
   };
+  // A reply on a question answers it; on anything else it continues the thread.
   const replyToPost = async (post: Post, body: string) => {
     if (data.client === null) throw new Error('dispatchd client not ready');
-    await data.client.sendMessage(
-      { to: [post.subject], kind: 'message', body },
-      { continueThread: true }
-    );
+    const question = data.me === null ? null : questionToAnswer(post, data.me);
+    if (question !== null) {
+      await data.client.replyToMessage(question.id, { body });
+    } else {
+      await data.client.sendMessage(
+        { to: [post.subject], kind: 'message', body },
+        { continueThread: true }
+      );
+    }
     void queryClient.invalidateQueries({
       queryKey: threadListsKey(data.port),
     });
@@ -2194,17 +2242,22 @@ function App() {
             }
             draftsCount={draftTrayViewModel(data.drafts).badgeCount}
             notifications={
-              <NotificationsSection
-                entries={notificationInbox.entries}
-                unreadCount={unreadCount(notificationInbox)}
-                onMarkAllRead={markNotificationInboxRead}
-                onOpen={openNotification}
-              />
+              sidePanelNotifications && (
+                <NotificationsSection
+                  entries={notificationInbox.entries}
+                  unreadCount={unreadCount(notificationInbox)}
+                  onMarkAllRead={markNotificationInboxRead}
+                  onOpen={openNotification}
+                  onDismiss={dismissNotification}
+                  onClearAll={clearNotifications}
+                  onHide={() => setSidePanelNotifications(false)}
+                />
+              )
             }
             outflow={{
-              sessions: data.liveEpicSessions,
-              epicTitle: (id) =>
-                data.epics.find((e) => e.meta.id === id)?.meta.title ?? id,
+              sessions: data.liveMilestoneSessions,
+              milestoneTitle: (id) =>
+                data.milestones.find((e) => e.meta.id === id)?.meta.title ?? id,
               mergeReady: mergeReadyCount,
               onMergeAll: data.handleMergeAllReady,
               spendToday: todaySpend,
@@ -2327,6 +2380,8 @@ function App() {
                   label={addressName}
                   onOpen={openPost}
                   onReply={replyToPost}
+                  onDismiss={(post) => dismissForYou([post])}
+                  onClearAll={dismissForYou}
                   holding={overseerTurnLive(overseer)}
                 />
                 <CapturedNotes
@@ -2430,7 +2485,7 @@ function App() {
                       <CreateTaskModal
                         projectName={activeProject?.name}
                         statuses={data.config.statuses}
-                        epics={data.epics}
+                        milestones={data.milestones}
                         initialStatus={createPreset?.status}
                         labels={labelCatalogue}
                         onCreate={(input) => data.handleCreate(input)}

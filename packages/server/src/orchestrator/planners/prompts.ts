@@ -7,7 +7,7 @@ import type { PlannerMode, PlannerQuestion, PlanProposal } from '../planner.js';
 const PROPOSAL_JSON_SCHEMA: Record<string, unknown> = {
   type: 'object',
   properties: {
-    epic: {
+    milestone: {
       type: 'object',
       properties: {
         title: { type: 'string' },
@@ -112,7 +112,7 @@ const PROPOSAL_RULES =
   'ordinary feature and fix work), elevated (touches shared contracts, ' +
   'auth, concurrency, or data migration), or critical (destructive ' +
   'operations, writes to an external system, or anything that can lose ' +
-  'user data) — pick the tier the task itself warrants, not the epic as a ' +
+  'user data) — pick the tier the task itself warrants, not the milestone as a ' +
   'whole.';
 
 // Shared clarifying-questions instruction for both plan and draft prompts;
@@ -141,7 +141,7 @@ function buildQuestionRules(roundLimit: string): string {
 }
 
 // The opening instruction wrapping a user's first planning prompt: asks for a
-// breakdown into an (optional) epic plus a set of tasks, and leans on the
+// breakdown into an (optional) milestone plus a set of tasks, and leans on the
 // json_schema outputFormat for shape enforcement rather than parsing free text.
 function buildPlannerPrompt(userPrompt: string): string {
   return [
@@ -149,10 +149,10 @@ function buildPlannerPrompt(userPrompt: string): string {
       'it. Do not write, edit, or run anything — you are in read-only ' +
       'planning mode. This is a conversation: the user may follow up to ' +
       'refine the plan across several turns.',
-    'Break the following request into tasks: a single epic with its child ' +
-      'tasks, or a flat list with no epic when an epic wrapper would add no ' +
+    'Break the following request into tasks: a single milestone with its child ' +
+      'tasks, or a flat list with no milestone when a milestone wrapper would add no ' +
       'value. If the request itself asks for a particular shape (one task, ' +
-      'no epic), follow it:',
+      'no milestone), follow it:',
     userPrompt,
     buildQuestionRules(
       'Ask at most 4 questions in a single turn, picking the ones that would ' +
@@ -183,7 +183,7 @@ function buildDraftPrompt(userPrompt: string): string {
     'You are turning a short request into a single well-formed task for a ' +
       'git-native task tracker, not implementing it. Do not write, edit, or ' +
       'run anything — you are in read-only planning mode.',
-    'Produce exactly one task (no epic) for this request:',
+    'Produce exactly one task (no milestone) for this request:',
     userPrompt,
     buildQuestionRules(
       'You get at most one round of questions for this single task — ask at ' +
@@ -193,7 +193,7 @@ function buildDraftPrompt(userPrompt: string): string {
     ),
     PROPOSAL_RULES +
       ' This draft proposes exactly one task, so `proposal.tasks` must have ' +
-      'at most one entry and `epic` must be omitted.',
+      'at most one entry and `milestone` must be omitted.',
   ].join('\n\n');
 }
 
@@ -233,19 +233,19 @@ export function followupPrompt(mode: PlannerMode, message: string): string {
 }
 
 // Codex enforces OpenAI strict structured output, where every property must be
-// required: the optional `epic` becomes required-but-nullable.
+// required: the optional `milestone` becomes required-but-nullable.
 const CODEX_PROPOSAL_JSON_SCHEMA: Record<string, unknown> = {
   ...PROPOSAL_JSON_SCHEMA,
   properties: {
     ...(PROPOSAL_JSON_SCHEMA.properties as Record<string, unknown>),
-    epic: {
+    milestone: {
       anyOf: [
-        (PROPOSAL_JSON_SCHEMA.properties as Record<string, unknown>).epic,
+        (PROPOSAL_JSON_SCHEMA.properties as Record<string, unknown>).milestone,
         { type: 'null' },
       ],
     },
   },
-  required: ['epic', 'tasks'],
+  required: ['milestone', 'tasks'],
 };
 
 /** TURN_JSON_SCHEMA in the strict form Codex's `outputSchema` accepts. */
@@ -258,7 +258,7 @@ export const CODEX_TURN_JSON_SCHEMA: Record<string, unknown> = {
 };
 
 // A Codex planner turn's final message as CODEX_TURN_JSON_SCHEMA's JSON, minus
-// a null epic; null when it isn't that shape (the planner retries, as for Claude).
+// a null milestone; null when it isn't that shape (the planner retries, as for Claude).
 export function parseCodexTurnOutput(text: string): PlannerTurnOutput | null {
   let parsed: unknown;
   try {
@@ -277,7 +277,7 @@ export function parseCodexTurnOutput(text: string): PlannerTurnOutput | null {
   }
   if (typeof output.proposal !== 'object') return null;
   const proposal = { ...(output.proposal as Record<string, unknown>) };
-  if (proposal.epic === null) delete proposal.epic;
+  if (proposal.milestone === null) delete proposal.milestone;
   return {
     message: output.message,
     proposal: proposal as unknown as PlanProposal,

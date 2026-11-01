@@ -205,8 +205,9 @@ describe('variantTaskInput', () => {
       variantTaskInput(sourceTask(), { executor: 'claude' }).parent
     ).toBeUndefined();
     expect(
-      variantTaskInput(sourceTask({ parent: 'epic-1' }), { executor: 'claude' })
-        .parent
-    ).toBe('epic-1');
+      variantTaskInput(sourceTask({ parent: 'milestone-1' }), {
+        executor: 'claude',
+      }).parent
+    ).toBe('milestone-1');
   });
 });

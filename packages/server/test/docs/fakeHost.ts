@@ -147,7 +147,7 @@ export class FakeDocsHost implements DocsHost {
     });
     this.tasks.set('e-1', {
       id: 'e-1',
-      title: 'Epic',
+      title: 'Milestone',
       body: '',
       parent: 'e-root',
       risk: 'routine',

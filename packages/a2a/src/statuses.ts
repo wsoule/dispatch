@@ -25,6 +25,9 @@ export interface StatusVocabulary {
   definitions: readonly { name: string; type: StatusKind }[];
   roles: {
     ready: string | null;
+    /** Written when a run starts; a review or landing role sharing it reads
+     *  as working, since status alone cannot say the run has finished. */
+    dispatched?: string | null;
     review: string | null;
     landing: string | null;
     landed: string | null;
@@ -77,6 +80,7 @@ export function handoffStatuses(v: StatusVocabulary): HandoffStatuses {
         case 'unstarted':
           return 'queued';
         case 'started':
+          if (name === v.roles.dispatched) return 'working';
           if (name === v.roles.review) return 'review';
           if (name === v.roles.landing) return 'landing';
           return 'working';

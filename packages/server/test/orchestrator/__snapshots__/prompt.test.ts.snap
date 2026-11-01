@@ -1,6 +1,6 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
-exports[`buildTaskPrompt matches the exact prompt text for a fixture task with a parent epic 1`] = `
+exports[`buildTaskPrompt matches the exact prompt text for a fixture task with a parent milestone 1`] = `
 "# Task t-abc123: Add login rate limiting
 
 ## Description
@@ -13,7 +13,7 @@ Add a rate limiter to the login endpoint.
 
 ## Activity
 
-## Parent epic: e-def456 — Harden auth
+## Parent milestone: e-def456 — Harden auth
 
 ## Description
 

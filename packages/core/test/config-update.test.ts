@@ -29,7 +29,8 @@ describe('updateConfig', () => {
   test('sets a nested orchestrator value', () => {
     const dir = root('autoCommit: false\n');
     expect(
-      updateConfig(dir, { epicConcurrency: 7 }).orchestrator.epicConcurrency
+      updateConfig(dir, { milestoneConcurrency: 7 }).orchestrator
+        .milestoneConcurrency
     ).toBe(7);
   });
 
@@ -90,7 +91,7 @@ describe('updateConfig', () => {
   });
 
   test.each([0, -1, 1.5])('rejects a nonsensical concurrency: %s', (value) => {
-    expect(() => updateConfig(root(), { epicConcurrency: value })).toThrow(
+    expect(() => updateConfig(root(), { milestoneConcurrency: value })).toThrow(
       /positive integer/
     );
   });
@@ -104,7 +105,7 @@ describe('updateConfig', () => {
   test('a rejected patch leaves the file untouched', () => {
     const dir = root('autoCommit: true\n');
     const before = read(dir);
-    expect(() => updateConfig(dir, { epicConcurrency: -1 })).toThrow();
+    expect(() => updateConfig(dir, { milestoneConcurrency: -1 })).toThrow();
     expect(read(dir)).toBe(before);
   });
 
@@ -113,19 +114,19 @@ describe('updateConfig', () => {
     const cfg = updateConfig(dir, {
       verifyCommand: 'bun run verify',
       autoCommit: true,
-      epicConcurrency: 4,
+      milestoneConcurrency: 4,
       permissionMode: 'auto',
     });
     expect(cfg.verifyCommand).toBe('bun run verify');
     expect(cfg.autoCommit).toBe(true);
-    expect(cfg.orchestrator.epicConcurrency).toBe(4);
+    expect(cfg.orchestrator.milestoneConcurrency).toBe(4);
   });
 
   test('round-trips through loadConfig', () => {
     const dir = root();
-    updateConfig(dir, { epicConcurrency: 9, verifyTimeoutSec: 120 });
+    updateConfig(dir, { milestoneConcurrency: 9, verifyTimeoutSec: 120 });
     const cfg = loadConfig(dir);
-    expect(cfg.orchestrator.epicConcurrency).toBe(9);
+    expect(cfg.orchestrator.milestoneConcurrency).toBe(9);
     expect(cfg.orchestrator.verifyTimeoutSec).toBe(120);
   });
 
@@ -155,17 +156,18 @@ describe('updateConfig', () => {
     expect(read(dir)).toBe(before);
   });
 
-  test('rejects an epicConcurrency above the effective maxConcurrency', () => {
+  test('rejects an milestoneConcurrency above the effective maxConcurrency', () => {
     const dir = root();
-    expect(() => updateConfig(dir, { epicConcurrency: 20 })).toThrow(
-      /invalid epicConcurrency: 20 exceeds maxConcurrency \(16\)/
+    expect(() => updateConfig(dir, { milestoneConcurrency: 20 })).toThrow(
+      /invalid milestoneConcurrency: 20 exceeds maxConcurrency \(16\)/
     );
     updateConfig(dir, { maxConcurrency: 20 });
     expect(
-      updateConfig(dir, { epicConcurrency: 20 }).orchestrator.epicConcurrency
+      updateConfig(dir, { milestoneConcurrency: 20 }).orchestrator
+        .milestoneConcurrency
     ).toBe(20);
     expect(() => updateConfig(dir, { maxConcurrency: 8 })).toThrow(
-      /invalid epicConcurrency: 20 exceeds maxConcurrency \(8\)/
+      /invalid milestoneConcurrency: 20 exceeds maxConcurrency \(8\)/
     );
   });
 
@@ -219,7 +221,7 @@ describe('updateConfig', () => {
     );
   });
 
-  // A budget is money, so fractions are legitimate — unlike epicConcurrency, this
+  // A budget is money, so fractions are legitimate — unlike milestoneConcurrency, this
   // must not be an integer check.
   test('accepts a fractional budget cap', () => {
     const dir = root();

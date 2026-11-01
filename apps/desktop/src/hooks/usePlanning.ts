@@ -1,4 +1,4 @@
-import type { EpicProgress, RunMeta } from '@dispatch/client';
+import type { MilestoneProgress, RunMeta } from '@dispatch/client';
 import type {
   AllocationPlan,
   DependencyGraph,
@@ -65,7 +65,7 @@ export type PlanningInput = Pick<
   | 'me'
   | 'linearLinks'
   | 'latestRunByTaskId'
-  | 'epicProgressById'
+  | 'milestoneProgressById'
 >;
 
 /** The chain's results, one object per computation (stable between). */
@@ -157,12 +157,12 @@ function useRunStarts(latest: ReadonlyMap<string, RunMeta>): RunStarts {
   }, [latest]);
 }
 
-type SessionStates = ReadonlyMap<string, Pick<EpicProgress, 'session'>>;
+type SessionStates = ReadonlyMap<string, Pick<MilestoneProgress, 'session'>>;
 
 // Whether every container's fan-out session is in the same state in both maps.
 function sameSessionStates(
   prev: SessionStates,
-  next: ReadonlyMap<string, EpicProgress>
+  next: ReadonlyMap<string, MilestoneProgress>
 ): boolean {
   if (prev.size !== next.size) return false;
   for (const [id, progress] of next) {
@@ -176,20 +176,20 @@ function sameSessionStates(
 
 /**
  * Each container's fan-out session, the one fact about fan-out progress the
- * synthesis reads (a paused session pauses the project). `epicProgressById`
+ * synthesis reads (a paused session pauses the project). `milestoneProgressById`
  * is refetched after every task event and rebuilt whenever a count moved,
  * so it is reduced to the sessions and kept the same Map while no session
  * changed state: a task.changed patch recomputes the plan once, for the
  * task list, not again for the progress refetch that follows it.
  */
 function useSessionStates(
-  progress: ReadonlyMap<string, EpicProgress>
+  progress: ReadonlyMap<string, MilestoneProgress>
 ): SessionStates {
   const kept = useRef<SessionStates | null>(null);
   return useMemo(() => {
     const prev = kept.current;
     if (prev !== null && sameSessionStates(prev, progress)) return prev;
-    const next = new Map<string, Pick<EpicProgress, 'session'>>();
+    const next = new Map<string, Pick<MilestoneProgress, 'session'>>();
     for (const [id, each] of progress) next.set(id, { session: each.session });
     kept.current = next;
     return next;
@@ -206,7 +206,7 @@ export function usePlanning(data: PlanningInput): Planning {
   const model = useStatusModelOf(data.config);
   const minute = useMinuteClock();
   const runStarts = useRunStarts(data.latestRunByTaskId);
-  const sessions = useSessionStates(data.epicProgressById);
+  const sessions = useSessionStates(data.milestoneProgressById);
   const executors = useMemo(
     () => data.executors?.executors.map((executor) => executor.name) ?? [],
     [data.executors]
@@ -221,7 +221,7 @@ export function usePlanning(data: PlanningInput): Planning {
       me,
       linearLinks,
       latestRunByTaskId: runStarts,
-      epicProgressById: sessions,
+      milestoneProgressById: sessions,
       hrefFor: taskHref,
     });
     const ctx = buildEvalContext(new Date(minute));

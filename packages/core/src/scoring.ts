@@ -105,6 +105,8 @@ export interface RankOptions {
   readiness?: Record<string, ReadinessLevel>;
   /** The project's status model; the built-in one when omitted. */
   statuses?: StatusModel;
+  /** Whether a task's latest run has ended; see `dispatchableTasks`. */
+  finishedRun?: (id: string) => boolean;
 }
 
 /** What a factor is, without the function that computes it: the shape config
@@ -247,15 +249,15 @@ export const QUEUE_FACTOR_KEYS: readonly ScoreFactorKey[] = FACTORS.map(
 
 // Whether finishing something would free *this* task — i.e. whether it counts
 // as work released. Mirrors the filters readyTasks/dispatchableTasks apply to
-// their own candidates: an epic is a container the orchestrator never starts,
+// their own candidates: a milestone is a container the orchestrator never starts,
 // and a derived task only anchors a review of someone else's artifact. Counting
 // either as freed work would inflate a blocker's unblocking value with tasks
 // nobody will ever be handed.
-function countsAsFreedWork(task: TaskDoc): boolean {
+function countsAsFreedWork(task: TaskDoc, model?: StatusModel): boolean {
   return (
     task.meta.kind === 'task' &&
     task.meta.derivedFrom === undefined &&
-    !isDone(task)
+    !isDone(task, model)
   );
 }
 
@@ -284,14 +286,15 @@ function countsAsFreedWork(task: TaskDoc): boolean {
  */
 function countDependents(
   tasks: TaskDoc[],
-  sources: string[]
+  sources: string[],
+  options: Pick<RankOptions, 'statuses' | 'finishedRun'>
 ): Map<string, DependentCount> {
   const byId = new Map(tasks.map((task) => [task.meta.id, task]));
   const blocks = new Map<string, string[]>();
   const freesByBlocker = new Map<string, number>();
 
   for (const task of tasks) {
-    if (!countsAsFreedWork(task)) continue;
+    if (!countsAsFreedWork(task, options.statuses)) continue;
     // Deduped so a blockedBy naming the same blocker twice neither doubles an
     // edge nor hides that blocker being the only one left.
     const blockers = new Set(task.meta.blockedBy);
@@ -304,7 +307,14 @@ function countDependents(
     // readyTasks treats as satisfied, so it is not what holds this task back.
     const holdingItBack = [...blockers].filter((id) => {
       const blocker = byId.get(id);
-      return blocker !== undefined && !isSatisfiedForDispatch(blocker);
+      return (
+        blocker !== undefined &&
+        !isSatisfiedForDispatch(
+          blocker,
+          options.statuses,
+          options.finishedRun?.(id) ?? false
+        )
+      );
     });
     const last = holdingItBack.length === 1 ? holdingItBack[0] : undefined;
     if (last !== undefined) {
@@ -362,14 +372,19 @@ export function rankTasks(
   options: RankOptions
 ): ScoredTask[] {
   const nowMs = Date.parse(options.now);
-  const candidates = dispatchableTasks(tasks, options.statuses);
+  const candidates = dispatchableTasks(
+    tasks,
+    options.statuses,
+    options.finishedRun
+  );
   const ctx: ScoringContext = {
     // An unparseable `now` would make every age reading NaN, so fall back to
     // the epoch, which pins that factor at 0 rather than poisoning the score.
     nowMs: Number.isNaN(nowMs) ? 0 : nowMs,
     dependents: countDependents(
       tasks,
-      candidates.map((task) => task.meta.id)
+      candidates.map((task) => task.meta.id),
+      options
     ),
     readiness: options.readiness,
   };

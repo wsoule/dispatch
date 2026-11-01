@@ -134,7 +134,7 @@ describe('GET /api/queue', () => {
     writeTask('t-aaaaaa', {});
     writeTask('t-bbbbbb', {}, ['t-aaaaaa']);
     writeTask('t-cccccc', { status: 'backlog' });
-    writeTask('e-dddddd', { kind: 'epic' });
+    writeTask('e-dddddd', { kind: 'milestone' });
     await start();
 
     const body = await json<QueueBody>(await getQueue());

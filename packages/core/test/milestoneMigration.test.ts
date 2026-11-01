@@ -12,17 +12,17 @@ import { SqliteTaskStore } from '../src/sqliteTaskStore.js';
 import { TaskStore } from '../src/store.js';
 import type { TaskStorePort } from '../src/store.js';
 
-// A board as the legacy milestone field left it: two milestones, an epic
+// A board as the legacy milestone field left it: two milestones, a milestone
 // child that already has a parent, a task with none, and a stray project.
 function fixture(store: TaskStorePort) {
-  const epic = store.create({
-    title: 'Auth epic',
-    kind: 'epic',
+  const milestone = store.create({
+    title: 'Auth milestone',
+    kind: 'milestone',
     milestone: 'v1',
   });
   const child = store.create({
     title: 'Login',
-    parent: epic.meta.id,
+    parent: milestone.meta.id,
     milestone: 'v1',
   });
   const loose = store.create({ title: 'Docs', milestone: ' v1 ' });
@@ -33,7 +33,7 @@ function fixture(store: TaskStorePort) {
     kind: 'project',
     milestone: 'v2',
   });
-  return { epic, child, loose, other, plain, project };
+  return { milestone, child, loose, other, plain, project };
 }
 
 function eachBackend(run: (store: TaskStorePort) => void): void {
@@ -58,13 +58,13 @@ describe('migrateLegacyMilestones', () => {
       ]);
       expect(report.projectsCreated).toEqual([]);
       expect(report.reparented.map((r) => r.id).sort()).toEqual(
-        [f.epic.meta.id, f.loose.meta.id, f.other.meta.id].sort()
+        [f.milestone.meta.id, f.loose.meta.id, f.other.meta.id].sort()
       );
       expect(report.skipped).toEqual([
         {
           id: f.child.meta.id,
           milestone: 'v1',
-          reason: `already has parent ${f.epic.meta.id}`,
+          reason: `already has parent ${f.milestone.meta.id}`,
         },
         {
           id: f.project.meta.id,
@@ -87,11 +87,11 @@ describe('migrateLegacyMilestones', () => {
       const v1Doc = store.get(v1)!;
       expect(v1Doc.meta.kind).toBe('project');
       expect(v1Doc.meta.title).toBe('v1');
-      expect(store.get(f.epic.meta.id)!.meta.parent).toBe(v1);
+      expect(store.get(f.milestone.meta.id)!.meta.parent).toBe(v1);
       expect(store.get(f.loose.meta.id)!.meta.parent).toBe(v1);
       // The legacy field is kept, not cleared.
       expect(store.get(f.loose.meta.id)!.meta.milestone).toBe(' v1 ');
-      expect(store.get(f.child.meta.id)!.meta.parent).toBe(f.epic.meta.id);
+      expect(store.get(f.child.meta.id)!.meta.parent).toBe(f.milestone.meta.id);
       expect(store.get(f.plain.meta.id)!.meta.parent).toBeNull();
 
       const second = migrateLegacyMilestones(store);

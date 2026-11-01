@@ -1,6 +1,6 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
-import { canonicalKind, isContainerKind } from '@dispatch-foo/core/browser';
-import type { EpicProgress } from '@dispatch/client';
+import { isContainerKind } from '@dispatch-foo/core/browser';
+import type { MilestoneProgress } from '@dispatch/client';
 
 import { type FlightScope, flightScope } from '../flightplan/flightScope';
 
@@ -25,7 +25,7 @@ export interface LiveBandSpec {
   /** The band's container; null for Loose work. */
   container: TaskListItem | null;
   /** The container's active or paused fan-out, else null. */
-  progress: EpicProgress | null;
+  progress: MilestoneProgress | null;
   scope: FlightScope;
 }
 
@@ -39,7 +39,7 @@ export interface LiveSelectionInput {
   taskById: ReadonlyMap<string, TaskListItem>;
   children: ReadonlyMap<string, readonly TaskListItem[]>;
   /** Fan-outs whose session is active or paused. */
-  sessions: readonly EpicProgress[];
+  sessions: readonly MilestoneProgress[];
   /** Tasks an agent is on: a live run, or a dispatch whose run has not shown up yet. */
   flying: IdSet;
   /** Tasks whose run sits in the merge queue. */
@@ -60,7 +60,7 @@ function byCreatedThenId(a: TaskListItem, b: TaskListItem): number {
 // a parent issue is one node of its container's plan, its sub-issues its own.
 function nestedInLivePlan(
   id: string,
-  live: ReadonlyMap<string, EpicProgress>,
+  live: ReadonlyMap<string, MilestoneProgress>,
   taskById: ReadonlyMap<string, TaskListItem>
 ): boolean {
   const task = taskById.get(id);
@@ -100,7 +100,7 @@ function activityScope(
   container: TaskListItem,
   children: ReadonlyMap<string, readonly TaskListItem[]>
 ): FlightScope {
-  const kind = canonicalKind(container.meta.kind);
+  const kind = container.meta.kind;
   return kind === 'project' || kind === 'initiative'
     ? directScope(container, children)
     : flightScope(container, children);
@@ -116,9 +116,10 @@ function activityScope(
  */
 export function selectLiveBands(input: LiveSelectionInput): LiveBandSpec[] {
   const { taskById, children } = input;
-  const live = new Map<string, EpicProgress>();
+  const live = new Map<string, MilestoneProgress>();
   for (const progress of input.sessions) {
-    if (taskById.has(progress.epicId)) live.set(progress.epicId, progress);
+    if (taskById.has(progress.milestoneId))
+      live.set(progress.milestoneId, progress);
   }
 
   const bands: LiveBandSpec[] = [];
@@ -290,7 +291,7 @@ export function readyContainers(input: ReadyContainerInput): ReadyContainer[] {
     if (container === undefined || container.meta.archivedAt !== undefined) {
       continue;
     }
-    const kind = canonicalKind(container.meta.kind);
+    const kind = container.meta.kind;
     if (kind === 'project' || kind === 'initiative') continue;
     const total = (input.children.get(id) ?? []).filter(
       (c) => !isContainerKind(c.meta.kind)

@@ -2,10 +2,18 @@ import { describeValue, parseLinearExternal } from '@dispatch-foo/core/browser';
 import type { StatusRoles } from '@dispatch-foo/core/browser';
 import { ApiError } from '@dispatch/client';
 import type {
+  LinearBulkAction,
+  LinearBulkOutcome,
+  LinearCapacity,
+  LinearCapacityState,
+  LinearCoverage,
+  LinearExportPreview,
+  LinearExportScope,
   LinearIssueLink,
   LinearProgress,
   LinearStatus,
   LinearSyncSummary,
+  LinearUnlinkedReason,
 } from '@dispatch/client';
 
 import { formatRelativeTimeFromIso } from './format';
@@ -85,15 +93,185 @@ const PROGRESS_PHASE: Record<LinearProgress['phase'], string> = {
   containers: 'Reading projects',
   issues: 'Fetching issues',
   applying: 'Writing tasks',
+  creating: 'Creating issues',
+  archiving: 'Archiving issues',
 };
 
-/** Where an import has got to: "Fetching issues… 1,200", or "… of 2,000". */
+/** Where a long pass has got to: "Fetching issues… 1,200", or "… of 2,000". */
 export function formatLinearProgress(progress: LinearProgress): string {
-  const done = progress.done.toLocaleString('en-US');
+  const done = count(progress.done);
   const phase = PROGRESS_PHASE[progress.phase];
   return progress.total === null
     ? `${phase}… ${done}`
-    : `${phase}… ${done} of ${progress.total.toLocaleString('en-US')}`;
+    : `${phase}… ${done} of ${count(progress.total)}`;
+}
+
+/** The live progress when it belongs to `action`, else null, so each row shows
+ *  only its own pass. A daemon predating `action` only reports imports. */
+export function progressFor(
+  progress: LinearProgress | null | undefined,
+  action: 'import' | LinearBulkAction
+): LinearProgress | null {
+  if (progress === null || progress === undefined) return null;
+  return (progress.action ?? 'import') === action ? progress : null;
+}
+
+function count(n: number): string {
+  return n.toLocaleString('en-US');
+}
+
+const BULK_VERB: Record<LinearBulkAction, string> = {
+  export: 'Exported',
+  retry: 'Sent',
+  archive: 'Archived',
+};
+
+/** One line on how the last export, retry or archive ended, or null before
+ *  the first: "Exported 47 of 47 · 12 archived on arrival". */
+export function describeBulkOutcome(
+  outcome: LinearBulkOutcome | null | undefined
+): string | null {
+  if (outcome === null || outcome === undefined) return null;
+  const { done, candidates, remaining, halted } = outcome;
+  const tally = `${count(done)} of ${count(candidates)}`;
+  // A stopped export or retry leaves the rest queued; an archive does not.
+  const rest =
+    outcome.action === 'archive'
+      ? 'archive again for the rest'
+      : 'the rest retry on their own';
+  let line =
+    halted === 'usage-limit'
+      ? `Stopped after ${tally} at the issue limit`
+      : halted === 'rate-limit'
+        ? `Stopped after ${tally}: Linear rate-limited the run; ${rest}`
+        : `${BULK_VERB[outcome.action]} ${tally}`;
+  if (halted === null && remaining > 0) line += ` · ${count(remaining)} left`;
+  const arrived = outcome.archivedOnArrival ?? 0;
+  if (arrived > 0) line += ` · ${count(arrived)} archived on arrival`;
+  return line;
+}
+
+/** How many tasks an export of `scope` sends. */
+export function exportScopeCount(
+  preview: LinearExportPreview,
+  scope: LinearExportScope
+): number {
+  if (scope === 'open') return preview.open;
+  return scope === 'all' ? preview.all : preview.allArchiveFinished;
+}
+
+/** How many issues an export of `scope` leaves active in Linear: finished
+ *  tasks arrive archived under 'all-archive-finished'. */
+export function exportActiveCount(
+  preview: LinearExportPreview,
+  scope: LinearExportScope
+): number {
+  return scope === 'all' ? preview.all : preview.open;
+}
+
+const PLAN_NAME: Record<LinearCapacity['plan'], string | null> = {
+  free: 'the Free plan',
+  paid: 'a paid plan',
+  trial: 'a trial',
+  unknown: null,
+};
+
+/** Active issues against the plan's cap: "188 of 250 active issues on the
+ *  Free plan · HYD 120 · OPS 68". Null before anything was measured. */
+export function describeCapacity(
+  capacity: LinearCapacity | null
+): string | null {
+  if (capacity === null || capacity.active === null) return null;
+  const plan = PLAN_NAME[capacity.plan];
+  const scope = capacity.activeScope === 'workspace' ? ' in the workspace' : '';
+  let line =
+    capacity.limit === null
+      ? `${count(capacity.active)} active issues${scope}`
+      : `${count(capacity.active)} of ${count(capacity.limit)} active issues${scope}`;
+  if (plan !== null) line += ` on ${plan}`;
+  if (capacity.limit === null && capacity.plan === 'paid') {
+    line += ', with no issue limit';
+  }
+  if (capacity.teams.length > 1) {
+    line += capacity.teams
+      .map((t) => ` · ${t.key} ${count(t.active)}`)
+      .join('');
+  }
+  return line;
+}
+
+/** How many closed issues an archive would take from the linked teams. */
+export function archivableCount(
+  capacity: LinearCapacity,
+  includeCanceled: boolean
+): number {
+  return capacity.teams.reduce(
+    (n, t) => n + t.completed + (includeCanceled ? t.canceled : 0),
+    0
+  );
+}
+
+/** Whether ordinary passes are holding new issues back after the usage limit. */
+export function capacityPaused(
+  capacity: LinearCapacityState | null | undefined,
+  now = Date.now()
+): boolean {
+  const retryAt = capacity?.retryAt ?? null;
+  return retryAt !== null && now < Date.parse(retryAt);
+}
+
+/** "in 25m" or "in 2h": how long until a future timestamp. */
+export function formatUntil(iso: string, now = Date.now()): string {
+  const minutes = Math.max(1, Math.round((Date.parse(iso) - now) / 60_000));
+  return minutes < 60
+    ? `in ${String(minutes)}m`
+    : `in ${String(Math.round(minutes / 60))}h`;
+}
+
+/** A coverage reason as a badge reads. */
+export const UNLINKED_REASON_LABEL: Record<LinearUnlinkedReason, string> = {
+  failed: 'Failed',
+  'at-capacity': 'Issue limit',
+  queued: 'Queued',
+  'moved-out': 'Left team',
+  'pull-only': 'Pull only',
+  'held-back': 'Held back',
+  pending: 'Next sync',
+};
+
+const UNLINKED_REASON_COUNT: Record<LinearUnlinkedReason, string> = {
+  failed: 'failed',
+  'at-capacity': 'over the issue limit',
+  queued: 'queued to send',
+  'moved-out': 'left the linked teams',
+  'pull-only': 'stay here (pull only)',
+  'held-back': 'held back',
+  pending: 'waiting for the next sync',
+};
+
+/** Why the unlinked tasks are unlinked, every empty reason omitted:
+ *  "12 failed · 47 held back". */
+export function describeUnlinkedCounts(
+  counts: LinearCoverage['counts']
+): string {
+  const parts = (Object.keys(UNLINKED_REASON_COUNT) as LinearUnlinkedReason[])
+    .filter((reason) => counts[reason] > 0)
+    .map(
+      (reason) => `${count(counts[reason])} ${UNLINKED_REASON_COUNT[reason]}`
+    );
+  return parts.length === 0 ? 'Every task is in Linear.' : parts.join(' · ');
+}
+
+/** Whether a reason means a create is waiting to be retried. */
+export function isRetryable(reason: LinearUnlinkedReason): boolean {
+  return reason === 'failed' || reason === 'at-capacity' || reason === 'queued';
+}
+
+/** The tasks whose create failed or waits in the retry queue. */
+export function retryableTaskIds(coverage: LinearCoverage): string[] {
+  return coverage.unlinked
+    .filter((t) => isRetryable(t.reason))
+    .map((t) => t.id);
 }
 
 /** A short line of what one sync pass did, every zero-valued count omitted — "Nothing changed"
@@ -109,7 +287,23 @@ export function formatSyncCounts(summary: LinearSyncSummary): string {
   if (summary.conflicts > 0) {
     parts.push(`${summary.conflicts} conflict(s) resolved`);
   }
+  const archived = summary.archivedIssues ?? 0;
+  if (archived > 0) parts.push(`${archived} archived in Linear`);
+  const queued = summary.queued ?? 0;
+  if (queued > 0) parts.push(`${queued} waiting to retry`);
   return parts.length === 0 ? 'Nothing changed' : parts.join(' · ');
+}
+
+/** The pass that moved tasks onto the linked team's workflow says so, or null:
+ *  linking adopts the team's states, which otherwise changes statuses silently. */
+export function describeMigrated(
+  summary: LinearSyncSummary,
+  teamName: string | null
+): string | null {
+  const moved = summary.migrated ?? 0;
+  if (moved === 0) return null;
+  const team = teamName === null ? 'the team’s' : `${teamName}’s`;
+  return `Moved ${count(moved)} task${moved === 1 ? '' : 's'} onto ${team} workflow.`;
 }
 
 /** What a finished "Push to Linear" should report, or null when an issue really went up. A

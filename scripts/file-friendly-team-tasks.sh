@@ -13,9 +13,9 @@
 #   scripts/file-friendly-team-tasks.sh --dry-run   # print what it would file
 #   scripts/file-friendly-team-tasks.sh
 #
-# Tasks that already have epics (preview per run, lens, builder front door) are
-# NOT re-filed. Where an existing epic is the right home for new work, the new
-# task is parented to it; if that epic is gone, a replacement epic is created.
+# Tasks that already have milestones (preview per run, lens, builder front door) are
+# NOT re-filed. Where an existing milestone is the right home for new work, the new
+# task is parented to it; if that milestone is gone, a replacement milestone is created.
 
 set -euo pipefail
 
@@ -23,14 +23,14 @@ DISPATCH="${DISPATCH_BIN:-dispatch}"
 DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
 
-# Epics filed in the 2026-08-22 planning discussion (docs/archive/design/
+# Milestones filed in the 2026-08-22 planning discussion (docs/archive/design/
 # lovable-workstreams.md). Referenced, never recreated.
-EPIC_PREVIEW=e-a27691      # preview per run
-EPIC_LENS=e-3a6884         # builder/engineer lens
-EPIC_FRONT_DOOR=e-16ef06   # builder front door
-EPIC_SHARE=e-dff6d3        # shareable run URLs
-EPIC_TEAM_LOCAL=e-5f3530   # team-local mode
-EPIC_SPINE=e-99e113        # storage spine (shipped)
+MILESTONE_PREVIEW=e-a27691      # preview per run
+MILESTONE_LENS=e-3a6884         # builder/engineer lens
+MILESTONE_FRONT_DOOR=e-16ef06   # builder front door
+MILESTONE_SHARE=e-dff6d3        # shareable run URLs
+MILESTONE_TEAM_LOCAL=e-5f3530   # team-local mode
+MILESTONE_SPINE=e-99e113        # storage spine (shipped)
 
 die() { echo "error: $*" >&2; exit 1; }
 
@@ -51,7 +51,7 @@ exists() { "$DISPATCH" task show "$1" >/dev/null 2>&1; }
 
 # create KIND PRIORITY PARENT TITLE DESCRIPTION [BLOCKED_BY...]
 # Echoes the new (or existing) task id so callers can parent children to it.
-# PARENT and any blocker of "-" is dropped, so a missing epic degrades to an
+# PARENT and any blocker of "-" is dropped, so a missing milestone degrades to an
 # unparented task rather than a dangling reference `task next` would trip on.
 create() {
   local kind=$1 priority=$2 parent=$3 title=$4 description=$5
@@ -85,24 +85,24 @@ create() {
 
 echo "== already filed, not recreated =="
 for pair in \
-  "$EPIC_PREVIEW:preview per run" \
-  "$EPIC_LENS:builder/engineer lens" \
-  "$EPIC_FRONT_DOOR:builder front door" \
-  "$EPIC_SHARE:shareable run URLs" \
-  "$EPIC_TEAM_LOCAL:team-local mode"; do
+  "$MILESTONE_PREVIEW:preview per run" \
+  "$MILESTONE_LENS:builder/engineer lens" \
+  "$MILESTONE_FRONT_DOOR:builder front door" \
+  "$MILESTONE_SHARE:shareable run URLs" \
+  "$MILESTONE_TEAM_LOCAL:team-local mode"; do
   id="${pair%%:*}"; label="${pair#*:}"
   if exists "$id"; then echo "  $id  $label"; else echo "  $id  $label  (GONE — referenced only; any new work that needed it gets a replacement)"; fi
 done
 echo
 
 # ---------------------------------------------------------------------------
-# 1. Information architecture. Genuinely new: the lens epic is a second shell,
+# 1. Information architecture. Genuinely new: the lens milestone is a second shell,
 #    this is renaming and demoting inside today's one, and does not wait on it.
 # ---------------------------------------------------------------------------
 echo "== information architecture =="
-IA="$(create epic high - \
+IA="$(create milestone high - \
   "Collapse the app's information architecture" \
-  "A first run meets nine different nouns for 'your work' (Inbox, Drafts, Brain dump, Plans, Tasks, Control room, Landing, Impact, Sessions) across 15 sidebar rows, 7 settings pages and 167 components, before anything exists to look at. Independent of the lens epic ($EPIC_LENS): renaming and demoting is cheap inside today's shell and does not wait for a second one. Writes: apps/desktop/src/components/shell/Sidebar.tsx, apps/desktop/src/lib/appNav.ts.")"
+  "A first run meets nine different nouns for 'your work' (Inbox, Drafts, Brain dump, Plans, Tasks, Control room, Landing, Impact, Sessions) across 15 sidebar rows, 7 settings pages and 167 components, before anything exists to look at. Independent of the lens milestone ($MILESTONE_LENS): renaming and demoting is cheap inside today's shell and does not wait for a second one. Writes: apps/desktop/src/components/shell/Sidebar.tsx, apps/desktop/src/lib/appNav.ts.")"
 
 create task high "$IA" \
   "Group the sidebar into Work, Runs and Inbox" \
@@ -114,7 +114,7 @@ create task medium "$IA" \
 
 create task high "$IA" \
   "Open an empty project on a prompt box, not the Control room" \
-  "initialNavState opens on 'overview' (apps/desktop/src/lib/appNav.ts:148), so a freshly initialized project shows an empty Control room behind a full sidebar. With no tasks on the board, show AiTaskComposer's textarea and nothing else. Narrower than the builder front door epic ($EPIC_FRONT_DOOR), which is the full planner-graph flow — this is the empty state alone, and it ships without it." >/dev/null
+  "initialNavState opens on 'overview' (apps/desktop/src/lib/appNav.ts:148), so a freshly initialized project shows an empty Control room behind a full sidebar. With no tasks on the board, show AiTaskComposer's textarea and nothing else. Narrower than the builder front door milestone ($MILESTONE_FRONT_DOOR), which is the full planner-graph flow — this is the empty state alone, and it ships without it." >/dev/null
 
 TRY="$(create task medium "$IA" \
   "Retire the Try block from the sidebar" \
@@ -127,13 +127,13 @@ echo
 #    tree and `dispatch init --db` is documented. These are its next steps.
 # ---------------------------------------------------------------------------
 echo "== team-local multiplayer =="
-if exists "$EPIC_TEAM_LOCAL"; then
-  TEAM="$EPIC_TEAM_LOCAL"
-  echo "  parenting to existing epic $EPIC_TEAM_LOCAL (team-local mode)"
+if exists "$MILESTONE_TEAM_LOCAL"; then
+  TEAM="$MILESTONE_TEAM_LOCAL"
+  echo "  parenting to existing milestone $MILESTONE_TEAM_LOCAL (team-local mode)"
 else
-  TEAM="$(create epic high - \
+  TEAM="$(create milestone high - \
     "Team-local multiplayer on the existing daemon" \
-    "Replaces $EPIC_TEAM_LOCAL, which is no longer on the board. One shared dispatchd a team can reach, per-user tokens over the existing two-tier auth, the desktop bundle served to browsers, presence and per-user attribution. Unblocked by the storage spine ($EPIC_SPINE), which has landed.")"
+    "Replaces $MILESTONE_TEAM_LOCAL, which is no longer on the board. One shared dispatchd a team can reach, per-user tokens over the existing two-tier auth, the desktop bundle served to browsers, presence and per-user attribution. Unblocked by the storage spine ($MILESTONE_SPINE), which has landed.")"
 fi
 
 IDENT="$(create task high "$TEAM" \
@@ -146,7 +146,7 @@ create task high "$TEAM" \
 
 create task high "$TEAM" \
   "Add a 'whose attention' axis to the decision feed" \
-  "packages/server/src/decisionFeed.ts already splits blocking from recorded, and its own comment says the policy engine ($EPIC_LENS's sibling, the autonomy ladder) will reclassify items through it. The team move is that same mechanism on one more axis: approvals demote from teammate-blocking to teammate-visible, the way solo gates demoted from blocking to recording. This is what makes 'autonomy with receipts' a team claim rather than a solo one. Writes: packages/server/src/decisionFeed.ts, packages/core/src/policy.ts." "$IDENT" >/dev/null
+  "packages/server/src/decisionFeed.ts already splits blocking from recorded, and its own comment says the policy engine ($MILESTONE_LENS's sibling, the autonomy ladder) will reclassify items through it. The team move is that same mechanism on one more axis: approvals demote from teammate-blocking to teammate-visible, the way solo gates demoted from blocking to recording. This is what makes 'autonomy with receipts' a team claim rather than a solo one. Writes: packages/server/src/decisionFeed.ts, packages/core/src/policy.ts." "$IDENT" >/dev/null
 
 create task medium "$TEAM" \
   "Derive presence from connected daemons and live runs" \
@@ -159,16 +159,16 @@ echo
 
 # ---------------------------------------------------------------------------
 # 3. The overlap: a run URL is both "everything has a URL" and the team's
-#    review packet. Belongs under the share-URL epic when it still exists.
+#    review packet. Belongs under the share-URL milestone when it still exists.
 # ---------------------------------------------------------------------------
 echo "== shareable runs =="
 SHARE_PARENT=-
-if exists "$EPIC_SHARE"; then
-  SHARE_PARENT="$EPIC_SHARE"
-  echo "  parenting to existing epic $EPIC_SHARE (shareable run URLs)"
+if exists "$MILESTONE_SHARE"; then
+  SHARE_PARENT="$MILESTONE_SHARE"
+  echo "  parenting to existing milestone $MILESTONE_SHARE (shareable run URLs)"
 fi
 PREVIEW_BLOCKER=-
-exists "$EPIC_PREVIEW" && PREVIEW_BLOCKER="$EPIC_PREVIEW"
+exists "$MILESTONE_PREVIEW" && PREVIEW_BLOCKER="$MILESTONE_PREVIEW"
 
 create task high "$SHARE_PARENT" \
   "Make the run URL the team's review packet" \
@@ -179,7 +179,7 @@ cat <<'NOTE'
 == recommended order ==
   1. preview per run            (e-a27691, already filed, nothing built yet)
   2. shareable run URLs         (e-dff6d3 + "review packet" task above)
-  3. information architecture   (epic filed above — independent, start any time)
+  3. information architecture   (milestone filed above — independent, start any time)
   4. per-user identity          (task filed above — gates every other team task)
   5. team-local multiplayer     (e-5f3530, unblocked now that the spine landed)
 

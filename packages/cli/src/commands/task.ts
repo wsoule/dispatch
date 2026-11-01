@@ -1,21 +1,22 @@
 import {
-  ACCEPTED_KINDS,
   ActorContext,
-  canonicalStatus,
   childEnv,
   DISPATCH_DIR,
   isValidAssignee,
+  KINDS,
   loadConfig,
   PRIORITIES,
   readProjectBackend,
   readyTasks,
   resolveMilestoneRef,
+  resolveStatusName,
   serializeTaskFile,
   statusModelOf,
   TaskStore,
 } from '@dispatch-foo/core';
 import type {
   CreateInput,
+  DispatchConfig,
   GitReader,
   ListFilter,
   Priority,
@@ -35,9 +36,25 @@ import { formatTable } from '../output.js';
 import { projectRoot } from '../projectRoot.js';
 import { findRunningDaemon } from './daemon.js';
 
-// The status alias layer, tolerant of an omitted flag.
-function canonicalStatusOpt(value: string | undefined): string | undefined {
-  return value === undefined ? undefined : canonicalStatus(value);
+// A typed status as one of config.statuses: exact, then case-insensitive, then
+// a legacy alias, then a built-in word read through statusRoles (core's
+// resolveStatusName). Tolerates an omitted flag.
+function resolveStatus(
+  value: string | undefined,
+  config: DispatchConfig
+): string | undefined {
+  if (value === undefined) return undefined;
+  const resolved = resolveStatusName(
+    value,
+    config.statuses,
+    statusModelOf(config)
+  );
+  if (resolved === null) {
+    throw new CliError(
+      `invalid status: ${value} (expected ${config.statuses.join('|')})`
+    );
+  }
+  return resolved;
 }
 
 // ActorContext's GitReader seam, Node-based — mirrors server/src/index.ts's
@@ -79,7 +96,7 @@ export function requireStore(ctx: CliContext): TaskStore {
  *
  * Unlike `requireStore` this accepts either backend: a database-backed
  * project has no `.dispatch/tasks` directory, and gating on one would refuse
- * every orchestrate/plan/scope command in exactly the projects this epic is
+ * every orchestrate/plan/scope command in exactly the projects this milestone is
  * moving towards.
  *
  * Checked at the resolved project root first: a run's worktree carries only
@@ -221,7 +238,9 @@ function taskRow(t: TaskDoc): string[] {
 const TABLE_HEADER = ['ID', 'STATUS', 'PRI', 'KIND', 'TITLE'];
 
 export function registerTaskCommands(program: Command, ctx: CliContext): void {
-  const task = program.command('task').description('Manage tasks and epics');
+  const task = program
+    .command('task')
+    .description('Manage tasks and milestones');
 
   task
     .command('create')
@@ -248,16 +267,8 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
         const config = loadConfig(ctx.cwd);
         const input: CreateInput = {
           title,
-          kind: validate(
-            opts.kind as string,
-            ACCEPTED_KINDS,
-            'kind'
-          ) as TaskKind,
-          status: validate(
-            canonicalStatusOpt(opts.status as string | undefined),
-            config.statuses,
-            'status'
-          ),
+          kind: validate(opts.kind as string, KINDS, 'kind') as TaskKind,
+          status: resolveStatus(opts.status as string | undefined, config),
           description: opts.description as string | undefined,
           parent: (opts.parent as string | undefined) ?? null,
           priority: validate(
@@ -275,16 +286,21 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
             milestone === undefined ? input : { ...input, milestone }
           );
         } else {
+          // Omitted, a task starts in the board's ready role, as dispatchd does.
+          const local: CreateInput = {
+            ...input,
+            status: input.status ?? statusModelOf(config).roles.ready,
+          };
           doc = route.store.create(
             milestone === undefined
-              ? input
+              ? local
               : {
-                  ...input,
+                  ...local,
                   parent: localMilestoneParent(
                     route.store,
                     milestone,
-                    input.kind ?? 'task',
-                    input.parent ?? null
+                    local.kind ?? 'task',
+                    local.parent ?? null
                   ),
                 }
           );
@@ -307,12 +323,8 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
       const route = await resolveTaskRoute(ctx);
       const config = loadConfig(ctx.cwd);
       const query: ListFilter = {
-        status: validate(
-          canonicalStatusOpt(opts.status as string | undefined),
-          config.statuses,
-          'status'
-        ),
-        kind: validate(opts.kind as string | undefined, ACCEPTED_KINDS, 'kind'),
+        status: resolveStatus(opts.status as string | undefined, config),
+        kind: validate(opts.kind as string | undefined, KINDS, 'kind'),
         parent: opts.parent as string | undefined,
       };
       const docs =
@@ -364,11 +376,7 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
     .action(async (id: string, status: string) => {
       const route = await resolveTaskRoute(ctx);
       const config = loadConfig(ctx.cwd);
-      const valid = validate(
-        canonicalStatus(status),
-        config.statuses,
-        'status'
-      )!;
+      const valid = resolveStatus(status, config)!;
       const patch: UpdatePatch = {
         status: valid,
         appendActivity: `${new Date().toISOString()} status → ${valid}`,

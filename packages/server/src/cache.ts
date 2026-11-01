@@ -1,5 +1,4 @@
 import {
-  canonicalKind,
   canonicalStatus,
   CONTAINER_KINDS,
   readyTasks,
@@ -27,7 +26,7 @@ export interface CacheFilter {
   includeArchived?: boolean;
 }
 
-// Cached rows hold canonical kinds, so the legacy `epic` never appears here.
+// Cached rows hold canonical kinds, so the legacy `milestone` never appears here.
 const CONTAINER_SQL = CONTAINER_KINDS.map((k) => `'${k}'`).join(', ');
 
 interface TaskRow {
@@ -121,7 +120,7 @@ export class TaskCache {
   // them through separately.
   private lastErrors: ListSafeError[] = [];
   // Every row's body-less item, parsed and frozen once when it is written, so
-  // a pass over the whole board (the ready queue, epic progress) parses
+  // a pass over the whole board (the ready queue, milestone progress) parses
   // nothing.
   private readonly items = new Map<string, TaskListItem>();
   // allItems()'s result, kept until the next write.
@@ -342,7 +341,7 @@ export class TaskCache {
     }
     if (filter.kind !== undefined) {
       clauses.push('kind = $kind');
-      params.$kind = canonicalKind(filter.kind);
+      params.$kind = filter.kind;
     }
     if (filter.parent !== undefined) {
       clauses.push('parent = $parent');

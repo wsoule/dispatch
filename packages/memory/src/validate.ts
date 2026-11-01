@@ -13,7 +13,7 @@ export interface MemoryWriteInput {
   title: string;
   body: string;
   refs?: Ref[];
-  epic?: string | null;
+  milestone?: string | null;
   appliesTo?: string[];
   projectKey?: string | null;
 }
@@ -24,7 +24,7 @@ export interface ValidMemoryInput {
   title: string;
   body: string;
   refs: Ref[];
-  epic: string | null;
+  milestone: string | null;
   appliesTo: string[];
   projectKey: string | null;
 }
@@ -107,14 +107,14 @@ export function validateMemoryInput(input: MemoryWriteInput): ValidMemoryInput {
       `at most ${MEMORY_LIMITS.bodyBytes} bytes (UTF-8); long-form belongs in a doc: doc_save it, then ref it from a short entry`
     );
   const refs = validateRefs(input.refs ?? []);
-  const epic = input.epic ?? null;
+  const milestone = input.milestone ?? null;
   const appliesTo = input.appliesTo ?? [];
   const projectKey = input.projectKey ?? null;
   if (personal) {
-    if (epic !== null)
+    if (milestone !== null)
       invalid(
-        'epic',
-        'personal memory has no epic; narrow it with projectOnly'
+        'milestone',
+        'personal memory has no milestone; narrow it with projectOnly'
       );
     if (appliesTo.length > 0)
       invalid('appliesTo', 'personal memory has no task reach');
@@ -123,8 +123,8 @@ export function validateMemoryInput(input: MemoryWriteInput): ValidMemoryInput {
   } else {
     if (projectKey !== null)
       invalid('projectKey', 'only personal memory is narrowed to a project');
-    if (epic !== null && !TASK_ID_PATTERN.test(epic))
-      invalid('epic', 'expected an epic id like e-1a2b3c');
+    if (milestone !== null && !TASK_ID_PATTERN.test(milestone))
+      invalid('milestone', 'expected a milestone id like e-1a2b3c');
     if (appliesTo.length > MEMORY_LIMITS.appliesTo)
       invalid('appliesTo', `at most ${MEMORY_LIMITS.appliesTo} task ids`);
     appliesTo.forEach((id, i) => {
@@ -138,7 +138,7 @@ export function validateMemoryInput(input: MemoryWriteInput): ValidMemoryInput {
     title,
     body: input.body,
     refs,
-    epic,
+    milestone,
     appliesTo: [...new Set(appliesTo)],
     projectKey,
   };

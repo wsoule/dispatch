@@ -162,7 +162,7 @@ describe('loadFavorites / saveFavorites', () => {
     storage.setItem(
       'dispatch:favorites:/a',
       JSON.stringify([
-        { kind: 'epic', id: 'e-1' },
+        { kind: 'milestone', id: 'e-1' },
         { kind: 'task', id: 7 },
         { kind: 'task', id: 't-2' },
       ])

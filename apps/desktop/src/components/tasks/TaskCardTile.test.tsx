@@ -36,7 +36,7 @@ function renderCard(
       ready={false}
       blocked={false}
       liveRunState={undefined}
-      epicTitle="Payments"
+      milestoneTitle="Payments"
       statuses={['ready', 'working', 'landed']}
       onStatusChange={() => {}}
       onEditTask={() => {}}
@@ -64,7 +64,7 @@ function slot(name: string): HTMLElement {
   return el;
 }
 
-test('renders the four rows: id › epic + avatar, glyph + title, priority + pills, Created', () => {
+test('renders the four rows: id › milestone + avatar, glyph + title, priority + pills, Created', () => {
   renderCard();
   const rows = Array.from(card().children).map((el) =>
     el.getAttribute('data-slot')

@@ -3,15 +3,15 @@ import { readFileSync } from 'node:fs';
 
 import type {
   ApiClient,
-  EpicProgress,
-  EpicSession,
+  MilestoneProgress,
+  MilestoneSession,
   PlanProposal,
   PlanRecord,
 } from '../apiClient.js';
 import { createApiClient, DaemonUnreachableError } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import {
-  formatEpicProgress,
+  formatMilestoneProgress,
   formatPlanNeedsReply,
   formatProposal,
 } from '../orchestrateFormat.js';
@@ -58,12 +58,12 @@ export async function pollUntilSettled(
   );
 }
 
-// Watches an epic dispatch session over WS and resolves once a progress snapshot reports
+// Watches a milestone dispatch session over WS and resolves once a progress snapshot reports
 // `active: false`. Callers MUST wrap it in try/finally and always call `dispose()`.
-export function createEpicWatcher(
+export function createMilestoneWatcher(
   baseUrl: string,
-  fetchProgress: () => Promise<EpicProgress>,
-  onProgress: (progress: EpicProgress) => void,
+  fetchProgress: () => Promise<MilestoneProgress>,
+  onProgress: (progress: MilestoneProgress) => void,
   connectOptions: Pick<
     ConnectEventsOptions,
     'createSocket' | 'reconnectDelayMs' | 'maxConsecutiveFailures' | 'token'
@@ -116,8 +116,8 @@ export function createEpicWatcher(
       if (
         event.type === 'task.changed' ||
         event.type === 'run.changed' ||
-        event.type === 'epic.changed' ||
-        event.type === 'epic.paused'
+        event.type === 'milestone.changed' ||
+        event.type === 'milestone.paused'
       ) {
         triggerRefetch();
       }
@@ -135,8 +135,8 @@ export function createEpicWatcher(
   };
 }
 
-// The raw `--concurrency` / `--max-spend` / `--max-runs` strings `epic start`
-// and `epic resume` share; commander hands every option through as a string.
+// The raw `--concurrency` / `--max-spend` / `--max-runs` strings `milestone start`
+// and `milestone resume` share; commander hands every option through as a string.
 interface SessionCeilingOptions {
   concurrency?: string;
   maxSpend?: string;
@@ -171,7 +171,7 @@ function parseSessionCeilings(opts: SessionCeilingOptions): {
 
 // `concurrency 4, ceiling $60.00, max 20 runs` — the ceilings only when the
 // session has them, so a plain start reads as it always did.
-function describeSession(session: EpicSession): string {
+function describeSession(session: MilestoneSession): string {
   const parts = [`concurrency ${String(session.concurrency)}`];
   if (session.maxSpendUsd !== null) {
     parts.push(`ceiling $${session.maxSpendUsd.toFixed(2)}`);
@@ -185,7 +185,7 @@ function describeSession(session: EpicSession): string {
 export function registerPlanCommands(program: Command, ctx: CliContext): void {
   const plan = program
     .command('plan')
-    .description('Turn a prompt into a proposed epic + tasks');
+    .description('Turn a prompt into a proposed milestone + tasks');
   plan.addHelpText(
     'after',
     '\nStart a plan with:\n  dispatch plan <prompt...> [--planner claude|codex|fake] [--json] [--yes]' +
@@ -259,8 +259,8 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
               : [
                   formatProposal(proposal),
                   '',
-                  result.epicId !== undefined
-                    ? `confirmed: epic ${result.epicId}, ${result.taskIds.length} task(s)`
+                  result.milestoneId !== undefined
+                    ? `confirmed: milestone ${result.milestoneId}, ${result.taskIds.length} task(s)`
                     : `confirmed: ${result.taskIds.length} task(s)`,
                 ].join('\n')
           );
@@ -305,8 +305,8 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
 
       const result = await client.confirmPlan(planId, proposal);
       ctx.log(
-        result.epicId !== undefined
-          ? `confirmed: epic ${result.epicId}, ${result.taskIds.length} task(s)`
+        result.milestoneId !== undefined
+          ? `confirmed: milestone ${result.milestoneId}, ${result.taskIds.length} task(s)`
           : `confirmed: ${result.taskIds.length} task(s)`
       );
     });
@@ -384,12 +384,12 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
       }
     );
 
-  const epic = program
-    .command('epic')
-    .description("Dispatch and monitor an epic's children");
+  const milestone = program
+    .command('milestone')
+    .description("Dispatch and monitor a milestone's children");
 
-  epic
-    .command('start <epicId>')
+  milestone
+    .command('start <milestoneId>')
     .option('--concurrency <n>', 'max concurrent child runs')
     .option('--max-spend <usd>', 'pause once the session has spent this much')
     .option(
@@ -403,38 +403,38 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
     .option('--json')
     .action(
       async (
-        epicId: string,
+        milestoneId: string,
         opts: SessionCeilingOptions & { executor?: string; json?: boolean }
       ) => {
         const { client } = await daemonFor(ctx);
-        const session = await client.startEpic(epicId, {
+        const session = await client.startMilestone(milestoneId, {
           ...parseSessionCeilings(opts),
           executor: opts.executor,
         });
         ctx.log(
           opts.json === true
             ? JSON.stringify(session, null, 2)
-            : `epic ${session.epicId} dispatch started (${describeSession(session)})`
+            : `milestone ${session.milestoneId} dispatch started (${describeSession(session)})`
         );
       }
     );
 
-  epic
-    .command('pause <epicId>')
+  milestone
+    .command('pause <milestoneId>')
     .description('hold new dispatches; live runs finish on their own')
     .option('--json')
-    .action(async (epicId: string, opts: { json?: boolean }) => {
+    .action(async (milestoneId: string, opts: { json?: boolean }) => {
       const { client } = await daemonFor(ctx);
-      const session = await client.pauseEpic(epicId);
+      const session = await client.pauseMilestone(milestoneId);
       ctx.log(
         opts.json === true
           ? JSON.stringify(session, null, 2)
-          : `epic ${session.epicId} dispatch paused`
+          : `milestone ${session.milestoneId} dispatch paused`
       );
     });
 
-  epic
-    .command('resume <epicId>')
+  milestone
+    .command('resume <milestoneId>')
     .description('lift a pause, optionally with new ceilings')
     .option('--concurrency <n>', 'max concurrent child runs')
     .option('--max-spend <usd>', 'pause once the session has spent this much')
@@ -445,60 +445,63 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
     .option('--json')
     .action(
       async (
-        epicId: string,
+        milestoneId: string,
         opts: SessionCeilingOptions & { json?: boolean }
       ) => {
         const { client } = await daemonFor(ctx);
-        const session = await client.resumeEpic(
-          epicId,
+        const session = await client.resumeMilestone(
+          milestoneId,
           parseSessionCeilings(opts)
         );
         ctx.log(
           opts.json === true
             ? JSON.stringify(session, null, 2)
-            : `epic ${session.epicId} dispatch resumed (${describeSession(session)})`
+            : `milestone ${session.milestoneId} dispatch resumed (${describeSession(session)})`
         );
       }
     );
 
-  epic
-    .command('stop <epicId>')
+  milestone
+    .command('stop <milestoneId>')
     .option('--json')
-    .action(async (epicId: string, opts: { json?: boolean }) => {
+    .action(async (milestoneId: string, opts: { json?: boolean }) => {
       const { client } = await daemonFor(ctx);
-      const session = await client.stopEpic(epicId);
+      const session = await client.stopMilestone(milestoneId);
       ctx.log(
         opts.json === true
           ? JSON.stringify(session, null, 2)
-          : `epic ${session.epicId} dispatch stopped`
+          : `milestone ${session.milestoneId} dispatch stopped`
       );
     });
 
-  epic
-    .command('status <epicId>')
+  milestone
+    .command('status <milestoneId>')
     .option('--json')
     .option('--watch', 'stream run/task events until the dispatch session ends')
     .action(
-      async (epicId: string, opts: { json?: boolean; watch?: boolean }) => {
+      async (
+        milestoneId: string,
+        opts: { json?: boolean; watch?: boolean }
+      ) => {
         const { baseUrl, token, client } = await daemonFor(ctx);
 
-        const renderProgress = (progress: EpicProgress): void => {
+        const renderProgress = (progress: MilestoneProgress): void => {
           ctx.log(
             opts.json === true
               ? JSON.stringify(progress, null, 2)
-              : formatEpicProgress(progress)
+              : formatMilestoneProgress(progress)
           );
         };
 
-        const initial = await client.getEpicProgress(epicId);
+        const initial = await client.getMilestoneProgress(milestoneId);
         renderProgress(initial);
         if (opts.watch !== true || !initial.active) return;
 
         // try/finally so a lost-connection rejection still disposes the WS
         // connection and reconnect timer, which would otherwise hang the process.
-        const watcher = createEpicWatcher(
+        const watcher = createMilestoneWatcher(
           baseUrl,
-          () => client.getEpicProgress(epicId),
+          () => client.getMilestoneProgress(milestoneId),
           renderProgress,
           { token }
         );

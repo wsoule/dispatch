@@ -1,7 +1,9 @@
+import { ApiError } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
 import {
   type ActionFeedbackCache,
+  CONTENT_KEY_MISSING,
   describeAction,
   describeError,
   withActionFeedback,
@@ -28,6 +30,15 @@ describe('describeError', () => {
       'from another realm'
     );
     expect(describeError({ message: '' })).toBe('Unknown error');
+  });
+
+  test('says plainly why a team change waits for the encryption key', () => {
+    const refused = new ApiError(
+      "this machine has not received the team's content key yet",
+      409,
+      'content_key_missing'
+    );
+    expect(describeError(refused)).toBe(CONTENT_KEY_MISSING);
   });
 });
 

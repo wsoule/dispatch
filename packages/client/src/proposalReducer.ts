@@ -9,8 +9,8 @@ import type { PlanProposal } from './api';
 // desktop review screen and its tests can exercise the exact edit semantics
 // (in particular, index renumbering on remove) without mounting any React.
 export type ProposalAction =
-  | { type: 'setEpicTitle'; title: string }
-  | { type: 'setEpicDescription'; description: string }
+  | { type: 'setMilestoneTitle'; title: string }
+  | { type: 'setMilestoneDescription'; description: string }
   | { type: 'setTaskTitle'; index: number; title: string }
   | { type: 'setTaskDescription'; index: number; description: string }
   | { type: 'setTaskPriority'; index: number; priority: Priority }
@@ -46,14 +46,17 @@ export function reduceProposal(
   action: ProposalAction
 ): PlanProposal {
   switch (action.type) {
-    case 'setEpicTitle':
-      if (proposal.epic === undefined) return proposal;
-      return { ...proposal, epic: { ...proposal.epic, title: action.title } };
-    case 'setEpicDescription':
-      if (proposal.epic === undefined) return proposal;
+    case 'setMilestoneTitle':
+      if (proposal.milestone === undefined) return proposal;
       return {
         ...proposal,
-        epic: { ...proposal.epic, description: action.description },
+        milestone: { ...proposal.milestone, title: action.title },
+      };
+    case 'setMilestoneDescription':
+      if (proposal.milestone === undefined) return proposal;
+      return {
+        ...proposal,
+        milestone: { ...proposal.milestone, description: action.description },
       };
     case 'setTaskTitle':
       return {

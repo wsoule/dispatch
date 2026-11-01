@@ -8,10 +8,9 @@ pub mod session_builder;
 pub mod transcript;
 
 pub use claude_jsonl::parse_line;
-pub use codex_jsonl::parse_line as parse_codex_line;
 pub use cursor_jsonl::parse_line as parse_cursor_line;
-pub use gemini_log::parse_line as parse_gemini_line;
 pub use record::ParsedRecord;
+#[cfg(test)]
 pub use session_builder::ingest_record;
 pub use transcript::{extract_excerpts, render_markdown};
 // `TranscriptExcerpts` isn't referenced by name yet (its `last_assistant_text` field is for
@@ -20,3 +19,10 @@ pub use transcript::{extract_excerpts, render_markdown};
 // submodule directly.
 #[allow(unused_imports)]
 pub use transcript::TranscriptExcerpts;
+
+/// Header-derived continuation state, owned by one file cursor and committed with it.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct FileContext {
+    pub session_id: Option<String>,
+    pub cwd: Option<String>,
+}

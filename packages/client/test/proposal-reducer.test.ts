@@ -10,7 +10,10 @@ import { reduceProposal } from '../src/proposalReducer';
 // renumbering).
 function chainProposal(): PlanProposal {
   return {
-    epic: { title: 'Ship the widget', description: 'Build it end to end.' },
+    milestone: {
+      title: 'Ship the widget',
+      description: 'Build it end to end.',
+    },
     tasks: [
       {
         title: 'Design',
@@ -38,27 +41,27 @@ function chainProposal(): PlanProposal {
 }
 
 describe('reduceProposal', () => {
-  it('edits the epic title', () => {
+  it('edits the milestone title', () => {
     const next = reduceProposal(chainProposal(), {
-      type: 'setEpicTitle',
+      type: 'setMilestoneTitle',
       title: 'Ship the widget v2',
     });
-    expect(next.epic?.title).toBe('Ship the widget v2');
-    expect(next.epic?.description).toBe('Build it end to end.');
+    expect(next.milestone?.title).toBe('Ship the widget v2');
+    expect(next.milestone?.description).toBe('Build it end to end.');
   });
 
-  it('edits the epic description', () => {
+  it('edits the milestone description', () => {
     const next = reduceProposal(chainProposal(), {
-      type: 'setEpicDescription',
+      type: 'setMilestoneDescription',
       description: 'Updated plan.',
     });
-    expect(next.epic?.description).toBe('Updated plan.');
+    expect(next.milestone?.description).toBe('Updated plan.');
   });
 
-  it('is a no-op editing the epic when the proposal has none', () => {
+  it('is a no-op editing the milestone when the proposal has none', () => {
     const proposal: PlanProposal = { tasks: [] };
     const next = reduceProposal(proposal, {
-      type: 'setEpicTitle',
+      type: 'setMilestoneTitle',
       title: 'nope',
     });
     expect(next).toEqual(proposal);

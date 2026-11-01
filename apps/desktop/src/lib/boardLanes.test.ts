@@ -4,8 +4,8 @@ import { describe, expect, test } from 'bun:test';
 import {
   countLaneStatuses,
   dropZoneId,
-  groupTasksByEpicLane,
   groupTasksByLane,
+  groupTasksByMilestoneLane,
   laneKey,
   statusFromDropZoneId,
   visibleBoardColumns,
@@ -34,87 +34,97 @@ function task(
 
 const STATUSES = ['todo', 'in-progress', 'done'];
 
-describe('groupTasksByEpicLane', () => {
-  test('one lane per epic, each with the full status column set', () => {
-    const lanes = groupTasksByEpicLane(
+describe('groupTasksByMilestoneLane', () => {
+  test('one lane per milestone, each with the full status column set', () => {
+    const lanes = groupTasksByMilestoneLane(
       [task('t-1', 'todo', 'e-1'), task('t-2', 'done', 'e-2')],
       STATUSES,
-      [task('e-1', 'todo', null, 'epic'), task('e-2', 'todo', null, 'epic')]
+      [
+        task('e-1', 'todo', null, 'milestone'),
+        task('e-2', 'todo', null, 'milestone'),
+      ]
     );
-    expect(lanes.map((l) => l.epicId)).toEqual(['e-1', 'e-2']);
+    expect(lanes.map((l) => l.milestoneId)).toEqual(['e-1', 'e-2']);
     expect(lanes[0]?.columns.map((c) => c.status)).toEqual(STATUSES);
   });
 
   // The status columns are the project's own, so a custom tracker is not reduced to a fixed set.
   test('columns follow the configured status order, not an alphabetical or fixed one', () => {
     const custom = ['icebox', 'shipping', 'landed'];
-    const lanes = groupTasksByEpicLane(
+    const lanes = groupTasksByMilestoneLane(
       [task('t-1', 'shipping', 'e-1')],
       custom,
-      [task('e-1', 'todo', null, 'epic')]
+      [task('e-1', 'todo', null, 'milestone')]
     );
     expect(lanes[0]?.columns.map((c) => c.status)).toEqual(custom);
   });
 
-  test('lanes follow the project epic order', () => {
-    const lanes = groupTasksByEpicLane(
+  test('lanes follow the project milestone order', () => {
+    const lanes = groupTasksByMilestoneLane(
       [task('t-1', 'todo', 'e-2'), task('t-2', 'todo', 'e-1')],
       STATUSES,
-      [task('e-2', 'todo', null, 'epic'), task('e-1', 'todo', null, 'epic')]
+      [
+        task('e-2', 'todo', null, 'milestone'),
+        task('e-1', 'todo', null, 'milestone'),
+      ]
     );
-    expect(lanes.map((l) => l.epicId)).toEqual(['e-2', 'e-1']);
+    expect(lanes.map((l) => l.milestoneId)).toEqual(['e-2', 'e-1']);
   });
 
-  // Twenty epics with three active ones must not render seventeen blank rows.
-  test('an epic with no tasks gets no lane', () => {
-    const lanes = groupTasksByEpicLane([task('t-1', 'todo', 'e-1')], STATUSES, [
-      task('e-1', 'todo', null, 'epic'),
-      task('e-empty', 'todo', null, 'epic'),
-    ]);
-    expect(lanes.map((l) => l.epicId)).toEqual(['e-1']);
+  // Twenty milestones with three active ones must not render seventeen blank rows.
+  test('a milestone with no tasks gets no lane', () => {
+    const lanes = groupTasksByMilestoneLane(
+      [task('t-1', 'todo', 'e-1')],
+      STATUSES,
+      [
+        task('e-1', 'todo', null, 'milestone'),
+        task('e-empty', 'todo', null, 'milestone'),
+      ]
+    );
+    expect(lanes.map((l) => l.milestoneId)).toEqual(['e-1']);
   });
 
-  test('parentless tasks land in a no-epic lane, last', () => {
-    const lanes = groupTasksByEpicLane(
+  test('parentless tasks land in a no-milestone lane, last', () => {
+    const lanes = groupTasksByMilestoneLane(
       [task('t-1', 'todo', 'e-1'), task('t-loose', 'todo')],
       STATUSES,
-      [task('e-1', 'todo', null, 'epic')]
+      [task('e-1', 'todo', null, 'milestone')]
     );
-    expect(lanes.at(-1)?.epicId).toBeNull();
-    expect(lanes.at(-1)?.title).toBe('No epic');
+    expect(lanes.at(-1)?.milestoneId).toBeNull();
+    expect(lanes.at(-1)?.title).toBe('No milestone');
   });
 
   // A dangling parent must not masquerade as unparented — that hides a real data problem.
-  test('a parent that resolves to no known epic gets its own lane', () => {
-    const lanes = groupTasksByEpicLane(
+  test('a parent that resolves to no known milestone gets its own lane', () => {
+    const lanes = groupTasksByMilestoneLane(
       [task('t-1', 'todo', 'e-ghost')],
       STATUSES,
       []
     );
     expect(lanes).toHaveLength(1);
-    expect(lanes[0]?.epicId).toBe('e-ghost');
+    expect(lanes[0]?.milestoneId).toBe('e-ghost');
   });
 
-  // An epic is a lane heading; counting it as a card inside its own lane would double it.
-  test('epics are lane headings, never cards', () => {
-    const lanes = groupTasksByEpicLane(
-      [task('e-1', 'todo', null, 'epic'), task('t-1', 'todo', 'e-1')],
+  // A milestone is a lane heading; counting it as a card inside its own lane would double it.
+  test('milestones are lane headings, never cards', () => {
+    const lanes = groupTasksByMilestoneLane(
+      [task('e-1', 'todo', null, 'milestone'), task('t-1', 'todo', 'e-1')],
       STATUSES,
-      [task('e-1', 'todo', null, 'epic')]
+      [task('e-1', 'todo', null, 'milestone')]
     );
     expect(lanes).toHaveLength(1);
     expect(lanes[0]?.total).toBe(1);
   });
 
   test('lane totals match the cards placed in them', () => {
-    const lanes = groupTasksByEpicLane(
+    const lanes = groupTasksByMilestoneLane(
       [
         task('t-1', 'todo', 'e-1'),
         task('t-2', 'done', 'e-1'),
         task('t-3', 'in-progress', 'e-1'),
       ],
       STATUSES,
-      [task('e-1', 'todo', null, 'epic')]
+      [task('e-1', 'todo', null, 'milestone')]
     );
     const placed = lanes[0]?.columns.reduce((n, c) => n + c.tasks.length, 0);
     expect(placed).toBe(lanes[0]?.total);
@@ -122,39 +132,39 @@ describe('groupTasksByEpicLane', () => {
   });
 
   test('an empty project produces no lanes', () => {
-    expect(groupTasksByEpicLane([], STATUSES, [])).toEqual([]);
+    expect(groupTasksByMilestoneLane([], STATUSES, [])).toEqual([]);
   });
 
   // The header count and the visible cards must agree, or the board lies about its own contents.
   test('the lane total counts rendered cards, not bucket size', () => {
-    const lanes = groupTasksByEpicLane(
+    const lanes = groupTasksByMilestoneLane(
       [task('t-1', 'nonsense', 'e-1'), task('t-2', 'todo', 'e-1')],
       STATUSES,
-      [task('e-1', 'todo', null, 'epic')]
+      [task('e-1', 'todo', null, 'milestone')]
     );
     expect(lanes[0]?.total).toBe(1);
   });
 
   test('a lane emptied entirely by the status filter is not rendered', () => {
     expect(
-      groupTasksByEpicLane([task('t-1', 'nonsense', 'e-1')], STATUSES, [
-        task('e-1', 'todo', null, 'epic'),
+      groupTasksByMilestoneLane([task('t-1', 'nonsense', 'e-1')], STATUSES, [
+        task('e-1', 'todo', null, 'milestone'),
       ])
     ).toEqual([]);
   });
 
   test('a task whose status is not configured is dropped, as on the flat board', () => {
-    const lanes = groupTasksByEpicLane(
+    const lanes = groupTasksByMilestoneLane(
       [task('t-1', 'nonsense', 'e-1'), task('t-2', 'todo', 'e-1')],
       STATUSES,
-      [task('e-1', 'todo', null, 'epic')]
+      [task('e-1', 'todo', null, 'milestone')]
     );
     const placed = lanes[0]?.columns.reduce((n, c) => n + c.tasks.length, 0);
     expect(placed).toBe(1);
   });
 });
 
-const TWO_EPIC_LANES = groupTasksByEpicLane(
+const TWO_MILESTONE_LANES = groupTasksByMilestoneLane(
   [
     task('t-1', 'todo', 'e-1'),
     task('t-2', 'todo', 'e-1'),
@@ -163,20 +173,23 @@ const TWO_EPIC_LANES = groupTasksByEpicLane(
     task('t-loose', 'done'),
   ],
   STATUSES,
-  [task('e-1', 'todo', null, 'epic'), task('e-2', 'todo', null, 'epic')]
+  [
+    task('e-1', 'todo', null, 'milestone'),
+    task('e-2', 'todo', null, 'milestone'),
+  ]
 );
 
 describe('laneKey', () => {
-  test('an epic lane is keyed by its epic id', () => {
+  test('a milestone lane is keyed by its milestone id', () => {
     expect(laneKey('e-1')).toBe('e-1');
-    expect(TWO_EPIC_LANES.map((lane) => lane.key)).toEqual([
+    expect(TWO_MILESTONE_LANES.map((lane) => lane.key)).toEqual([
       'e-1',
       'e-2',
       laneKey(null),
     ]);
   });
 
-  test('the no-epic lane gets a sentinel no epic id can collide with', () => {
+  test('the no-milestone lane gets a sentinel no milestone id can collide with', () => {
     expect(laneKey(null)).not.toBe('');
     expect(laneKey(null)).not.toMatch(/^e-/);
   });
@@ -189,10 +202,10 @@ describe('groupTasksByLane: assignee', () => {
       task('t-2', 'done', null, 'task'),
       task('t-3', 'todo', null, 'task', { assignee: 'agent:claude' }),
       task('t-4', 'todo', null, 'task', { assignee: 'human:alice' }),
-      task('e-1', 'todo', null, 'epic', { assignee: 'agent:claude' }),
+      task('e-1', 'todo', null, 'milestone', { assignee: 'agent:claude' }),
     ],
     STATUSES,
-    [task('e-1', 'todo', null, 'epic')],
+    [task('e-1', 'todo', null, 'milestone')],
     'assignee'
   );
 
@@ -219,9 +232,9 @@ describe('groupTasksByLane: assignee', () => {
       'human:wyat',
       'none',
     ]);
-    expect(lanes.every((l) => l.kind === 'assignee' && l.epicId === null)).toBe(
-      true
-    );
+    expect(
+      lanes.every((l) => l.kind === 'assignee' && l.milestoneId === null)
+    ).toBe(true);
   });
 
   test('every lane carries the full status column set', () => {
@@ -230,8 +243,8 @@ describe('groupTasksByLane: assignee', () => {
     }
   });
 
-  // An epic heads its own lane on the epic board and belongs on no other.
-  test('epics never become cards', () => {
+  // A milestone heads its own lane on the milestone board and belongs on no other.
+  test('milestones never become cards', () => {
     expect(lanes.find((l) => l.key === 'assignee:agent:claude')?.total).toBe(1);
     expect(visibleLaneTaskIds(lanes, new Set())).not.toContain('e-1');
   });
@@ -271,14 +284,14 @@ describe('groupTasksByLane: priority', () => {
 
 describe('countLaneStatuses', () => {
   test("sums every lane's cards per status", () => {
-    const counts = countLaneStatuses(TWO_EPIC_LANES, STATUSES);
+    const counts = countLaneStatuses(TWO_MILESTONE_LANES, STATUSES);
     expect(counts.get('todo')).toBe(3);
     expect(counts.get('done')).toBe(2);
     expect(counts.get('in-progress')).toBe(0);
   });
 
   test('every configured status gets an entry, even one no task is in', () => {
-    const counts = countLaneStatuses(TWO_EPIC_LANES, STATUSES);
+    const counts = countLaneStatuses(TWO_MILESTONE_LANES, STATUSES);
     expect([...counts.keys()]).toEqual(STATUSES);
   });
 });
@@ -315,7 +328,7 @@ describe('visibleBoardColumns', () => {
 describe('visibleLaneTaskIds', () => {
   // Lane by lane, then column-major inside a lane — the order the eye reads the board in.
   test('walks lanes in order, then down each status column', () => {
-    expect(visibleLaneTaskIds(TWO_EPIC_LANES, new Set())).toEqual([
+    expect(visibleLaneTaskIds(TWO_MILESTONE_LANES, new Set())).toEqual([
       't-1',
       't-2',
       't-3',
@@ -327,15 +340,15 @@ describe('visibleLaneTaskIds', () => {
   // The regression this guards: j/k landing on a card inside a folded-up lane, which moves real
   // DOM focus to something nobody can see and leaves Enter opening an invisible task.
   test('skips the cards a collapsed lane is hiding', () => {
-    expect(visibleLaneTaskIds(TWO_EPIC_LANES, new Set(['e-1']))).toEqual([
+    expect(visibleLaneTaskIds(TWO_MILESTONE_LANES, new Set(['e-1']))).toEqual([
       't-4',
       't-loose',
     ]);
   });
 
   test('everything collapsed leaves nothing to traverse', () => {
-    const all = new Set(TWO_EPIC_LANES.map((lane) => lane.key));
-    expect(visibleLaneTaskIds(TWO_EPIC_LANES, all)).toEqual([]);
+    const all = new Set(TWO_MILESTONE_LANES.map((lane) => lane.key));
+    expect(visibleLaneTaskIds(TWO_MILESTONE_LANES, all)).toEqual([]);
   });
 
   // Lanes of every kind fold by `lane.key`, so a priority lane's fold hides its cards too.

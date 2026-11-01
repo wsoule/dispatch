@@ -1,5 +1,9 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
-import type { EpicProgress, EpicSession, RunMeta } from '@dispatch/client';
+import type {
+  MilestoneProgress,
+  MilestoneSession,
+  RunMeta,
+} from '@dispatch/client';
 
 // Builders for the Live view's tests: tasks, fan-out progress and runs, with just the
 // fields the Live model reads.
@@ -35,16 +39,16 @@ export function task(
 }
 
 export function progress(
-  epicId: string,
-  state: EpicSession['state'],
-  session: Partial<EpicSession> = {},
+  milestoneId: string,
+  state: MilestoneSession['state'],
+  session: Partial<MilestoneSession> = {},
   settledUsd = 0
-): EpicProgress {
+): MilestoneProgress {
   return {
-    epicId,
+    milestoneId,
     active: state === 'active',
     session: {
-      epicId,
+      milestoneId,
       concurrency: 2,
       executor: 'fake',
       state,

@@ -25,10 +25,10 @@ import { createRunTokens } from '../../src/messaging/runTokens.js';
 import type { Messaging } from '../../src/messaging/service.js';
 import { openMessaging } from '../../src/messaging/service.js';
 import type { Orchestrator } from '../../src/orchestrator/orchestrator.js';
-import { BOOT_FORCE_FAIL_ERROR } from '../../src/orchestrator/orchestrator.js';
 import { memoryDbPath, runsDir } from '../../src/orchestrator/paths.js';
 import type { ExecutorProfile } from '../../src/orchestrator/types.js';
 import {
+  BOOT_FORCE_FAIL_ERROR,
   DEFAULT_EXECUTOR_PROFILE,
   TERMINAL_RUN_STATES,
 } from '../../src/orchestrator/types.js';
@@ -849,11 +849,11 @@ describe('wake gate handler', () => {
     });
   }
 
-  it('does not wake an epic or a missing task on replay', async () => {
+  it('does not wake a milestone or a missing task on replay', async () => {
     const { orchestrator, store } = makeOrchestrator(project.root());
     const executor = new StallingExecutor();
     orchestrator.registerExecutor('claude', executor);
-    const epic = store.create({ title: 'An epic', kind: 'epic' });
+    const milestone = store.create({ title: 'A milestone', kind: 'milestone' });
     const messaging = openMessaging({
       rootDir: project.root(),
       orchestrator,
@@ -864,7 +864,7 @@ describe('wake gate handler', () => {
     });
     await messaging.recover();
 
-    for (const target of [`task:${epic.meta.id}`, 'task:t-000000']) {
+    for (const target of [`task:${milestone.meta.id}`, 'task:t-000000']) {
       const { question, answer } = seedApprovedWake(messaging, {
         from: 'human:asker',
         target,
@@ -878,7 +878,7 @@ describe('wake gate handler', () => {
       .filter((i) => i.message.kind === 'notice')
       .map((i) => i.message.body);
     expect(notices).toEqual([
-      `Not woken: task ${epic.meta.id} is an epic.`,
+      `Not woken: task ${milestone.meta.id} is a milestone.`,
       'Not woken: task t-000000 is missing.',
     ]);
     messaging.close();

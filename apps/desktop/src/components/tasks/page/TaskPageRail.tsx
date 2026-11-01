@@ -1,9 +1,16 @@
-import { Button, TaskDetailSection } from '@dispatch/ui';
+import { Button, InitialsAvatar, TaskDetailSection } from '@dispatch/ui';
+import { useQuery } from '@tanstack/react-query';
 import { ArrowUpRight } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
+import { threadListsKey } from '../../../hooks/useThreads';
+import { formatRelativeTimeFromIso } from '../../../lib/format';
 import { resolveExecuteModel } from '../../../lib/models';
-import { isTerminalRunState } from '../../../lib/runState';
+import {
+  isTerminalRunState,
+  tasksWithFinishedRun,
+} from '../../../lib/runState';
+import { partySummary, taskAgentParties } from '../../../lib/taskAgents';
 import {
   enrichDraftFromPlan,
   enrichPatch,
@@ -39,6 +46,58 @@ export interface TaskPageRailProps {
   view: TaskPageView;
   /** Puts the writes editor's field in view and focuses it (the card's "Add writes"). */
   onAddWrites: () => void;
+}
+
+/**
+ * The outside (A2A) agents this task has traded messages with, one row each: who they
+ * are, whether a question waits on you or on them, and when they last spoke. Reads the
+ * task's conversation, as the task's home does; hidden when no outside agent is involved.
+ */
+function OutsideAgentsSection({ page }: { page: TaskPageModel }) {
+  const { client, port, messageAccess } = page.project;
+  const query = { about: `task:${page.item.meta.id}` };
+  const conversation = useQuery({
+    queryKey: [...threadListsKey(port), 'conversation', query],
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.getConversation({ ...query, limit: 200 });
+    },
+    enabled: client !== null && messageAccess.canMessage,
+    retry: false,
+  });
+  const parties = useMemo(
+    () => taskAgentParties(conversation.data?.messages ?? []),
+    [conversation.data]
+  );
+  if (parties.length === 0) return null;
+  return (
+    <TaskDetailSection title="Outside agents" count={parties.length}>
+      <ul data-slot="outside-agents" className={styles.agents}>
+        {parties.map((party) => (
+          <li
+            key={party.address}
+            title={party.address}
+            className={styles.agent}
+          >
+            <InitialsAvatar name={party.label} />
+            <span className={styles.agentText}>
+              <span className={styles.agentName}>{party.label}</span>
+              <span
+                data-slot="outside-agent-summary"
+                data-waiting={party.waitingOnYou > 0 ? 'true' : undefined}
+                className={styles.agentSummary}
+              >
+                {partySummary(party)}
+              </span>
+            </span>
+            <span className={styles.agentWhen}>
+              {formatRelativeTimeFromIso(party.lastAt)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </TaskDetailSection>
+  );
 }
 
 /**
@@ -128,13 +187,14 @@ export function TaskPageRail({
       liveTaskIds,
       model: page.statusModel,
       concurrency:
-        project.epicProgressById.get(taskId)?.session?.concurrency ?? null,
+        project.milestoneProgressById.get(taskId)?.session?.concurrency ?? null,
+      withFinishedRun: tasksWithFinishedRun(project.runs),
     });
   }, [
     page.children,
     page.statusModel,
     project.runs,
-    project.epicProgressById,
+    project.milestoneProgressById,
     taskId,
   ]);
 
@@ -156,6 +216,7 @@ export function TaskPageRail({
 
   return (
     <>
+      <OutsideAgentsSection page={page} />
       {hasWork && (
         <TaskDetailSection title="Work">
           <div className={styles.work}>
@@ -245,7 +306,7 @@ export function TaskPageRail({
                 model={page.statusModel}
                 latestRunByTaskId={project.latestRunByTaskId}
                 onOpenTask={page.openTask}
-                createPreset={canEdit ? { epic: taskId } : undefined}
+                createPreset={canEdit ? { milestone: taskId } : undefined}
               />
             </div>
           </div>

@@ -264,3 +264,26 @@ test('below the operator tier the webhook is locked', () => {
   expect(screen.queryByRole('button', { name: 'Replace' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Clear' })).toBeNull();
 });
+
+test('the side-panel switch hides notifications without saving config', () => {
+  window.localStorage.clear();
+  const saved: unknown[] = [];
+  render(
+    <NotificationsSection
+      config={config}
+      onSave={(p) => Promise.resolve(void saved.push(p))}
+      canOperate={false}
+    />
+  );
+  const name = 'Show notifications in the side panel';
+  // A viewing preference: not locked behind the owner, and on by default.
+  expect(
+    screen.getByRole('switch', { name }).hasAttribute('data-checked')
+  ).toBe(true);
+  toggle(name);
+  expect(
+    screen.getByRole('switch', { name }).hasAttribute('data-checked')
+  ).toBe(false);
+  expect(saved).toEqual([]);
+  window.localStorage.clear();
+});

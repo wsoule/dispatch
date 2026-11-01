@@ -368,6 +368,7 @@ describe('team setup from the CLI', () => {
       'invite',
       'join',
       'status',
+      'encrypt',
       'leave',
       'host',
       'advanced',

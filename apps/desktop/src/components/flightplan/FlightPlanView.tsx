@@ -9,7 +9,10 @@ import {
   statusModelOf,
   usesIntegrationBranch,
 } from '@dispatch-foo/core/browser';
-import type { EpicProgress, EpicProgressChild } from '@dispatch/client';
+import type {
+  MilestoneProgress,
+  MilestoneProgressChild,
+} from '@dispatch/client';
 import { Waypoints } from 'lucide-react';
 import {
   type ReactNode,
@@ -24,15 +27,16 @@ import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { useOptimisticDispatch } from '../../hooks/useOptimisticDispatch';
 import type { TaskTab } from '../../lib/appNav';
 import { liveClaimsFrom } from '../../lib/dispatchPreview';
+import { landingStateByTaskId } from '../../lib/landingBadge';
+import { resolveLinearLink } from '../../lib/linearSettings';
 import {
   concurrencyChoices,
   concurrencyLabel,
-} from '../../lib/epicConcurrency';
-import type { WorkEpicOptions } from '../../lib/epicSession';
-import { landingStateByTaskId } from '../../lib/landingBadge';
-import { resolveLinearLink } from '../../lib/linearSettings';
+} from '../../lib/milestoneConcurrency';
 import { rollupMilestoneStatus } from '../../lib/milestoneRollup';
+import type { WorkMilestoneOptions } from '../../lib/milestoneSession';
 import { pendingStarts } from '../../lib/optimisticDispatch';
+import { tasksWithFinishedRun } from '../../lib/runState';
 import { assigneeRef } from '../../lib/taskDisplay';
 import { FanoutControls } from '../milestones/FanoutControls';
 import { usePeople } from '../people/PeopleContext';
@@ -135,7 +139,7 @@ export function canDispatch(
 // The fan-out dialog, open for one container: `start` sends a fresh session, `raise`
 // edits a paused one's ceilings.
 interface FanoutDialogState {
-  epicId: string;
+  milestoneId: string;
   mode: 'start' | 'raise';
 }
 
@@ -173,7 +177,7 @@ export function FlightPlan({
   const sendAgentsNonce = sendAgentsRequest?.nonce ?? null;
   useEffect(() => {
     if (sendAgentsNonce === null) return;
-    setDialog({ epicId: containerId, mode: 'start' });
+    setDialog({ milestoneId: containerId, mode: 'start' });
     onSendAgentsServed?.(sendAgentsNonce);
   }, [sendAgentsNonce, containerId, onSendAgentsServed]);
 
@@ -301,16 +305,16 @@ export function FlightPlan({
   // only changes when one starts, stops or finishes.
   const liveKey = useMemo(() => {
     const out: string[] = [];
-    for (const progress of data.epicProgressById.values()) {
+    for (const progress of data.milestoneProgressById.values()) {
       const session = progress.session;
       if (session?.state === 'active' || session?.state === 'paused') {
         out.push(
-          `${progress.epicId}=${session.startedBy ?? ''}=${session.scope ?? 'plan'}`
+          `${progress.milestoneId}=${session.startedBy ?? ''}=${session.scope ?? 'plan'}`
         );
       }
     }
     return out.sort().join(' ');
-  }, [data.epicProgressById]);
+  }, [data.milestoneProgressById]);
   const { liveStarters, directOnly } = useMemo(() => {
     const starters = new Map<string, string | null>();
     const direct = new Set<string>();
@@ -363,15 +367,15 @@ export function FlightPlan({
 
   // The fan-out sessions that own these nodes.
   const sessions = useMemo(() => {
-    const out = new Map<string, EpicProgress>();
+    const out = new Map<string, MilestoneProgress>();
     for (const task of nodes) {
       const owner = owners.get(task.meta.id) ?? null;
       if (owner === null || out.has(owner)) continue;
-      const progress = data.epicProgressById.get(owner);
+      const progress = data.milestoneProgressById.get(owner);
       if (progress !== undefined) out.set(owner, progress);
     }
     return out;
-  }, [nodes, owners, data.epicProgressById]);
+  }, [nodes, owners, data.milestoneProgressById]);
   const concurrency = useMemo(() => {
     let total: number | null = null;
     for (const progress of sessions.values()) {
@@ -383,7 +387,7 @@ export function FlightPlan({
     return total;
   }, [sessions]);
   const phases = useMemo(() => {
-    const out = new Map<string, EpicProgressChild>();
+    const out = new Map<string, MilestoneProgressChild>();
     for (const progress of sessions.values()) {
       if (progress.session === null) continue;
       for (const child of progress.children) out.set(child.id, child);
@@ -393,6 +397,10 @@ export function FlightPlan({
 
   const withRunBranch = useMemo(
     () => tasksWithRunBranch(data.runs),
+    [data.runs]
+  );
+  const withFinishedRun = useMemo(
+    () => tasksWithFinishedRun(data.runs),
     [data.runs]
   );
   const plan = useMemo(
@@ -408,6 +416,7 @@ export function FlightPlan({
         ownerOf,
         startedByOf,
         withRunBranch,
+        withFinishedRun,
         lookup,
       }),
     [
@@ -422,6 +431,7 @@ export function FlightPlan({
       ownerOf,
       startedByOf,
       withRunBranch,
+      withFinishedRun,
       lookup,
     ]
   );
@@ -538,8 +548,10 @@ export function FlightPlan({
   }, [scope, nodes]);
   const laneGroups = useMemo<BranchLaneGroup[]>(() => {
     if (container === null || scope === null) return [];
-    const integrationOf = (epic: TaskListItem) =>
-      usesIntegrationBranch(epic.meta.kind) ? `epic/${epic.meta.id}` : null;
+    const integrationOf = (milestone: TaskListItem) =>
+      usesIntegrationBranch(milestone.meta.kind)
+        ? `milestone/${milestone.meta.id}`
+        : null;
     if (scope.bands === null) {
       return [
         {
@@ -594,13 +606,13 @@ export function FlightPlan({
   // A ceiling change on a live session: pause, then resume at the new concurrency (the
   // daemon only takes new options on resume). Running agents are untouched either way.
   const setCeiling = useCallback(
-    async (epicId: string, next: number) => {
+    async (milestoneId: string, next: number) => {
       try {
-        await data.handlePauseEpic(epicId);
-        await data.handleResumeEpic(epicId, { concurrency: next });
+        await data.handlePauseMilestone(milestoneId);
+        await data.handleResumeMilestone(milestoneId, { concurrency: next });
       } catch (err) {
         onDispatchFailed(
-          epicId,
+          milestoneId,
           err instanceof Error ? err.message : 'The daemon refused the change.'
         );
       }
@@ -611,9 +623,9 @@ export function FlightPlan({
   // One container's fan-out verbs — the header's for the plan's own container, a band's
   // for its milestone — over the same session API the Milestones page uses.
   const fanoutFor = useCallback(
-    (epic: TaskListItem, band: boolean): ReactNode => {
-      const epicId = epic.meta.id;
-      const progress = data.epicProgressById.get(epicId);
+    (milestone: TaskListItem, band: boolean): ReactNode => {
+      const milestoneId = milestone.meta.id;
+      const progress = data.milestoneProgressById.get(milestoneId);
       const session = progress?.session ?? null;
       const progressChildren = progress?.children ?? [];
       const landable =
@@ -621,9 +633,9 @@ export function FlightPlan({
         session?.state !== 'paused' &&
         progressChildren.length > 0 &&
         progressChildren.every((c) => isDoneStatus(c.status, model)) &&
-        !isCompletedStatus(epic.meta.status, model);
+        !isCompletedStatus(milestone.meta.status, model);
       const choices = concurrencyChoices(
-        data.config?.orchestrator.epicConcurrency ?? 3,
+        data.config?.orchestrator.milestoneConcurrency ?? 3,
         data.config?.orchestrator.maxConcurrency
       );
       return (
@@ -631,7 +643,9 @@ export function FlightPlan({
           {!band && session?.state === 'active' && (
             <DropdownMenu>
               <DropdownMenuTrigger
-                render={<SelectPill aria-label={`Agent slots for ${epicId}`} />}
+                render={
+                  <SelectPill aria-label={`Agent slots for ${milestoneId}`} />
+                }
               >
                 {session.concurrency}{' '}
                 {session.concurrency === 1 ? 'slot' : 'slots'}
@@ -642,7 +656,7 @@ export function FlightPlan({
                   onValueChange={(value) => {
                     const next = Number(value);
                     if (next !== session.concurrency)
-                      void setCeiling(epicId, next);
+                      void setCeiling(milestoneId, next);
                   }}
                 >
                   {choices.map((choice) => (
@@ -655,18 +669,20 @@ export function FlightPlan({
             </DropdownMenu>
           )}
           <FanoutControls
-            epic={epic}
+            milestone={milestone}
             model={model}
             progress={progress}
             landable={landable}
             phases={false}
-            onSendAgents={(id) => setDialog({ epicId: id, mode: 'start' })}
-            onPause={data.handlePauseEpic}
-            onResume={data.handleResumeEpic}
-            onRaiseCeiling={(id) => setDialog({ epicId: id, mode: 'raise' })}
-            onStop={data.handleStopEpic}
-            onLand={data.handleLandEpic}
-            onOpenEpic={(id) => onOpenTask(id)}
+            onSendAgents={(id) => setDialog({ milestoneId: id, mode: 'start' })}
+            onPause={data.handlePauseMilestone}
+            onResume={data.handleResumeMilestone}
+            onRaiseCeiling={(id) =>
+              setDialog({ milestoneId: id, mode: 'raise' })
+            }
+            onStop={data.handleStopMilestone}
+            onLand={data.handleLandMilestone}
+            onOpenMilestone={(id) => onOpenTask(id)}
             showOpen={band}
           />
         </>
@@ -749,12 +765,12 @@ export function FlightPlan({
     pace,
   };
 
-  const dialogEpic =
+  const dialogMilestone =
     dialog === null
       ? null
-      : dialog.epicId === containerId
+      : dialog.milestoneId === containerId
         ? container
-        : (scope.bands?.find((b) => b.key === dialog.epicId)?.container ??
+        : (scope.bands?.find((b) => b.key === dialog.milestoneId)?.container ??
           null);
   // A teammate's task can never start in the fan-out, so the dialog never says it will.
   const dialogReadyIds =
@@ -767,7 +783,7 @@ export function FlightPlan({
         );
   const dialogSession =
     dialog?.mode === 'raise'
-      ? (data.epicProgressById.get(dialog.epicId)?.session ?? null)
+      ? (data.milestoneProgressById.get(dialog.milestoneId)?.session ?? null)
       : null;
 
   return (
@@ -804,17 +820,19 @@ export function FlightPlan({
           focusOnMount={focusOnMount}
         />
       )}
-      {dialog !== null && dialogEpic !== null && (
+      {dialog !== null && dialogMilestone !== null && (
         <DispatchDialog
-          title={`${dialog.mode === 'raise' ? 'Raise ceiling' : 'Send agents'} · ${dialogEpic.meta.title}`}
+          title={`${dialog.mode === 'raise' ? 'Raise ceiling' : 'Send agents'} · ${dialogMilestone.meta.title}`}
           tasks={fanoutScope(
-            dialog.epicId,
+            dialog.milestoneId,
             (id) => children.get(id) ?? []
           ).filter((t) => !containerIds.has(t.meta.id))}
           readyIds={dialogReadyIds}
           runningNow={data.liveRunStateByTaskId.size}
           liveClaims={liveClaims}
-          defaultConcurrency={data.config?.orchestrator.epicConcurrency ?? 3}
+          defaultConcurrency={
+            data.config?.orchestrator.milestoneConcurrency ?? 3
+          }
           maxConcurrency={data.config?.orchestrator.maxConcurrency}
           runCostEstimateUsd={data.config?.orchestrator.runCostEstimateUsd}
           fixLoopAuto={data.config?.fixLoop.auto}
@@ -829,11 +847,11 @@ export function FlightPlan({
               : undefined
           }
           onCancel={() => setDialog(null)}
-          onConfirm={async (opts: WorkEpicOptions) => {
+          onConfirm={async (opts: WorkMilestoneOptions) => {
             if (dialog.mode === 'raise') {
-              await data.handleResumeEpic(dialog.epicId, opts);
+              await data.handleResumeMilestone(dialog.milestoneId, opts);
             } else {
-              await data.handleWorkEpic(dialog.epicId, opts);
+              await data.handleWorkMilestone(dialog.milestoneId, opts);
             }
             setDialog(null);
           }}

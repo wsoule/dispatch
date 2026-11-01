@@ -5,10 +5,12 @@ import {
   bodyWithLinks,
   canonicalMarkdown,
   ISSUE_FIELDS,
+  ISSUE_FOLLOW_UP_FIELDS,
   issuePatch,
   issuePush,
   issueTaskCreate,
   issueValues,
+  labelCollision,
   labelFor,
   linearDescriptionFromBody,
   linksFromBody,
@@ -24,6 +26,7 @@ import type { LinearMapContext } from '../src/linearFields.js';
 import type {
   LinearIssue,
   LinearLabel,
+  LinearLabelMatch,
   LinearRelation,
   LinearWorkflowState,
 } from '../src/linearMap.js';
@@ -199,6 +202,32 @@ describe('Linear -> Dispatch -> Linear', () => {
         if (JSON.stringify(local[field]) !== JSON.stringify(remote[field])) {
           throw new Error(
             `run ${run}, field ${field}: ${JSON.stringify(local[field])} != ${JSON.stringify(remote[field])}`
+          );
+        }
+      }
+    }
+  });
+
+  it('is the identity for an archived finished issue when finished archives push', () => {
+    const random = rng(42);
+    for (let run = 0; run < 300; run++) {
+      const issue = randomIssue(random);
+      const tasks = workspace();
+      const pulled = pull(issue, doc(linked('t-x', 'issue', 'i-x')), tasks);
+      const ctx = context([...tasks, pulled.meta], { archiveFinished: true });
+      const remote = issueValues(issue, ctx);
+      const local = taskIssueValues(pulled, ctx);
+      for (const field of ISSUE_FIELDS) {
+        // A finished task maps archived one way: an unarchive stays Linear's.
+        const expected =
+          field === 'archived' &&
+          isDoneStatus(pulled.meta.status, ctx.model) &&
+          remote.archived === false
+            ? UNMAPPED
+            : remote[field];
+        if (JSON.stringify(local[field]) !== JSON.stringify(expected)) {
+          throw new Error(
+            `run ${run}, field ${field}: ${JSON.stringify(local[field])} != ${JSON.stringify(expected)}`
           );
         }
       }
@@ -439,6 +468,14 @@ describe('issue field details', () => {
     ).toEqual(['l-bug', 'l-web']);
   });
 
+  it('lists a label the task repeats, in any case, once', () => {
+    const ctx = context(workspace());
+    const task = doc(
+      meta('t-x', 'task', { labels: ['cost', 'cost', 'Cost', 'WEB', 'web'] })
+    );
+    expect(missingLabels(task, ctx)).toEqual(['cost']);
+  });
+
   it('rounds an estimate, since Linear takes an integer', () => {
     const ctx = context(workspace());
     const task = doc(meta('t-x', 'task', { estimate: 2.6 }));
@@ -459,6 +496,63 @@ describe('issue field details', () => {
     expect(
       issuePush(unarchived, ['archived'], blankIssue('i-z'), ctx).archive
     ).toBe(false);
+  });
+
+  it('pushes a finished task’s archive with archiveFinished, never its unarchive', () => {
+    const off = context(workspace());
+    const on = context(workspace(), { archiveFinished: true });
+    for (const status of ['Done', 'Canceled']) {
+      const archived = doc(meta('t-x', 'task', { status, archivedAt: NOW }));
+      const restored = doc(meta('t-y', 'task', { status }));
+      expect(taskIssueValues(archived, off).archived).toBe(UNMAPPED);
+      expect(taskIssueValues(restored, off).archived).toBe(UNMAPPED);
+      expect(taskIssueValues(archived, on).archived).toBe(true);
+      expect(taskIssueValues(restored, on).archived).toBe(UNMAPPED);
+      expect(
+        issuePush(archived, ['archived'], blankIssue('i-x'), on).archive
+      ).toBe(true);
+      expect(
+        issuePush(restored, ['archived'], blankIssue('i-y'), on).archive
+      ).toBeNull();
+    }
+  });
+
+  it('archives a finished task on arrival only with archiveFinished', () => {
+    const task = doc(meta('t-x', 'task', { status: 'Done', archivedAt: NOW }));
+    const arrive = (ctx: LinearMapContext) =>
+      issuePush(task, ISSUE_FOLLOW_UP_FIELDS, blankIssue('i-x'), ctx).archive;
+    expect(arrive(context(workspace(), { archiveFinished: true }))).toBe(true);
+    expect(arrive(context(workspace()))).toBeNull();
+  });
+
+  it('leaves Linear’s archive alone when a finished task is restored here', () => {
+    const ctx = context(workspace(), { archiveFinished: true });
+    const issue = blankIssue('i-x', {
+      state: STATES.find((s) => s.name === 'Done') ?? null,
+      archivedAt: NOW,
+    });
+    const archived = doc(
+      linked('t-x', 'issue', 'i-x', 'task', { status: 'Done', archivedAt: NOW })
+    );
+    const base = nextBase(
+      ISSUE_FIELDS,
+      taskIssueValues(archived, ctx),
+      issueValues(issue, ctx),
+      null
+    );
+    const restored = applyUpdatePatch(archived, { archivedAt: null }, NOW);
+    const decisions = mergeFields({
+      fields: ['archived'],
+      local: taskIssueValues(restored, ctx),
+      remote: issueValues(issue, ctx),
+      base,
+      localUpdated: NOW,
+      remoteUpdated: NOW,
+      localDirty: true,
+    });
+    expect(decisions).toEqual([
+      { field: 'archived', action: 'rebase', conflict: false },
+    ]);
   });
 
   it('distrusts exactly the fields a cut-short list feeds', () => {
@@ -639,5 +733,91 @@ describe('several linked teams', () => {
     // Type/Bug is team-1's own: team-2 would need one of its own.
     expect(missingLabels(task, ctx, 'team-2')).toEqual(['Type/Bug']);
     expect(missingLabels(task, ctx, 'team-1')).toEqual([]);
+  });
+});
+
+describe('labelCollision', () => {
+  function match(
+    id: string,
+    teamId: string | null,
+    flags: Partial<LinearLabelMatch> = {}
+  ): LinearLabelMatch {
+    return {
+      id,
+      name: 'Cost',
+      group: null,
+      teamId,
+      isGroup: false,
+      archived: false,
+      retired: false,
+      ...flags,
+    };
+  }
+
+  it('reuses the team’s own label before a workspace one', () => {
+    const hit = labelCollision('cost', 'team-1', [
+      match('l-ws', null),
+      match('l-own', 'team-1'),
+    ]);
+    expect(hit).toEqual({ reuse: match('l-own', 'team-1') });
+  });
+
+  it('reuses a workspace label for any team', () => {
+    expect(labelCollision('COST', 'team-2', [match('l-ws', null)])).toEqual({
+      reuse: match('l-ws', null),
+    });
+  });
+
+  it('passes over another team’s label of the same name', () => {
+    expect(
+      labelCollision('cost', 'team-1', [
+        match('l-other', 'team-2'),
+        match('l-ws', null),
+      ])
+    ).toEqual({ reuse: match('l-ws', null) });
+    expect(
+      labelCollision('cost', 'team-1', [match('l-other', 'team-2')])
+    ).toEqual({ blocked: 'label "cost" belongs to another Linear team' });
+  });
+
+  it('says why a group, a retired or an archived label cannot stand in', () => {
+    const blocked = (matches: LinearLabelMatch[]) => {
+      const hit = labelCollision('cost', 'team-1', matches);
+      return hit !== null && 'blocked' in hit ? hit.blocked : null;
+    };
+    const group = match('l-g', 'team-1', { isGroup: true });
+    const retired = match('l-r', null, { retired: true });
+    const archived = match('l-a', 'team-1', { archived: true });
+    expect(blocked([archived, retired, group])).toContain('label group');
+    expect(blocked([archived, retired])).toContain('retired');
+    expect(blocked([archived])).toContain('archived');
+    // A live label in reach beats any of them.
+    expect(
+      labelCollision('cost', 'team-1', [group, match('l-own', 'team-1')])
+    ).toEqual({ reuse: match('l-own', 'team-1') });
+    // This team's blocker explains the refusal before another team's group.
+    expect(
+      blocked([match('l-og', 'team-2', { isGroup: true }), archived])
+    ).toContain('archived');
+  });
+
+  it('names the group a label sits in under another spelling', () => {
+    const grouped = match('l-c', 'team-1', { group: 'Spend' });
+    expect(labelCollision('cost', 'team-1', [grouped])).toEqual({
+      blocked:
+        'label "cost" is in the "Spend" group in Linear; label the task Spend/Cost instead',
+    });
+    expect(labelCollision('spend/cost', 'team-1', [grouped])).toEqual({
+      reuse: grouped,
+    });
+  });
+
+  it('answers null when nothing spells the name', () => {
+    expect(labelCollision('cost', 'team-1', [])).toBeNull();
+    expect(
+      labelCollision('cost', 'team-1', [
+        { ...match('l-x', 'team-1'), name: 'costs' },
+      ])
+    ).toBeNull();
   });
 });

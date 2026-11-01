@@ -22,7 +22,10 @@ import {
   unmetBlockers,
 } from '../../../lib/dispatchReadiness';
 import { criteriaItems } from '../../../lib/reviewCriteria';
-import { isTerminalRunState } from '../../../lib/runState';
+import {
+  isTerminalRunState,
+  tasksWithFinishedRun,
+} from '../../../lib/runState';
 import { useStatusModelOf } from '../../../lib/statusModel';
 import { parseTaskSections } from '../../../lib/taskDisplay';
 import { childrenIn, taskIndexOf } from '../../../lib/taskIndex';
@@ -185,9 +188,17 @@ export function useTaskPageModel(
   const runs = useMemo(() => executeRuns(allRuns), [allRuns]);
   const latestRun = runs[0];
   const model = useStatusModelOf(project.config);
+  const finishedRuns = useMemo(
+    () => tasksWithFinishedRun(project.runs),
+    [project.runs]
+  );
+  const finishedRun = useCallback(
+    (id: string) => finishedRuns.has(id),
+    [finishedRuns]
+  );
   const unmet = useMemo(
-    () => unmetBlockers(item, tasksById, model),
-    [item, tasksById, model]
+    () => unmetBlockers(item, tasksById, model, finishedRun),
+    [item, tasksById, model, finishedRun]
   );
   const stateInput = {
     statusType: statusType(meta.status, model),
@@ -290,6 +301,7 @@ export function useTaskPageModel(
     liveRun: runs.find((r) => !isTerminalRunState(r.state)),
     reading: project.readinessById.get(taskId),
     liveClaims,
+    finishedRun,
   });
   // A container goes out from its plan, never as one run.
   const canDispatch = !container && readiness.canDispatch;
@@ -322,6 +334,7 @@ export function useTaskPageModel(
     children,
     tasksById,
     unmetBlockers: unmet,
+    finishedRun,
     readiness,
     statusModel: model,
     patch,

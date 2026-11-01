@@ -169,8 +169,8 @@ describe('DocsService.promptSection', () => {
       links: [{ target: { type: 'task', id: 't-1' }, rel: 'spec' }],
     });
     service.create(owner, {
-      title: 'Epic spec',
-      body: 'Epic body.\n',
+      title: 'Milestone spec',
+      body: 'Milestone body.\n',
       links: [{ target: { type: 'task', id: 'e-1' }, rel: 'spec' }],
     });
     service.create(owner, {
@@ -188,7 +188,7 @@ describe('DocsService.promptSection', () => {
       '- spec · own-spec · draft · rev 1 · 1 KB: Own spec: The own spec.'
     );
     expect(text).toContain(
-      '- parent spec · epic-spec · draft · rev 1 · 1 KB: Epic spec: Epic body.'
+      '- parent spec · milestone-spec · draft · rev 1 · 1 KB: Milestone spec: Milestone body.'
     );
     expect(text).toContain(
       '- ancestor plan · root-plan · draft · rev 1 · 1 KB: Root plan: Root.'
@@ -205,8 +205,8 @@ describe('DocsService.promptSection', () => {
   it('inlines the nearest spec for an executor without the MCP server', () => {
     const { service } = makeService();
     service.create(service.actorFor(OWNER), {
-      title: 'Epic spec',
-      body: 'EPIC SPEC TEXT\n',
+      title: 'Milestone spec',
+      body: 'MILESTONE SPEC TEXT\n',
       links: [{ target: { type: 'task', id: 'e-1' }, rel: 'spec' }],
     });
     expect(
@@ -215,7 +215,7 @@ describe('DocsService.promptSection', () => {
         taskId: 't-1',
         dispatchTools: false,
       })
-    ).toContain('EPIC SPEC TEXT');
+    ).toContain('MILESTONE SPEC TEXT');
   });
 
   it('is null while docs are unavailable', () => {

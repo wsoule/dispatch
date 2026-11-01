@@ -14,10 +14,35 @@ and the fake is fixed.
 
 ## What the relay can read
 
-Everything that is not sealed: the board, team memory and team docs, the roster
-with the team's license key, presence, and who messaged whom and when. It cannot
-read message contents. Every client shows this sentence (`RELAY_DISCLOSURE`)
+It depends on whether the team turned on end-to-end encrypted content (an
+admin's `content-e2e` roster op; `dispatch team encrypt --on`, or Settings →
+Members → End-to-end encryption). Every client shows the sentence that is true
+for the team (`RELAY_DISCLOSURE`, or `RELAY_DISCLOSURE_E2E` once it is on)
 before a team switches, and a switch needs it confirmed.
+
+- **Off** (every team starts here): everything that is not sealed. That is the
+  board, team memory and team docs, the roster with the team's license key,
+  presence, and who messaged whom and when. It cannot read message contents.
+- **On**: the roster with the license key and every machine's public keys, and
+  each op's header: publisher, seq, time, type and size, plus the `to` of a
+  sealed op. The body of every `task`, `presence`, `agent`, `channel`, `memory`
+  and `doc` op is a content envelope (`{e2e: 1, epoch, nonce, ct}`) under a team
+  content key the relay never holds. A `presence` envelope keeps two clear hints
+  for retention below: its `kind`, and `run`, an HMAC of the run id under the
+  epoch's key. The relay can group presence by run with it but cannot recover
+  the id. A replica presence also keeps `caps` and `wants` (the epochs whose key
+  its machine lacks) in the clear.
+
+What turning it on does not change:
+
+- Ops published before the switch stay as they were, readable. Board ops are
+  never pruned, so the board's history before the switch stays on the relay;
+  founding a new team is the only way to purge it.
+- A removed machine keeps every key and op it already received. Each accepted
+  revoke after the switch opens a new epoch with a new key, which it never gets.
+- There is no forward secrecy within an epoch: anyone holding its key reads
+  every op under it.
+- Metadata (who, when, type, size), the roster and the license stay visible.
 
 ## Endpoints
 
@@ -147,13 +172,17 @@ is ignored. A malformed frame closes the socket, on either side.
   daemon stops before publishing.
 - **The `to` rule.** A sealed op (`mail`, `state`) may name any roster replica
   in `to`. It is delivered whole only to admitted replicas in `to`. Every other
-  reader gets its stub, so chains still verify.
+  reader gets its stub, so chains still verify. End-to-end content does not
+  change it: team content keys travel only as grants inside sealed `state` ops,
+  so the rule is what keeps them from anyone outside `to`.
 - **Retention.**
   - A `mail` or `state` op becomes a stub once every admitted recipient has
     acknowledged it. A recipient that is no longer admitted counts as having
     acknowledged it.
   - Any `mail` or `state` op becomes a stub 30 days after it was stored.
-  - Only the latest `presence` op per run and per replica is kept whole.
+  - Only the latest `presence` op per run and per replica is kept whole. While
+    content is encrypted the relay reads the envelope's `kind` and its `run` tag
+    in place of the body's run id; equal ids give equal tags within an epoch.
 - **Limits.**
   - An op may be at most 1 MiB.
   - A replica may store at most 1,000 ops a minute. The switch-over upload is

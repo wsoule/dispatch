@@ -41,7 +41,7 @@ export interface LedgerStorePort {
     records: LedgerEntry[];
     errors: readonly unknown[];
   };
-  entriesFor(taskId: string, epicId: string | null): LedgerEntry[];
+  entriesFor(taskId: string, milestoneId: string | null): LedgerEntry[];
 }
 
 // How many times add() will re-roll an id before giving up. Far beyond what
@@ -121,7 +121,7 @@ export class LedgerStore implements LedgerStorePort {
     const now = new Date().toISOString();
     const record: LedgerEntry = {
       id: this.mintId(now),
-      epicId: input.epicId ?? null,
+      milestoneId: input.milestoneId ?? null,
       sourceTaskId: input.sourceTaskId ?? null,
       kind: input.kind,
       title: input.title,
@@ -135,8 +135,8 @@ export class LedgerStore implements LedgerStorePort {
   }
 
   list(filter: LedgerListFilter = {}): LedgerEntry[] {
-    if (filter.epicId === undefined) return this.read();
-    return this.read().filter((e) => e.epicId === filter.epicId);
+    if (filter.milestoneId === undefined) return this.read();
+    return this.read().filter((e) => e.milestoneId === filter.milestoneId);
   }
 
   // Every record plus the lines that would not read, so an import can count
@@ -148,9 +148,9 @@ export class LedgerStore implements LedgerStorePort {
     if (!existsSync(this.file)) return { records: [], errors: [] };
     const scan = scanLedgerJsonl(readFileSync(this.file, 'utf8'));
     const records =
-      filter.epicId === undefined
+      filter.milestoneId === undefined
         ? scan.records
-        : scan.records.filter((e) => e.epicId === filter.epicId);
+        : scan.records.filter((e) => e.milestoneId === filter.milestoneId);
     return {
       records,
       errors: [...scan.unparseableLines, ...scan.invalidLines],
@@ -158,12 +158,13 @@ export class LedgerStore implements LedgerStorePort {
   }
 
   // What a dispatched task should see: entries aimed at it directly, plus
-  // untargeted entries scoped to its epic or project-wide (epicId null).
-  entriesFor(taskId: string, epicId: string | null): LedgerEntry[] {
+  // untargeted entries scoped to its milestone or project-wide (milestoneId null).
+  entriesFor(taskId: string, milestoneId: string | null): LedgerEntry[] {
     return this.read().filter(
       (e) =>
         e.appliesTo.includes(taskId) ||
-        (e.appliesTo.length === 0 && (e.epicId === null || e.epicId === epicId))
+        (e.appliesTo.length === 0 &&
+          (e.milestoneId === null || e.milestoneId === milestoneId))
     );
   }
 }

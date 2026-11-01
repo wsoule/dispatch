@@ -40,18 +40,21 @@ describe('childEnv', () => {
     const dir = mkdtempSync(join(tmpdir(), 'child-env-'));
     process.env.DISPATCH_HOME = dir;
     let seen: SpawnTerminalOptions | null = null;
+    const registry = new TerminalRegistry(dir, {
+      spawn: (opts) => {
+        seen = opts;
+        throw new Error('not spawned');
+      },
+    });
     try {
-      const registry = new TerminalRegistry(dir, {
-        spawn: (opts) => {
-          seen = opts;
-          throw new Error('not spawned');
-        },
-      });
       registry.create({ cwd: dir, command: ['true'] });
       expect(seen).not.toBeNull();
       for (const key of Object.keys(SECRETS))
         expect((seen as SpawnTerminalOptions | null)?.env[key]).toBeUndefined();
     } finally {
+      // Clears the debounced flush, which would otherwise land in whatever
+      // DISPATCH_HOME a later test has set.
+      registry.shutdown();
       rmSync(dir, { recursive: true, force: true });
     }
   });

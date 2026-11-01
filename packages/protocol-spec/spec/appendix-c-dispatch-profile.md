@@ -7,15 +7,15 @@ and a host that claims the profile does all of it. Dispatch's host is its
 daemon, one per project on each machine.
 
 The profile computes one kind of implicit member ([§3.6](03-addresses.md#s3.6)):
-the members of `channel:epic/<id>` are the work items whose parent is that epic.
-They are added when a message is sent, never stored, and cannot leave the
-channel. No other channel has implicit members.
+the members of `channel:milestone/<id>` are the work items whose parent is that
+milestone. They are added when a message is sent, never stored, and cannot leave
+the channel. No other channel has implicit members.
 
 ## C.1 Identifiers
 
 | Identifier   | Dispatch form                                                                             | Example                          |
 | ------------ | ----------------------------------------------------------------------------------------- | -------------------------------- |
-| work item id | `[te]-[0-9a-f]{6,12}`: `t-` for a task, `e-` for an epic                                  | `t-4a8cce`, `e-c25f9c`           |
+| work item id | `[te]-[0-9a-f]{6,12}`: `t-` for a task, `e-` for a milestone                              | `t-4a8cce`, `e-c25f9c`           |
 | session id   | `r-[0-9a-f]{6,12}`: a session is one Dispatch run                                         | `r-9f2c01`                       |
 | message id   | `m-` and a lowercase [ULID](https://github.com/ulid/spec)                                 | `m-` and 26 characters           |
 | delivery id  | `d-` and a lowercase ULID                                                                 | `d-` and 26 characters           |
@@ -24,7 +24,7 @@ channel. No other channel has implicit members.
 The profile narrows the grammar of work item and session ids, and refuses an id
 outside these forms as `invalid` on the field that carried it
 ([§3.1](03-addresses.md#s3.1)). Vectors:
-`env.address.dispatch-grammar-admits-epic-ids`,
+`env.address.dispatch-grammar-admits-milestone-ids`,
 `env.address.refuses-a-task-id-outside-the-dispatch-grammar`,
 `env.address.refuses-a-run-id-outside-the-dispatch-grammar`.
 
@@ -334,8 +334,8 @@ and hour.
 Dispatch rules on each wake ([§6.5](06-delivery.md#s6.5)) as follows:
 
 - A `run:` target: `allow` when the sender is a `human:` address, else `deny`.
-- A `task:` target: `deny` when the work item does not exist, is an epic, or is
-  landed or dropped. Otherwise `allow` when the sender is a `human:` address,
+- A `task:` target: `deny` when the work item does not exist, is a milestone, or
+  is landed or dropped. Otherwise `allow` when the sender is a `human:` address,
   since waking a work item is that human's own call, at every rung and with no
   gate. For any other sender, the project's autonomy policy for `wake` at the
   task's rung, capped by the task's risk: `allow` when the policy acts on its
@@ -375,7 +375,7 @@ The notices a wake sends its sender are:
 | an approved gate found it cannot be woken | `Not woken: task <id> is <state>.`                                   |
 | an approved gate could not read it        | `Not woken: task <id> could not be read: <error>.`                   |
 
-`<state>` is `missing`, `an epic`, `landed` or `dropped`.
+`<state>` is `missing`, `a milestone`, `landed` or `dropped`.
 
 Vectors: `core.wake.a-failed-wake-notice-names-the-reason`,
 `core.wake.deny-notice-says-waking-was-not-allowed`,

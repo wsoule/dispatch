@@ -11,7 +11,6 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleDot,
-  Milestone,
   SignalHigh,
   Sparkles,
   Tag,
@@ -65,7 +64,6 @@ const FACET_ICON: Record<FilterFacet, ReactNode> = {
   priority: <SignalHigh aria-hidden />,
   assignee: <User aria-hidden />,
   labels: <Tag aria-hidden />,
-  epic: <Milestone aria-hidden />,
   milestone: <Target aria-hidden />,
   run: <Activity aria-hidden />,
   created: <Calendar aria-hidden />,
@@ -91,11 +89,9 @@ const ROW_CLASS =
 export interface FilterMenuContext {
   /** The project's statuses in config order. */
   statuses: readonly string[];
-  epics: readonly TaskListItem[];
+  milestones: readonly TaskListItem[];
   /** Every label in use, sorted. */
   labels: readonly string[];
-  /** Every milestone name in use, sorted. */
-  milestones: readonly string[];
 }
 
 export interface FilterMenuProps {
@@ -139,15 +135,13 @@ function optionsFor(facet: FilterFacet, ctx: FilterMenuContext): FacetOption[] {
       }));
     case 'labels':
       return ctx.labels.map((l) => ({ value: l, label: l }));
-    case 'epic':
-      return [
-        { value: FILTER_NONE, label: 'No epic' },
-        ...ctx.epics.map((e) => ({ value: e.meta.id, label: e.meta.title })),
-      ];
     case 'milestone':
       return [
         { value: FILTER_NONE, label: 'No milestone' },
-        ...ctx.milestones.map((m) => ({ value: m, label: m })),
+        ...ctx.milestones.map((e) => ({
+          value: e.meta.id,
+          label: e.meta.title,
+        })),
       ];
     case 'run':
       return RUN_STATES.map((s) => ({
@@ -209,8 +203,8 @@ function moveMenuFocus(e: KeyboardEvent<HTMLElement>) {
 
 /**
  * Linear's Filter menu (§7) off the header's funnel (or `f`): a 180px popover with an
- * `Add filter…` search, then one row per facet — Status, Priority, Assignee, Labels, Epic,
- * Milestone, Run state, Created, Updated — each opening its values (a `▸` drill-in rather
+ * `Add filter…` search, then one row per facet — Status, Priority, Assignee, Labels, Milestone,
+ * Run state, Created, Updated — each opening its values (a `▸` drill-in rather
  * than a hover submenu, so it works the same from the keyboard). Picking a value toggles it
  * into the facet's clause; the applied clauses render as chips under the header
  * (`AppliedFilters`). Typing searches facets and their values together. With `onAiFilter`

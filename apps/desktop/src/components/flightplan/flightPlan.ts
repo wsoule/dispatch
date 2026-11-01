@@ -4,6 +4,7 @@ import {
   fanoutWaitingOn,
   hasStatusRole,
   isDoneStatus,
+  isReviewStatus,
   isUnstartedStatus,
 } from '@dispatch-foo/core/browser';
 import type { RunMeta } from '@dispatch/client';
@@ -99,6 +100,9 @@ export interface FlightPlanOptions {
   /** Tasks with a run branch a dependent can stack on (`tasksWithRunBranch`); a blocker in
    * review without one holds its dependents until done. Omitted: none. */
   withRunBranch?: ReadonlySet<string>;
+  /** Tasks whose latest run has ended (`tasksWithFinishedRun`): where the review status is
+   * also the dispatched one, only these read as review. Omitted: `withRunBranch`. */
+  withFinishedRun?: ReadonlySet<string>;
   /** Blockers outside `children`, archived ones included: an unfinished one holds its
    * dependent as on the server, though never a wave. Omitted: none are known. */
   lookup?: (id: string) => TaskListItem | undefined;
@@ -131,21 +135,23 @@ export function tasksWithRunBranch(runs: readonly RunMeta[]): Set<string> {
 }
 
 // One child's state, first match wins: finished, a live run, a teammate's hands, the
-// review/landing roles, then the unstarted ready/blocked split.
+// review/landing roles, then the unstarted ready/blocked split. `finishedRun` tells review
+// from working where the two share a status.
 function stateOf(
   task: TaskListItem,
   waitingOn: readonly string[],
   subPlan: boolean,
   live: boolean,
   holder: string | null,
-  model: StatusModel
+  model: StatusModel,
+  finishedRun: boolean
 ): FlightNodeState {
   const status = task.meta.status;
   if (isDoneStatus(status, model)) return 'done';
   if (live) return 'running';
   if (holder !== null) return 'teammate';
   if (
-    hasStatusRole(status, 'review', model) ||
+    isReviewStatus(status, model, finishedRun) ||
     hasStatusRole(status, 'landing', model)
   ) {
     return 'review';
@@ -180,6 +186,7 @@ export function buildFlightPlan(
     ownerOf,
     startedByOf,
     withRunBranch = NONE,
+    withFinishedRun,
     lookup,
   }: FlightPlanOptions
 ): FlightPlan {
@@ -204,6 +211,9 @@ export function buildFlightPlan(
       (b) => ({
         held: holderOf(b) !== null,
         hasRunBranch: withRunBranch.has(b.meta.id),
+        ...(withFinishedRun === undefined
+          ? {}
+          : { finishedRun: withFinishedRun.has(b.meta.id) }),
       })
     );
     return {
@@ -214,7 +224,8 @@ export function buildFlightPlan(
         subPlan,
         liveTaskIds.has(id),
         holder,
-        model
+        model,
+        (withFinishedRun ?? withRunBranch).has(id)
       ),
       wave: waveOf.get(id) ?? 0,
       waitingOn,

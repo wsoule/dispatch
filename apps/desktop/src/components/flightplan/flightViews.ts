@@ -4,8 +4,8 @@ import {
   PRIORITY_ORDER,
 } from '@dispatch-foo/core/browser';
 import type {
-  EpicProgressChild,
   MergeQueueEntryState,
+  MilestoneProgressChild,
   RunMeta,
 } from '@dispatch/client';
 
@@ -76,7 +76,7 @@ export interface NodeViewContext {
   /** Whether a node's owning fan-out (`node.owner`) is filling slots right now. */
   sessionActive: (ownerId: string) => boolean;
   /** The server's reading of a node inside its parent's fan-out. */
-  phaseOf: (taskId: string) => EpicProgressChild | undefined;
+  phaseOf: (taskId: string) => MilestoneProgressChild | undefined;
   /** Live runs' claimed files, for spotting a queued node parked behind one. */
   liveClaims: readonly { taskId: string; claims: string[] }[];
   /** Tasks whose run is in the merge queue, with the entry's state. */

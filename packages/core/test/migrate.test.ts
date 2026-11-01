@@ -63,7 +63,7 @@ function legacyTask(
     `id: ${id}`,
     `title: ${JSON.stringify(title)}`,
     'status: in-progress',
-    `kind: ${id.startsWith('e-') ? 'epic' : 'task'}`,
+    `kind: ${id.startsWith('e-') ? 'milestone' : 'task'}`,
     'created: 2026-01-02T03:04:05.000Z',
     'updated: 2026-05-06T07:08:09.000Z',
     ...Object.entries(extra).map(([k, v]) => `${k}: ${v}`),
@@ -104,7 +104,7 @@ function ledgerEntry(
 ): Record<string, unknown> {
   return {
     id: 'l-aaa111',
-    epicId: 'e-def456',
+    milestoneId: 'e-def456',
     sourceTaskId: 't-abc123',
     kind: 'decision',
     title: 'Use SQLite',
@@ -190,14 +190,14 @@ describe('importLegacyProject', () => {
     expect(exported?.filename).toBe('t-abc123-the-original-slug.md');
   });
 
-  it('counts epics separately from tasks', () => {
+  it('counts milestones separately from tasks', () => {
     writeTaskFile('t-abc123-a.md', legacyTask('t-abc123', 'A task'));
-    writeTaskFile('e-def456-b.md', legacyTask('e-def456', 'An epic'));
+    writeTaskFile('e-def456-b.md', legacyTask('e-def456', 'A milestone'));
     const report = importLegacyProject(sqliteStores());
     expect(report.tasks.found).toBe(1);
-    expect(report.epics.found).toBe(1);
+    expect(report.milestones.found).toBe(1);
     expect(report.rowsAfter.tasks).toBe(1);
-    expect(report.rowsAfter.epics).toBe(1);
+    expect(report.rowsAfter.milestones).toBe(1);
   });
 
   it('imports findings and ledger entries with their own ids and stamps', () => {
@@ -266,7 +266,7 @@ describe('importLegacyProject', () => {
   // keeps its task files: re-reading all of them was most of a cold boot.
   it('tallies an imported board from its rows without reading the files', () => {
     writeTaskFile('t-abc123-a.md', legacyTask('t-abc123', 'A task'));
-    writeTaskFile('e-def456-b.md', legacyTask('e-def456', 'An epic'));
+    writeTaskFile('e-def456-b.md', legacyTask('e-def456', 'A milestone'));
     const stores = sqliteStores();
     importLegacyProject(stores);
     // Unparseable now, which only a read of the file could notice.
@@ -280,7 +280,7 @@ describe('importLegacyProject', () => {
       skipped: 1,
       damaged: 0,
     });
-    expect(again.epics.skipped).toBe(1);
+    expect(again.milestones.skipped).toBe(1);
     expect(stores.tasks.get('t-abc123')?.meta.title).toBe('A task');
   });
 
@@ -347,7 +347,7 @@ describe('importLegacyProject', () => {
   });
 
   // A ledger entry that reads back with an empty appliesTo stops being aimed at
-  // one task and starts applying to every task under its epic.
+  // one task and starts applying to every task under its milestone.
   it('rejects a ledger entry whose appliesTo is not a list of strings', () => {
     writeJsonl('ledger.jsonl', [ledgerEntry({ appliesTo: 't-abc123' })]);
     const report = importLegacyProject(sqliteStores());

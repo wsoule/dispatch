@@ -32,7 +32,7 @@ export interface BranchLaneGroup {
   key: string;
   /** A band's name; null for a plan without bands. */
   title: string | null;
-  /** `epic/<id>`, or null for a container too broad to share one (a project). */
+  /** `milestone/<id>`, or null for a container too broad to share one (a project). */
   integration: string | null;
   tasks: readonly TaskListItem[];
 }
@@ -128,10 +128,10 @@ export function FlightBranchLane({
   onOpenNode,
 }: FlightBranchLaneProps) {
   const [open, setOpen] = useState(readOpen);
-  const epicEntries = useMemo(() => {
+  const milestoneEntries = useMemo(() => {
     const map = new Map<string, BranchEntry>();
     for (const entry of branches) {
-      if (entry.status === 'epic') map.set(entry.branch, entry);
+      if (entry.status === 'milestone') map.set(entry.branch, entry);
     }
     return map;
   }, [branches]);
@@ -197,7 +197,7 @@ export function FlightBranchLane({
               entry={
                 group.integration === null
                   ? undefined
-                  : epicEntries.get(group.integration)
+                  : milestoneEntries.get(group.integration)
               }
               accessoryFor={accessoryFor}
               refFor={refFor}

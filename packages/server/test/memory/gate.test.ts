@@ -335,7 +335,7 @@ describe('live notify', () => {
         title: 'x',
         body: '',
         writes: [],
-        epic: null,
+        milestone: null,
         risk: 'routine',
         a2a: false,
       });
@@ -390,7 +390,7 @@ describe('live notify', () => {
         title: 'x',
         body: '',
         writes: [],
-        epic: null,
+        milestone: null,
         risk: 'routine',
         a2a: run.a2a === true,
       });

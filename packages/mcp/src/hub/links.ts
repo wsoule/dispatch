@@ -20,7 +20,7 @@ import {
 import { join, sep } from 'node:path';
 
 // The hub's side of its links to project daemons: who each linked dispatchd
-// is, where a session's run, task, epic and human mail goes, and the hub's own
+// is, where a session's run, task, milestone and human mail goes, and the hub's own
 // replica id and clock, which every link shares.
 
 /** One project daemon linked to this hub. */
@@ -57,12 +57,12 @@ function real(path: string): string {
   }
 }
 
-/** Recipients a project's dispatchd homes: its runs, tasks and epic channels. */
+/** Recipients a project's dispatchd homes: its runs, tasks and milestone channels. */
 export function projectAddress(recipient: string): boolean {
   return (
     recipient.startsWith('run:') ||
     recipient.startsWith('task:') ||
-    recipient.startsWith('channel:epic/')
+    recipient.startsWith('channel:milestone/')
   );
 }
 

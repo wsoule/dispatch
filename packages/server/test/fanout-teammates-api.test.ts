@@ -12,7 +12,7 @@ import { runGitSync } from './orchestrator/helpers.js';
 import { licensedManager } from './team/licenseKeys.js';
 import { rawFetch, useTestAuth } from './testAuth.js';
 
-// POST /api/epics/:id/dispatch works for the caller: a fan-out a teammate
+// POST /api/milestones/:id/dispatch works for the caller: a fan-out a teammate
 // starts on a shared daemon never picks up the operator's tasks, and one the
 // operator starts never picks up a teammate's.
 
@@ -101,24 +101,24 @@ function post(path: string, body: unknown, token?: string) {
 
 // A milestone with one task per assignee, each with its own write-set.
 function milestone(assignees: Record<string, string>) {
-  const epicId = store.create({ title: 'Milestone', kind: 'milestone' }).meta
-    .id;
+  const milestoneId = store.create({ title: 'Milestone', kind: 'milestone' })
+    .meta.id;
   const ids: Record<string, string> = {};
   for (const [name, assignee] of Object.entries(assignees)) {
     ids[name] = store.create({
       title: name,
       kind: 'task',
-      parent: epicId,
+      parent: milestoneId,
       assignee,
       writes: [`${name}.ts`],
     }).meta.id;
   }
-  return { epicId, ids };
+  return { milestoneId, ids };
 }
 
-async function dispatchedTaskIds(epicId: string): Promise<Set<string>> {
+async function dispatchedTaskIds(milestoneId: string): Promise<Set<string>> {
   const progress = await json(
-    await fetch(`${baseUrl}/api/epics/${epicId}/progress`)
+    await fetch(`${baseUrl}/api/milestones/${milestoneId}/progress`)
   );
   return new Set(
     (progress.liveRuns as { taskId: string }[]).map((r) => r.taskId)
@@ -133,9 +133,9 @@ async function runOwners(): Promise<Set<string | undefined>> {
   return new Set(runs.map((r) => r.dispatchedBy));
 }
 
-describe('POST /api/epics/:id/dispatch and teammates', () => {
+describe('POST /api/milestones/:id/dispatch and teammates', () => {
   it('leaves a teammate’s unstarted issue alone on a single-user daemon', async () => {
-    const { epicId, ids } = milestone({
+    const { milestoneId, ids } = milestone({
       unassigned: 'none',
       mine: 'human:test',
       samTask: 'human:sam',
@@ -144,16 +144,18 @@ describe('POST /api/epics/:id/dispatch and teammates', () => {
     const me = (await json(await fetch(`${baseUrl}/api/people`))).me;
     expect(me).toBe('human:test');
 
-    const res = await post(`/api/epics/${epicId}/dispatch`, {
+    const res = await post(`/api/milestones/${milestoneId}/dispatch`, {
       executor: 'fake',
       concurrency: 4,
     });
     expect(res.status).toBe(201);
     expect((await json(res)).startedBy).toBe(me);
 
-    await waitFor(async () => (await dispatchedTaskIds(epicId)).size === 2);
+    await waitFor(
+      async () => (await dispatchedTaskIds(milestoneId)).size === 2
+    );
     await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(await dispatchedTaskIds(epicId)).toEqual(
+    expect(await dispatchedTaskIds(milestoneId)).toEqual(
       new Set([ids.unassigned, ids.mine])
     );
     expect(await runOwners()).toEqual(new Set([me]));
@@ -164,7 +166,7 @@ describe('POST /api/epics/:id/dispatch and teammates', () => {
   });
 
   it('works for the teammate who started it, never the operator', async () => {
-    const { epicId, ids } = milestone({
+    const { milestoneId, ids } = milestone({
       unassigned: 'none',
       ada: 'human:ada',
       operator: 'human:test',
@@ -175,16 +177,18 @@ describe('POST /api/epics/:id/dispatch and teammates', () => {
     const adaToken = daemon.team.teammates.issue('ada', 'request');
 
     const res = await post(
-      `/api/epics/${epicId}/dispatch`,
+      `/api/milestones/${milestoneId}/dispatch`,
       { executor: 'fake', concurrency: 4 },
       adaToken
     );
     expect(res.status).toBe(201);
     expect((await json(res)).startedBy).toBe('human:ada');
 
-    await waitFor(async () => (await dispatchedTaskIds(epicId)).size === 2);
+    await waitFor(
+      async () => (await dispatchedTaskIds(milestoneId)).size === 2
+    );
     await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(await dispatchedTaskIds(epicId)).toEqual(
+    expect(await dispatchedTaskIds(milestoneId)).toEqual(
       new Set([ids.unassigned, ids.ada])
     );
     // Her fan-out's runs are hers, not the operator's.
@@ -206,14 +210,14 @@ describe('POST /api/epics/:id/dispatch and teammates', () => {
   });
 
   it('never takes the starter from the request body', async () => {
-    const { epicId, ids } = milestone({ samTask: 'human:sam' });
+    const { milestoneId, ids } = milestone({ samTask: 'human:sam' });
     await boot();
-    const res = await post(`/api/epics/${epicId}/dispatch`, {
+    const res = await post(`/api/milestones/${milestoneId}/dispatch`, {
       executor: 'fake',
       startedBy: 'human:sam',
     });
     expect((await json(res)).startedBy).toBe('human:test');
     await new Promise((resolve) => setTimeout(resolve, 100));
-    expect((await dispatchedTaskIds(epicId)).has(ids.samTask)).toBe(false);
+    expect((await dispatchedTaskIds(milestoneId)).has(ids.samTask)).toBe(false);
   });
 });

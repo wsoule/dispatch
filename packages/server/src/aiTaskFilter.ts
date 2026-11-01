@@ -28,8 +28,7 @@ export interface AiTaskFilterResult {
 export interface AiFilterVocabulary {
   statuses: string[];
   labels: string[];
-  milestones: string[];
-  epics: { id: string; title: string }[];
+  milestones: { id: string; title: string }[];
   runStates: string[];
 }
 
@@ -48,7 +47,6 @@ const FACETS = [
   'priority',
   'assignee',
   'labels',
-  'epic',
   'milestone',
   'run',
   'created',
@@ -102,9 +100,8 @@ export function buildAiFilterPrompt(
       '(nobody / unassigned). Operators: "is", "is not".',
     '`labels`: free-form tags. Use "includes" with the label names listed below; a task ' +
       'must carry every value given.',
-    '`epic`: the parent epic. Values are the epic ids listed below (never titles), or "none" ' +
-      'for tasks with no epic. Operators: "is", "is not".',
-    '`milestone`: the milestone name, from the list below, or "none". Operators: "is", "is not".',
+    '`milestone`: the parent milestone. Values are the milestone ids listed below (never titles), or "none" ' +
+      'for tasks with no milestone. Operators: "is", "is not".',
     "`run`: the state of the task's live agent run, from the run states listed below, or " +
       '"none" for tasks with no live run ("running" means an agent is working on it now). ' +
       'Operators: "is", "is not".',
@@ -114,11 +111,10 @@ export function buildAiFilterPrompt(
       'before, daysAgo 30.',
     `Statuses: ${list(vocab.statuses)}`,
     `Labels: ${list(vocab.labels)}`,
-    `Milestones: ${list(vocab.milestones)}`,
-    `Epics (id — title): ${
-      vocab.epics.length === 0
+    `Milestones (id — title): ${
+      vocab.milestones.length === 0
         ? '(none)'
-        : vocab.epics.map((e) => `${e.id} — ${e.title}`).join('; ')
+        : vocab.milestones.map((e) => `${e.id} — ${e.title}`).join('; ')
     }`,
     `Run states: ${list(vocab.runStates)}`,
     `Sentence: ${sentence.trim()}`,
@@ -239,7 +235,7 @@ function isoDaysAgo(now: Date, daysAgo: number): string {
 
 /**
  * Drops anything the model got wrong before it reaches the chips: an invented
- * facet or operator, a value outside the project's vocabulary, an epic named
+ * facet or operator, a value outside the project's vocabulary, a milestone named
  * by title (mapped to its id when it can be), a date clause with no `daysAgo`.
  * Whatever survives is a filter the desktop would have built by hand.
  */
@@ -256,9 +252,9 @@ export function sanitizeAiFilter(
   const clauses: AiFilterClause[] = [];
   if (!Array.isArray(record.clauses)) return { clauses, join };
 
-  const epicIds = new Set(vocab.epics.map((e) => e.id));
-  const epicIdByTitle = new Map(
-    vocab.epics.map((e) => [e.title.trim().toLowerCase(), e.id])
+  const milestoneIds = new Set(vocab.milestones.map((e) => e.id));
+  const milestoneIdByTitle = new Map(
+    vocab.milestones.map((e) => [e.title.trim().toLowerCase(), e.id])
   );
   const allowed = (values: string[], extra: string[] = []) =>
     new Set([...values, ...extra]);
@@ -295,9 +291,6 @@ export function sanitizeAiFilter(
       case 'labels':
         values = given.filter(keepIn(allowed(vocab.labels)));
         break;
-      case 'milestone':
-        values = given.filter(keepIn(allowed(vocab.milestones, [NONE])));
-        break;
       case 'run':
         values = given.filter(keepIn(allowed(vocab.runStates, [NONE])));
         break;
@@ -307,10 +300,10 @@ export function sanitizeAiFilter(
       case 'assignee':
         values = given.filter(keepIn(allowed(ASSIGNEES)));
         break;
-      case 'epic':
+      case 'milestone':
         values = given.flatMap((v) => {
-          if (v === NONE || epicIds.has(v)) return [v];
-          const byTitle = epicIdByTitle.get(v.trim().toLowerCase());
+          if (v === NONE || milestoneIds.has(v)) return [v];
+          const byTitle = milestoneIdByTitle.get(v.trim().toLowerCase());
           return byTitle === undefined ? [] : [byTitle];
         });
         break;

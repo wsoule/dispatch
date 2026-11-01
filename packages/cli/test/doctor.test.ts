@@ -188,13 +188,20 @@ describe('doctor', () => {
     expect(lines.join('\n')).toMatch(/ok — 2 tasks/);
   });
 
-  it('does not flag a parent that is an epic', async () => {
-    const epicOut: string[] = [];
-    ctx.log = (l) => epicOut.push(l);
-    await run('task', 'create', 'The epic', '--kind', 'epic', '--json');
-    const epicId = JSON.parse(epicOut.join('\n')).meta.id;
+  it('does not flag a parent that is a milestone', async () => {
+    const milestoneOut: string[] = [];
+    ctx.log = (l) => milestoneOut.push(l);
+    await run(
+      'task',
+      'create',
+      'The milestone',
+      '--kind',
+      'milestone',
+      '--json'
+    );
+    const milestoneId = JSON.parse(milestoneOut.join('\n')).meta.id;
     ctx.log = (l) => lines.push(l);
-    await run('task', 'create', 'Child', '--parent', epicId);
+    await run('task', 'create', 'Child', '--parent', milestoneId);
     lines = [];
     await run('doctor');
     expect(lines.join('\n')).toMatch(/ok — 2 tasks/);

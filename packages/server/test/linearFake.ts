@@ -6,6 +6,7 @@ import type {
   LinearIssue,
   LinearIssueInput,
   LinearLabel,
+  LinearLabelMatch,
   LinearMilestoneInput,
   LinearProject,
   LinearProjectInput,
@@ -19,6 +20,7 @@ import type {
 
 import type { LinearDocument } from '../src/docs/linear.js';
 import type {
+  LinearCapacity,
   LinearClient,
   LinearContentHistoryEntry,
   LinearFailure,
@@ -31,6 +33,10 @@ import type {
   LinearViewer,
   LinearWebhookInput,
   LinearWorkspace,
+} from '../src/linear/client.js';
+import {
+  FREE_PLAN_ISSUE_LIMIT,
+  LINEAR_USAGE_LIMIT_MESSAGE,
 } from '../src/linear/client.js';
 
 const TEAM_ID = 'team-1';
@@ -111,6 +117,22 @@ const PROJECT_STATUSES: LinearProjectStatus[] = [
 
 export type Method = keyof LinearClient;
 
+/** A label as Linear holds it, including the kinds labels() leaves out. */
+export type FakeLabel = LinearLabel & {
+  isGroup?: boolean;
+  archived?: boolean;
+  retired?: boolean;
+};
+
+// The label as the real client maps it: LinearLabel's fields only.
+function plainLabel(label: FakeLabel): LinearLabel {
+  const out: LinearLabel = { id: label.id, name: label.name };
+  if (label.color !== undefined) out.color = label.color;
+  if (label.group !== undefined) out.group = label.group;
+  if (label.teamId !== undefined) out.teamId = label.teamId;
+  return out;
+}
+
 function ok<T>(data: T): Promise<LinearResult<T>> {
   return Promise.resolve({ ok: true, data });
 }
@@ -134,7 +156,7 @@ export class FakeLinearClient implements LinearClient {
   teamList: LinearTeam[] = [{ id: TEAM_ID, key: 'HYD', name: 'Hydrogen' }];
   /** Workflows of teams beyond team-1, by team id. */
   teamStates: Record<string, LinearWorkflowState[]> = {};
-  labelList: LinearLabel[] = LABELS.map((l) => ({ ...l }));
+  labelList: FakeLabel[] = LABELS.map((l) => ({ ...l }));
   members: LinearUser[] = [VIEWER];
   viewerUser: LinearUser = VIEWER;
   projectStatuses: LinearProjectStatus[] = PROJECT_STATUSES;
@@ -167,6 +189,14 @@ export class FakeLinearClient implements LinearClient {
   issuesFailure: LinearFailure | null = null;
   createFailure: LinearFailure | null = null;
   linkFailure: LinearFailure | null = null;
+  /** Live (non-archived) issues the plan allows; a create or unarchive past
+   *  it is refused as Linear's usage limit. */
+  issueLimit: number | null = null;
+  /** What capacity() reports the plan as. */
+  plan: LinearCapacity['plan'] = 'free';
+  /** The closed counts each capacity() call was given to reuse. */
+  capacityReuse: (Pick<LinearCapacity, 'teams' | 'truncated'> | undefined)[] =
+    [];
   /** Runs inside createIssue, standing in for a local edit landing mid-round-trip. */
   onCreate: (() => void) | null = null;
   /** Runs as any method is called: a local edit landing while a pass waits on Linear. */
@@ -239,15 +269,120 @@ export class FakeLinearClient implements LinearClient {
     });
   }
 
-  /** The team's labels plus the workspace's, as Linear scopes them. */
+  /** The team's labels plus the workspace's, as Linear scopes them: groups
+   *  and archived labels left out, as the real walk does. */
   labels(teamId: string): Promise<LinearResult<LinearLabel[]>> {
     const f = this.fail('labels');
     if (f !== null) return Promise.resolve(f);
     return ok(
       this.labelList
-        .filter((l) => l.teamId == null || l.teamId === teamId)
-        .map((l) => ({ ...l }))
+        .filter(
+          (l) =>
+            (l.teamId == null || l.teamId === teamId) &&
+            l.isGroup !== true &&
+            l.archived !== true
+        )
+        .map(plainLabel)
     );
+  }
+
+  /** Every label named `name` in any case, across teams, flags included. */
+  labelsNamed(name: string): Promise<LinearResult<LinearLabelMatch[]>> {
+    const f = this.fail('labelsNamed');
+    if (f !== null) return Promise.resolve(f);
+    return ok(
+      this.labelList
+        .filter((l) => l.name.toLowerCase() === name.toLowerCase())
+        .map((l) => ({
+          ...plainLabel(l),
+          isGroup: l.isGroup === true,
+          archived: l.archived === true,
+          retired: l.retired === true,
+        }))
+    );
+  }
+
+  /** Live issues per team and in the workspace, closed ones split by type;
+   *  a team in `reuse` keeps the closed counts given. */
+  capacity(
+    teamIds?: readonly string[],
+    reuse?: Pick<LinearCapacity, 'teams' | 'truncated'>
+  ): Promise<LinearResult<LinearCapacity>> {
+    this.capacityReuse.push(reuse);
+    const f = this.fail('capacity');
+    if (f !== null) return Promise.resolve(f);
+    const live = this.issues.filter((i) => i.archivedAt === null);
+    const teams = (teamIds ?? this.teamList.map((t) => t.id)).map((id) => {
+      const team = this.teamOf(id);
+      const own = live.filter((i) => i.team?.id === id);
+      const typed = (...types: string[]) =>
+        own.filter((i) => types.includes(i.state?.type ?? '')).length;
+      const known = reuse?.teams.find((t) => t.id === id);
+      return {
+        id,
+        key: team.key,
+        name: team.name,
+        active: own.length,
+        completed: known?.completed ?? typed('completed'),
+        canceled: known?.canceled ?? typed('canceled', 'duplicate'),
+      };
+    });
+    const free = this.plan === 'free';
+    return ok({
+      teams,
+      active: live.length,
+      activeScope: 'workspace',
+      limit: free ? FREE_PLAN_ISSUE_LIMIT : null,
+      limitSource: free ? 'plan' : null,
+      plan: this.plan,
+      limitHitAt: null,
+      truncated: false,
+      checkedAt: new Date().toISOString(),
+    });
+  }
+
+  /** The team's live issues in a closed state of one of `types`. */
+  closedIssues(
+    teamId: string,
+    types: readonly ('completed' | 'canceled')[]
+  ): Promise<LinearResult<LinearPage<LinearIssueRef>>> {
+    const f = this.fail('closedIssues');
+    if (f !== null) return Promise.resolve(f);
+    // Linear's 'duplicate' state type is a canceled one.
+    const wanted = new Set<string>(
+      types.flatMap((t) => (t === 'canceled' ? [t, 'duplicate'] : [t]))
+    );
+    return ok({
+      nodes: this.issues
+        .filter(
+          (i) =>
+            i.archivedAt === null &&
+            i.team?.id === teamId &&
+            wanted.has(i.state?.type ?? '')
+        )
+        .map((i) => ({
+          id: i.id,
+          identifier: i.identifier,
+          url: i.url,
+          updatedAt: i.updatedAt,
+        })),
+      truncated: false,
+    });
+  }
+
+  // Linear's usage-limit refusal, once the workspace holds `issueLimit`
+  // live issues.
+  private overLimit(): LinearFailure | null {
+    if (this.issueLimit === null) return null;
+    const live = this.issues.filter((i) => i.archivedAt === null).length;
+    return live < this.issueLimit
+      ? null
+      : {
+          ok: false,
+          kind: 'usage-limit',
+          error: LINEAR_USAGE_LIMIT_MESSAGE,
+          detail: 'usage limit exceeded',
+        };
   }
 
   cycles(): Promise<LinearResult<TaskCycle[]>> {
@@ -479,7 +614,8 @@ export class FakeLinearClient implements LinearClient {
   }
 
   createIssue(input: LinearIssueInput): Promise<LinearResult<LinearIssue>> {
-    const f = this.fail('createIssue') ?? this.createFailure;
+    const f =
+      this.fail('createIssue') ?? this.createFailure ?? this.overLimit();
     if (f !== null) return Promise.resolve(f);
     this.onCreate?.();
     this.created.push(input);
@@ -509,17 +645,23 @@ export class FakeLinearClient implements LinearClient {
   }
 
   unarchiveIssue(id: string): Promise<LinearResult<LinearIssue>> {
-    return this.touchIssue('unarchiveIssue', id, (i) => {
-      i.archivedAt = null;
-    });
+    return this.touchIssue(
+      'unarchiveIssue',
+      id,
+      (i) => {
+        i.archivedAt = null;
+      },
+      () => this.overLimit()
+    );
   }
 
   private touchIssue(
     method: Method,
     id: string,
-    change: (issue: LinearIssue) => void
+    change: (issue: LinearIssue) => void,
+    refuse: () => LinearFailure | null = () => null
   ): Promise<LinearResult<LinearIssue>> {
-    const f = this.fail(method);
+    const f = this.fail(method) ?? refuse();
     if (f !== null) return Promise.resolve(f);
     const issue = this.issues.find((i) => i.id === id);
     if (issue === undefined) return missing('issue', id);
@@ -560,6 +702,22 @@ export class FakeLinearClient implements LinearClient {
   }): Promise<LinearResult<LinearLabel>> {
     const f = this.fail('createLabel');
     if (f !== null) return Promise.resolve(f);
+    // Linear refuses a name the team or the workspace already holds, in any
+    // case, groups and archived labels included.
+    const name = input.name.toLowerCase();
+    const taken = this.labelList.some(
+      (l) =>
+        l.name.toLowerCase() === name &&
+        (l.teamId == null || l.teamId === input.teamId)
+    );
+    if (taken) {
+      return Promise.resolve({
+        ok: false,
+        kind: 'graphql',
+        code: 'duplicate',
+        error: 'duplicate label name',
+      });
+    }
     const label: LinearLabel = {
       id: `l-${this.next()}`,
       name: input.name,

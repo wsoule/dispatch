@@ -26,11 +26,14 @@ export function taskVerificationKey(
 ) {
   return [ORCHESTRATION_QUERY_ROOT, 'verification', port, taskId] as const;
 }
-function epicLedgerKey(port: number | undefined, epicId: string | undefined) {
-  return [ORCHESTRATION_QUERY_ROOT, 'ledger', port, epicId] as const;
+function milestoneLedgerKey(
+  port: number | undefined,
+  milestoneId: string | undefined
+) {
+  return [ORCHESTRATION_QUERY_ROOT, 'ledger', port, milestoneId] as const;
 }
-/** The project-wide bucket (`epicId: null`), kept under the same 'ledger' root
- *  so `ledger.changed` invalidates it alongside every epic's. */
+/** The project-wide bucket (`milestoneId: null`), kept under the same 'ledger' root
+ *  so `ledger.changed` invalidates it alongside every milestone's. */
 function projectLedgerKey(port: number | undefined) {
   return [ORCHESTRATION_QUERY_ROOT, 'ledger', port, null] as const;
 }
@@ -245,22 +248,22 @@ export function useTaskVerification(
   };
 }
 
-/** An epic's ledger receipts (its audit class; lessons live in memory).
+/** A milestone's ledger receipts (its audit class; lessons live in memory).
  *  `error` must be checked the same way as `useTaskFindings`'s. */
-export function useEpicLedger(
+export function useMilestoneLedger(
   client: ApiClient | null,
   port: number | undefined,
-  epicId: string | undefined
+  milestoneId: string | undefined
 ) {
   const { data, isLoading, error } = useQuery({
-    queryKey: epicLedgerKey(port, epicId),
+    queryKey: milestoneLedgerKey(port, milestoneId),
     queryFn: () => {
-      if (client === null || epicId === undefined) {
+      if (client === null || milestoneId === undefined) {
         throw new Error('dispatchd client not ready');
       }
-      return client.fetchLedger({ epicId, class: 'audit' });
+      return client.fetchLedger({ milestoneId, class: 'audit' });
     },
-    enabled: client !== null && epicId !== undefined,
+    enabled: client !== null && milestoneId !== undefined,
     retry: false,
   });
   return {
@@ -270,7 +273,7 @@ export function useEpicLedger(
   };
 }
 
-/** The project-wide ledger receipts — entries filed with no epic, which is
+/** The project-wide ledger receipts — entries filed with no milestone, which is
  *  where a scope grant on a parentless task lands. */
 export function useProjectLedger(
   client: ApiClient | null,
@@ -281,7 +284,7 @@ export function useProjectLedger(
     queryKey: projectLedgerKey(port),
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
-      return client.fetchLedger({ epicId: null, class: 'audit' });
+      return client.fetchLedger({ milestoneId: null, class: 'audit' });
     },
     enabled: client !== null && enabled,
     retry: false,

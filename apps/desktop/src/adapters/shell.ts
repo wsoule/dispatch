@@ -1,4 +1,4 @@
-import { canonicalKind, type TaskListItem } from '@dispatch-foo/core/browser';
+import { storedKind, type TaskListItem } from '@dispatch-foo/core/browser';
 import type { MilestoneAssessment, Snapshot } from '@dispatch/planning';
 import type {
   ShellCrumb,
@@ -233,7 +233,7 @@ export function buildProjectsSection(
   const limit = input.limit ?? PROJECTS_SECTION_LIMIT;
   const items: ShellSectionItem[] = [];
   for (const doc of input.tasks) {
-    if (canonicalKind(doc.meta.kind) !== 'project') continue;
+    if (storedKind(doc.meta.kind) !== 'project') continue;
     if (items.length >= limit) break;
     const mark =
       input.statusOf?.(doc.meta.id) ??

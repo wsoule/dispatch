@@ -18,8 +18,7 @@ import { aiFilterTasks } from '../src/api/aiFilter';
 const vocab: AiFilterVocabulary = {
   statuses: ['draft', 'ready', 'working', 'review', 'landed'],
   labels: ['ui', 'api'],
-  milestones: ['v1'],
-  epics: [{ id: 'e-1', title: 'Payments epic' }],
+  milestones: [{ id: 'e-1', title: 'Payments milestone' }],
   runStates: ['running', 'awaiting-approval'],
 };
 
@@ -76,24 +75,30 @@ describe('sanitizeAiFilter', () => {
     expect(out).toEqual({ clauses: [], join: 'or' });
   });
 
-  test('maps an epic title to its id, case-insensitively', () => {
+  test('maps a milestone title to its id, case-insensitively', () => {
     const out = sanitizeAiFilter(
       {
         clauses: [
-          { facet: 'epic', op: 'is', values: ['payments EPIC', 'Search epic'] },
+          {
+            facet: 'milestone',
+            op: 'is',
+            values: ['payments MILESTONE', 'Search milestone'],
+          },
         ],
         join: 'and',
       },
       vocab
     );
-    expect(out.clauses).toEqual([{ facet: 'epic', op: 'is', values: ['e-1'] }]);
+    expect(out.clauses).toEqual([
+      { facet: 'milestone', op: 'is', values: ['e-1'] },
+    ]);
   });
 
   test('keeps none for the scalar facets that have it', () => {
     const out = sanitizeAiFilter(
       {
         clauses: [
-          { facet: 'epic', op: 'is', values: ['none'] },
+          { facet: 'milestone', op: 'is', values: ['none'] },
           { facet: 'milestone', op: 'is not', values: ['none'] },
           { facet: 'run', op: 'is', values: ['none'] },
           { facet: 'assignee', op: 'is', values: ['none'] },
@@ -146,7 +151,7 @@ describe('buildAiFilterPrompt', () => {
     const prompt = buildAiFilterPrompt('urgent ui work', vocab);
     expect(prompt).toContain('Statuses: draft, ready, working, review, landed');
     expect(prompt).toContain('Labels: ui, api');
-    expect(prompt).toContain('e-1 — Payments epic');
+    expect(prompt).toContain('e-1 — Payments milestone');
     expect(prompt.endsWith('Sentence: urgent ui work')).toBe(true);
   });
 });
@@ -286,7 +291,7 @@ function routeContext(port: AiTaskFilterPort = new FakeAiTaskFilter()) {
     'statuses:\n  - ready\n  - doing\n  - landed\n'
   );
   const docs = [
-    doc({ id: 'e-1', title: 'Payments epic', kind: 'milestone' }),
+    doc({ id: 'e-1', title: 'Payments milestone', kind: 'milestone' }),
     doc({ id: 't-2', labels: ['ui'], milestone: 'v1', parent: 'e-1' }),
   ];
   return {
@@ -330,8 +335,7 @@ describe('aiFilterTasks', () => {
     expect(seen[0]).toEqual({
       statuses: ['ready', 'doing', 'landed'],
       labels: ['ui'],
-      milestones: ['v1'],
-      epics: [{ id: 'e-1', title: 'Payments epic' }],
+      milestones: [{ id: 'e-1', title: 'Payments milestone' }],
       runStates: [
         'provisioning',
         'running',

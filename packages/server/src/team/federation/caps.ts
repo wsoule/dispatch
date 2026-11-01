@@ -6,7 +6,10 @@ import type { FedStore } from './store.js';
 // presence when it changes. A gate reads the capability, never a version.
 
 /** What this build speaks. */
-export const BUILD_CAPS: readonly string[] = ['relay'];
+export const BUILD_CAPS: readonly string[] = ['relay', 'content-e2e'];
+
+/** The capability a build announces once it reads and writes e2e content. */
+export const CONTENT_E2E_CAP = 'content-e2e';
 
 const MAX_CAPS = 16;
 const MAX_CAP_CHARS = 32;
@@ -88,7 +91,15 @@ export function capsOf(fed: FedStore, replica: string): string[] {
     .get(replica);
   if (announced !== null) return JSON.parse(announced.caps_json) as string[];
   const signPub = fed.pinned(replica)?.signPub;
-  if (signPub === undefined) return [];
+  return signPub === undefined ? [] : keyCaps(fed, replica, signPub);
+}
+
+/** What the key op a replica signed with `signPub` announced; none if unread. */
+export function keyCaps(
+  fed: FedStore,
+  replica: string,
+  signPub: string
+): string[] {
   const keyed = fed.db
     .query<{ caps_json: string }, [string, string]>(
       'SELECT caps_json FROM fed_caps_keys WHERE replica = ? AND sign_pub = ?'

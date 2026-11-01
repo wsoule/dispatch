@@ -232,8 +232,8 @@ describe('memory tools', () => {
     );
   });
 
-  // The daemon defaults a run's epic from the task it already knows.
-  it('memory_save sends one Idempotency-Key, retries a dropped connection with it, and leaves an unnamed epic out', async () => {
+  // The daemon defaults a run's milestone from the task it already knows.
+  it('memory_save sends one Idempotency-Key, retries a dropped connection with it, and leaves an unnamed milestone out', async () => {
     const res = await callDroppingFirstPost('/api/memory', 'memory_save', {
       scope: 'team',
       kind: 'hazard',
@@ -249,11 +249,11 @@ describe('memory tools', () => {
     expect(posts[1].auth).toBe('Bearer rt-secret');
     const body = JSON.parse(posts[1].body ?? '') as Record<string, unknown>;
     expect(body.scope).toBe('team');
-    expect('epic' in body).toBe(false);
+    expect('milestone' in body).toBe(false);
     expect(seen.some((s) => s.path.startsWith('/api/runs/'))).toBe(false);
   });
 
-  it('memory_save sends an explicit epic: null, and no epic on a personal save', async () => {
+  it('memory_save sends an explicit milestone: null, and no milestone on a personal save', async () => {
     const c = await client();
     await c.callTool({
       name: 'memory_save',
@@ -262,7 +262,7 @@ describe('memory tools', () => {
         kind: 'fact',
         title: 'project-wide',
         body: '',
-        epic: null,
+        milestone: null,
       },
     });
     await c.callTool({
@@ -277,8 +277,8 @@ describe('memory tools', () => {
     const bodies = savePosts().map(
       (s) => JSON.parse(s.body ?? '') as Record<string, unknown>
     );
-    expect(bodies[0].epic).toBeNull();
-    expect('epic' in bodies[1]).toBe(false);
+    expect(bodies[0].milestone).toBeNull();
+    expect('milestone' in bodies[1]).toBe(false);
   });
 
   it('memory_forget posts the reason to /retire, upper-casing the handle', async () => {

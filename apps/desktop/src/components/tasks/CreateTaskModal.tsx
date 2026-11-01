@@ -5,7 +5,11 @@ import type {
   TaskKind,
   TaskListItem,
 } from '@dispatch-foo/core/browser';
-import { isContainerKind, isValidParentKind } from '@dispatch-foo/core/browser';
+import {
+  draftStatus,
+  isContainerKind,
+  isValidParentKind,
+} from '@dispatch-foo/core/browser';
 import {
   Box,
   Check,
@@ -31,6 +35,7 @@ import { useRef, useState } from 'react';
 import { usePersistedDraft } from '../../hooks/usePersistedDraft';
 import { filesFromDataTransfer, splitOversized } from '../../lib/attachments';
 import { colorForLabel } from '../../lib/labelColor';
+import { useActiveStatusModel } from '../../lib/statusModel';
 import {
   assigneeLabel,
   kindLabel,
@@ -91,7 +96,7 @@ interface CreateTaskModalProps {
   statuses: string[];
   /** Every container (a container kind, or an issue with sub-issues) — where a new task
    * can be filed. */
-  epics: TaskListItem[];
+  milestones: TaskListItem[];
   /** The crumb's project chip (`[project] › New task`); the app name until a project is open. */
   projectName?: string;
   /** Pre-selects the status — kept for callers that pass it directly; the shell's
@@ -237,15 +242,15 @@ function PropertyChip({
 // that already have sub-issues, archived ones left out — the rail's "Move to" rule.
 function parentOptions(
   kind: TaskKind,
-  epics: readonly TaskListItem[]
+  milestones: readonly TaskListItem[]
 ): TaskListItem[] {
   const containers: TaskListItem[] = [];
   const parents: TaskListItem[] = [];
-  for (const epic of epics) {
-    if (epic.meta.archivedAt !== undefined) continue;
-    if (!isValidParentKind(kind, epic.meta.kind)) continue;
-    if (isContainerKind(epic.meta.kind)) containers.push(epic);
-    else parents.push(epic);
+  for (const milestone of milestones) {
+    if (milestone.meta.archivedAt !== undefined) continue;
+    if (!isValidParentKind(kind, milestone.meta.kind)) continue;
+    if (isContainerKind(milestone.meta.kind)) containers.push(milestone);
+    else parents.push(milestone);
   }
   return [...containers, ...parents];
 }
@@ -255,16 +260,16 @@ function parentOptions(
 function ParentChip({
   value,
   kind,
-  epics,
+  milestones,
   onChange,
 }: {
   value: string | null;
   kind: TaskKind;
-  epics: readonly TaskListItem[];
+  milestones: readonly TaskListItem[];
   onChange: (parent: string | null) => void;
 }) {
   const selected =
-    value === null ? undefined : epics.find((e) => e.meta.id === value);
+    value === null ? undefined : milestones.find((e) => e.meta.id === value);
   const Icon =
     selected === undefined
       ? Layers
@@ -279,14 +284,14 @@ function ParentChip({
             glyph: <X className="size-3.5" />,
           },
         ]),
-    ...parentOptions(kind, epics).map((epic) => {
-      const Glyph = KIND_ICON[epic.meta.kind] ?? CircleDot;
+    ...parentOptions(kind, milestones).map((milestone) => {
+      const Glyph = KIND_ICON[milestone.meta.kind] ?? CircleDot;
       return {
-        value: epic.meta.id,
-        label: epic.meta.title,
-        hint: kindLabel(epic.meta.kind),
+        value: milestone.meta.id,
+        label: milestone.meta.title,
+        hint: kindLabel(milestone.meta.kind),
         glyph: <Glyph className="size-3.5" />,
-        selected: epic.meta.id === value,
+        selected: milestone.meta.id === value,
       };
     }),
   ];
@@ -319,12 +324,13 @@ function ParentChip({
  * Linear's new-issue dialog (§9): a ~1024px sheet near the top of the window with a crumb
  * header, a borderless 18px title over a 15px description, a row of 28px property chips,
  * and a footer with `Create more` + the indigo `Create task`. Title is the only required
- * field; `⌘⏎` creates, `Save as draft` files it under `draft`, and `Create more` keeps the
- * dialog open with the properties intact for the next one.
+ * field; `⌘⏎` creates, `Save as draft` files it under the board's draft status (core's
+ * `draftStatus`), and `Create more` keeps the dialog open with the properties intact for
+ * the next one.
  */
 export function CreateTaskModal({
   statuses,
-  epics,
+  milestones,
   projectName = 'Dispatch',
   initialStatus,
   labels: labelCatalogue = [],
@@ -334,6 +340,9 @@ export function CreateTaskModal({
 }: CreateTaskModalProps) {
   const { createPreset } = useShellActions();
   const toasts = useToasts();
+  const statusModel = useActiveStatusModel();
+  // A board with no backlog or triage status has nowhere to keep a draft.
+  const draft = draftStatus(statusModel);
   // Title and description survive an accidental close (Escape, outside click) — the two
   // fields with real typing in them. The chips cost one click to redo and stay ephemeral.
   const [title, setTitle] = usePersistedDraft(CREATE_TASK_TITLE_KEY);
@@ -347,7 +356,7 @@ export function CreateTaskModal({
     initialStatus ?? createPreset?.status ?? statuses[0] ?? 'backlog'
   );
   const [parent, setParent] = useState<string | null>(
-    createPreset?.epic ?? null
+    createPreset?.milestone ?? null
   );
   const [labels, setLabels] = useState<string[]>([]);
   // Files chosen before the task exists; uploaded against its id once created.
@@ -443,7 +452,7 @@ export function CreateTaskModal({
   // parent the new kind cannot live under is dropped rather than sent to be refused.
   function changeKind(next: TaskKind) {
     setKind(next);
-    const current = epics.find((e) => e.meta.id === parent);
+    const current = milestones.find((e) => e.meta.id === parent);
     if (current !== undefined && !isValidParentKind(next, current.meta.kind)) {
       setParent(null);
     }
@@ -591,7 +600,7 @@ export function CreateTaskModal({
             <ParentChip
               value={parent}
               kind={kind}
-              epics={epics}
+              milestones={milestones}
               onChange={setParent}
             />
             <PropertyChip
@@ -638,11 +647,11 @@ export function CreateTaskModal({
             checked={createMore}
             onCheckedChange={(next) => setCreateMore(next)}
           />
-          {title.trim() !== '' && (
+          {title.trim() !== '' && draft !== null && (
             <Button
               variant="ghost"
               disabled={submitting}
-              onClick={() => void submit('draft')}
+              onClick={() => void submit(draft)}
             >
               Save as draft
             </Button>

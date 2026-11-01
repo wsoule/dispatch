@@ -353,18 +353,13 @@ export function IssuesView({
           ];
         case 'labels':
           return menuContext.labels.map((value) => ({ value, label: value }));
-        case 'epic':
-          return [
-            { value: FILTER_NONE, label: label(FILTER_NONE) },
-            ...menuContext.epics.map((epic) => ({
-              value: epic.meta.id,
-              label: epic.meta.title,
-            })),
-          ];
         case 'milestone':
           return [
             { value: FILTER_NONE, label: label(FILTER_NONE) },
-            ...menuContext.milestones.map((value) => ({ value, label: value })),
+            ...menuContext.milestones.map((milestone) => ({
+              value: milestone.meta.id,
+              label: milestone.meta.title,
+            })),
           ];
         case 'run':
           return [FILTER_NONE, ...RUN_STATES].map((value) => ({

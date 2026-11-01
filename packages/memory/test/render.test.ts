@@ -6,7 +6,7 @@ import { estimateTokens, indexLine, renderIndex } from '../src/render.js';
 import type { MemoryEntry, MemoryKind } from '../src/types.js';
 
 const NOW = '2026-09-25T10:00:00.000Z';
-const ctx = { taskId: 't-1a2b3c', epic: 'e-000001' };
+const ctx = { taskId: 't-1a2b3c', milestone: 'e-000001' };
 let n = 0;
 function e(over: Partial<MemoryEntry> & { title?: string } = {}): MemoryEntry {
   n += 1;
@@ -76,14 +76,14 @@ describe('renderIndex', () => {
     const line = indexLine(
       e({
         kind: 'hazard',
-        epic: 'e-000001',
+        milestone: 'e-000001',
         trust: 'agent',
         title: 'pnpm 11 ignores onlyBuiltDependencies',
       }),
       ctx
     );
     expect(line).toMatch(
-      /^- hazard · epic · unreviewed: pnpm 11 ignores onlyBuiltDependencies \(#[0-9A-Z]{8}\)$/
+      /^- hazard · milestone · unreviewed: pnpm 11 ignores onlyBuiltDependencies \(#[0-9A-Z]{8}\)$/
     );
     expect(
       indexLine(

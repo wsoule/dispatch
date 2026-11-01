@@ -81,7 +81,7 @@ describe('status roles', () => {
       new FakePlanner({
         ok: true,
         proposal: {
-          epic: { title: 'Ship', description: 'd' },
+          milestone: { title: 'Ship', description: 'd' },
           tasks: [
             {
               title: 'one',
@@ -104,7 +104,7 @@ describe('status roles', () => {
       started.id,
       manager.get(started.id).proposal
     );
-    expect(store.get(result.epicId!)!.meta.status).toBe('Todo');
+    expect(store.get(result.milestoneId!)!.meta.status).toBe('Todo');
     expect(store.get(result.taskIds[0])!.meta.status).toBe('Todo');
   });
 });

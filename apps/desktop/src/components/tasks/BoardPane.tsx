@@ -23,11 +23,11 @@ import {
   readCollapsedGroups,
   toggleCollapsedGroup,
   writeCollapsedGroups,
-} from '../../lib/collapsedEpics';
-import type { WorkEpicOptions } from '../../lib/epicSession';
+} from '../../lib/collapsedMilestones';
 import { resolveListKeyCommand } from '../../lib/keyboard';
 import { landingStateByTaskId } from '../../lib/landingBadge';
 import { sortTasks } from '../../lib/listGrouping';
+import type { WorkMilestoneOptions } from '../../lib/milestoneSession';
 import { useStatusModelOf } from '../../lib/statusModel';
 import type { TasksDisplayPrefs } from '../../lib/tasksPrefs';
 import { DispatchDialog } from './DispatchDialog';
@@ -35,7 +35,7 @@ import { TaskBoard } from './TaskBoard';
 import { liveClaimsFrom } from '@/lib/dispatchPreview';
 
 /** Session keys for the columns folded to a strip or hidden from a column's `···` menu —
- * the same "out of my way for now" lifetime as collapsed epic lanes. */
+ * the same "out of my way for now" lifetime as collapsed milestone lanes. */
 const COLLAPSED_COLUMNS_STORAGE_KEY = 'dispatch:board-collapsed-columns';
 const HIDDEN_COLUMNS_STORAGE_KEY = 'dispatch:board-hidden-columns';
 
@@ -85,10 +85,10 @@ export function BoardPane({
   const [hiddenColumns, setHiddenColumns] = useState<ReadonlySet<string>>(() =>
     readSessionSet(HIDDEN_COLUMNS_STORAGE_KEY)
   );
-  // The fan-out dialog, open for one epic: `start` sends a fresh session from a lane
+  // The fan-out dialog, open for one milestone: `start` sends a fresh session from a lane
   // header's Send agents…, `raise` edits a paused one's ceilings.
-  const [dispatchEpic, setDispatchEpic] = useState<{
-    epicId: string;
+  const [dispatchMilestone, setDispatchMilestone] = useState<{
+    milestoneId: string;
     mode: 'start' | 'raise';
   } | null>(null);
 
@@ -122,25 +122,25 @@ export function BoardPane({
     () => landingStateByTaskId(data.mergeQueue),
     [data.mergeQueue]
   );
-  const epicIds = useMemo(
-    () => new Set(data.epics.map((e) => e.meta.id)),
-    [data.epics]
+  const milestoneIds = useMemo(
+    () => new Set(data.milestones.map((e) => e.meta.id)),
+    [data.milestones]
   );
-  const epicTitleById = useMemo(
-    () => new Map(data.epics.map((e) => [e.meta.id, e.meta.title])),
-    [data.epics]
+  const milestoneTitleById = useMemo(
+    () => new Map(data.milestones.map((e) => [e.meta.id, e.meta.title])),
+    [data.milestones]
   );
   const filteredBoardTasks = useMemo(() => {
     const passing =
       taskFilter === undefined ? boardTasks : boardTasks.filter(taskFilter);
-    // A sub-task is a task whose parent is another task (an epic's children are members);
+    // A sub-task is a task whose parent is another task (a milestone's children are members);
     // Display › Show sub-tasks off hides those, as on the list.
     return display.showSubtasks
       ? passing
       : passing.filter(
-          (doc) => doc.meta.parent === null || epicIds.has(doc.meta.parent)
+          (doc) => doc.meta.parent === null || milestoneIds.has(doc.meta.parent)
         );
-  }, [boardTasks, taskFilter, display.showSubtasks, epicIds]);
+  }, [boardTasks, taskFilter, display.showSubtasks, milestoneIds]);
   // Sorted here, once, so the j/k cursor below and `TaskBoard` walk the same sequence.
   const orderedBoardTasks = useMemo(
     () => sortTasks(filteredBoardTasks, display, model),
@@ -183,14 +183,14 @@ export function BoardPane({
         : groupTasksByLane(
             orderedBoardTasks,
             visibleStatuses,
-            data.epics,
+            data.milestones,
             display.subGrouping
           ),
     [
       orderedBoardTasks,
       data.config,
       visibleStatuses,
-      data.epics,
+      data.milestones,
       display.subGrouping,
     ]
   );
@@ -234,7 +234,7 @@ export function BoardPane({
 
   function handleBoardKeyDown(e: React.KeyboardEvent) {
     // A keydown that lands on (or inside) one of the track's own interactive controls — an
-    // epic lane header's buttons or pickers, a column's menu, a card's Dispatch button.
+    // milestone lane header's buttons or pickers, a column's menu, a card's Dispatch button.
     // A card's own open button (`data-task-card-open`) is the roving cursor's target, not one
     // of those controls, so its keys fall through to the roving-cursor logic.
     const controlEl = (e.target as HTMLElement).closest(
@@ -290,8 +290,9 @@ export function BoardPane({
 
   // Only a raise pre-fills from the session; a fresh fan-out starts from the defaults.
   const dialogSession =
-    dispatchEpic?.mode === 'raise'
-      ? (data.epicProgressById.get(dispatchEpic.epicId)?.session ?? null)
+    dispatchMilestone?.mode === 'raise'
+      ? (data.milestoneProgressById.get(dispatchMilestone.milestoneId)
+          ?.session ?? null)
       : null;
 
   return (
@@ -319,8 +320,8 @@ export function BoardPane({
           }
           hiddenColumnCount={hiddenColumns.size}
           onShowHiddenColumns={() => setHiddenColumns(new Set())}
-          onRequestWorkEpic={(epicId) =>
-            setDispatchEpic({ epicId, mode: 'start' })
+          onRequestWorkMilestone={(milestoneId) =>
+            setDispatchMilestone({ milestoneId, mode: 'start' })
           }
           tasks={orderedBoardTasks}
           archivedTaskIds={archivedTaskIds}
@@ -334,41 +335,43 @@ export function BoardPane({
           readinessById={data.readinessById}
           attentionByTaskId={data.attentionByTaskId}
           landingByTaskId={landingByTaskId}
-          epicProgressById={data.epicProgressById}
-          epicConcurrencyDefault={
-            data.config?.orchestrator.epicConcurrency ?? 3
+          milestoneProgressById={data.milestoneProgressById}
+          milestoneConcurrencyDefault={
+            data.config?.orchestrator.milestoneConcurrency ?? 3
           }
-          epics={data.epics}
+          milestones={data.milestones}
           onSelect={onSelectTask}
           onDispatch={dispatchCard}
-          onWorkEpic={data.handleWorkEpic}
-          onPauseEpic={data.handlePauseEpic}
-          onResumeEpic={data.handleResumeEpic}
-          onRaiseCeilingEpic={(epicId) =>
-            setDispatchEpic({ epicId, mode: 'raise' })
+          onWorkMilestone={data.handleWorkMilestone}
+          onPauseMilestone={data.handlePauseMilestone}
+          onResumeMilestone={data.handleResumeMilestone}
+          onRaiseCeilingMilestone={(milestoneId) =>
+            setDispatchMilestone({ milestoneId, mode: 'raise' })
           }
-          onStopEpic={data.handleStopEpic}
-          onLandEpic={data.handleLandEpic}
+          onStopMilestone={data.handleStopMilestone}
+          onLandMilestone={data.handleLandMilestone}
           onMoveStatus={data.moveTaskStatus}
           onEditTask={data.handleUpdate}
           focusedTaskId={focusedTaskId}
           onCardFocus={setFocusedTaskId}
         />
       </div>
-      {dispatchEpic !== null && (
+      {dispatchMilestone !== null && (
         <DispatchDialog
-          title={`${dispatchEpic.mode === 'raise' ? 'Raise ceiling' : 'Send agents'} · ${epicTitleById.get(dispatchEpic.epicId) ?? dispatchEpic.epicId}`}
+          title={`${dispatchMilestone.mode === 'raise' ? 'Raise ceiling' : 'Send agents'} · ${milestoneTitleById.get(dispatchMilestone.milestoneId) ?? dispatchMilestone.milestoneId}`}
           tasks={data.tasks.filter(
-            (t) => t.meta.parent === dispatchEpic.epicId
+            (t) => t.meta.parent === dispatchMilestone.milestoneId
           )}
           readyIds={data.readyIds}
           runningNow={data.liveRunStateByTaskId.size}
           liveClaims={liveClaimsFrom(data.runs)}
-          defaultConcurrency={data.config?.orchestrator.epicConcurrency ?? 3}
+          defaultConcurrency={
+            data.config?.orchestrator.milestoneConcurrency ?? 3
+          }
           maxConcurrency={data.config?.orchestrator.maxConcurrency}
           runCostEstimateUsd={data.config?.orchestrator.runCostEstimateUsd}
           fixLoopAuto={data.config?.fixLoop.auto}
-          mode={dispatchEpic.mode}
+          mode={dispatchMilestone.mode}
           initial={
             dialogSession !== null
               ? {
@@ -378,14 +381,20 @@ export function BoardPane({
                 }
               : undefined
           }
-          onCancel={() => setDispatchEpic(null)}
-          onConfirm={async (opts: WorkEpicOptions) => {
-            if (dispatchEpic.mode === 'raise') {
-              await data.handleResumeEpic(dispatchEpic.epicId, opts);
+          onCancel={() => setDispatchMilestone(null)}
+          onConfirm={async (opts: WorkMilestoneOptions) => {
+            if (dispatchMilestone.mode === 'raise') {
+              await data.handleResumeMilestone(
+                dispatchMilestone.milestoneId,
+                opts
+              );
             } else {
-              await data.handleWorkEpic(dispatchEpic.epicId, opts);
+              await data.handleWorkMilestone(
+                dispatchMilestone.milestoneId,
+                opts
+              );
             }
-            setDispatchEpic(null);
+            setDispatchMilestone(null);
           }}
         />
       )}

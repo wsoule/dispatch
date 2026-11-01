@@ -150,12 +150,12 @@ describe('queryMeta', () => {
 
 describe('queryJson + queryMetaJson', () => {
   it('serialize exactly what query() and queryMeta() return, per filter', () => {
-    const epic = store.create(
-      { title: 'Epic', kind: 'milestone' },
+    const milestone = store.create(
+      { title: 'Milestone', kind: 'milestone' },
       '2026-07-13T01:00:00Z'
     );
     store.create(
-      { title: 'Child', parent: epic.meta.id, description: 'Prose' },
+      { title: 'Child', parent: milestone.meta.id, description: 'Prose' },
       '2026-07-13T02:00:00Z'
     );
     const gone = store.create(
@@ -169,7 +169,7 @@ describe('queryJson + queryMetaJson', () => {
       {},
       { includeArchived: true },
       { status: 'draft', includeArchived: true },
-      { parent: epic.meta.id },
+      { parent: milestone.meta.id },
       { containers: true },
     ]) {
       expect(cache.queryJson(filter)).toBe(JSON.stringify(cache.query(filter)));

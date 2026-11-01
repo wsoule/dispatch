@@ -276,7 +276,7 @@ describe('addressEntries', () => {
         { ref: 'human:wyat', name: 'Wyat' },
         { ref: 'human:sam', name: 'Sam' },
       ],
-      rooms: ['release', 'epic/t-1'],
+      rooms: ['release', 'milestone/t-1'],
       peers: [
         { alias: 'acme', status: 'active' },
         { alias: 'gone', status: 'disabled' },

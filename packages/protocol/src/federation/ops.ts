@@ -66,6 +66,7 @@ export const ZERO_HASH = '0'.repeat(64);
 export const TAG = {
   op: 'dispatch-op-v2',
   sealed: 'dispatch-sealed-v1',
+  content: 'dispatch-content-v1',
   ack: 'dispatch-ack-v1',
   relay: 'dispatch-relay-v1',
   invite: 'dispatch-invite-v1',
@@ -210,6 +211,8 @@ export type RosterBody = { rv: 1 } & (
   | { action: 'recover'; proof: string }
   | { action: 'recovery-key'; pub: string } // a new recovery code replaces the last
   | { action: 'transport'; kind: 'git' | 'relay'; url?: string }
+  // Switches team content to e2e and opens its first key epoch; admins only.
+  | { action: 'content-e2e' }
   // Takes the named roster op, whose (action, rv) is outside Known(1), out of
   // every build's fold when an admin that may dismiss it sends it; no level.
   | { action: 'dismiss'; replica: string; seq: number; hash: string }

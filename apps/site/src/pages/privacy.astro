@@ -62,9 +62,11 @@ import '../styles/page.css';
         <h2>Teams</h2>
         <p>
           Teammates sync a board through a git branch you host, or through the Dispatch relay if
-          your team switches to it. The relay stores and forwards signed, sealed operations
-          between your team’s machines and can’t read what is sealed. Nothing goes to the relay
-          unless your team chooses it.
+          your team uses it. The relay stores and forwards signed operations between your team’s
+          machines. Messages are sealed, so it can’t read them. The board, team memory and team
+          docs are readable to it unless an admin turns on end-to-end encryption; from then on it
+          sees only who published each change, when, its type and size, and the team’s roster and
+          license. What was published before encryption was turned on stays readable to it.
         </p>
 
         <h2>The Claude plugin</h2>

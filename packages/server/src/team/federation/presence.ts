@@ -12,6 +12,7 @@ import {
   readCaps,
   recordPresenceCaps,
 } from './caps.js';
+import { CONTENT_KEY_WAITING, ContentKeyMissingError } from './content.js';
 import type { Homes } from './homes.js';
 import { RosterError } from './roster.js';
 import type { RosterService } from './roster.js';
@@ -56,6 +57,8 @@ export class Presence implements Collector, OpHandler {
   private lastReplicaAt: number | null = null;
   // The caps last re-announced, so a change goes out at once.
   private lastCapsSent: string | null = null;
+  // The content epochs last asked for, so a change goes out at once.
+  private lastWantsSent = '[]';
 
   constructor(
     private deps: {
@@ -123,8 +126,11 @@ export class Presence implements Collector, OpHandler {
     const capsChanged = announceCaps
       ? JSON.stringify(caps) !== this.lastCapsSent
       : this.lastCapsSent !== null;
+    // E2e content: the epochs whose key this machine lacks ride replica presence.
+    const wants = JSON.stringify(fed.contentWants());
     if (
       capsChanged ||
+      wants !== this.lastWantsSent ||
       this.lastReplicaAt === null ||
       now.getTime() - this.lastReplicaAt >= PRESENCE_REPLICA_EVERY_MS
     ) {
@@ -138,6 +144,7 @@ export class Presence implements Collector, OpHandler {
       this.lastCapsSent = announceCaps ? JSON.stringify(caps) : null;
       fed.append({ type: 'presence', body });
       this.lastReplicaAt = now.getTime();
+      this.lastWantsSent = wants;
     }
     // A run of this machine's that is no longer live (a crash, a restart)
     // ends in the team's view too.
@@ -495,7 +502,7 @@ export class Presence implements Collector, OpHandler {
   ): void {
     if (!this.canPublish()) return;
     const { fed } = this.deps;
-    const body: PresenceBody = {
+    const body: RunBody = {
       kind: 'run',
       run: meta.id,
       task: meta.taskId,
@@ -504,7 +511,25 @@ export class Presence implements Collector, OpHandler {
       ...(waitingOn === null ? {} : { waitingOn }),
     };
     // The run's row is written with its op, so this machine's homes see the
-    // run at once and its first message always takes a later tick.
+    // run at once and its first message always takes a later tick. Without
+    // the team's content key yet, the run stays local and a note says why.
+    try {
+      this.appendRun(meta, body, live, waitingOn);
+    } catch (err) {
+      if (!(err instanceof ContentKeyMissingError)) throw err;
+      fed.problem('content:key', CONTENT_KEY_WAITING);
+      return;
+    }
+    this.deps.changed?.();
+  }
+
+  private appendRun(
+    meta: RunInfo,
+    body: RunBody,
+    live: boolean,
+    waitingOn: string | null
+  ): void {
+    const { fed } = this.deps;
     fed.append({
       type: 'presence',
       body,
@@ -524,7 +549,6 @@ export class Presence implements Collector, OpHandler {
           );
       },
     });
-    this.deps.changed?.();
   }
 
   // Presence goes out only once this machine is admitted under a firm pin

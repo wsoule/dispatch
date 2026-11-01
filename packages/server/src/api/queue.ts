@@ -9,6 +9,7 @@ import type { QueueFactorInfo } from '@dispatch-foo/core';
 
 import type { ApiContext } from '../api.js';
 import { ReadinessStore } from '../judgments/readiness.js';
+import { tasksWithFinishedRun } from '../orchestrator/types.js';
 import { statusModelFor } from '../statuses.js';
 import { errorResponse, jsonResponse, parseCountParam } from './http.js';
 
@@ -63,6 +64,7 @@ export function getQueue(ctx: ApiContext, url: URL): Response {
       : Object.fromEntries(
           Object.entries(cached).map(([id, entry]) => [id, entry.reading])
         );
+  const finished = tasksWithFinishedRun(ctx.orchestrator.list());
   const snapshot: QueueSnapshot = {
     factors: QUEUE_FACTORS,
     weights: weights.weights,
@@ -73,6 +75,7 @@ export function getQueue(ctx: ApiContext, url: URL): Response {
       limit: limit.value,
       readiness,
       statuses: statusModelFor(ctx.rootDir),
+      finishedRun: (id) => finished.has(id),
     }),
   };
   return jsonResponse(snapshot);

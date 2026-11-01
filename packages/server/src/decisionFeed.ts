@@ -34,9 +34,9 @@ type DecisionKind = NotificationKind;
  *
  * Nothing today produces `recorded` — every kind above is by definition
  * something a human still has to act on. The distinction exists now so the
- * policy engine (epic e-ad1978) can reclassify items through
+ * policy engine (milestone e-ad1978) can reclassify items through
  * `DecisionFeedContext.policy` and have `list({ disposition })` become its
- * filter, instead of that epic having to reshape this feed's contract.
+ * filter, instead of that milestone having to reshape this feed's contract.
  */
 export type DecisionDisposition = 'blocking' | 'recorded';
 
@@ -93,6 +93,9 @@ export interface DecisionItem {
   messageId?: string;
   /** The Overseer conversation an overseer-action or tool-approval gate is parked on. */
   conversation?: string;
+  /** The address that asked, on a gate item: lets a surface tell a question
+   *  from an outside A2A agent from one a teammate asked. */
+  from?: string;
   disposition: DecisionDisposition;
 }
 
@@ -498,6 +501,7 @@ export class DecisionFeed {
         id: `${kind}:${message.id}`,
         kind,
         messageId: message.id,
+        from: message.from,
         runId,
         taskId,
         taskTitle,

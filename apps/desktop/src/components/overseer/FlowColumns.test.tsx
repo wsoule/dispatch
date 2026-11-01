@@ -1,4 +1,4 @@
-import type { EpicProgress, RunMeta } from '@dispatch/client';
+import type { MilestoneProgress, RunMeta } from '@dispatch/client';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
@@ -69,21 +69,21 @@ test('Coming in counts what waits and says so when nothing does', () => {
 });
 
 function session(
-  epicId: string,
+  milestoneId: string,
   state: 'active' | 'paused',
   live: number
-): EpicProgress {
+): MilestoneProgress {
   return {
-    epicId,
+    milestoneId,
     active: state === 'active',
-    session: { epicId, state, maxSpendUsd: 60 },
+    session: { milestoneId, state, maxSpendUsd: 60 },
     spend: { settledUsd: 12.5, maxSpendUsd: 60 },
     children: [],
     waves: [],
     liveRuns: Array.from({ length: live }, (_, i) =>
-      run(`${epicId}-${i}`, 'running', 'child')
+      run(`${milestoneId}-${i}`, 'running', 'child')
     ),
-  } as unknown as EpicProgress;
+  } as unknown as MilestoneProgress;
 }
 
 test('Going out lists live milestone sessions with their spend and opens them', () => {
@@ -95,7 +95,7 @@ test('Going out lists live milestone sessions with their spend and opens them', 
       setAside={[]}
       onOpenTask={(id) => opened.push(id)}
       sessions={[session('e-1', 'active', 2), session('e-2', 'paused', 0)]}
-      epicTitle={(id) => (id === 'e-1' ? 'Checkout rework' : id)}
+      milestoneTitle={(id) => (id === 'e-1' ? 'Checkout rework' : id)}
     />
   );
   expect(screen.getByRole('heading', { name: /Going out\s*2/ })).toBeTruthy();

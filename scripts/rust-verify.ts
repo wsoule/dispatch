@@ -9,7 +9,7 @@
 // minutes and Rust changes are rare: paying that on every merge to catch the
 // occasional one is the wrong trade, and skipping the check entirely is how
 // main went red. The diff is against the merge base with the branch's
-// upstream when it has one, else with main — an epic branch's own Rust
+// upstream when it has one, else with main — a milestone branch's own Rust
 // changes show up in that diff too, which only ever means an extra run, never
 // a missed one.
 

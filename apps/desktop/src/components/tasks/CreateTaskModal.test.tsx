@@ -1,7 +1,9 @@
 import type { CreateInput, TaskDoc } from '@dispatch-foo/core/browser';
+import { statusModelOf } from '@dispatch-foo/core/browser';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
 
+import { setActiveStatusModel } from '../../lib/statusModel';
 import {
   type CreateTaskPreset,
   type ShellActions,
@@ -23,7 +25,12 @@ beforeEach(() => {
   window.localStorage.removeItem(CREATE_TASK_DESCRIPTION_KEY);
 });
 
-function epic(id: string, title: string, kind = 'milestone'): TaskDoc {
+// Reset inside act: the dialog may still be mounted and subscribed to the model.
+afterEach(() => {
+  act(() => setActiveStatusModel(null));
+});
+
+function milestone(id: string, title: string, kind = 'milestone'): TaskDoc {
   return { meta: { id, title, kind }, body: '' } as unknown as TaskDoc;
 }
 
@@ -78,10 +85,10 @@ function mount({
       <ShellActionsProvider value={shellActions(preset)}>
         <CreateTaskModal
           statuses={STATUSES}
-          epics={[
-            epic('e-1', 'Search index'),
-            epic('p-1', 'Platform', 'project'),
-            epic('t-9', 'Parent issue', 'task'),
+          milestones={[
+            milestone('e-1', 'Search index'),
+            milestone('p-1', 'Platform', 'project'),
+            milestone('t-9', 'Parent issue', 'task'),
           ]}
           projectName={projectName}
           labels={labels}
@@ -148,7 +155,7 @@ test('renders the crumb header, borderless fields and property chips', () => {
 });
 
 test('reads the status and the parent container from the shell createPreset', async () => {
-  const { created } = mount({ preset: { status: 'review', epic: 'e-1' } });
+  const { created } = mount({ preset: { status: 'review', milestone: 'e-1' } });
   expect(screen.getByLabelText('Status').textContent).toBe('Review');
   expect(screen.getByLabelText('Parent').textContent).toBe('Search index');
   // The free-text milestone is gone: a task's container is its parent.
@@ -168,7 +175,7 @@ test('reads the status and the parent container from the shell createPreset', as
 });
 
 test('the Parent picker lists where this kind can live, and clears to no parent', async () => {
-  const { created } = mount({ preset: { epic: 'e-1' } });
+  const { created } = mount({ preset: { milestone: 'e-1' } });
   fireEvent.click(screen.getByLabelText('Parent'));
   const options = screen.getAllByRole('option').map((o) => o.textContent ?? '');
   expect(options).toEqual([
@@ -196,7 +203,7 @@ test('a kind preset starts the Kind chip there and creates that kind', async () 
 });
 
 test('switching to a broader kind drops a parent that cannot hold it', () => {
-  mount({ preset: { epic: 'e-1' } });
+  mount({ preset: { milestone: 'e-1' } });
   fireEvent.click(screen.getByLabelText('Kind'));
   fireEvent.click(screen.getByRole('menuitem', { name: /Project/ }));
   expect(screen.getByLabelText('Parent').textContent).toBe('Parent');
@@ -261,6 +268,62 @@ test('Save as draft appears once a title exists and files the task as draft', as
   await settle();
 
   expect(created[0]?.status).toBe('draft');
+});
+
+// A board linked to Linear has no `draft`; the daemon would refuse it.
+test('Save as draft files the task under a Linear board’s backlog status', async () => {
+  setActiveStatusModel(
+    statusModelOf({
+      statuses: ['Backlog', 'Todo', 'In Progress', 'Done', 'Canceled'],
+      statusDefinitions: [
+        { name: 'Backlog', type: 'backlog', color: null },
+        { name: 'Todo', type: 'unstarted', color: null },
+        { name: 'In Progress', type: 'started', color: null },
+        { name: 'Done', type: 'completed', color: null },
+        { name: 'Canceled', type: 'canceled', color: null },
+      ],
+      statusRoles: {
+        ready: 'Todo',
+        dispatched: 'In Progress',
+        review: 'In Progress',
+        landing: null,
+        landed: 'Done',
+        dropped: 'Canceled',
+      },
+    })
+  );
+  const { created } = mount({ preset: { status: 'Todo' } });
+  fireEvent.change(titleField(), { target: { value: 'Later' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save as draft' }));
+  await settle();
+
+  expect(created[0]?.status).toBe('Backlog');
+});
+
+test('Save as draft is not offered on a board with no backlog or triage status', () => {
+  setActiveStatusModel(
+    statusModelOf({
+      statuses: ['Todo', 'In Progress', 'Done', 'Canceled'],
+      statusDefinitions: [
+        { name: 'Todo', type: 'unstarted', color: null },
+        { name: 'In Progress', type: 'started', color: null },
+        { name: 'Done', type: 'completed', color: null },
+        { name: 'Canceled', type: 'canceled', color: null },
+      ],
+      statusRoles: {
+        ready: 'Todo',
+        dispatched: 'In Progress',
+        review: 'In Progress',
+        landing: null,
+        landed: 'Done',
+        dropped: 'Canceled',
+      },
+    })
+  );
+  mount({ preset: { status: 'Todo' } });
+  fireEvent.change(titleField(), { target: { value: 'Later' } });
+
+  expect(screen.queryByRole('button', { name: 'Save as draft' })).toBeNull();
 });
 
 test('a failed create keeps the dialog open with the title intact and says why', async () => {

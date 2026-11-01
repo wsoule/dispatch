@@ -10,24 +10,20 @@
 //! `.unwrap()`/`.expect()`, unrecognized shapes are skipped rather than treated as fatal. This
 //! is expected to need adjustment once real rollout files can be inspected.
 //!
-//! A structural difference from Claude Code's format (the reason this module needs a
-//! per-file cache, unlike the fully self-contained `claude_jsonl`): Codex's `cwd` and session
-//! id are only expected to appear once, on the file's leading `session_meta` line, not
-//! repeated on every subsequent line. Every other record in the same file only carries a
-//! `timestamp`. So `parse_line` is keyed by `raw_log_path` and remembers the last-seen
-//! `session_meta` for that specific file, applying it to later lines from the same file.
+//! Codex's session id and cwd are expected only on `session_meta` headers. Production
+//! ingestion passes file-owned `FileContext` to `parse_with_context` and commits it with
+//! the file cursor. The test-only `parse_line` wrapper retains the legacy cache interface.
 
 use super::record::{ParsedRecord, Usage, UsageKind};
 use serde_json::Value;
+#[cfg(test)]
 use std::collections::HashMap;
+#[cfg(test)]
 use std::sync::{Mutex, OnceLock};
 
-#[derive(Debug, Clone, Default)]
-struct FileContext {
-    session_id: Option<String>,
-    cwd: Option<String>,
-}
+use super::FileContext;
 
+#[cfg(test)]
 fn context_cache() -> &'static Mutex<HashMap<String, FileContext>> {
     static CACHE: OnceLock<Mutex<HashMap<String, FileContext>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -36,7 +32,14 @@ fn context_cache() -> &'static Mutex<HashMap<String, FileContext>> {
 /// Parses a single complete JSONL line from a Codex CLI rollout file. `raw_log_path` is used
 /// purely as a cache key to remember this file's `session_meta` across calls — never persisted
 /// or otherwise interpreted.
+#[cfg(test)]
 pub fn parse_line(line: &str, raw_log_path: &str) -> Option<ParsedRecord> {
+    let mut cache = context_cache().lock().unwrap();
+    parse_with_context(line, cache.entry(raw_log_path.to_string()).or_default())
+}
+
+/// Parses against caller-owned state so rollback never leaves an advanced global cache.
+pub fn parse_with_context(line: &str, context: &mut FileContext) -> Option<ParsedRecord> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return None;
@@ -72,15 +75,10 @@ pub fn parse_line(line: &str, raw_log_path: &str) -> Option<ParsedRecord> {
                 .and_then(Value::as_str)
                 .map(String::from);
 
-            let mut cache = context_cache().lock().unwrap();
-            cache.insert(
-                raw_log_path.to_string(),
-                FileContext {
-                    session_id: session_id.clone(),
-                    cwd: cwd.clone(),
-                },
-            );
-            drop(cache);
+            *context = FileContext {
+                session_id: session_id.clone(),
+                cwd: cwd.clone(),
+            };
 
             Some(ParsedRecord {
                 record_type,
@@ -97,7 +95,7 @@ pub fn parse_line(line: &str, raw_log_path: &str) -> Option<ParsedRecord> {
             })
         }
         "response_item" => {
-            let ctx = cached_context(raw_log_path);
+            let ctx = context.clone();
             let item_type = payload.and_then(|p| p.get("type")).and_then(Value::as_str);
 
             let text = match item_type {
@@ -120,7 +118,7 @@ pub fn parse_line(line: &str, raw_log_path: &str) -> Option<ParsedRecord> {
             })
         }
         "event_msg" => {
-            let ctx = cached_context(raw_log_path);
+            let ctx = context.clone();
             let event_type = payload.and_then(|p| p.get("type")).and_then(Value::as_str);
 
             let usage = if event_type == Some("token_count") {
@@ -145,15 +143,6 @@ pub fn parse_line(line: &str, raw_log_path: &str) -> Option<ParsedRecord> {
         }
         _ => None,
     }
-}
-
-fn cached_context(raw_log_path: &str) -> FileContext {
-    context_cache()
-        .lock()
-        .unwrap()
-        .get(raw_log_path)
-        .cloned()
-        .unwrap_or_default()
 }
 
 /// Best-effort extraction of a `response_item` message's text: OpenAI Responses-API-shaped

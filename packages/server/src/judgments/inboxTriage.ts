@@ -20,7 +20,7 @@ import { capText, mapLimit, warnOnce } from './client.js';
 
 /**
  * Triage for inbox captures: per item, which kind it really is, which open
- * epic it belongs to, and whether it duplicates work already captured.
+ * milestone it belongs to, and whether it duplicates work already captured.
  * Converting an item into a task reads these judgments.
  *
  * Everything here is either pure (candidates, questions, interpretation) or
@@ -28,10 +28,10 @@ import { capText, mapLimit, warnOnce } from './client.js';
  * failure, and convert then works without them.
  */
 
-export interface TriageEpic {
+export interface TriageMilestone {
   id: string;
   title: string;
-  /** First line of the epic's body, so the model can tell similar titles apart. */
+  /** First line of the milestone's body, so the model can tell similar titles apart. */
   summary: string;
 }
 
@@ -48,11 +48,11 @@ export interface InboxTriage {
   hash: string;
   kind: TriageKind;
   kindConfidence: number;
-  /** Null when no listed epic won with confidence ≥ EPIC_CONFIDENCE. */
-  epicId: string | null;
-  /** The winning epic's title at triage time, so a client needs no lookup. */
-  epicTitle: string | null;
-  epicConfidence: number;
+  /** Null when no listed milestone won with confidence ≥ MILESTONE_CONFIDENCE. */
+  milestoneId: string | null;
+  /** The winning milestone's title at triage time, so a client needs no lookup. */
+  milestoneTitle: string | null;
+  milestoneConfidence: number;
   /** Tasks or other inbox items this looks like a duplicate of, strongest first. */
   duplicates: { id: string; probability: number }[];
 }
@@ -62,9 +62,9 @@ export interface InboxTriageSnapshot {
   updatedAt: string;
 }
 
-/** Below this the epic Choice is treated as "no home" and the item still
+/** Below this the milestone Choice is treated as "no home" and the item still
  *  goes to the clusterer. */
-const EPIC_CONFIDENCE = 0.6;
+const MILESTONE_CONFIDENCE = 0.6;
 /** A judged kind replaces the capture-time regex guess only at or above this. */
 const KIND_CONFIDENCE = 0.6;
 /** A paste is cut at a line only when "starts a new thought" wins by this
@@ -153,8 +153,8 @@ export function triageCandidates(
   return scored.slice(0, limit).map((s) => s.candidate);
 }
 
-/** The open epics an item could belong to, with their first body line. */
-export function triageEpics(tasks: TaskDoc[]): TriageEpic[] {
+/** The open milestones an item could belong to, with their first body line. */
+export function triageMilestones(tasks: TaskDoc[]): TriageMilestone[] {
   const parentIds = parentIdsOf(tasks);
   return tasks
     .filter((t) => isContainer(t.meta, parentIds) && !isDone(t))
@@ -171,14 +171,14 @@ export function triageEpics(tasks: TaskDoc[]): TriageEpic[] {
 
 type TriageQuestions = {
   kind: ChoiceQuestion<Record<TriageKind, string>>;
-  epic?: ChoiceQuestion<Record<string, string>>;
+  milestone?: ChoiceQuestion<Record<string, string>>;
 } & Record<`dup_${string}`, NoulQuestion>;
 
-/** One request's questions: the kind, the epic (only when there are any)
+/** One request's questions: the kind, the milestone (only when there are any)
  *  and one duplicate check per candidate. Keyed so `interpretTriage` can
  *  find each answer by name. */
 export function triageQuestions(
-  epics: TriageEpic[],
+  milestones: TriageMilestone[],
   candidates: TriageCandidate[]
 ): TriageQuestions {
   const questions: TriageQuestions = {
@@ -187,15 +187,17 @@ export function triageQuestions(
       { ...KIND_CRITERIA }
     ),
   };
-  if (epics.length > 0) {
+  if (milestones.length > 0) {
     const criteria: Record<string, string> = {};
-    for (const epic of epics) {
-      criteria[epic.id] =
-        epic.summary === '' ? epic.title : `${epic.title}: ${epic.summary}`;
+    for (const milestone of milestones) {
+      criteria[milestone.id] =
+        milestone.summary === ''
+          ? milestone.title
+          : `${milestone.title}: ${milestone.summary}`;
     }
-    criteria.none = 'belongs to none of the listed epics';
-    questions.epic = choice(
-      'Which of the epics in `epics` is `item.text` a piece of? Pick `none` unless the item is clearly work for that epic.',
+    criteria.none = 'belongs to none of the listed milestones';
+    questions.milestone = choice(
+      'Which of the milestones in `milestones` is `item.text` a piece of? Pick `none` unless the item is clearly work for that milestone.',
       criteria
     );
   }
@@ -217,12 +219,12 @@ export function triageQuestions(
 
 function triageState(
   item: InboxItem,
-  epics: TriageEpic[],
+  milestones: TriageMilestone[],
   candidates: TriageCandidate[]
 ): EntryType {
   // Spelled out as literals: EntryType is a JSON index signature, which the
   // named interfaces above are not assignable to.
-  const epicsJson: JsonValue[] = epics.map((e) => ({
+  const milestonesJson: JsonValue[] = milestones.map((e) => ({
     id: e.id,
     title: e.title,
     summary: e.summary,
@@ -233,33 +235,33 @@ function triageState(
   }));
   return {
     item: { kind: item.kind, text: capText(item.text, ITEM_TEXT_CAP) },
-    epics: epicsJson,
+    milestones: milestonesJson,
     candidates: candidatesJson,
   };
 }
 
 type TriageAnswers = {
   kind: ChoiceResponse;
-  epic?: ChoiceResponse;
+  milestone?: ChoiceResponse;
 } & Record<string, ChoiceResponse | NoulResponse | undefined>;
 
 /** Applies the thresholds to one item's answers. */
 export function interpretTriage(
   itemId: string,
   hash: string,
-  epics: TriageEpic[],
+  milestones: TriageMilestone[],
   candidates: TriageCandidate[],
   answers: TriageAnswers
 ): InboxTriage {
   const kind: TriageKind = isInboxKind(answers.kind.choice)
     ? answers.kind.choice
     : 'noise';
-  const epic = answers.epic;
-  const epicId =
-    epic !== undefined &&
-    epic.choice !== 'none' &&
-    epic.confidence >= EPIC_CONFIDENCE
-      ? epic.choice
+  const milestone = answers.milestone;
+  const milestoneId =
+    milestone !== undefined &&
+    milestone.choice !== 'none' &&
+    milestone.confidence >= MILESTONE_CONFIDENCE
+      ? milestone.choice
       : null;
   const duplicates: InboxTriage['duplicates'] = [];
   for (const candidate of candidates) {
@@ -274,9 +276,9 @@ export function interpretTriage(
     hash,
     kind,
     kindConfidence: answers.kind.confidence,
-    epicId,
-    epicTitle: epics.find((e) => e.id === epicId)?.title ?? null,
-    epicConfidence: epic?.confidence ?? 0,
+    milestoneId,
+    milestoneTitle: milestones.find((e) => e.id === milestoneId)?.title ?? null,
+    milestoneConfidence: milestone?.confidence ?? 0,
     duplicates,
   };
 }
@@ -294,7 +296,7 @@ export async function triageInbox(
 ): Promise<InboxTriageSnapshot | null> {
   if (client === null) return null;
   const open = items.filter((i) => !i.done);
-  const epics = triageEpics(tasks);
+  const milestones = triageMilestones(tasks);
   const result: Record<string, InboxTriage> = {};
   const pending: InboxItem[] = [];
   for (const item of open) {
@@ -307,13 +309,13 @@ export async function triageInbox(
     const judged = await mapLimit(pending, CONCURRENCY, async (item) => {
       const candidates = triageCandidates(item, tasks, open);
       const { answers } = await client.judge(
-        triageState(item, epics, candidates),
-        triageQuestions(epics, candidates)
+        triageState(item, milestones, candidates),
+        triageQuestions(milestones, candidates)
       );
       return interpretTriage(
         item.id,
         triageHash(item),
-        epics,
+        milestones,
         candidates,
         answers as TriageAnswers
       );
@@ -327,13 +329,13 @@ export async function triageInbox(
 }
 
 /** The items the Claude clusterer still needs to see: anything without a
- *  confident epic. With no snapshot, that is everything — as before. */
+ *  confident milestone. With no snapshot, that is everything — as before. */
 export function untriagedForClustering(
   items: InboxItem[],
   snapshot: InboxTriageSnapshot | null
 ): InboxItem[] {
   if (snapshot === null) return items;
-  return items.filter((item) => snapshot.items[item.id]?.epicId == null);
+  return items.filter((item) => snapshot.items[item.id]?.milestoneId == null);
 }
 
 /** `.dispatch/inbox-triage.json`, overwritten per pass — a cache of the last

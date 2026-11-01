@@ -1,10 +1,14 @@
 import {
   clearProjectCredential,
   DEFAULT_LINEAR,
+  fieldHash,
+  isDoneStatus,
   isOutstanding,
   loadConfig,
   parseLinearExternal,
   resolveLinearApiKey,
+  statusModelOf,
+  statusType,
   UNRESOLVED_LINEAR_ASSIGNEE,
   writeProjectCredential,
 } from '@dispatch-foo/core';
@@ -20,7 +24,10 @@ import type {
   LinearProject,
   LinearProjectMilestone,
   LinearUser,
+  StatusModel,
   TaskDoc,
+  TaskListItem,
+  TaskMeta,
   TaskStorePort,
 } from '@dispatch-foo/core';
 import { randomBytes } from 'node:crypto';
@@ -36,7 +43,9 @@ import type { DocsActor } from '../docs/service.js';
 import type { EventBus } from '../events.js';
 import { TaskChangeBatch } from './batch.js';
 import type {
+  LinearCapacity,
   LinearClient,
+  LinearErrorKind,
   LinearFailure,
   LinearIssuePage,
   LinearIssueRef,
@@ -45,9 +54,21 @@ import type {
   LinearResult,
   LinearWorkspace,
 } from './client.js';
-import { HttpLinearClient } from './client.js';
+import { FREE_PLAN_ISSUE_LIMIT, HttpLinearClient } from './client.js';
 import { CommentSync } from './comments.js';
 import type {
+  LinearCoverage,
+  LinearCoverageCounts,
+  LinearExportPreview,
+} from './coverage.js';
+import {
+  coverageCounts,
+  exportCandidates,
+  exportPreview,
+  linearCoverage,
+} from './coverage.js';
+import type {
+  CreateRemoteResult,
   LinearSyncSummary,
   ReconcileMode,
   RemoteRecord,
@@ -55,12 +76,18 @@ import type {
 import { emptySummary, LinearPass } from './reconcile.js';
 import type {
   ConflictRecord,
+  LinearBulkOutcome,
+  LinearCapacityState,
+  LinearExportScope,
   LinearIssueLink,
   LinearSyncState,
+  PushAttempt,
 } from './state.js';
 import {
+  accountedAt,
   echoTtlMs,
   pruneEchoes,
+  readBase,
   readLinearState,
   upgradeBases,
   webhookHooks,
@@ -83,12 +110,22 @@ import {
 
 export type { LinearSyncSummary } from './reconcile.js';
 
-/** Where a long pass (an import) has got to. `total` is null while unknown. */
+/** Where a long pass has got to. `total` is null while unknown; an absent
+ *  `action` is an import. */
 export interface LinearProgress {
-  phase: 'containers' | 'issues' | 'applying';
+  phase: 'containers' | 'issues' | 'applying' | 'creating' | 'archiving';
   done: number;
   total: number | null;
+  action?: 'import' | BulkAction;
 }
+
+/** A long action run in the background, reported through status. */
+type BulkAction = 'export' | 'archive' | 'retry';
+
+/** A start* method's answer: refused, or begun in the background. */
+type LinearBulkStart =
+  | { ok: true; candidates: number; startedAt: string }
+  | { ok: false; status: 409; error: string };
 
 export interface LinearStatus {
   enabled: boolean;
@@ -107,11 +144,22 @@ export interface LinearStatus {
   lastError: string | null;
   lastSummary: LinearSyncSummary | null;
   syncing: boolean;
+  /** Asked for by request id: the summary that request was answered with,
+   *  null until its pass ends. */
+  answered?: LinearSyncSummary | null;
   /** Field conflicts resolved since the link, and the latest few. */
   conflicts: { total: number; recent: ConflictRecord[] };
   /** Set while an import or other long pass is running. */
   progress: LinearProgress | null;
   webhook: LinearWebhookStatus;
+  /** The usage-limit pause and the counts last measured against the cap. */
+  capacity: LinearCapacityState | null;
+  /** Which tasks have a Linear record; null while sync is off. */
+  coverage: LinearCoverageCounts | null;
+  /** An export, archive or retry started and not yet finished. */
+  running: { action: BulkAction; startedAt: string } | null;
+  lastExport: LinearBulkOutcome | null;
+  lastArchive: LinearBulkOutcome | null;
 }
 
 /**
@@ -155,6 +203,9 @@ export interface LinearSyncDeps {
   webhookDebounceMs?: number;
   /** Linear documents; absent, documents are not synced. */
   documents?: LinearDocsBinding;
+  /** Tasks whose newest execute run has ended (tasksWithFinishedRun), for
+   *  moving them when a review state splits off the dispatched one. */
+  finishedRuns?: () => ReadonlySet<string>;
 }
 
 /** How the pass reaches the docs side: an adapter over a mapping it builds. */
@@ -169,8 +220,9 @@ class DocumentCallFailed extends Error {}
 
 // 'both' is the ordinary pass; 'push' is the debounced local-edit trigger;
 // 'import' is the explicit "bring existing Linear issues down" action;
-// 'webhook' applies what deliveries named, and nothing else.
-type SyncMode = 'both' | 'push' | 'import' | 'webhook';
+// 'webhook' applies what deliveries named, and nothing else; 'export' creates
+// the named tasks' records with no pull; 'archive' archives closed issues.
+type SyncMode = 'both' | 'push' | 'import' | 'webhook' | 'export' | 'archive';
 
 interface RunOptions {
   mode: SyncMode;
@@ -178,6 +230,21 @@ interface RunOptions {
   targets?: WebhookTargets;
   /** A timer pass, which may end at an idle probe (see pollOnce). */
   poll?: boolean;
+  /** Named tasks whose new issue is archived as it lands. */
+  archiveOnArrival?: ReadonlySet<string>;
+  /** An archive pass takes canceled issues too, beside completed ones. */
+  includeCanceled?: boolean;
+  /** The background action this pass carries out; its outcome is recorded. */
+  bulk?: BulkRun;
+}
+
+interface BulkRun {
+  action: BulkAction;
+  startedAt: string;
+  /** What the start counted; an archive pass replaces it with what it found. */
+  candidates: number;
+  scope?: LinearExportScope;
+  includeCanceled?: boolean;
 }
 
 /** What webhook deliveries named since the last targeted pass. */
@@ -236,6 +303,12 @@ interface Run {
   canPush: (id: string) => boolean;
   importing: boolean;
   taskIds: string[] | undefined;
+  /** The ids an explicit push names, or null on an ordinary pass. */
+  named: ReadonlySet<string> | null;
+  archiveOnArrival: ReadonlySet<string>;
+  bulk: BulkRun | null;
+  /** Closed issues an archive pass found to archive. */
+  found: number | null;
   /** The poll's probe, when one already ran this pass. */
   probe: LinearProbe | null;
 }
@@ -260,6 +333,19 @@ const WEBHOOK_POLL_SEC = 300;
 const WEBHOOK_RETRY_MS = 60 * 60_000;
 // How long applying pulled issues runs before handing the event loop back.
 const APPLY_SLICE_MS = 10;
+// How long GET /capacity reuses its last measurement.
+const CAPACITY_CACHE_MS = 60_000;
+// How long a paid plan's closed counts are reused between measurements.
+const CLOSED_COUNTS_MS = 15 * 60_000;
+// Tagged requests whose summaries status keeps (see LinearSync.answer).
+const ANSWERED_KEPT = 20;
+// Archive failures in a row that end an archive pass: a key that cannot
+// archive fails every issue alike.
+const ARCHIVE_FAILURE_RUN = 5;
+// A queued create's retry delay doubles per attempt from here, up to the cap.
+const QUEUE_RETRY_BASE_MS = 5 * 60_000;
+const QUEUE_RETRY_MAX_MS = 6 * 60 * 60_000;
+const NOT_LINKED = 'Linear is not linked yet; sync once first';
 
 // Returns a function to await between units of synchronous work: it yields
 // to the event loop once APPLY_SLICE_MS has passed since the last yield, so
@@ -391,6 +477,189 @@ async function probeTeams(
   return { ok: true, data: out };
 }
 
+// Records a create that did not land. Refused over the issue limit, it
+// waits out the pause uncounted; any other failure backs off, except an
+// automatic create, which the next pass retries anyway.
+function recordAttempt(
+  state: LinearSyncState,
+  id: string,
+  result: { error: string; capped: boolean },
+  kind: LinearErrorKind | null,
+  now: number
+): void {
+  const at = new Date(now).toISOString();
+  const prior: PushAttempt = state.pushQueue[id] ?? {
+    origin: 'auto',
+    queuedAt: at,
+    attempts: 0,
+    lastAttemptAt: null,
+    lastError: null,
+    lastErrorKind: null,
+    retryAt: null,
+  };
+  if (result.capped) {
+    state.pushQueue[id] = {
+      ...prior,
+      lastError: result.error,
+      lastErrorKind: 'usage-limit',
+    };
+    return;
+  }
+  const attempts = prior.attempts + 1;
+  state.pushQueue[id] = {
+    ...prior,
+    attempts,
+    lastAttemptAt: at,
+    lastError: result.error,
+    lastErrorKind: kind,
+    retryAt:
+      prior.origin === 'auto'
+        ? null
+        : new Date(now + retryDelay(attempts)).toISOString(),
+  };
+}
+
+// Whether ordinary passes are waiting out Linear's usage limit.
+function capacityPaused(state: LinearSyncState, now: number): boolean {
+  const retryAt = state.capacity?.retryAt ?? null;
+  return retryAt !== null && now < Date.parse(retryAt);
+}
+
+// Ends the usage-limit pause, keeping when it last hit and what was measured.
+function clearPause(state: LinearSyncState): void {
+  const capacity = state.capacity;
+  if (capacity === null || capacity.retryAt === null) return;
+  state.capacity = { ...capacity, retryAt: null, message: null };
+}
+
+// Whether a measurement shows room under `limit` that ends the pause. It
+// must have begun after Linear refused the create; and since it counts only
+// the teams the key can see, it must also be lower than the count measured
+// before, unless that one showed no room (or there was none). A count taken
+// before the limit was known is held to the limit now in force.
+function measuredRoom(
+  prior: LinearCapacityState | null,
+  active: number | null,
+  limit: number | null,
+  startedAt: number
+): boolean {
+  if (active === null || limit === null || active >= limit) return false;
+  const limitedAt = prior?.limitedAt ?? null;
+  if (limitedAt !== null && Date.parse(limitedAt) >= startedAt) return false;
+  const before = prior?.active ?? null;
+  if (before === null || before >= (prior?.limit ?? limit)) return true;
+  return active < before;
+}
+
+// The stored capacity a measurement begun at `startedAt` leaves, ending the
+// pause when it shows room (see measuredRoom).
+function nextCapacity(
+  prior: LinearCapacityState | null,
+  m: LinearCapacity,
+  startedAt: number
+): LinearCapacityState {
+  const limitedAt = prior?.limitedAt ?? null;
+  // Linear refused a create while the plan could not be read: the only
+  // issue limit it has is the Free plan's.
+  const observed =
+    m.limit === null && m.plan === 'unknown' && limitedAt !== null;
+  const limit = observed ? FREE_PLAN_ISSUE_LIMIT : m.limit;
+  const room = measuredRoom(prior, m.active, limit, startedAt);
+  return {
+    limitedAt,
+    retryAt: room ? null : (prior?.retryAt ?? null),
+    message: room ? null : (prior?.message ?? null),
+    active: m.active,
+    limit,
+    limitSource: observed ? 'observed' : m.limitSource,
+    plan: m.plan,
+    checkedAt: m.checkedAt,
+  };
+}
+
+function retryReady(entry: PushAttempt, now: number): boolean {
+  return entry.retryAt === null || Date.parse(entry.retryAt) <= now;
+}
+
+// Five minutes after the first failure, doubling, at most six hours.
+function retryDelay(attempts: number): number {
+  return Math.min(
+    QUEUE_RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1),
+    QUEUE_RETRY_MAX_MS
+  );
+}
+
+// Queued creates still waiting: those a push or an export named.
+function forcedEntries(state: LinearSyncState): number {
+  return Object.values(state.pushQueue).filter((e) => e.origin !== 'auto')
+    .length;
+}
+
+// Queues each task still without its record for a create, keeping what an
+// entry it already has says; an automatic entry takes `origin`.
+function queueCreates(
+  state: LinearSyncState,
+  metas: Iterable<
+    Pick<TaskMeta, 'id' | 'derivedFrom' | 'external'> | undefined
+  >,
+  origin: 'explicit' | 'export',
+  archive: ReadonlySet<string>,
+  at: string
+): void {
+  for (const meta of metas) {
+    if (meta === undefined || meta.derivedFrom !== undefined) continue;
+    if (parseLinearExternal(meta.external) !== null) continue;
+    const id = meta.id;
+    const prior = state.pushQueue[id];
+    const archived = archive.has(id) || prior?.archive === true;
+    state.pushQueue[id] = {
+      origin:
+        prior === undefined || prior.origin === 'auto' ? origin : prior.origin,
+      queuedAt: prior?.queuedAt ?? at,
+      attempts: prior?.attempts ?? 0,
+      lastAttemptAt: prior?.lastAttemptAt ?? null,
+      lastError: prior?.lastError ?? null,
+      lastErrorKind: prior?.lastErrorKind ?? null,
+      retryAt: prior?.retryAt ?? null,
+      ...(archived ? { archive: true as const } : {}),
+    };
+  }
+}
+
+// Records an unlinked task as deliberately not sent at this version. One
+// that left a linked team keeps its `pushed` entry, which a relink reads.
+function holdBack(state: LinearSyncState, id: string, updated: string): void {
+  if (state.pushed[id] !== undefined) state.pushed[id] = updated;
+  else (state.localOnly ??= {})[id] = updated;
+  if (state.pushQueue[id]?.origin === 'auto') delete state.pushQueue[id];
+}
+
+// A state written before `localOnly` held back unlinked tasks in `pushed`;
+// they move across once. Tasks that left a linked team stay in `pushed`.
+function foldLocalOnly(
+  state: LinearSyncState,
+  items: Iterable<TaskListItem>
+): void {
+  if (state.localOnly !== undefined) return;
+  const localOnly: Record<string, string> = {};
+  const movedOut = new Set(Object.values(state.movedOut));
+  for (const { meta } of items) {
+    const at = state.pushed[meta.id];
+    if (at === undefined || movedOut.has(meta.id)) continue;
+    if (parseLinearExternal(meta.external) !== null) continue;
+    localOnly[meta.id] = at;
+    delete state.pushed[meta.id];
+  }
+  state.localOnly = localOnly;
+}
+
+// At most five distinct messages, a repeat counted: 'usage limit exceeded (x44)'.
+function dedupeErrors(errors: readonly string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const e of errors) counts.set(e, (counts.get(e) ?? 0) + 1);
+  return [...counts].slice(0, 5).map(([e, n]) => (n > 1 ? `${e} (x${n})` : e));
+}
+
 /**
  * Keeps a project's tasks and one Linear team as two faithful copies: every
  * field both ways, merged field by field against a per-field base in
@@ -404,6 +673,9 @@ export class LinearSync {
   private debounce: ReturnType<typeof setTimeout> | null = null;
   private inFlight: Promise<LinearSyncSummary> | null = null;
   private lastSummary: LinearSyncSummary | null = null;
+  // The summaries the last few tagged requests were answered with, newest
+  // last, for a caller whose request was cut before its pass ended.
+  private readonly answered = new Map<string, LinearSyncSummary>();
   private progress: LinearProgress | null = null;
   // Set after a rate-limit failure; the timer and the debounced push both stand
   // down until it passes rather than spending the remaining hourly budget.
@@ -437,6 +709,30 @@ export class LinearSync {
     teams: LinearWorkspace[];
     labels: LinearLabel[];
   } | null = null;
+  // The export, archive or retry a start* method began, until its pass ends.
+  private running: { action: BulkAction; startedAt: string } | null = null;
+  // GET /capacity's last measurement, reused for CAPACITY_CACHE_MS; `closedAt`
+  // is when its closed counts were walked.
+  private capacityCache: {
+    at: number;
+    closedAt: number;
+    data: LinearCapacity;
+  } | null = null;
+  // The measurement running, and whether it walks the closed counts afresh.
+  private capacityInFlight: {
+    refresh: boolean;
+    done: Promise<LinearResult<LinearCapacity>>;
+  } | null = null;
+  // Bumped by each measurement and each reset; only the newest one caches.
+  private capacityEpoch = 0;
+  // Labels found blocked in Linear, kept across passes (see PassDeps).
+  private readonly blockedLabels = new Map<
+    string,
+    { reason: string; until: number }
+  >();
+  // State changes made outside a pass. A pass in flight re-applies them as it
+  // writes, so its own write of the state it read earlier keeps them.
+  private stateEdits: ((state: LinearSyncState) => unknown)[] = [];
 
   constructor(deps: LinearSyncDeps) {
     this.deps = deps;
@@ -455,13 +751,19 @@ export class LinearSync {
     }
   }
 
-  status(): LinearStatus {
+  status(request?: string): LinearStatus {
     const config = this.safeConfig();
     const linear = config?.linear ?? DEFAULT_LINEAR;
     const state = readLinearState(this.deps.rootDir);
     const { source } = resolveLinearApiKey(this.deps.rootDir);
+    const enabled = config !== null && linear.enabled;
+    // The pause's message outlives the pass that hit the limit: paused passes
+    // never call Linear, so they record no error of their own.
+    const pausedBy = capacityPaused(state, Date.now())
+      ? (state.capacity?.message ?? null)
+      : null;
     return {
-      enabled: config !== null && linear.enabled,
+      enabled,
       connected: this.deps.client !== undefined || source !== null,
       keySource: source,
       teamId: linear.teamId,
@@ -472,12 +774,26 @@ export class LinearSync {
       cursor: state.cursor,
       bootstrappedAt: state.bootstrappedAt,
       lastSyncAt: state.lastSyncAt,
-      lastError: this.configError ?? state.lastError,
+      lastError: this.configError ?? pausedBy ?? state.lastError,
       lastSummary: this.lastSummary,
       syncing: this.inFlight !== null,
+      ...(request === undefined
+        ? {}
+        : { answered: this.answered.get(request) ?? null }),
       conflicts: { total: state.conflictTotal, recent: state.conflicts },
       progress: this.progress,
       webhook: this.webhookStatus(linear, state),
+      capacity: state.capacity,
+      // From the task cache, never the store: status is read on every refresh.
+      coverage: enabled
+        ? coverageCounts(this.deps.cache.allItems(), state, {
+            direction: linear.direction,
+            model: statusModelOf(config),
+          })
+        : null,
+      running: this.running,
+      lastExport: state.lastExport,
+      lastArchive: state.lastArchive,
     };
   }
 
@@ -520,6 +836,7 @@ export class LinearSync {
    *  key. The machine-wide key is never written, staying a read-only fallback. */
   connect(apiKey: string): void {
     this.workspaceCache = null;
+    this.resetCapacity();
     writeProjectCredential(this.deps.rootDir, 'linear', { apiKey });
   }
 
@@ -537,6 +854,7 @@ export class LinearSync {
       writeLinearState(this.deps.rootDir, state);
     }
     this.workspaceCache = null;
+    this.resetCapacity();
     clearProjectCredential(this.deps.rootDir, 'linear');
   }
 
@@ -544,6 +862,7 @@ export class LinearSync {
   start(): void {
     this.stopTimers();
     this.workspaceCache = null;
+    this.blockedLabels.clear();
     const config = this.safeConfig();
     this.enabled = config?.linear.enabled ?? false;
     if (config === null) return;
@@ -641,6 +960,7 @@ export class LinearSync {
       t.documents.add(id);
     } else if (type === 'IssueLabel' || type === 'Cycle') {
       this.workspaceCache = null;
+      this.blockedLabels.clear();
     } else return;
     if (this.webhookTimer !== null) clearTimeout(this.webhookTimer);
     this.webhookTimer = setTimeout(() => {
@@ -713,12 +1033,39 @@ export class LinearSync {
     }, delay);
   }
 
-  /** Pull then push, per the configured direction. Concurrent callers share one pass. */
-  async syncOnce(taskIds?: string[]): Promise<LinearSyncSummary> {
+  /**
+   * Pull then push, per the configured direction. Concurrent callers share
+   * one pass. A `request` id keeps the answer for status to hand back.
+   */
+  async syncOnce(
+    taskIds?: string[],
+    request?: string
+  ): Promise<LinearSyncSummary> {
     // An explicit push carries tasks the in-flight pass never considered, so it
     // queues behind that pass instead of being answered by it.
-    if (taskIds === undefined && this.inFlight !== null) return this.inFlight;
-    return this.enqueue({ mode: 'both', taskIds });
+    const pass =
+      taskIds === undefined && this.inFlight !== null
+        ? this.inFlight
+        : this.enqueue({ mode: 'both', taskIds });
+    return this.answer(pass, request);
+  }
+
+  // Keeps the summary a tagged request is answered with, the last
+  // ANSWERED_KEPT of them, so status can say which pass it got.
+  private answer(
+    pass: Promise<LinearSyncSummary>,
+    request: string | undefined
+  ): Promise<LinearSyncSummary> {
+    if (request === undefined) return pass;
+    return pass.then((summary) => {
+      this.answered.delete(request);
+      this.answered.set(request, summary);
+      for (const old of this.answered.keys()) {
+        if (this.answered.size <= ANSWERED_KEPT) break;
+        this.answered.delete(old);
+      }
+      return summary;
+    });
   }
 
   /**
@@ -755,8 +1102,324 @@ export class LinearSync {
   }
 
   /** Brings the team's whole backlog down: containers, issues, comments, links. */
-  async importIssues(): Promise<LinearSyncSummary> {
-    return this.enqueue({ mode: 'import' });
+  async importIssues(request?: string): Promise<LinearSyncSummary> {
+    return this.answer(this.enqueue({ mode: 'import' }), request);
+  }
+
+  /** How many tasks each export scope would send. Reads only the task cache. */
+  exportPreview(): LinearExportPreview {
+    return exportPreview(
+      this.deps.cache.allItems(),
+      this.statusModel(),
+      readLinearState(this.deps.rootDir)
+    );
+  }
+
+  /**
+   * Creates Linear records for the unlinked tasks `scope` covers, in the
+   * background: an explicit push with no pull, queued like one so a create
+   * the pass does not land is retried. Progress and the outcome arrive
+   * through status and events.
+   */
+  startExport(scope: LinearExportScope): LinearBulkStart {
+    const refused = this.bulkRefusal('export');
+    if (refused !== null) return { ok: false, status: 409, error: refused };
+    const startedAt = new Date().toISOString();
+    const items = this.deps.cache.allItems();
+    const plan = exportCandidates(
+      items,
+      scope,
+      this.statusModel(),
+      readLinearState(this.deps.rootDir)
+    );
+    const candidates = plan.taskIds.length;
+    if (candidates === 0) return { ok: true, candidates, startedAt };
+    // Queued now, so a pass that stops before its creates (a throttle, a
+    // failed session) still leaves every one for later passes to send.
+    const metas = new Map(items.map((i) => [i.meta.id, i.meta]));
+    this.editState((state) =>
+      queueCreates(
+        state,
+        plan.taskIds.map((id) => metas.get(id)),
+        'export',
+        new Set(plan.archiveOnArrival),
+        startedAt
+      )
+    );
+    this.startBulk({
+      mode: 'export',
+      taskIds: plan.taskIds,
+      archiveOnArrival: new Set(plan.archiveOnArrival),
+      bulk: { action: 'export', startedAt, candidates, scope },
+    });
+    return { ok: true, candidates, startedAt };
+  }
+
+  /** Every task's Linear coverage, and why each unlinked one is unlinked. */
+  coverage(): LinearCoverage {
+    const config = this.safeConfig();
+    return linearCoverage(
+      this.deps.cache.allItems(),
+      readLinearState(this.deps.rootDir),
+      {
+        direction: (config?.linear ?? DEFAULT_LINEAR).direction,
+        model: statusModelOf(config),
+      }
+    );
+  }
+
+  /**
+   * Retries `taskIds` now, or every queued create: their backoff is reset
+   * and the usage-limit pause cleared, then they are pushed by name in the
+   * background.
+   */
+  startRetry(taskIds?: readonly string[]): LinearBulkStart {
+    const refused = this.bulkRefusal('retry');
+    if (refused !== null) return { ok: false, status: 409, error: refused };
+    const startedAt = new Date().toISOString();
+    const ids = [
+      ...new Set(
+        taskIds ?? Object.keys(readLinearState(this.deps.rootDir).pushQueue)
+      ),
+    ];
+    const metas = new Map(
+      this.deps.cache.allItems().map((i) => [i.meta.id, i.meta])
+    );
+    this.editState((state) => {
+      // A named task not queued yet is queued, as an export's are.
+      queueCreates(
+        state,
+        ids.map((id) => metas.get(id)),
+        'explicit',
+        new Set(),
+        startedAt
+      );
+      for (const id of ids) {
+        const entry = state.pushQueue[id];
+        if (entry !== undefined) {
+          state.pushQueue[id] = { ...entry, attempts: 0, retryAt: null };
+        }
+      }
+      clearPause(state);
+    });
+    const candidates = ids.length;
+    if (candidates === 0) return { ok: true, candidates, startedAt };
+    this.startBulk({
+      mode: 'export',
+      taskIds: ids,
+      bulk: { action: 'retry', startedAt, candidates },
+    });
+    return { ok: true, candidates, startedAt };
+  }
+
+  /**
+   * Stops retrying these tasks' creates: each queue entry is dropped and an
+   * unlinked task is held back at its current version, so only a later edit
+   * or a push by name sends it. Answers how many tasks that changed.
+   */
+  forget(taskIds: readonly string[]): number {
+    const items = this.deps.cache.allItems();
+    const metas = new Map(items.map((i) => [i.meta.id, i.meta]));
+    return this.editState((state) => {
+      foldLocalOnly(state, items);
+      let n = 0;
+      for (const id of new Set(taskIds)) {
+        const queued = state.pushQueue[id] !== undefined;
+        delete state.pushQueue[id];
+        const meta = metas.get(id);
+        const unlinked =
+          meta !== undefined && parseLinearExternal(meta.external) === null;
+        if (unlinked) holdBack(state, id, meta.updated);
+        if (queued || unlinked) n++;
+      }
+      return n;
+    });
+  }
+
+  /**
+   * Issue counts against the workspace's plan cap, measured live at most
+   * once a minute unless `refresh`; concurrent callers share a measurement.
+   * One with room under the limit ends the usage-limit pause (see
+   * measuredRoom).
+   */
+  async capacity(refresh = false): Promise<LinearResult<LinearCapacity>> {
+    const cached = this.capacityCache;
+    const fresh = cached !== null && Date.now() - cached.at < CAPACITY_CACHE_MS;
+    if (cached !== null && fresh && !refresh) {
+      return { ok: true, data: cached.data };
+    }
+    // A refresh never shares one that may reuse the closed counts.
+    const running = this.capacityInFlight;
+    if (running !== null && (running.refresh || !refresh)) return running.done;
+    const done = this.measureCapacity(refresh).finally(() => {
+      if (this.capacityInFlight?.done === done) this.capacityInFlight = null;
+    });
+    this.capacityInFlight = { refresh, done };
+    return done;
+  }
+
+  // Forgets the measurement and any running, which no longer caches.
+  private resetCapacity(): void {
+    this.capacityCache = null;
+    this.capacityInFlight = null;
+    this.capacityEpoch++;
+  }
+
+  private async measureCapacity(
+    refresh: boolean
+  ): Promise<LinearResult<LinearCapacity>> {
+    const cached = this.capacityCache;
+    const client = this.client();
+    if (client === null) {
+      return { ok: false, kind: 'auth', error: 'no Linear API key configured' };
+    }
+    if (Date.now() < this.backoffUntil) {
+      if (cached !== null) return { ok: true, data: cached.data };
+      return {
+        ok: false,
+        kind: 'rate-limit',
+        error: 'linear rate limit backoff in effect',
+        retryAfterMs: this.backoffUntil - Date.now(),
+      };
+    }
+    const teamIds = this.safeConfig()?.linear.teamIds ?? [];
+    // A paid plan has no cap, so its closed counts (which only the archive
+    // action reads) are walked again at most every CLOSED_COUNTS_MS.
+    const reuse =
+      !refresh &&
+      cached !== null &&
+      cached.data.plan === 'paid' &&
+      Date.now() - cached.closedAt < CLOSED_COUNTS_MS
+        ? cached
+        : null;
+    const startedAt = Date.now();
+    const epoch = ++this.capacityEpoch;
+    const measured = await client.capacity(
+      teamIds.length > 0 ? teamIds : undefined,
+      reuse?.data
+    );
+    if (!measured.ok) {
+      this.note(measured);
+      return measured;
+    }
+    // One a newer measurement or a reset superseded answers its caller, but
+    // leaves the stored counts and the pause to the newer one.
+    const current = epoch === this.capacityEpoch;
+    const counted = current
+      ? this.editState(
+          (state) =>
+            (state.capacity = nextCapacity(
+              state.capacity,
+              measured.data,
+              startedAt
+            ))
+        )
+      : nextCapacity(
+          readLinearState(this.deps.rootDir).capacity,
+          measured.data,
+          startedAt
+        );
+    const data: LinearCapacity = {
+      ...measured.data,
+      limit: counted.limit,
+      limitSource: counted.limitSource,
+      limitHitAt: counted.limitedAt,
+    };
+    if (current) {
+      this.capacityCache = {
+        at: Date.now(),
+        closedAt: reuse?.closedAt ?? Date.now(),
+        data,
+      };
+    }
+    return { ok: true, data };
+  }
+
+  /**
+   * Archives the linked teams' closed issues in Linear, completed ones and
+   * canceled ones too when asked, in the background. Their local tasks take
+   * the archive the way they would from an archive made in Linear.
+   */
+  startArchiveClosed(opts: { includeCanceled: boolean }): LinearBulkStart {
+    const refused = this.bulkRefusal('archiving closed issues');
+    if (refused !== null) return { ok: false, status: 409, error: refused };
+    if (readLinearState(this.deps.rootDir).bootstrappedAt === null) {
+      return { ok: false, status: 409, error: NOT_LINKED };
+    }
+    const startedAt = new Date().toISOString();
+    const candidates = this.closedEstimate(opts.includeCanceled);
+    this.startBulk({
+      mode: 'archive',
+      includeCanceled: opts.includeCanceled,
+      bulk: {
+        action: 'archive',
+        startedAt,
+        candidates,
+        includeCanceled: opts.includeCanceled,
+      },
+    });
+    return { ok: true, candidates, startedAt };
+  }
+
+  // Why a background action cannot start now, or null when it can.
+  private bulkRefusal(what: string): string | null {
+    const config = this.safeConfig();
+    if (config === null) return this.configError ?? 'invalid config';
+    if (config.linear.teamIds[0] === undefined) {
+      return 'no Linear team selected';
+    }
+    if (this.client() === null) return 'no Linear API key configured';
+    if (config.linear.direction === 'pull') {
+      return `sync direction is pull only; ${what} needs push`;
+    }
+    if (this.running !== null) return 'an export or archive is already running';
+    return null;
+  }
+
+  private startBulk(opts: RunOptions & { bulk: BulkRun }): void {
+    const { action, startedAt } = opts.bulk;
+    this.running = { action, startedAt };
+    void this.enqueue(opts)
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.running?.startedAt === startedAt) this.running = null;
+      });
+  }
+
+  // Applies a state change now, answering what it returns, and again to the
+  // state a pass in flight writes, so that write cannot undo it.
+  private editState<T>(edit: (state: LinearSyncState) => T): T {
+    const state = readLinearState(this.deps.rootDir);
+    const result = edit(state);
+    writeLinearState(this.deps.rootDir, state);
+    if (this.inFlight !== null) this.stateEdits.push(edit);
+    return result;
+  }
+
+  private statusModel(): StatusModel {
+    return statusModelOf(this.safeConfig());
+  }
+
+  // How many closed issues an archive would take: the last measurement's
+  // counts for the linked teams, or else the linked local tasks that are closed.
+  private closedEstimate(includeCanceled: boolean): number {
+    const teamIds = this.safeConfig()?.linear.teamIds ?? [];
+    const measured = this.capacityCache?.data.teams.filter((t) =>
+      teamIds.includes(t.id)
+    );
+    if (measured !== undefined && measured.length > 0) {
+      return measured.reduce(
+        (n, t) => n + t.completed + (includeCanceled ? t.canceled : 0),
+        0
+      );
+    }
+    const model = this.statusModel();
+    return this.deps.cache.allItems().filter(({ meta }) => {
+      if (meta.archivedAt !== undefined) return false;
+      if (parseLinearExternal(meta.external)?.entity !== 'issue') return false;
+      const type = statusType(meta.status, model);
+      return type === 'completed' || (includeCanceled && type === 'canceled');
+    }).length;
   }
 
   private enqueue(opts: RunOptions): Promise<LinearSyncSummary> {
@@ -979,20 +1642,37 @@ export class LinearSync {
 
   private async run(opts: RunOptions): Promise<LinearSyncSummary> {
     const summary = emptySummary(new Date().toISOString());
+    const bulk = opts.bulk ?? null;
+    // A background action that never got going still records how it ended.
+    const stopped = () =>
+      bulk === null ? {} : { outcome: this.outcome(bulk, summary, 0) };
     if (Date.now() < this.backoffUntil) {
       summary.rateLimited = true;
       summary.errors.push('linear rate limit backoff in effect');
-      return this.finish(summary, readLinearState(this.deps.rootDir), null);
+      const state = readLinearState(this.deps.rootDir);
+      return this.finish(summary, state, null, undefined, stopped());
     }
     const opened = await this.openSession(opts.mode === 'import');
     if (!opened.ok) {
       summary.errors.push(opened.error);
       // Persisted so `status().lastError` explains a misconfiguration, not just the summary.
-      return this.finish(summary, readLinearState(this.deps.rootDir), null);
+      const state = readLinearState(this.deps.rootDir);
+      return this.finish(summary, state, null, undefined, stopped());
     }
     const session = opened.session;
     const { store, cache, rootDir } = this.deps;
     const state = readLinearState(rootDir);
+    const archiving = opts.mode === 'archive';
+    if (archiving && state.bootstrappedAt === null) {
+      summary.errors.push(NOT_LINKED);
+      return this.finish(
+        summary,
+        state,
+        null,
+        session.linear.intervalSec,
+        stopped()
+      );
+    }
     this.takeCommentChanges(state);
     let probe: LinearProbe | null = null;
     if (opts.poll === true && state.bootstrappedAt !== null) {
@@ -1029,7 +1709,8 @@ export class LinearSync {
         !this.localDirty &&
         (this.deps.documents?.outstanding().length ?? 0) === 0 &&
         !this.auditDue(state) &&
-        this.webhookSettled(state, session);
+        this.webhookSettled(state, session) &&
+        !(session.linear.direction !== 'pull' && this.retryDue(state));
       if (idle) {
         return this.finish(summary, state, null, session.linear.intervalSec, {
           quiet: true,
@@ -1039,6 +1720,7 @@ export class LinearSync {
     this.localDirty = false;
     const docs = new Map(store.listSafe().docs.map((d) => [d.meta.id, d]));
     this.foldLegacyWatermark(state, docs);
+    foldLocalOnly(state, docs.values());
     const batch = new TaskChangeBatch(
       store,
       cache,
@@ -1047,9 +1729,16 @@ export class LinearSync {
         this.quietly(() =>
           this.deps.events.broadcast({ type: 'task.changed', ids })
         );
-        if (this.progress !== null) {
+        // Only an import's progress counts writes; an export or archive
+        // line keeps its own phase.
+        const progress = this.progress;
+        if (
+          progress !== null &&
+          (progress.phase === 'applying' ||
+            (progress.action ?? 'import') === 'import')
+        ) {
           this.setProgress({
-            ...this.progress,
+            ...progress,
             phase: 'applying',
             done: batch.count(),
           });
@@ -1068,9 +1757,11 @@ export class LinearSync {
         id: t.team.id,
         key: t.team.key,
         states: t.states,
-      }))
+      })),
+      this.deps.finishedRuns?.()
     );
     for (const id of regenerated.migrated) batch.add(id);
+    summary.migrated = regenerated.migrated.length;
     upgradeBases(state, state.stateNames);
     const localRef = this.deps.localHumanRef ?? 'human:me';
     const people = syncPeople(
@@ -1117,6 +1808,7 @@ export class LinearSync {
       batch,
       note: (failure) => this.note(failure),
       onLabel: (label) => this.cacheLabel(session, label),
+      blockedLabels: this.blockedLabels,
     });
     // A color write that did not land keeps its old base, so it retries.
     for (const id of await pass.pushLabelColors(labels.push)) {
@@ -1125,6 +1817,7 @@ export class LinearSync {
       else state.labelColors[id] = was;
     }
     const changedComments = new Map<string, Set<string>>();
+    const named = opts.taskIds === undefined ? null : new Set(opts.taskIds);
     const run: Run = {
       pass,
       session,
@@ -1145,11 +1838,16 @@ export class LinearSync {
             }),
       mayPull,
       // An explicit push writes only the tasks it names; others a pull meets
-      // take Linear's changes and keep their own for an ordinary pass.
+      // take Linear's changes and keep their own for an ordinary pass. An
+      // archive pass only takes Linear's archive.
       canPush: (id) =>
-        mayPush && (opts.taskIds === undefined || opts.taskIds.includes(id)),
+        mayPush && !archiving && (named === null || named.has(id)),
       importing: opts.mode === 'import',
       taskIds: opts.taskIds,
+      named,
+      archiveOnArrival: opts.archiveOnArrival ?? new Set(),
+      bulk,
+      found: null,
       probe,
     };
 
@@ -1157,6 +1855,9 @@ export class LinearSync {
     // takes a cursor instead of scanning a whole team it has no use for.
     const baselining = state.bootstrappedAt === null && !run.importing;
     const webhook = opts.mode === 'webhook';
+    // An export or archive does its one job; the next ordinary pass catches
+    // up on the pull, documents, audit and webhook.
+    const upkeep = !webhook && opts.mode !== 'export' && !archiving;
     if (webhook) {
       if (!baselining && mayPull) {
         await pass.guarded(() => this.applyTargets(run, opts.targets));
@@ -1164,6 +1865,10 @@ export class LinearSync {
         if (delivered !== undefined && delivered.size > 0 && !pass.stopped)
           await pass.guarded(() => this.syncDocuments(run, delivered));
       }
+    } else if (archiving) {
+      await pass.guarded(() =>
+        this.archiveClosed(run, opts.includeCanceled === true)
+      );
     } else if (baselining) {
       const now = new Date().toISOString();
       state.cursor = rewind(now);
@@ -1182,17 +1887,17 @@ export class LinearSync {
     }
 
     const pushing = baselining ? opts.taskIds !== undefined : !run.importing;
-    if (!webhook && pushing && mayPush && !pass.stopped) {
+    if (!webhook && !archiving && pushing && mayPush && !pass.stopped) {
       await pass.guarded(() => this.push(run));
     }
 
-    if (!webhook && !baselining && !pass.stopped) {
+    if (upkeep && !baselining && !pass.stopped) {
       await pass.guarded(() => this.audit(run, run.importing));
     }
-    if (!webhook && !baselining && !pass.stopped) {
+    if (upkeep && !baselining && !pass.stopped) {
       await pass.guarded(() => this.syncDocuments(run));
     }
-    if (!webhook && !pass.stopped) {
+    if (upkeep && !pass.stopped) {
       await pass.guarded(() => this.ensureWebhook(run));
       if (this.timer !== null) {
         this.schedulePolls(session.linear.intervalSec, state.webhook !== null);
@@ -1213,6 +1918,13 @@ export class LinearSync {
       this.accountForAll(state, docs);
       state.bootstrappedAt = new Date().toISOString();
     }
+    // A create a throttle stopped after its record landed is linked now.
+    this.pruneQueue(state, docs);
+    summary.queued = forcedEntries(state);
+    // Archiving freed room, so creates queued behind the limit go next.
+    if (archiving && summary.archivedIssues > 0 && this.retryDue(state)) {
+      this.schedulePush();
+    }
     this.quietly(() => {
       for (const [taskId, ids] of changedComments) {
         this.deps.events.broadcast({
@@ -1222,7 +1934,13 @@ export class LinearSync {
         });
       }
     });
-    return this.finish(summary, state, batch, session.linear.intervalSec);
+    return this.finish(
+      summary,
+      state,
+      batch,
+      session.linear.intervalSec,
+      bulk === null ? {} : { outcome: this.passOutcome(run, bulk) }
+    );
   }
 
   /**
@@ -1366,13 +2084,17 @@ export class LinearSync {
   }
 
   // Records every task on disk at its current version, so establishing the link leaves
-  // nothing outstanding for the push to send.
+  // nothing outstanding for the push to send: a linked task as what Linear
+  // holds, an unlinked one as held back.
   private accountForAll(
     state: LinearSyncState,
     docs: Map<string, TaskDoc>
   ): void {
     for (const doc of docs.values()) {
-      state.pushed[doc.meta.id] = doc.meta.updated;
+      const { id, updated } = doc.meta;
+      if (parseLinearExternal(doc.meta.external) === null) {
+        (state.localOnly ??= {})[id] = updated;
+      } else state.pushed[id] = updated;
     }
   }
 
@@ -1405,7 +2127,10 @@ export class LinearSync {
     state: LinearSyncState,
     batch: TaskChangeBatch | null,
     intervalSec = 300,
-    { quiet = false }: { quiet?: boolean } = {}
+    {
+      quiet = false,
+      outcome,
+    }: { quiet?: boolean; outcome?: LinearBulkOutcome } = {}
   ): LinearSyncSummary {
     batch?.flush();
     this.progress = null;
@@ -1417,11 +2142,86 @@ export class LinearSync {
       Date.now(),
       echoTtlMs(intervalSec)
     );
+    // Written before linear.changed goes out, so a client refreshing on it
+    // sees the outcome and nothing running.
+    if (outcome !== undefined) {
+      if (outcome.action === 'archive') state.lastArchive = outcome;
+      else state.lastExport = outcome;
+      this.running = null;
+      this.resetCapacity();
+    }
+    for (const edit of this.stateEdits.splice(0)) edit(state);
     writeLinearState(this.deps.rootDir, state);
     this.lastSummary = summary;
     // An idle poll changed nothing a client shows, so it stays silent.
     if (!quiet) this.deps.events.broadcast({ type: 'linear.changed', summary });
     return summary;
+  }
+
+  // A background action's outcome. `done` is what landed; `candidates`
+  // defaults to what the start counted.
+  private outcome(
+    bulk: BulkRun,
+    summary: LinearSyncSummary,
+    done: number,
+    extra: { candidates?: number; archivedOnArrival?: number } = {}
+  ): LinearBulkOutcome {
+    const candidates = extra.candidates ?? bulk.candidates;
+    return {
+      action: bulk.action,
+      startedAt: bulk.startedAt,
+      at: new Date().toISOString(),
+      ...(bulk.scope === undefined ? {} : { scope: bulk.scope }),
+      ...(bulk.includeCanceled === undefined
+        ? {}
+        : { includeCanceled: bulk.includeCanceled }),
+      candidates,
+      done,
+      ...(extra.archivedOnArrival === undefined
+        ? {}
+        : { archivedOnArrival: extra.archivedOnArrival }),
+      remaining: Math.max(0, candidates - done),
+      halted: summary.usageLimited
+        ? 'usage-limit'
+        : summary.rateLimited
+          ? 'rate-limit'
+          : null,
+      errors: dedupeErrors(summary.errors),
+    };
+  }
+
+  // How a pass that ran ended: an archive by issues archived, an export or
+  // retry by named tasks that now have their record.
+  private passOutcome(run: Run, bulk: BulkRun): LinearBulkOutcome {
+    const summary = run.pass.summary;
+    if (bulk.action === 'archive') {
+      return this.outcome(bulk, summary, summary.archivedIssues, {
+        candidates: run.found ?? bulk.candidates,
+      });
+    }
+    const ids = run.taskIds ?? [];
+    const linked = ids.filter(
+      (id) => parseLinearExternal(run.docs.get(id)?.meta.external) !== null
+    );
+    if (bulk.action === 'retry') {
+      return this.outcome(bulk, summary, linked.length);
+    }
+    const archived = fieldHash(true);
+    const archivedOnArrival = linked.filter(
+      (id) =>
+        run.archiveOnArrival.has(id) &&
+        readBase(run.state, id, 'issue')?.remote.archived === archived
+    ).length;
+    return this.outcome(bulk, summary, linked.length, { archivedOnArrival });
+  }
+
+  // Whether a queued create is due, so an idle poll still runs the push.
+  private retryDue(state: LinearSyncState): boolean {
+    const now = Date.now();
+    if (capacityPaused(state, now)) return false;
+    return Object.values(state.pushQueue).some(
+      (e) => e.origin !== 'auto' && retryReady(e, now)
+    );
   }
 
   private auditDue(state: LinearSyncState): boolean {
@@ -1804,21 +2604,38 @@ export class LinearSync {
   }
 
   private async push(run: Run): Promise<void> {
-    const { pass, session, state, docs, touched, taskIds, mayPull } = run;
-    const explicit = taskIds !== undefined;
+    const { pass, session, state, docs, touched, named, mayPull } = run;
+    const explicit = named !== null;
     const summary = pass.summary;
+    const now = Date.now();
+    const at = new Date(now).toISOString();
+    this.pruneQueue(state, docs);
+    if (named !== null) this.queueNamed(run, named, at);
+    // Ordinary passes create nothing while the issue limit's pause runs; a
+    // push by name tries anyway, and its first refusal caps the pass.
+    const paused = !explicit && capacityPaused(state, now);
+    // Creates a push or an export named, due again: an ordinary pass sends
+    // them as if named.
+    const forced = new Set<string>();
+    if (!explicit && !paused) {
+      for (const [id, entry] of Object.entries(state.pushQueue)) {
+        if (entry.origin !== 'auto' && retryReady(entry, now)) forced.add(id);
+      }
+    }
     // A derived task's description is the artifact's own prose (a PR body),
     // and it exists only to anchor a local review — so it never becomes an
     // issue, not even on an explicit push, which is still a request to
     // publish it to a whole team's tracker.
-    const candidates = [...docs.values()].filter(
-      (doc) =>
-        doc.meta.derivedFrom === undefined &&
-        (explicit
-          ? taskIds.includes(doc.meta.id)
-          : !touched.has(doc.meta.id) &&
-            isOutstanding(doc.meta.updated, state.pushed[doc.meta.id]))
-    );
+    const candidates = [...docs.values()].filter((doc) => {
+      const id = doc.meta.id;
+      if (doc.meta.derivedFrom !== undefined) return false;
+      if (named !== null) return named.has(id);
+      if (forced.has(id)) return true;
+      return (
+        !touched.has(id) &&
+        isOutstanding(doc.meta.updated, accountedAt(state, id))
+      );
+    });
     const linked = candidates.filter(
       (d) => parseLinearExternal(d.meta.external) !== null
     );
@@ -1855,10 +2672,14 @@ export class LinearSync {
             );
             continue;
           }
+          const asked = named?.has(current.meta.id) === true;
+          // A named update that does not land is left outstanding, so the
+          // next ordinary pass sends it again.
+          if (asked) delete state.pushed[current.meta.id];
           await pass.reconcileIssue(current, issue, {
             mayPull,
             mayPush: true,
-            explicit: explicit && taskIds.includes(current.meta.id),
+            explicit: asked,
           });
         }
       }
@@ -1875,26 +2696,76 @@ export class LinearSync {
       });
     }
 
-    for (const doc of pass.creationOrder(unlinked)) {
+    await this.retryArrivalArchives(run);
+
+    const order = pass.creationOrder(unlinked);
+    const bulk = run.bulk;
+    const report = (done: number): void => {
+      if (bulk === null || bulk.action === 'archive') return;
+      this.setProgress({
+        phase: 'creating',
+        done,
+        total: order.length,
+        action: bulk.action,
+      });
+    };
+    report(0);
+    let attempted = 0;
+    for (const doc of order) {
       const current = docs.get(doc.meta.id) ?? doc;
-      if (!explicit && !this.mayAutoCreate(state, current)) {
-        state.pushed[current.meta.id] = current.meta.updated;
+      const id = current.meta.id;
+      const asked = explicit || forced.has(id);
+      if (!asked && !this.mayAutoCreate(state, current)) {
+        holdBack(state, id, current.meta.updated);
         continue;
       }
       // An archived task that never reached Linear stays local.
-      if (!explicit && current.meta.archivedAt !== undefined) {
-        state.pushed[current.meta.id] = current.meta.updated;
+      if (!asked && current.meta.archivedAt !== undefined) {
+        holdBack(state, id, current.meta.updated);
         continue;
       }
-      await pass.createRemote(current);
-      // A task that just got its issue takes its comments along.
-      const now = docs.get(current.meta.id);
+      // Left outstanding, or queued, until the pause ends.
+      if (paused) continue;
+      const archive =
+        run.archiveOnArrival.has(id) || state.pushQueue[id]?.archive === true;
+      let result: CreateRemoteResult;
+      try {
+        result = await pass.createRemote(current, { archive });
+      } catch (err) {
+        // A throttle after the create linked the task: it is no longer held
+        // back, so its unsent follow-ups stay outstanding, and its comments
+        // wait in the queue for a later pass.
+        if (parseLinearExternal(docs.get(id)?.meta.external) !== null) {
+          delete state.localOnly?.[id];
+          clearPause(state);
+          run.comments?.queueAll(id);
+        }
+        throw err;
+      }
+      report(++attempted);
+      if (result.created) {
+        delete state.pushQueue[id];
+        delete state.localOnly?.[id];
+        clearPause(state);
+      } else {
+        summary.failedTaskIds.push(id);
+        recordAttempt(state, id, result, pass.lastFailureKind, now);
+        continue;
+      }
+      // A task that just got its issue takes its comments along, queued
+      // first so a throttle or a failed send leaves them for a later pass.
+      const linkedNow = docs.get(id);
       if (
         run.comments !== null &&
-        parseLinearExternal(now?.meta.external)?.entity === 'issue'
+        parseLinearExternal(linkedNow?.meta.external)?.entity === 'issue'
       ) {
-        await run.comments.pushAll(current.meta.id);
-        delete state.pendingComments[current.meta.id];
+        run.comments.queueAll(id);
+        const retry = await run.comments.push(
+          id,
+          state.pendingComments[id] ?? []
+        );
+        if (retry.length > 0) state.pendingComments[id] = retry;
+        else delete state.pendingComments[id];
       }
     }
 
@@ -1905,6 +2776,132 @@ export class LinearSync {
         else delete state.pendingComments[taskId];
       }
     }
+  }
+
+  // Archives the issues an export meant to land archived whose archive
+  // failed then, while each task is still linked to its issue and finished
+  // or archived. Stops as archiveClosed does; a refused one goes to the back.
+  private async retryArrivalArchives(run: Run): Promise<void> {
+    const { pass, state, docs, ctx } = run;
+    const pending = state.pendingArchives ?? {};
+    let failedInRow = 0;
+    for (const [taskId, issueId] of Object.entries(pending)) {
+      const doc = docs.get(taskId);
+      const ref = parseLinearExternal(doc?.meta.external);
+      const wanted =
+        doc !== undefined &&
+        ref?.entity === 'issue' &&
+        ref.id === issueId &&
+        (doc.meta.archivedAt !== undefined ||
+          isDoneStatus(doc.meta.status, ctx.model));
+      if (!wanted || (await pass.archiveOnArrival(taskId, issueId))) {
+        if (wanted) failedInRow = 0;
+        delete pending[taskId];
+        continue;
+      }
+      delete pending[taskId];
+      pending[taskId] = issueId;
+      if (
+        pass.lastFailureKind === 'auth' ||
+        ++failedInRow >= ARCHIVE_FAILURE_RUN
+      ) {
+        break;
+      }
+    }
+  }
+
+  // Drops queue entries whose task is gone, now derived, or has its record.
+  private pruneQueue(
+    state: LinearSyncState,
+    docs: ReadonlyMap<string, TaskDoc>
+  ): void {
+    for (const id of Object.keys(state.pushQueue)) {
+      const doc = docs.get(id);
+      if (
+        doc === undefined ||
+        doc.meta.derivedFrom !== undefined ||
+        parseLinearExternal(doc.meta.external) !== null
+      ) {
+        delete state.pushQueue[id];
+      }
+    }
+  }
+
+  // Queues every named task still without its record before any create, so
+  // one a halt never reaches is retried by later passes.
+  private queueNamed(run: Run, named: ReadonlySet<string>, at: string): void {
+    const { state, docs } = run;
+    const origin = run.bulk?.action === 'export' ? 'export' : 'explicit';
+    queueCreates(
+      state,
+      [...named].map((id) => docs.get(id)?.meta),
+      origin,
+      run.archiveOnArrival,
+      at
+    );
+  }
+
+  /**
+   * Archives the linked teams' closed issues in Linear, then pulls the
+   * archive onto the tasks linked to them, as a pull would after an archive
+   * made in Linear. Nothing local is pushed.
+   */
+  private async archiveClosed(
+    run: Run,
+    includeCanceled: boolean
+  ): Promise<void> {
+    const { pass, session, ctx, state } = run;
+    const types: ('completed' | 'canceled')[] = includeCanceled
+      ? ['completed', 'canceled']
+      : ['completed'];
+    const closed = pass.take(
+      await acrossTeams(session.teamIds, (id) =>
+        session.client.closedIssues(id, types)
+      )
+    );
+    if (closed === null) return;
+    const total = closed.nodes.length;
+    run.found = total;
+    const archived: LinearIssue[] = [];
+    this.setProgress({ phase: 'archiving', done: 0, total, action: 'archive' });
+    let failedInRow = 0;
+    for (const [i, ref] of closed.nodes.entries()) {
+      const issue = pass.take(await session.client.archiveIssue(ref.id));
+      if (issue !== null) {
+        failedInRow = 0;
+        archived.push(issue);
+        pass.summary.archivedIssues++;
+        // Room under the cap again, so queued creates may go.
+        clearPause(state);
+      } else if (
+        pass.lastFailureKind === 'auth' ||
+        ++failedInRow >= ARCHIVE_FAILURE_RUN
+      ) {
+        pass.recordFailure(
+          `stopped archiving after ${i + 1} of ${total}: Linear refused the archive`
+        );
+        break;
+      }
+      this.setProgress({
+        phase: 'archiving',
+        done: i + 1,
+        total,
+        action: 'archive',
+      });
+    }
+    const mine = archived.filter((i) => ctx.taskByRemote.has(i.id));
+    if (mine.length === 0 || !run.mayPull) return;
+    const fetched: Fetched = {
+      initiatives: [],
+      projects: [],
+      milestones: [],
+      issues: mine,
+      comments: [],
+    };
+    await this.fillReferences(run, fetched);
+    await this.learnUsers(run, fetched);
+    await this.applyContainers(run, fetched);
+    await this.applyIssues(run, fetched.issues);
   }
 
   private async pushContainers(

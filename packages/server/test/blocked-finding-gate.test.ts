@@ -111,14 +111,12 @@ function blockTask(harness: Harness, taskId: string, runId: string): void {
   });
 }
 
-// Every queue command succeeds except `jj`, which is absent — the plain-git
-// path, so the queue reaches merge() through the orchestrator's own review.
-const noJjRunner = (_cwd: string, cmd: string[]): Promise<CommandResult> =>
-  Promise.resolve(
-    cmd[0] === 'jj'
-      ? { ok: false, stdout: '', stderr: 'jj: command not found' }
-      : { ok: true, stdout: '', stderr: '' }
-  );
+// Every queue command succeeds, so the queue reaches merge() through the
+// orchestrator's own review.
+const okRunner = (_cwd: string, cmd: string[]): Promise<CommandResult> => {
+  void cmd;
+  return Promise.resolve({ ok: true, stdout: '', stderr: '' });
+};
 
 // The same runner, plus a record of what the queue actually ran — a PR entry
 // merges through `gh`, so only the call log proves it was never merged.
@@ -131,7 +129,7 @@ function recordingRunner(): {
     calls,
     run: async (cwd, cmd) => {
       calls.push(cmd);
-      return noJjRunner(cwd, cmd);
+      return okRunner(cwd, cmd);
     },
   };
 }
@@ -169,7 +167,7 @@ describe('a blocked finding gates every merge path', () => {
         events: harness.events,
         orchestrator: harness.orchestrator,
       },
-      noJjRunner
+      okRunner
     );
 
     try {
@@ -193,7 +191,7 @@ describe('a blocked finding gates every merge path', () => {
         events: harness.events,
         orchestrator: harness.orchestrator,
       },
-      noJjRunner
+      okRunner
     );
 
     try {
@@ -215,7 +213,7 @@ describe('a blocked finding gates every merge path', () => {
         events: harness.events,
         orchestrator: harness.orchestrator,
       },
-      noJjRunner
+      okRunner
     );
 
     try {

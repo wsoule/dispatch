@@ -1,8 +1,8 @@
 import type { Message } from '@dispatch-foo/protocol';
 
 import type { LinearProgress, LinearSyncSummary } from './linear/sync.js';
-import type { EpicPauseReason } from './orchestrator/epic.js';
 import type { FixLoopStop } from './orchestrator/fixLoop.js';
+import type { MilestonePauseReason } from './orchestrator/milestone.js';
 import type { NormalizedEntry, RunSurvey } from './orchestrator/types.js';
 import type { ReceiptsResult } from './receipts/exporter.js';
 import type { SyncResult } from './sync/boardSyncer.js';
@@ -119,18 +119,18 @@ export type ServerEvent =
       reason: FixLoopStop;
       message?: string;
     }
-  // An epic's dispatch session changed: started, paused, resumed, stopped,
+  // A milestone's dispatch session changed: started, paused, resumed, stopped,
   // completed, or a fill dispatched a batch. Same "go refetch, no payload
-  // beyond the id" contract as `plan.changed` — EpicEngine debounces it per
-  // epic so a wave's terminal storm is one refetch of GET /api/epics/:id/progress.
-  | { type: 'epic.changed'; epicId: string }
-  // An epic's session paused on its own (a ceiling or a fill that kept
+  // beyond the id" contract as `plan.changed` — MilestoneEngine debounces it per
+  // milestone so a wave's terminal storm is one refetch of GET /api/milestones/:id/progress.
+  | { type: 'milestone.changed'; milestoneId: string }
+  // A milestone's session paused on its own (a ceiling or a fill that kept
   // failing — never a human's pause). Carries the spend numbers like
   // `fixloop.capped` so a client can toast the reason without a fetch.
   | {
-      type: 'epic.paused';
-      epicId: string;
-      reason: EpicPauseReason;
+      type: 'milestone.paused';
+      milestoneId: string;
+      reason: MilestonePauseReason;
       settledUsd: number;
       estimatedLiveUsd: number;
       maxSpendUsd: number | null;

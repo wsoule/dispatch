@@ -33,7 +33,7 @@ const entry = {
   ),
   rev: 3,
 };
-const ctx = { taskId: 't-1a2b3c', epic: null };
+const ctx = { taskId: 't-1a2b3c', milestone: null };
 
 // The file as Claude Code rewrites it: `metadata: ` with a trailing space, its
 // own node_type and new keys, the body untouched.

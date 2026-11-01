@@ -13,7 +13,16 @@ const SKEW_WARN_MS = 60 * 1000;
 
 /** What the relay can read, shown before any switch to it (F-D31). */
 export const RELAY_DISCLOSURE =
-  'The relay can read everything that is not sealed: the board, team memory and team docs, the roster with the team’s license key, presence, and who messaged whom and when. It cannot read message contents.';
+  'The relay can read everything that is not sealed: the board, team memory and team docs, the roster with the team’s license key, presence, and who messaged whom and when. It cannot read message contents. An admin can turn on end-to-end encryption for team content in Settings → Members or with dispatch team encrypt.';
+
+/** What the relay can read once team content is end-to-end encrypted. */
+export const RELAY_DISCLOSURE_E2E =
+  'Team content is end-to-end encrypted. The relay can read the roster with the team’s license key and machine public keys, and each change’s publisher, time, type and size, plus who a sealed message is for and what kind of presence it is. It cannot read the board, team memory, team docs, presence details or message contents. What was published before encryption was turned on stays readable to it.';
+
+/** The disclosure that is true for the team as it is now. */
+export function relayDisclosure(view: RosterView | null): string {
+  return view?.contentE2e != null ? RELAY_DISCLOSURE_E2E : RELAY_DISCLOSURE;
+}
 
 /** What `GET /api/team/keys` answers, at the decide tier. */
 export interface TeamKeys {
@@ -183,7 +192,7 @@ export function assembleTeamKeys(input: TeamKeysInput): TeamKeys {
       input.remote === null
         ? null
         : originWarning(withoutCredentials(input.remote)),
-    relayDisclosure: RELAY_DISCLOSURE,
+    relayDisclosure: relayDisclosure(view),
     warnings: warnings(input, roster),
     problems: input.problems,
     pause:

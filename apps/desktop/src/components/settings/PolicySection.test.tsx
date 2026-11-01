@@ -28,7 +28,7 @@ function configAt(
 function receipt(overrides: Partial<LedgerEntry>): LedgerEntry {
   return {
     id: 'l-000001',
-    epicId: null,
+    milestoneId: null,
     sourceTaskId: 't-aaaaaa',
     kind: 'decision',
     title: 'Scope extended for run r-x',

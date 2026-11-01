@@ -201,7 +201,7 @@ export function createTeamMemoryPort(deps: {
           title: fields.title as string,
           body: fields.body as string,
           refs: fields.refs as Ref[],
-          epic: (fields.epic ?? null) as string | null,
+          milestone: (fields.milestone ?? null) as string | null,
           appliesTo: (fields.appliesTo ?? []) as string[],
           projectKey: null,
         });
@@ -210,7 +210,7 @@ export function createTeamMemoryPort(deps: {
           title: valid.title,
           body: valid.body,
           refs: valid.refs,
-          epic: valid.epic,
+          milestone: valid.milestone,
           appliesTo: valid.appliesTo,
         };
       } catch (err) {
@@ -241,8 +241,8 @@ export function createTeamMemoryPort(deps: {
       const gated =
         held === null ||
         memoryContentHash(held) !== memoryContentHash(content) ||
-        JSON.stringify([held.epic, held.appliesTo]) !==
-          JSON.stringify([content.epic, content.appliesTo]) ||
+        JSON.stringify([held.milestone, held.appliesTo]) !==
+          JSON.stringify([content.milestone, content.appliesTo]) ||
         reason !== describe({ ...extra, ...pickExtra(held) }, held.author);
       // A proposal still open is what a human here was asked; it is updated
       // rather than bypassed.

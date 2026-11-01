@@ -118,7 +118,7 @@ import {
   openHumanDecisions,
   SYSTEM_SENDER,
 } from './messaging/gates.js';
-import { implicitEpicMembers } from './messaging/host.js';
+import { implicitMilestoneMembers } from './messaging/host.js';
 import { DaemonHubLink } from './messaging/hubLink.js';
 import { teamDeciders } from './messaging/operatorRouting.js';
 import {
@@ -128,6 +128,7 @@ import {
 } from './messaging/overseerBus.js';
 import type { Messaging } from './messaging/service.js';
 import { openMessaging } from './messaging/service.js';
+import { migrateEpicNames } from './migrateEpicNames.js';
 import { NoteStore } from './notes.js';
 import {
   codexInstalled,
@@ -135,14 +136,13 @@ import {
   registerCodexPlanner,
 } from './orchestrator/agentBackends.js';
 import { codexApprovalNeedsHuman } from './orchestrator/codexCommand.js';
-import { EpicEngine } from './orchestrator/epic.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
 import { CliExecutor } from './orchestrator/executors/cli.js';
 import { availableCliPresets } from './orchestrator/executors/cliPresets.js';
 import { CodexExecutor } from './orchestrator/executors/codex.js';
 import { FixLoop, FixLoopStore } from './orchestrator/fixLoop.js';
-import { JjManager } from './orchestrator/jj.js';
 import { MergeQueue } from './orchestrator/mergeQueue.js';
+import { MilestoneEngine } from './orchestrator/milestone.js';
 import { Orchestrator } from './orchestrator/orchestrator.js';
 import { OriginLander } from './orchestrator/originLanding.js';
 import { OverseerManager } from './orchestrator/overseer.js';
@@ -170,7 +170,11 @@ import {
 } from './orchestrator/repoDigest.js';
 import { ReviewRunner } from './orchestrator/review.js';
 import { TaskAuthorship } from './orchestrator/taskAuthorship.js';
-import { runKind, TERMINAL_RUN_STATES } from './orchestrator/types.js';
+import {
+  runKind,
+  tasksWithFinishedRun,
+  TERMINAL_RUN_STATES,
+} from './orchestrator/types.js';
 import { VerificationRunner } from './orchestrator/verify.js';
 import {
   policyActivityAppender,
@@ -972,6 +976,7 @@ async function bootServer(
   watchdog: EventLoopWatchdog
 ): Promise<ServerHandle> {
   const { rootDir } = opts;
+  migrateEpicNames(rootDir);
 
   const shouldWriteDaemonFile = opts.writeDaemonFile ?? true;
   const bindHost = opts.host ?? '127.0.0.1';
@@ -1433,13 +1438,6 @@ async function bootServer(
   // Tests override this default entirely via `registerExecutors` (see its
   // doc comment) to register a FakeExecutor without going through bin.ts at
   // all.
-  // One jj manager shared by the orchestrator's stacked-dispatch path and the
-  // merge queue's restack path, deliberately on the DEFAULT command runner
-  // rather than `opts.prCommandRunner`. The gh/git fake behind
-  // DISPATCH_FAKE_GH answers every unrecognized command `ok`, so a queue that
-  // probed jj through that seam would decide a demo repo was jj-colocated and
-  // take the jj rebase path against a repo with no jj at all.
-  const jj = new JjManager(rootDir);
   // The audit ledger: the daemon's receipts, plus lesson rows memory imports.
   // Backed by the same store the tasks came from (the database's ledger table,
   // or `.dispatch/ledger.jsonl`); both satisfy `LedgerStorePort`.
@@ -1531,7 +1529,6 @@ async function bootServer(
     cache,
     judgments,
     events,
-    jj,
     findingStore,
     comments: commentStore,
     // `null` on the file backend, where the run transcript is evidence's only
@@ -1651,8 +1648,8 @@ async function bootServer(
       perReplicaPerHour: remoteMailQuota(rootDir),
       now: federationNow,
       implicit: (channel) =>
-        implicitEpicMembers(
-          (epicId) => store.list({ parent: epicId }),
+        implicitMilestoneMembers(
+          (milestoneId) => store.list({ parent: milestoneId }),
           channel
         ),
     });
@@ -1724,7 +1721,7 @@ async function bootServer(
       ledgerStore,
       events,
       appendPolicyActivity,
-      epicOf: (taskId) => store.get(taskId)?.meta.parent ?? null,
+      milestoneOf: (taskId) => store.get(taskId)?.meta.parent ?? null,
     })
   );
   messaging.gates.register('doc', docGateHandler(docs.service, docsHost));
@@ -1882,7 +1879,7 @@ async function bootServer(
 
   // Phase 5 P1, revised Phase 7: the planner registry (real ClaudePlanner
   // under 'claude' by default; tests/bin.ts's DISPATCH_ENABLE_FAKES override
-  // via `registerPlanners`) and the epic dispatch engine, both wired against
+  // via `registerPlanners`) and the milestone dispatch engine, both wired against
   // the same store/cache/events/orchestrator every other request handler
   // shares.
   const planManager = new PlanManager({
@@ -1899,7 +1896,7 @@ async function bootServer(
     registerCodexPlanner(planManager, rootDir);
   }
   const taskAuthorship = new TaskAuthorship(taskAuthorshipPath(rootDir));
-  const epicEngine = new EpicEngine({
+  const milestoneEngine = new MilestoneEngine({
     rootDir,
     store,
     cache,
@@ -2012,7 +2009,6 @@ async function bootServer(
       cache,
       events,
       orchestrator,
-      jj,
       prState: (url) => prManager.cachedPrByUrl(url),
       cacheReady: () => prManager.cacheReady(),
       lander: new OriginLander({
@@ -2055,7 +2051,9 @@ async function bootServer(
       ledgerStore,
       memory: overseerMemory(memory),
       // An approved create_plan starts its milestone's agents, as Send agents does.
-      epics: { start: (epicId, opts) => epicEngine.start(epicId, opts) },
+      milestones: {
+        start: (milestoneId, opts) => milestoneEngine.start(milestoneId, opts),
+      },
       messaging: {
         ...overseerToolMessaging(messaging.engine, (sender, to) =>
           newestOpenRoot(
@@ -2178,6 +2176,7 @@ async function bootServer(
         new LinearDocsAdapter({ ...link, service: docs.service }),
       outstanding: () => docs.service.linearOutstanding(),
     },
+    finishedRuns: () => tasksWithFinishedRun(orchestrator.list()),
   });
   const unsubscribeLinear = events.subscribe((event) => {
     if (event.type === 'task.changed') linearSync.notifyTaskChanged();
@@ -2240,11 +2239,13 @@ async function bootServer(
   }
   // The engine reads child phases off the loop; bound here because the loop
   // is constructed after it. Its own sessions re-arm on a delay (see
-  // EpicEngine.resumeOnBoot) so the orchestrator's auto-resume goes first.
-  epicEngine.bindFixLoop(fixLoop);
-  const resumedEpics = epicEngine.resumeOnBoot();
-  if (resumedEpics > 0) {
-    console.log(`dispatchd: re-armed ${resumedEpics} epic dispatch session(s)`);
+  // MilestoneEngine.resumeOnBoot) so the orchestrator's auto-resume goes first.
+  milestoneEngine.bindFixLoop(fixLoop);
+  const resumedMilestones = milestoneEngine.resumeOnBoot();
+  if (resumedMilestones > 0) {
+    console.log(
+      `dispatchd: re-armed ${resumedMilestones} milestone dispatch session(s)`
+    );
   }
 
   // One feed of everything awaiting a human, derived from the registries above
@@ -2376,7 +2377,7 @@ async function bootServer(
     version: packageJson.version,
     planManager,
     overseerManager,
-    epicEngine,
+    milestoneEngine,
     taskAuthorship,
     messaging,
     hubLink,
@@ -2447,7 +2448,7 @@ async function bootServer(
       'queued merge',
       'queued merges'
     );
-    if (epicEngine.hasActiveSession()) out.push('an epic session');
+    if (milestoneEngine.hasActiveSession()) out.push('a milestone session');
     count(
       fixLoop
         .list()
@@ -2833,7 +2834,7 @@ async function bootServer(
       // on is torn down — it can sit in a quiet window for minutes and ends by
       // starting an agent (see Orchestrator.shutdown).
       orchestrator.shutdown();
-      epicEngine.shutdown();
+      milestoneEngine.shutdown();
       // So no Overseer or planner agent process (a Codex App Server) outlives the daemon.
       overseerManager.shutdown();
       planManager.shutdown();

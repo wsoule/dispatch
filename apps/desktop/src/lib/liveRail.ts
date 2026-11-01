@@ -1,4 +1,4 @@
-import type { EpicProgress, RunKind, RunMeta } from '@dispatch/client';
+import type { MilestoneProgress, RunKind, RunMeta } from '@dispatch/client';
 
 import { isTerminalRunState } from './runState';
 
@@ -13,7 +13,7 @@ interface LiveRailRow {
 
 /** The live rows under one milestone with a fan-out session, in `runs`' own order. */
 interface LiveRailGroup {
-  progress: EpicProgress;
+  progress: MilestoneProgress;
   rows: LiveRailRow[];
 }
 
@@ -50,14 +50,14 @@ export function runKindLabel(run: RunMeta): RunKindLabel {
  */
 export function buildLiveRail(
   runs: RunMeta[],
-  sessions: EpicProgress[] = []
+  sessions: MilestoneProgress[] = []
 ): LiveRailModel {
   const live = runs
     .filter((run) => !isTerminalRunState(run.state))
     .map((run) => ({ run, kindLabel: runKindLabel(run) }));
 
-  // First session to claim a task wins — a task belongs to one epic, so the
-  // only overlap possible is two progress entries for the same epic.
+  // First session to claim a task wins — a task belongs to one milestone, so the
+  // only overlap possible is two progress entries for the same milestone.
   const groupByTaskId = new Map<string, LiveRailGroup>();
   const groups: LiveRailGroup[] = [];
   for (const progress of sessions) {

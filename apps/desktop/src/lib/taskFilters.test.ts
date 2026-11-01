@@ -93,11 +93,11 @@ describe('clauses', () => {
     ]);
   });
 
-  test('epic, milestone and run state read `none` as unset', () => {
+  test('milestone, milestone and run state read `none` as unset', () => {
     expect(
       applyTaskFilters(
         TASKS,
-        set([{ facet: 'epic', op: 'is', values: ['none'] }])
+        set([{ facet: 'milestone', op: 'is', values: ['none'] }])
       ).map((t) => t.meta.id)
     ).toEqual(['t-1', 't-3']);
     expect(
@@ -311,15 +311,15 @@ describe('labels', () => {
     expect(
       sentence(
         clauseParts(
-          { facet: 'epic', op: 'is', values: ['e-1'] },
+          { facet: 'milestone', op: 'is', values: ['e-1'] },
           {
-            epicTitleById: new Map([['e-1', 'Payments']]),
+            milestoneTitleById: new Map([['e-1', 'Payments']]),
           }
         )
       )
-    ).toBe('Epic is Payments');
+    ).toBe('Milestone is Payments');
     expect(
-      sentence(clauseParts({ facet: 'epic', op: 'is', values: ['none'] }))
-    ).toBe('Epic is No epic');
+      sentence(clauseParts({ facet: 'milestone', op: 'is', values: ['none'] }))
+    ).toBe('Milestone is No milestone');
   });
 });

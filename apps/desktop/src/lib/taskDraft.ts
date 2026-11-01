@@ -1,7 +1,7 @@
 // The full-page task creator's draft model: what the planner returns (`TaskDraft`) is only
 // part of a task, so the view keeps its own editable copy that adds the two fields the
 // planner never proposes — `status` (the tracker column, which a board column's "+" can
-// pre-select) and `parent` (the epic to file it under). Kept here, DOM- and React-free, so
+// pre-select) and `parent` (the milestone to file it under). Kept here, DOM- and React-free, so
 // the "what actually gets saved" rules are testable without mounting the view.
 
 import type { CreateInput } from '@dispatch-foo/core/browser';
@@ -12,7 +12,7 @@ export interface EditableTaskDraft extends TaskDraft {
   /** Tracker status the task will be created in — seeded from the board column whose "+"
    * opened the creator, or the first configured status otherwise. */
   status: string;
-  /** Epic id to file the task under, or `null` for a top-level task. */
+  /** Milestone id to file the task under, or `null` for a top-level task. */
   parent: string | null;
 }
 

@@ -34,7 +34,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
 
 const GROUPINGS: { id: TasksGrouping; label: string }[] = [
   { id: 'status', label: 'Status' },
-  { id: 'epic', label: 'Epic' },
+  { id: 'parent', label: 'Parent' },
   { id: 'milestone', label: 'Milestone' },
   { id: 'assignee', label: 'Assignee' },
   { id: 'priority', label: 'Priority' },
@@ -43,7 +43,7 @@ const GROUPINGS: { id: TasksGrouping; label: string }[] = [
 
 const SUB_GROUPINGS: { id: TasksSubGrouping; label: string }[] = [
   { id: 'none', label: 'No grouping' },
-  { id: 'epic', label: 'Epic' },
+  { id: 'parent', label: 'Parent' },
   { id: 'assignee', label: 'Assignee' },
   { id: 'priority', label: 'Priority' },
 ];
@@ -61,7 +61,6 @@ const PROPERTY_LABEL: Record<TaskProperty, string> = {
   status: 'Status',
   assignee: 'Assignee',
   priority: 'Priority',
-  epic: 'Epic',
   milestone: 'Milestone',
   labels: 'Labels',
   links: 'Links',

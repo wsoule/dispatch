@@ -36,10 +36,10 @@ describe('the Issues list display', () => {
   // The keys keep their Two views names on purpose: renaming them would drop
   // every person's remembered grouping on upgrade.
   test('reads and writes the Two views key', () => {
-    writeIssuesDisplay({ ...ISSUES_DISPLAY, grouping: 'epic' });
+    writeIssuesDisplay({ ...ISSUES_DISPLAY, grouping: 'parent' });
     expect(
       window.localStorage.getItem('dispatch:two-views-tasks-display-v1')
-    ).toContain('"epic"');
+    ).toContain('"parent"');
   });
 
   // The Graph mode saved its layout as `milestones` (the milestone map); the

@@ -17,7 +17,6 @@ export type FilterFacet =
   | 'priority'
   | 'assignee'
   | 'labels'
-  | 'epic'
   | 'milestone'
   | 'run'
   | 'created'
@@ -45,7 +44,7 @@ export const EMPTY_TASK_FILTER_SET: TaskFilterSet = {
   join: 'and',
 };
 
-/** The value a scalar facet uses for "nothing set" — no epic, no milestone, no live run. */
+/** The value a scalar facet uses for "nothing set" — no milestone, no live run. */
 export const FILTER_NONE = 'none';
 
 export const FILTER_FACETS: readonly FilterFacet[] = [
@@ -53,7 +52,6 @@ export const FILTER_FACETS: readonly FilterFacet[] = [
   'priority',
   'assignee',
   'labels',
-  'epic',
   'milestone',
   'run',
   'created',
@@ -65,7 +63,6 @@ const FACET_LABEL: Record<FilterFacet, string> = {
   priority: 'Priority',
   assignee: 'Assignee',
   labels: 'Labels',
-  epic: 'Epic',
   milestone: 'Milestone',
   run: 'Run state',
   created: 'Created',
@@ -268,8 +265,8 @@ export function toggleClauseNegation(
 export interface FilterContext {
   /** Live (non-terminal) run state per task id, for the `Run state` facet. */
   liveRunStateByTaskId?: ReadonlyMap<string, RunState>;
-  /** Epic titles by id, for the chip label only. */
-  epicTitleById?: ReadonlyMap<string, string>;
+  /** Milestone titles by id, for the chip label only. */
+  milestoneTitleById?: ReadonlyMap<string, string>;
 }
 
 // A scalar facet's value on one task, as the string the clause's values are compared with.
@@ -285,10 +282,8 @@ function scalarValue(
       return doc.meta.priority;
     case 'assignee':
       return doc.meta.assignee;
-    case 'epic':
-      return doc.meta.parent ?? FILTER_NONE;
     case 'milestone':
-      return doc.meta.milestone ?? FILTER_NONE;
+      return doc.meta.parent ?? FILTER_NONE;
     case 'run':
       return ctx.liveRunStateByTaskId?.get(doc.meta.id) ?? FILTER_NONE;
   }
@@ -356,7 +351,7 @@ const RUN_STATE_LABEL: Record<RunState, string> = {
   'interrupted-dirty': 'Interrupted',
 };
 
-/** A clause value as a person reads it: `In progress`, `Urgent`, an epic's title. */
+/** A clause value as a person reads it: `In progress`, `Urgent`, a milestone's title. */
 export function filterValueLabel(
   facet: FilterFacet,
   value: string,
@@ -369,12 +364,10 @@ export function filterValueLabel(
       return priorityLabel(value as TaskListItem['meta']['priority']);
     case 'assignee':
       return assigneeLabel(value);
-    case 'epic':
-      return value === FILTER_NONE
-        ? 'No epic'
-        : (ctx.epicTitleById?.get(value) ?? value);
     case 'milestone':
-      return value === FILTER_NONE ? 'No milestone' : value;
+      return value === FILTER_NONE
+        ? 'No milestone'
+        : (ctx.milestoneTitleById?.get(value) ?? value);
     case 'run':
       return value === FILTER_NONE
         ? 'No live run'

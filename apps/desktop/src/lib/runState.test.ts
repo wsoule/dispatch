@@ -12,6 +12,7 @@ import {
   postFailWorkLabel,
   runDispositionLabel,
   runSurveyNotice,
+  tasksWithFinishedRun,
 } from './runState';
 
 describe('isTerminalRunState', () => {
@@ -369,5 +370,49 @@ describe('liveReviewAgentFor', () => {
     expect(
       liveReviewAgentFor([execute, verify, stacked], 'dispatch/t-1-exec')
     ).toBeUndefined();
+  });
+});
+
+describe('tasksWithFinishedRun', () => {
+  const at = (minute: number) => `2026-07-26T00:0${minute}:00.000Z`;
+
+  test('reads each task’s newest execute run, skipping review runs', () => {
+    const runs = [
+      run({ taskId: 't-a', state: 'finished', createdAt: at(1) }),
+      run({
+        taskId: 't-a',
+        kind: 'review',
+        state: 'running',
+        createdAt: at(2),
+      }),
+      run({ taskId: 't-b', state: 'running', createdAt: at(1) }),
+      run({ taskId: 't-c', state: 'failed', createdAt: at(1) }),
+    ];
+    expect([...tasksWithFinishedRun(runs)].sort()).toEqual(['t-a', 't-c']);
+  });
+
+  test('a live re-dispatch outweighs an earlier finished run', () => {
+    const runs = [
+      run({ taskId: 't-a', state: 'running', createdAt: at(2) }),
+      run({ taskId: 't-a', state: 'finished', createdAt: at(1) }),
+    ];
+    expect(tasksWithFinishedRun(runs).size).toBe(0);
+  });
+
+  test('a cancel and a run force-failed at boot leave the task as it was', () => {
+    const lost =
+      'dispatchd restarted while this run was in flight; the agent process may still be running';
+    const runs = [
+      run({ taskId: 't-a', state: 'cancelled', createdAt: at(1) }),
+      run({ taskId: 't-b', state: 'failed', error: lost, createdAt: at(1) }),
+      run({
+        taskId: 't-c',
+        state: 'interrupted-dirty',
+        error: lost,
+        createdAt: at(1),
+      }),
+      run({ taskId: 't-d', state: 'failed', error: 'boom', createdAt: at(1) }),
+    ];
+    expect([...tasksWithFinishedRun(runs)]).toEqual(['t-d']);
   });
 });

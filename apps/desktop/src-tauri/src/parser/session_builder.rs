@@ -15,105 +15,148 @@ pub struct IngestOutcome {
     pub session_updated: Option<String>,
 }
 
+#[cfg(test)]
 pub fn ingest_record(
     conn: &Connection,
     raw_log_path: &str,
     record: ParsedRecord,
 ) -> anyhow::Result<IngestOutcome> {
-    let mut outcome = IngestOutcome::default();
-
-    // "ai-title" records carry neither `cwd` nor a `timestamp` (see claude_jsonl's doc
-    // comment) — they're Claude Code's own auto-generated session title, always emitted
-    // after the session row already exists (its first `user` record creates it), so this
-    // is handled as its own early branch rather than falling into the cwd/timestamp checks
-    // below, which it would never pass.
-    if record.record_type == "ai-title" {
-        if let (Some(session_id), Some(title)) =
-            (record.session_id.clone(), record.ai_title.clone())
-        {
-            queries::update_session_title(conn, &session_id, &title)?;
-            outcome.session_updated = Some(session_id);
-        }
-        return Ok(outcome);
-    }
-
-    // No cwd means we have no idea which project this belongs to — nothing to persist.
-    let Some(cwd) = record.cwd.clone() else {
-        return Ok(outcome);
-    };
-    // No timestamp means we can't place this in time (real logs have such lines, e.g.
-    // some records preceding the first user/attachment record) — skip persisting.
-    let Some(timestamp) = record.timestamp else {
-        return Ok(outcome);
-    };
-
-    // A Dispatch run's cwd is a throwaway worktree; attribute the session to the project it
-    // was checked out from so runs don't surface as separate projects. Gathering known
-    // roots costs registry and DB reads, so it happens only for worktree-shaped paths.
-    let project_path = if dispatch_worktree::is_dispatch_worktree_path(&cwd) {
-        dispatch_worktree::canonical_project_cwd(&cwd, &known_project_roots(conn)?)
-    } else {
-        cwd.clone()
-    };
-    let project_id = project_id_for_path(&project_path);
-    let project_name = project_name_for_path(&project_path);
-
-    queries::upsert_project(conn, &project_id, &project_name, &project_path, timestamp)?;
-    outcome.project_touched = Some(project_id.clone());
-
-    // `system` records only carry cwd/gitBranch metadata refresh, no session content.
-    let Some(session_id) = record.session_id.clone() else {
-        return Ok(outcome);
-    };
-
-    let delta = record
-        .usage
-        .as_ref()
-        .map(|u| TokenDelta {
-            kind: u.kind,
-            prompt_tokens: u.input_tokens,
-            completion_tokens: u.output_tokens,
-            cache_read_tokens: u.cache_read_input_tokens,
-            cache_creation_tokens: u.cache_creation_input_tokens,
-        })
-        .unwrap_or_default();
-
-    let created = queries::upsert_session(
-        conn,
-        &session_id,
-        &project_id,
-        record.agent,
-        record.model.as_deref(),
-        timestamp,
-        raw_log_path,
-        &delta,
-    )?;
-
-    if created {
-        outcome.session_created = Some(session_id.clone());
-    } else {
-        outcome.session_updated = Some(session_id.clone());
-    }
-
-    // Recompute cost_usd from the now-updated accumulated totals (not the delta just applied)
-    // so this stays consistent with `all_session_token_totals` + `update_cost`'s use for
-    // recomputing every session's cost after a pricing-table edit, without re-parsing logs.
-    if let Some(totals) = queries::session_token_totals(conn, &session_id)? {
-        let cost = pricing::cost_usd(
-            totals.model.as_deref(),
-            totals.prompt_tokens,
-            totals.completion_tokens,
-            totals.cache_read_tokens,
-            totals.cache_creation_tokens,
-        );
-        queries::update_cost(conn, &session_id, cost)?;
-    }
-
-    for tool_use in &record.tool_uses {
-        ingest_tool_use(conn, &session_id, timestamp, tool_use)?;
-    }
-
+    let mut batch = IngestBatch::default();
+    let outcome = batch.ingest(conn, raw_log_path, record)?;
+    batch.finish(conn)?;
     Ok(outcome)
+}
+
+/// Segment-local bookkeeping avoids repeated existence reads and prices the final snapshot.
+#[derive(Default)]
+pub struct IngestBatch {
+    sessions: std::collections::HashSet<String>,
+}
+
+impl IngestBatch {
+    pub fn ingest(
+        &mut self,
+        conn: &Connection,
+        raw_log_path: &str,
+        record: ParsedRecord,
+    ) -> anyhow::Result<IngestOutcome> {
+        let mut outcome = IngestOutcome::default();
+
+        // "ai-title" records carry neither `cwd` nor a `timestamp` (see claude_jsonl's doc
+        // comment) — they're Claude Code's own auto-generated session title, always emitted
+        // after the session row already exists (its first `user` record creates it), so this
+        // is handled as its own early branch rather than falling into the cwd/timestamp checks
+        // below, which it would never pass.
+        if record.record_type == "ai-title" {
+            if let (Some(session_id), Some(title)) =
+                (record.session_id.clone(), record.ai_title.clone())
+            {
+                queries::update_session_title(conn, &session_id, &title)?;
+                outcome.session_updated = Some(session_id);
+            }
+            return Ok(outcome);
+        }
+
+        // No cwd means we have no idea which project this belongs to — nothing to persist.
+        let Some(cwd) = record.cwd.clone() else {
+            return Ok(outcome);
+        };
+        // No timestamp means we can't place this in time (real logs have such lines, e.g.
+        // some records preceding the first user/attachment record) — skip persisting.
+        let Some(timestamp) = record.timestamp else {
+            return Ok(outcome);
+        };
+
+        // A Dispatch run's cwd is a throwaway worktree; attribute the session to the project it
+        // was checked out from so runs don't surface as separate projects. Gathering known
+        // roots costs registry and DB reads, so it happens only for worktree-shaped paths.
+        let project_path = if dispatch_worktree::is_dispatch_worktree_path(&cwd) {
+            dispatch_worktree::canonical_project_cwd(&cwd, &known_project_roots(conn)?)
+        } else {
+            cwd.clone()
+        };
+        let project_id = project_id_for_path(&project_path);
+        let project_name = project_name_for_path(&project_path);
+
+        queries::upsert_project(conn, &project_id, &project_name, &project_path, timestamp)?;
+        outcome.project_touched = Some(project_id.clone());
+
+        // `system` records only carry cwd/gitBranch metadata refresh, no session content.
+        let Some(session_id) = record.session_id.clone() else {
+            return Ok(outcome);
+        };
+
+        let delta = record
+            .usage
+            .as_ref()
+            .map(|u| TokenDelta {
+                kind: u.kind,
+                prompt_tokens: u.input_tokens,
+                completion_tokens: u.output_tokens,
+                cache_read_tokens: u.cache_read_input_tokens,
+                cache_creation_tokens: u.cache_creation_input_tokens,
+            })
+            .unwrap_or_default();
+
+        let created = if self.sessions.contains(&session_id) {
+            queries::write_session(
+                conn,
+                &session_id,
+                &project_id,
+                record.agent,
+                record.model.as_deref(),
+                timestamp,
+                raw_log_path,
+                &delta,
+            )?;
+            false
+        } else {
+            let created = queries::upsert_session(
+                conn,
+                &session_id,
+                &project_id,
+                record.agent,
+                record.model.as_deref(),
+                timestamp,
+                raw_log_path,
+                &delta,
+            )?;
+            self.sessions.insert(session_id.clone());
+            created
+        };
+
+        if created {
+            outcome.session_created = Some(session_id.clone());
+        } else {
+            outcome.session_updated = Some(session_id.clone());
+        }
+
+        for tool_use in &record.tool_uses {
+            ingest_tool_use(conn, &session_id, timestamp, tool_use)?;
+        }
+
+        Ok(outcome)
+    }
+
+    /// Must run before the cursor commit; a pricing error rolls back the segment too.
+    pub fn finish(self, conn: &Connection) -> anyhow::Result<()> {
+        for session_id in self.sessions {
+            // Recompute cost_usd from the now-updated accumulated totals (not the delta just applied)
+            // so this stays consistent with `all_session_token_totals` + `update_cost`'s use for
+            // recomputing every session's cost after a pricing-table edit, without re-parsing logs.
+            if let Some(totals) = queries::session_token_totals(conn, &session_id)? {
+                let cost = pricing::cost_usd(
+                    totals.model.as_deref(),
+                    totals.prompt_tokens,
+                    totals.completion_tokens,
+                    totals.cache_read_tokens,
+                    totals.cache_creation_tokens,
+                );
+                queries::update_cost(conn, &session_id, cost)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 fn ingest_tool_use(

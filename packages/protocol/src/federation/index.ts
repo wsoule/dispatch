@@ -2,6 +2,23 @@
 // sealing. Only this subpath imports node:crypto; the package root never does.
 export { buildOp, verifyEntry } from './chain.js';
 export type { ChainHead } from './chain.js';
+export {
+  CONTENT_TYPES,
+  contentAad,
+  contentKeyRequest,
+  decryptContent,
+  encryptContent,
+  generateContentKey,
+  isContentEnvelope,
+  isContentKeyRequest,
+  runTag,
+  TEAM_CONTENT_KEY_BYTES,
+} from './content.js';
+export type {
+  ContentEnvelope,
+  ContentKeyGrant,
+  GrantPayload,
+} from './content.js';
 export { b64u, crockford32, fromB64u, sha256Hex } from './encoding.js';
 export { fingerprint } from './fingerprint.js';
 export {

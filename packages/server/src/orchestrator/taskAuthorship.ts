@@ -32,7 +32,7 @@ function bodyDigest(doc: TaskDoc): string {
 
 /**
  * Who created each task and who last wrote its title and its body, so an
- * epic's auto-fill acts for its operator only on work that operator wrote. A
+ * milestone's auto-fill acts for its operator only on work that operator wrote. A
  * task with no record, or changed since the last tracked edit, acts for no one.
  */
 export class TaskAuthorship {

@@ -1,16 +1,16 @@
 import { createHash, randomBytes } from 'node:crypto';
 
 import { isContainerKind } from './kinds.js';
-import type { TaskKindInput } from './kinds.js';
+import type { TaskKind } from './types.js';
 
 export function generateTaskId(
-  kind: TaskKindInput,
+  kind: TaskKind,
   title: string,
   now: string,
   nonce: string = randomBytes(4).toString('hex'),
   hexLength: number = 6
 ): string {
-  // Every container keeps the `e-` prefix epics always had.
+  // Every container keeps the `e-` prefix milestones always had.
   const prefix = isContainerKind(kind) ? 'e' : 't';
   const hash = createHash('sha256')
     .update(`${now}\n${title}\n${nonce}`)
@@ -35,7 +35,7 @@ export const SYNCED_TASK_ID_HEX = 8;
 
 /** The id generator a synced board mints with. */
 export function generateSyncedTaskId(
-  kind: TaskKindInput,
+  kind: TaskKind,
   title: string,
   now: string
 ): string {

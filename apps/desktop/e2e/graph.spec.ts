@@ -42,7 +42,7 @@ test('the Graph draws the fixture’s milestones, switches level and quick-looks
     view.getByRole('heading', { level: 1, name: 'Dependencies' })
   ).toBeVisible();
 
-  // The drawing's summary, and the fixture's epics as milestone boxes (every
+  // The drawing's summary, and the fixture's milestones as milestone boxes (every
   // box opens a task, so each is a button).
   await expect(
     view.getByRole('img', { name: /^Milestone dependency graph/ })

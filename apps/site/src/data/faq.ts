@@ -127,7 +127,7 @@ export const faqSections: FaqSection[] = [
       ],
       [
         'How does a team’s board stay in sync?',
-        'Over the team’s own git branch, or through a relay that cannot read what it carries. Runs still happen on each person’s machine.',
+        'Over the team’s own git branch, or through the Dispatch relay. Messages are always sealed; an admin can turn on end-to-end encryption so the relay cannot read the board, team memory or docs either. Runs still happen on each person’s machine.',
       ],
     ],
   },

@@ -399,6 +399,7 @@ export type {
   LinearIssue,
   LinearIssueInput,
   LinearLabel,
+  LinearLabelMatch,
   LinearMilestoneInput,
   LinearProject,
   LinearProjectInput,

@@ -40,6 +40,9 @@ To add the server to one client by hand instead:
 }
 ```
 
+In Claude Desktop, name it `dispatch-foo`: Claude reserves `dispatch` and will
+not start a server by that name in Cowork and Code sessions.
+
 The server works on the project in its current directory. Pass `--root <dir>` to
 point it at another one.
 

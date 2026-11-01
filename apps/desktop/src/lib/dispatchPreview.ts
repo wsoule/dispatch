@@ -2,15 +2,15 @@ import { claimConflictsWithWrites } from '@dispatch-foo/core/browser';
 import type { TaskListItem } from '@dispatch-foo/core/browser';
 import type { RunMeta } from '@dispatch/client';
 
-import { formatUsd } from './epicSession';
+import { formatUsd } from './milestoneSession';
 import { isTerminalRunState } from './runState';
 
 /**
  * What a bulk dispatch is actually about to do.
  *
  * The mockup framed this as "5 of 8 slots are busy, so 3 start now" — a fixed global cap. There
- * isn't one: dispatch concurrency is chosen per call (see `handleWorkEpic(epicId, { concurrency, … })`
- * and the stepper in EpicLaneHeader), not configured once for the project. So the honest preview
+ * isn't one: dispatch concurrency is chosen per call (see `handleWorkMilestone(milestoneId, { concurrency, … })`
+ * and the stepper in MilestoneLaneHeader), not configured once for the project. So the honest preview
  * is computed against the concurrency the user is about to pick, not an imaginary ceiling.
  *
  * The rule the dialog exists to enforce: nothing is ever silently dropped. Every selected task
@@ -202,7 +202,7 @@ export function buildDispatchPreview(
     (task, i) =>
       rows[i]?.disposition !== 'not-ready' && task.meta.writes.length === 0
   ).length;
-  // Same predicate the epic scheduler uses to keep its own runs apart
+  // Same predicate the milestone scheduler uses to keep its own runs apart
   // (claimConflictsWithWrites in core), so the dialog and the scheduler agree
   // on what an overlap is. A run on the task itself is not an overlap — that
   // is a redispatch, and the orchestrator resumes it rather than colliding.

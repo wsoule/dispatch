@@ -163,7 +163,7 @@ describe('proposalCardModel', () => {
     expect(JSON.stringify(model)).not.toContain('personal entry body');
   });
 
-  it('describes reach as the index does: task, epic, local, or everyone', () => {
+  it('describes reach as the index does: task, milestone, local, or everyone', () => {
     const reach = (
       over: Partial<Content>,
       scope: 'project' | 'team' = 'team'
@@ -176,7 +176,7 @@ describe('proposalCardModel', () => {
     expect(reach({ appliesTo: ['t-1a2b3c', 't-4d5e6f'] })).toBe(
       'these tasks: t-1a2b3c, t-4d5e6f'
     );
-    expect(reach({ epic: 'e-000001' })).toBe('epic e-000001');
+    expect(reach({ milestone: 'e-000001' })).toBe('milestone e-000001');
     expect(reach({}, 'project')).toBe('this machine only');
     expect(reach({})).toBe('every run in this project, and teammates’');
   });

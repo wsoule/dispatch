@@ -40,7 +40,7 @@ import {
 import { Kbd } from '@/ui/kbd';
 import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
 
-// Shared inline editors for a task's properties, so status/priority/assignee/epic/labels edit
+// Shared inline editors for a task's properties, so status/priority/assignee/milestone/labels edit
 // identically everywhere they appear — a bare 14px glyph you click on a board card or list
 // row (`variant: 'inline'`), or Linear's 32px ghost row in the properties rail
 // (`variant: 'row'`). Every surface that shows a property should edit it through one of
@@ -49,9 +49,9 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
 
 const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
 const ASSIGNEES: Assignee[] = ['agent', 'human', 'none'];
-// Menu values can't be the empty string, so this sentinel stands in for the "no epic"
+// Menu values can't be the empty string, so this sentinel stands in for the "no milestone"
 // choice and is mapped back to `null` at the onChange boundary.
-const NO_EPIC = '__none__';
+const NO_MILESTONE = '__none__';
 
 export type ControlVariant = 'inline' | 'row';
 
@@ -335,42 +335,42 @@ export function AssigneeControl({
   );
 }
 
-export function EpicControl({
+export function MilestoneControl({
   value,
-  epics,
+  milestones,
   onChange,
   variant = 'row',
   open,
   onOpenChange,
 }: {
   value: string | null;
-  epics: TaskListItem[];
+  milestones: TaskListItem[];
   onChange: (parent: string | null) => void;
   variant?: ControlVariant;
 } & ControlledOpen) {
   const options: Option[] = [
     {
-      value: NO_EPIC,
-      label: 'No epic',
+      value: NO_MILESTONE,
+      label: 'No milestone',
       glyph: <Milestone className="size-3.5" />,
     },
-    ...epics.map((epic) => ({
-      value: epic.meta.id,
-      label: epic.meta.title,
+    ...milestones.map((milestone) => ({
+      value: milestone.meta.id,
+      label: milestone.meta.title,
       glyph: <Milestone className="size-3.5" />,
     })),
   ];
   return (
     <PropertyDropdown
-      value={value ?? NO_EPIC}
+      value={value ?? NO_MILESTONE}
       options={options}
-      onChange={(v) => onChange(v === NO_EPIC ? null : v)}
+      onChange={(v) => onChange(v === NO_MILESTONE ? null : v)}
       variant={variant}
-      ariaLabel="Change epic"
-      menuTitle="Add to epic"
+      ariaLabel="Change milestone"
+      menuTitle="Add to milestone"
       shortcut="E"
       unset={value === null}
-      unsetLabel="Add to epic"
+      unsetLabel="Add to milestone"
       open={open}
       onOpenChange={onOpenChange}
     />

@@ -22,7 +22,7 @@ function editable(
 }
 
 describe('editableDraftFrom', () => {
-  test('carries the planner fields through and seeds the given status with no epic', () => {
+  test('carries the planner fields through and seeds the given status with no milestone', () => {
     const draft = editableDraftFrom(PLANNED, 'in-progress');
     expect(draft.title).toBe(PLANNED.title);
     expect(draft.acceptanceCriteria).toEqual(PLANNED.acceptanceCriteria);

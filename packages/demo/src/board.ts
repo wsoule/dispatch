@@ -7,7 +7,7 @@ export interface DemoTask {
   id: string;
   title: string;
   status: string;
-  kind: 'epic' | 'task';
+  kind: 'milestone' | 'task';
   parent: string | null;
   /** Bare actor handle (see ACTORS in paths.ts), not a wire-format ActorRef. */
   assignee: string;
@@ -68,7 +68,7 @@ function ago(days: number): string {
   return new Date(BASE_MS - days * 86400000).toISOString();
 }
 
-// The two epics and ten tasks that make up the storefront backlog, carried
+// The two milestones and ten tasks that make up the storefront backlog, carried
 // over from the marketing-screenshot fixture (.agents/ignore/gen-demo.py)
 // with an assignee added to each so the board shows plural attribution.
 export const TASKS: DemoTask[] = [
@@ -76,7 +76,7 @@ export const TASKS: DemoTask[] = [
     id: 'e-4a19c2',
     title: 'Checkout rewrite',
     status: 'working',
-    kind: 'epic',
+    kind: 'milestone',
     parent: null,
     assignee: 'wsoule679',
     priority: 'high',
@@ -92,7 +92,7 @@ export const TASKS: DemoTask[] = [
     id: 'e-77b3e1',
     title: 'Search relevance',
     status: 'working',
-    kind: 'epic',
+    kind: 'milestone',
     parent: null,
     assignee: 'pmirand',
     priority: 'medium',
@@ -399,7 +399,7 @@ verifySteps:
 ${verifyStepsYaml}
 
 orchestrator:
-  epicConcurrency: 3
+  milestoneConcurrency: 3
   maxTurns: 40
   verifyTimeoutSec: 600
   maxBudgetUsd: 5

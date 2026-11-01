@@ -16,6 +16,11 @@ import { StateMark } from '@/ui/chrome/state-mark';
 /** How many notifications show before "+N more". */
 const NOTIFICATIONS_SHOWN = 5;
 
+// A failure body can carry a whole git log; the row shows its first line.
+function firstLine(text: string): string {
+  return text.split('\n', 1)[0].trim();
+}
+
 // A draft's mark: still drafting, waiting on your answers, ready to review, or failed.
 function draftMark(draft: DraftRecord | undefined): FeedState {
   if (draft === undefined) return 'working';
@@ -107,7 +112,9 @@ export function DraftsSection({
 /**
  * The notification history in Coming in: every run and merge transition the
  * app recorded, newest first, unread ones marked. A row opens what it is
- * about; "Mark all read" clears the unread count. Renders nothing while the
+ * about and its cross dismisses it; "Mark all read" clears the unread count,
+ * "Clear all" empties the list and "Hide" takes it out of the side panel
+ * (Settings → Notifications brings it back). Renders nothing while the
  * history is empty.
  */
 export function NotificationsSection({
@@ -115,11 +122,17 @@ export function NotificationsSection({
   unreadCount,
   onMarkAllRead,
   onOpen,
+  onDismiss,
+  onClearAll,
+  onHide,
 }: {
   entries: readonly InboxEntry[];
   unreadCount: number;
   onMarkAllRead: () => void;
   onOpen: (entry: InboxEntry) => void;
+  onDismiss: (id: string) => void;
+  onClearAll: () => void;
+  onHide?: () => void;
 }) {
   const [all, setAll] = useState(false);
   if (entries.length === 0) return null;
@@ -135,17 +148,37 @@ export function NotificationsSection({
         count={unreadCount > 0 ? unreadCount : undefined}
         className="h-6 px-2 pb-0.5"
         trailing={
-          unreadCount > 0 && (
+          <div className="ml-auto flex items-center">
+            {unreadCount > 0 && (
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={onMarkAllRead}
+                data-testid="overseer-notifications-read-all"
+              >
+                Mark all read
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="xs"
-              className="ml-auto"
-              onClick={onMarkAllRead}
-              data-testid="overseer-notifications-read-all"
+              onClick={onClearAll}
+              data-testid="overseer-notifications-clear-all"
             >
-              Mark all read
+              Clear all
             </Button>
-          )
+            {onHide !== undefined && (
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={onHide}
+                title="Hide notifications from the side panel. Settings → Notifications shows them again."
+                data-testid="overseer-notifications-hide"
+              >
+                Hide
+              </Button>
+            )}
+          </div>
         }
       >
         Notifications
@@ -169,15 +202,32 @@ export function NotificationsSection({
               )
             }
             // The subject (the task or question) leads; the generic kind
-            // ("An agent needs your answer") is the tooltip, so two rows of
-            // the same kind still read differently in a narrow column.
+            // ("An agent needs your answer") and the full body are the
+            // tooltip, so a multi-line failure log stays one row.
             title={
               <span
-                title={entry.body === '' ? undefined : entry.title}
+                title={
+                  entry.body === ''
+                    ? undefined
+                    : `${entry.title}\n${entry.body}`
+                }
                 className={entry.read ? 'text-muted-foreground' : undefined}
               >
-                {entry.body === '' ? entry.title : entry.body}
+                {entry.body === '' ? entry.title : firstLine(entry.body)}
               </span>
+            }
+            trailing={
+              <IconButton
+                label="Dismiss notification"
+                data-testid="overseer-notification-dismiss"
+                onClick={(event) => {
+                  // The row opens its target; dismissing must not also open it.
+                  event.stopPropagation();
+                  onDismiss(entry.id);
+                }}
+              >
+                <X />
+              </IconButton>
             }
             date={formatRelativeTimeFromIso(entry.ts)}
           />

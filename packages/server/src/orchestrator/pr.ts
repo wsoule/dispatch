@@ -25,9 +25,9 @@ import type {
   ReviewReply,
 } from '../reviewComments.js';
 import type { ReviewTarget } from '../reviewTarget.js';
-import { isEpicBranch } from './epicBranch.js';
+import { isMilestoneBranch } from './milestoneBranch.js';
 import type { Orchestrator } from './orchestrator.js';
-import { epicPrsPath, runsDir } from './paths.js';
+import { milestonePrsPath, runsDir } from './paths.js';
 import type { PrWorktreeManager } from './prWorktree.js';
 import type { RunMeta } from './types.js';
 import {
@@ -597,10 +597,10 @@ export class PrManager {
         `git push failed: ${commandErrorText(push)}`
       );
     }
-    // A PR against an epic integration branch needs that branch on origin too
+    // A PR against a milestone integration branch needs that branch on origin too
     // — it exists only locally until something pushes it, and `gh pr create
     // --base` refuses a base ref origin has never seen.
-    if (isEpicBranch(meta.baseBranch)) {
+    if (isMilestoneBranch(meta.baseBranch)) {
       const pushBase = await this.run(meta.worktreePath, [
         'git',
         'push',
@@ -609,7 +609,7 @@ export class PrManager {
       ]);
       if (!pushBase.ok) {
         throw new OrchestratorConflictError(
-          `git push of epic base ${meta.baseBranch} failed: ${commandErrorText(pushBase)}`
+          `git push of milestone base ${meta.baseBranch} failed: ${commandErrorText(pushBase)}`
         );
       }
     }
@@ -724,78 +724,79 @@ export class PrManager {
     return prs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
-  // The PRs opened to land whole epic branches on the default base
-  // (epicId -> PR url). Loaded lazily from epicPrsPath and written back on
-  // every change, so a daemon restart keeps polling an epic PR to merged
-  // instead of forgetting the epic mid-land — the durability RunMeta.prUrl
-  // gets from the run registry, which an epic has no entry in.
-  private epicPrRecords: Map<string, string> | null = null;
+  // The PRs opened to land whole milestone branches on the default base
+  // (milestoneId -> PR url). Loaded lazily from milestonePrsPath and written back on
+  // every change, so a daemon restart keeps polling a milestone PR to merged
+  // instead of forgetting the milestone mid-land — the durability RunMeta.prUrl
+  // gets from the run registry, which a milestone has no entry in.
+  private milestonePrRecords: Map<string, string> | null = null;
 
-  private loadEpicPrs(): Map<string, string> {
-    if (this.epicPrRecords !== null) return this.epicPrRecords;
-    this.epicPrRecords = new Map();
-    const path = epicPrsPath(this.ctx.rootDir);
+  private loadMilestonePrs(): Map<string, string> {
+    if (this.milestonePrRecords !== null) return this.milestonePrRecords;
+    this.milestonePrRecords = new Map();
+    const path = milestonePrsPath(this.ctx.rootDir);
     if (existsSync(path)) {
       // A corrupt ledger (non-atomic write interrupted by a crash) degrades
-      // to "no epic PRs known" rather than taking the poller down — the PR
+      // to "no milestone PRs known" rather than taking the poller down — the PR
       // itself still exists on GitHub, and landing again will re-record it.
       try {
         const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<
           string,
           unknown
         >;
-        for (const [epicId, url] of Object.entries(raw)) {
-          if (typeof url === 'string') this.epicPrRecords.set(epicId, url);
+        for (const [milestoneId, url] of Object.entries(raw)) {
+          if (typeof url === 'string')
+            this.milestonePrRecords.set(milestoneId, url);
         }
       } catch (err) {
         console.error(
-          `dispatchd: failed to read epic PR ledger: ${(err as Error).message}`
+          `dispatchd: failed to read milestone PR ledger: ${(err as Error).message}`
         );
       }
     }
-    return this.epicPrRecords;
+    return this.milestonePrRecords;
   }
 
-  private saveEpicPrs(): void {
-    const records = this.loadEpicPrs();
+  private saveMilestonePrs(): void {
+    const records = this.loadMilestonePrs();
     try {
       mkdirSync(runsDir(this.ctx.rootDir), { recursive: true });
       writeFileSync(
-        epicPrsPath(this.ctx.rootDir),
+        milestonePrsPath(this.ctx.rootDir),
         JSON.stringify(Object.fromEntries(records))
       );
     } catch (err) {
       console.error(
-        `dispatchd: failed to write epic PR ledger: ${(err as Error).message}`
+        `dispatchd: failed to write milestone PR ledger: ${(err as Error).message}`
       );
     }
   }
 
-  // The open landing PR for an epic, if one exists — lets the API/UI say
+  // The open landing PR for a milestone, if one exists — lets the API/UI say
   // "already landing" instead of re-validating from scratch.
-  epicPrUrl(epicId: string): string | undefined {
-    return this.loadEpicPrs().get(epicId);
+  milestonePrUrl(milestoneId: string): string | undefined {
+    return this.loadMilestonePrs().get(milestoneId);
   }
 
   /**
-   * POST /api/epics/:id/land, PR half: pushes a finished epic's integration
+   * POST /api/milestones/:id/land, PR half: pushes a finished milestone's integration
    * branch and opens ONE PR from it to the default base, then leaves the
-   * existing poller (pollOnce below) to notice the merge and close the epic
-   * out via Orchestrator.markEpicMergedViaPr. Readiness — all children done,
-   * no unreviewed runs on the branch — is epicLandStatus's job, so a
-   * partially-done epic gets the same refusal the local-merge path gives.
+   * existing poller (pollOnce below) to notice the merge and close the milestone
+   * out via Orchestrator.markMilestoneMergedViaPr. Readiness — all children done,
+   * no unreviewed runs on the branch — is milestoneLandStatus's job, so a
+   * partially-done milestone gets the same refusal the local-merge path gives.
    */
-  async openEpicPr(epicId: string): Promise<string> {
+  async openMilestonePr(milestoneId: string): Promise<string> {
     if (!this.capability) {
       throw new OrchestratorConflictError(
         'PR review requires the gh CLI and a configured git remote'
       );
     }
-    const status = this.ctx.orchestrator.epicLandStatus(epicId);
-    const existing = this.loadEpicPrs().get(epicId);
+    const status = this.ctx.orchestrator.milestoneLandStatus(milestoneId);
+    const existing = this.loadMilestonePrs().get(milestoneId);
     if (existing !== undefined) {
       throw new OrchestratorConflictError(
-        `epic already has an open landing PR: ${existing}`
+        `milestone already has an open landing PR: ${existing}`
       );
     }
     if (!status.hasChanges) {
@@ -803,13 +804,13 @@ export class PrManager {
       // here; the guard stays so no other caller can ask gh to open a PR
       // with no commits, which it refuses with a less useful message.
       throw new OrchestratorConflictError(
-        `epic branch ${status.branch} has no commits beyond ${status.base} — nothing to open a PR for`
+        `milestone branch ${status.branch} has no commits beyond ${status.base} — nothing to open a PR for`
       );
     }
     // While the branch is definitely still alive — the local ref can vanish
     // (hand deletion) between here and the merge, and the snapshot is what
     // the review surface falls back to.
-    this.ctx.orchestrator.snapshotEpicDiff(epicId);
+    this.ctx.orchestrator.snapshotMilestoneDiff(milestoneId);
     const push = await this.run(this.ctx.rootDir, [
       'git',
       'push',
@@ -822,7 +823,7 @@ export class PrManager {
         `git push of ${status.branch} failed: ${commandErrorText(push)}`
       );
     }
-    const body = `Automated PR opened by dispatch to land epic ${epicId}.`;
+    const body = `Automated PR opened by dispatch to land milestone ${milestoneId}.`;
     const create = await this.run(this.ctx.rootDir, [
       'gh',
       'pr',
@@ -849,31 +850,31 @@ export class PrManager {
         .map((line) => line.trim())
         .filter((line) => line.length > 0)
         .pop() ?? '';
-    this.loadEpicPrs().set(epicId, url);
-    this.saveEpicPrs();
+    this.loadMilestonePrs().set(milestoneId, url);
+    this.saveMilestonePrs();
 
     const now = new Date().toISOString();
     this.ctx.store.update(
-      epicId,
+      milestoneId,
       {
-        appendActivity: `${now} [epic] opened landing PR: ${url}`,
+        appendActivity: `${now} [milestone] opened landing PR: ${url}`,
         // Same attribution as openPr: only the human's land action reaches
         // this method.
         activityActor: this.ctx.actorContext?.humanRef,
       },
       now
     );
-    this.ctx.cache.refresh(this.ctx.store, [epicId]);
-    this.ctx.events.broadcast({ type: 'task.changed', ids: [epicId] });
+    this.ctx.cache.refresh(this.ctx.store, [milestoneId]);
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [milestoneId] });
     return url;
   }
 
-  // pollOnce's epic half: checks every recorded epic landing PR. MERGED
-  // closes the epic out (status done, branch cleaned up, snapshot kept);
+  // pollOnce's milestone half: checks every recorded milestone landing PR. MERGED
+  // closes the milestone out (status done, branch cleaned up, snapshot kept);
   // CLOSED-without-merge drops the record — with an Activity line saying so —
-  // so the epic can be landed again rather than 409ing on a dead PR forever.
-  private async pollEpicPrsOnce(): Promise<void> {
-    for (const [epicId, url] of [...this.loadEpicPrs()]) {
+  // so the milestone can be landed again rather than 409ing on a dead PR forever.
+  private async pollMilestonePrsOnce(): Promise<void> {
+    for (const [milestoneId, url] of [...this.loadMilestonePrs()]) {
       const view = await this.run(this.ctx.rootDir, [
         'gh',
         'pr',
@@ -890,27 +891,27 @@ export class PrManager {
         continue;
       }
       if (state === 'MERGED') {
-        // Drop the record FIRST: markEpicMergedViaPr touches the store and
+        // Drop the record FIRST: markMilestoneMergedViaPr touches the store and
         // git, and a throw there must not leave a merged PR being re-polled
-        // (and re-closing the epic) every pass forever.
-        this.loadEpicPrs().delete(epicId);
-        this.saveEpicPrs();
-        this.ctx.orchestrator.markEpicMergedViaPr(epicId, url);
+        // (and re-closing the milestone) every pass forever.
+        this.loadMilestonePrs().delete(milestoneId);
+        this.saveMilestonePrs();
+        this.ctx.orchestrator.markMilestoneMergedViaPr(milestoneId, url);
       } else if (state === 'CLOSED') {
-        this.loadEpicPrs().delete(epicId);
-        this.saveEpicPrs();
+        this.loadMilestonePrs().delete(milestoneId);
+        this.saveMilestonePrs();
         const now = new Date().toISOString();
         this.ctx.store.update(
-          epicId,
+          milestoneId,
           {
-            appendActivity: `${now} [epic] landing PR closed without merging (${url}) — land again to reopen`,
+            appendActivity: `${now} [milestone] landing PR closed without merging (${url}) — land again to reopen`,
             // Whoever closed it did so on GitHub, outside dispatch's sight.
             activityActor: 'none',
           },
           now
         );
-        this.ctx.cache.refresh(this.ctx.store, [epicId]);
-        this.ctx.events.broadcast({ type: 'task.changed', ids: [epicId] });
+        this.ctx.cache.refresh(this.ctx.store, [milestoneId]);
+        this.ctx.events.broadcast({ type: 'task.changed', ids: [milestoneId] });
       }
     }
   }
@@ -1068,9 +1069,9 @@ export class PrManager {
         this.ctx.orchestrator.markRunMergedViaPr(meta.id);
       }
     }
-    // Epic landing PRs ride the same pass and the same interval — one more
-    // sequential `gh pr view` per open epic PR, usually zero.
-    await this.pollEpicPrsOnce();
+    // Milestone landing PRs ride the same pass and the same interval — one more
+    // sequential `gh pr view` per open milestone PR, usually zero.
+    await this.pollMilestonePrsOnce();
   }
 
   // Refreshes `cache` from one `gh pr list` call (the same argv listRepoPrs()

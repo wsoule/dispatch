@@ -20,7 +20,7 @@ import { ProgressGlyph } from '@/ui/chrome';
 
 // The `▾ Sub-tasks ◔ 1/3` block under the description: a 12px/500 header with a collapse
 // chevron, the progress pie and count, and a `+` that opens the task creator with this
-// epic preset; then one 36px `ListRow` per child (priority, id, status, title, label pills,
+// milestone preset; then one 36px `ListRow` per child (priority, id, status, title, label pills,
 // a live run mark, the assignee, the day it last moved). Also used, titled `Blocks`, for a
 // task whose completion unblocks others.
 export function SubtasksBlock({
@@ -41,7 +41,7 @@ export function SubtasksBlock({
   latestRunByTaskId: Map<string, RunMeta>;
   onOpenTask?: (taskId: string) => void;
   /** What the `+` pre-fills; omitted hides the button (a `Blocks` list has no creator). */
-  createPreset?: { epic: string };
+  createPreset?: { milestone: string };
 }) {
   const shell = useShellActions();
   const [collapsed, setCollapsed] = useState(false);
@@ -79,7 +79,9 @@ export function SubtasksBlock({
           <IconButton
             label={`Add sub-task to ${parent.meta.title}`}
             className="ml-auto"
-            onClick={() => shell.openCreateTask({ epic: createPreset.epic })}
+            onClick={() =>
+              shell.openCreateTask({ milestone: createPreset.milestone })
+            }
           >
             <Plus />
           </IconButton>

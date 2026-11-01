@@ -22,6 +22,20 @@ holds what a user upgrading needs to know.
 
 ### Changed
 
+- **Epics are now milestones, everywhere.** The hierarchy is initiative ›
+  project › milestone › task, and nothing says "epic" any more: the CLI's
+  `dispatch epic` is `dispatch milestone`, the daemon serves `/api/milestones/*`
+  instead of `/api/epics/*`, milestone branches are `milestone/<id>`, the
+  implicit channel is `channel:milestone/<id>`, and MCP tools take `milestone`
+  where they took `epic`. There are no aliases, so update the desktop app, the
+  CLI and `@dispatch-foo/mcp` together with the daemon. The daemon moves its own
+  state on first boot: `orchestrator.epicConcurrency` becomes
+  `milestoneConcurrency` in `.dispatch/config.yml`, the run ledgers are renamed,
+  and the task and memory databases are migrated (older builds cannot open them
+  afterwards). Open `epic/<id>` branches are not renamed; land or re-dispatch
+  them first. In the task list, group by **Parent** for what was "Epic", and the
+  `e` shortcut is gone (`m` sets the milestone).
+
 - **`dispatch team invite` now makes a team invite link.** It prints one
   `dispatch-team:` link that a teammate pastes into `dispatch team join` (or
   Settings → Team) to join your signed team. The old behaviour, a sign-in token

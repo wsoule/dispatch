@@ -84,6 +84,8 @@ export interface Paused extends Position {
 }
 
 type Transport = { kind: 'git' | 'relay'; url?: string };
+/** The e2e switch's op hash, and its key epochs in fold order: the switch, then each accepted revoke after it. */
+export type ContentE2e = { since: string; epochs: readonly string[] };
 type Invite = { pub: string; handle: string; expires: string; by: string };
 type Closed = { by: string; entries: readonly LegacyAttestation[] };
 type HostCut = { afterSeq: number; hosts: readonly string[] };
@@ -124,6 +126,8 @@ export interface RosterView {
     closed: Closed | null;
   };
   transport: Transport;
+  /** Set once an admin switched team content to e2e; null before. */
+  contentE2e: ContentE2e | null;
   /** The ops valid dismisses took out of the fold, one per valid dismiss. */
   dismissed: readonly Dismissal[];
   problems: readonly Problem[];
@@ -231,6 +235,8 @@ interface Evaluation {
   usedRecovery: Set<string>;
   licenses: { key: string; by: string }[];
   transport: Transport;
+  /** The first valid content-e2e switch. */
+  contentE2e: RosterOpRef | null;
   legacyClosed: Closed | null;
   /** Handles in the order each was first granted, for seats. */
   people: string[];
@@ -1323,6 +1329,7 @@ const SHAPES = new Map<string, (b: Record<string, unknown>) => boolean>([
     'transport',
     (b) => (b.kind === 'git' || b.kind === 'relay') && optional(b.url, isStr),
   ],
+  ['content-e2e', () => true],
 ]);
 
 /**
@@ -1544,6 +1551,7 @@ function evaluate(
     usedRecovery: new Set(),
     licenses: [],
     transport: { kind: 'git' },
+    contentE2e: null,
     legacyClosed: null,
     people: [],
     peopleSeen: new Set(),
@@ -1684,6 +1692,10 @@ function step(
         body.url === undefined
           ? { kind: body.kind }
           : { kind: body.kind, url: body.url };
+      return;
+    case 'content-e2e':
+      if (!rights().admin) return noRight();
+      ev.contentE2e ??= op;
       return;
     case 'revoke':
       // A removal, which the resolution loop decides.
@@ -2069,6 +2081,17 @@ function notesOf(
   return { unknown, problems };
 }
 
+// The switch, then each accepted revoke folded after it, each opening an epoch.
+function contentE2eOf(ev: Evaluation): ContentE2e | null {
+  const on = ev.contentE2e;
+  if (on === null) return null;
+  const revokes = ev.cuts
+    .filter((c) => c.kind === 'all' && ev.order(on, c.op) < 0)
+    .map((c) => c.op)
+    .sort(ev.order);
+  return { since: on.hash, epochs: [on.hash, ...revokes.map((o) => o.hash)] };
+}
+
 function viewOf(
   folded: Folded,
   dismisses: readonly Dismiss[],
@@ -2183,6 +2206,7 @@ function viewOf(
       closed: ev.legacyClosed,
     },
     transport: ev.transport,
+    contentE2e: contentE2eOf(ev),
     dismissed: [...valid].map(({ item, named }) => ({
       replica: named.op.replica,
       seq: named.op.seq,

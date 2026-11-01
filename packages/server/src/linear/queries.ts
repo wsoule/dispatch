@@ -147,6 +147,33 @@ export const LABELS_QUERY = `query IssueLabels($after: String) {
   }
 }`;
 
+// Every label spelling a name, in any team or state, to explain a create
+// Linear refused as a duplicate.
+export const LABELS_NAMED_QUERY = `query IssueLabelsNamed($name: String!, $after: String) {
+  issueLabels(
+    first: 50
+    after: $after
+    includeArchived: true
+    filter: { name: { eqIgnoreCase: $name } }
+  ) {
+    nodes { id name color isGroup archivedAt retiredAt team { id } parent { name } }
+    ${PAGE_INFO}
+  }
+}`;
+
+// Non-archived issues per team: what the plan's issue cap counts.
+export const TEAM_ISSUE_COUNTS = `query TeamIssueCounts($after: String) {
+  teams(first: 50, after: $after) {
+    nodes { id key name issueCount(includeArchived: false) }
+    ${PAGE_INFO}
+  }
+}`;
+
+// `subscription` is null on the Free plan.
+export const ORGANIZATION_PLAN = `query OrganizationPlan {
+  organization { subscription { type } }
+}`;
+
 export const CYCLES_QUERY = `query Cycles($teamId: String!, $after: String) {
   team(id: $teamId) {
     cycles(first: 50, after: $after) {
@@ -222,6 +249,30 @@ export const ISSUE_LINKS_QUERY = `query IssueLinks($teamId: ID!, $after: String)
     includeArchived: true
   ) {
     nodes { id identifier url updatedAt }
+    ${PAGE_INFO}
+  }
+}`;
+
+// Without includeArchived, only issues still counting against the cap.
+export const CLOSED_ISSUES_QUERY = `query ClosedIssues($teamId: ID!, $types: [String!]!, $after: String) {
+  issues(
+    filter: { team: { id: { eq: $teamId } }, state: { type: { in: $types } } }
+    first: ${LINK_PAGE}
+    after: $after
+  ) {
+    nodes { id identifier url updatedAt }
+    ${PAGE_INFO}
+  }
+}`;
+
+// The same filter, ids only: a count reads nothing else.
+export const CLOSED_ISSUE_COUNT_QUERY = `query ClosedIssueCount($teamId: ID!, $types: [String!]!, $after: String) {
+  issues(
+    filter: { team: { id: { eq: $teamId } }, state: { type: { in: $types } } }
+    first: ${LINK_PAGE}
+    after: $after
+  ) {
+    nodes { id }
     ${PAGE_INFO}
   }
 }`;

@@ -46,7 +46,7 @@ interface MemoryEntryBody {
   title: string;
   trust: string;
   body: string;
-  epic: string | null;
+  milestone: string | null;
   appliesTo: string[];
   origin: string;
 }
@@ -168,7 +168,7 @@ describe('POST /api/tasks/:id/amend', () => {
       kind: 'constraint',
       trust: 'human',
       appliesTo: [dependent],
-      epic: null,
+      milestone: null,
     });
     // The index shows titles only, so the title carries the override itself.
     expect(entry.title).toBe(`Amended ${taskId}: join on the issue UUID`);
@@ -190,15 +190,17 @@ describe('POST /api/tasks/:id/amend', () => {
     expect(res.memory.status).toBe('proposed');
   });
 
-  it('with no dependents, reach falls back to the parent epic, then to the whole project', async () => {
-    const epic = await createTask('the epic', { kind: 'epic' });
-    const child = await createTask('child of the epic', { parent: epic });
+  it('with no dependents, reach falls back to the parent milestone, then to the whole project', async () => {
+    const milestone = await createTask('the milestone', { kind: 'milestone' });
+    const child = await createTask('child of the milestone', {
+      parent: milestone,
+    });
     expect(
       await memoryOf(await amend(child, { overrides: 'a', reason: 'b' }))
-    ).toMatchObject({ epic, appliesTo: [] });
+    ).toMatchObject({ milestone, appliesTo: [] });
     expect(
       await memoryOf(await amend(taskId, { overrides: 'c', reason: 'd' }))
-    ).toMatchObject({ epic: null, appliesTo: [] });
+    ).toMatchObject({ milestone: null, appliesTo: [] });
   });
 
   it('400s an empty reason', async () => {

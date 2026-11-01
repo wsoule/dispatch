@@ -2,7 +2,7 @@ import YAML from 'yaml';
 
 import { isValidAssignee } from './actor.js';
 import { describeValue } from './describe.js';
-import { canonicalKind } from './kinds.js';
+import { storedKind } from './kinds.js';
 import { canonicalStatus } from './status.js';
 import type {
   Assignee,
@@ -55,7 +55,7 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
   }
   // NOTE: status is deliberately NOT validated against the built-in list —
   // .dispatch/config.yml can define custom statuses; the doctor command validates status against config.
-  const kind = canonicalKind(describeValue(raw.kind));
+  const kind = storedKind(describeValue(raw.kind));
   if (!KINDS.includes(kind as TaskKind)) {
     throw new TaskParseError(`invalid kind: ${String(raw.kind)}`, file);
   }

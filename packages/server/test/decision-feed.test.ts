@@ -589,6 +589,24 @@ describe('DecisionFeed live updates', () => {
     stop();
   });
 
+  // DIS-129: a surface groups an outside A2A agent's question by who asked,
+  // so every gate item says who asked it.
+  it('names who asked on a gate item, an outside A2A agent included', () => {
+    h.gates.push(
+      gate('m-a2a', {
+        from: 'agent:wyat/a2a.ci-bot',
+        to: ['human:wyat'],
+        body: 'Can the refund change hit staging tonight?',
+      })
+    );
+    const [item] = h.feed.list();
+    expect(item).toMatchObject({
+      kind: 'question',
+      messageId: 'm-a2a',
+      from: 'agent:wyat/a2a.ci-bot',
+    });
+  });
+
   it('broadcasts when a delivery change leaves a gate answered', () => {
     const run = runMeta('r-1');
     h.runs.push(run);

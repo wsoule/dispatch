@@ -3,8 +3,8 @@ import { CircleDashed, Hourglass } from 'lucide-react';
 import { memo } from 'react';
 
 import { useRunStep } from '../../hooks/useRunStep';
-import { formatUsd } from '../../lib/epicSession';
 import { landingBadgeTitle } from '../../lib/landingBadge';
+import { formatUsd } from '../../lib/milestoneSession';
 import { withLiveStep } from '../../lib/runStep';
 import { AssigneeAvatar } from '../tasks/AssigneeAvatar';
 import { LandingBadge } from '../tasks/LandingBadge';

@@ -22,7 +22,7 @@ const PICKER_HITS = 20;
 const PICKER_SEARCH_MS = 150;
 
 // A task's own links by role, its team spec before a personal one (one spec per
-// namespace); links it inherits from its epics come last.
+// namespace); links it inherits from its milestones come last.
 export function groupTaskDocs(linking: readonly DocLinking[]): {
   specs: DocLinking[];
   plans: DocLinking[];

@@ -7,7 +7,7 @@
 // Idempotent: a project is found again by kind + title, and a task already
 // under its project is left alone, so a second run creates and moves nothing.
 // Non-destructive: the `milestone` field itself is kept on every task.
-import { canonicalKind, isValidParentKind } from './kinds.js';
+import { isValidParentKind } from './kinds.js';
 import type { TaskStorePort } from './store.js';
 import type { TaskDoc } from './types.js';
 
@@ -131,7 +131,7 @@ export function migrateLegacyMilestones(
   for (const { doc, milestone } of withMilestone) {
     const named = byId.get(milestone);
     const parent = named?.meta.id ?? projectIds.get(milestone) ?? null;
-    const parentKind = canonicalKind(named?.meta.kind ?? 'project');
+    const parentKind = named?.meta.kind ?? 'project';
     const { id } = doc.meta;
     if (parent !== null && id === parent) continue;
     if (parent !== null && doc.meta.parent === parent) {

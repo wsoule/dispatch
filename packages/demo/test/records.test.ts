@@ -121,10 +121,10 @@ test('every ledger entry carries the fields the reader dereferences', () => {
   }
 });
 
-test('the ledger scopes at least one entry to an epic and leaves one project-wide', () => {
+test('the ledger scopes at least one entry to a milestone and leaves one project-wide', () => {
   const ledger = lines(build(), 'ledger.jsonl');
-  expect(ledger.some((l) => l.epicId !== null)).toBe(true);
-  expect(ledger.some((l) => l.epicId === null)).toBe(true);
+  expect(ledger.some((l) => l.milestoneId !== null)).toBe(true);
+  expect(ledger.some((l) => l.milestoneId === null)).toBe(true);
 });
 
 test('authoredBy round-trips through the real ActorRef parser', () => {

@@ -96,7 +96,7 @@ export interface RetainedSource {
 /** Row counts per table, used on both sides of the import for parity. */
 export interface RowCounts {
   tasks: number;
-  epics: number;
+  milestones: number;
   findings: number;
   ledger: number;
 }
@@ -105,7 +105,7 @@ export interface MigrationReport {
   rootDir: string;
   dryRun: boolean;
   tasks: MigrationTally;
-  epics: MigrationTally;
+  milestones: MigrationTally;
   findings: MigrationTally;
   ledger: MigrationTally;
   problems: MigrationProblem[];
@@ -155,7 +155,7 @@ export function hasLegacyState(rootDir: string): boolean {
 export function totalImported(report: MigrationReport): number {
   return (
     report.tasks.imported +
-    report.epics.imported +
+    report.milestones.imported +
     report.findings.imported +
     report.ledger.imported
   );
@@ -199,8 +199,8 @@ function rowCounts(records: SqliteRecordStores): RowCounts {
     queryOne<{ n: number }>(records.db, sql, params)?.n ?? 0;
   return {
     tasks: count('SELECT COUNT(*) AS n FROM tasks WHERE kind = ?', ['task']),
-    // `epics` counts every container kind, legacy `epic` rows included.
-    epics: count("SELECT COUNT(*) AS n FROM tasks WHERE kind <> 'task'"),
+    // `milestones` counts every container kind, legacy `milestone` rows included.
+    milestones: count("SELECT COUNT(*) AS n FROM tasks WHERE kind <> 'task'"),
     findings: count('SELECT COUNT(*) AS n FROM findings'),
     ledger: count('SELECT COUNT(*) AS n FROM ledger_entries'),
   };
@@ -371,14 +371,16 @@ function importTasks(
   target: SqliteTaskStore,
   imported: ReadonlyMap<string, string>,
   tasks: MigrationTally,
-  epics: MigrationTally,
+  milestones: MigrationTally,
   problems: MigrationProblem[]
 ): void {
   if (!source.isInitialized()) return;
   const slugs = taskSlugsByFile(source.tasksDir);
   if (everyFileImported(source.tasksDir, slugs, imported)) {
     for (const id of slugs.keys()) {
-      const tally = isContainerKind(imported.get(id) ?? '') ? epics : tasks;
+      const tally = isContainerKind(imported.get(id) ?? '')
+        ? milestones
+        : tasks;
       tally.found += 1;
       tally.skipped += 1;
     }
@@ -395,7 +397,7 @@ function importTasks(
     });
   }
   for (const doc of docs) {
-    const tally = isContainerKind(doc.meta.kind) ? epics : tasks;
+    const tally = isContainerKind(doc.meta.kind) ? milestones : tasks;
     tally.found += 1;
     // Check-then-write rather than an upsert, because put() OVERWRITES: a
     // re-run must not clobber a task the daemon has edited since the first
@@ -547,7 +549,7 @@ export function importLegacyProject(
   const target = stores.tasks;
 
   const tasks = emptyTally();
-  const epics = emptyTally();
+  const milestones = emptyTally();
   const findings = emptyTally();
   const ledger = emptyTally();
   const problems: MigrationProblem[] = [];
@@ -573,7 +575,7 @@ export function importLegacyProject(
       target,
       imported,
       tasks,
-      epics,
+      milestones,
       problems
     );
     importJsonl(
@@ -607,7 +609,7 @@ export function importLegacyProject(
     rootDir,
     dryRun,
     tasks,
-    epics,
+    milestones,
     findings,
     ledger,
     problems,
@@ -685,10 +687,10 @@ export function formatMigrationReport(report: MigrationReport): string {
   );
   lines.push(
     tallyLine(
-      'epics',
-      report.epics,
-      report.rowsBefore.epics,
-      report.rowsAfter.epics
+      'milestones',
+      report.milestones,
+      report.rowsBefore.milestones,
+      report.rowsAfter.milestones
     )
   );
   lines.push(

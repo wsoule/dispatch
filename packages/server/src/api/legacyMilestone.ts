@@ -1,4 +1,4 @@
-import { canonicalKind, resolveMilestoneRef } from '@dispatch-foo/core';
+import { resolveMilestoneRef } from '@dispatch-foo/core';
 
 import type { ApiContext } from '../api.js';
 
@@ -35,7 +35,7 @@ export function legacyMilestoneParent(
     ...ctx.cache.queryMeta({ kind: 'project', includeArchived: true }),
   ];
   const resolved = resolveMilestoneRef(candidates, value, {
-    childKind: canonicalKind(childKind),
+    childKind: childKind,
     parent: typeof body.parent === 'string' ? body.parent : null,
   });
   return resolved.ok ? { ok: true, parent: resolved.id } : resolved;

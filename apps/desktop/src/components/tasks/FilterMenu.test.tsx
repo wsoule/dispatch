@@ -11,9 +11,8 @@ import { FilterMenu, type FilterMenuProps } from './FilterMenu';
 
 const context: FilterMenuProps['context'] = {
   statuses: ['draft', 'ready', 'working', 'review', 'landed'],
-  epics: [],
-  labels: ['ui'],
   milestones: [],
+  labels: ['ui'],
 };
 
 // A popover positions itself a microtask after mount (floating-ui); every open, click and

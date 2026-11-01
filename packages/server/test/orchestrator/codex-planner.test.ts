@@ -70,10 +70,10 @@ function promptOf(codex: FakeCodexProcess): string {
 }
 
 describe('CodexPlanner', () => {
-  it('returns the reply, proposal and thread id, dropping a null epic', async () => {
+  it('returns the reply, proposal and thread id, dropping a null milestone', async () => {
     const codex = answering({
       message: "here's a plan",
-      proposal: { epic: null, ...PROPOSAL },
+      proposal: { milestone: null, ...PROPOSAL },
       questions: [],
     });
     const turn = await plannerOver([codex]).start('build the thing');
@@ -126,7 +126,7 @@ describe('CodexPlanner', () => {
     };
     expect(schema.required).toEqual(['message', 'proposal', 'questions']);
     expect(schema.properties.proposal.anyOf[0].required).toEqual([
-      'epic',
+      'milestone',
       'tasks',
     ]);
   });
@@ -198,7 +198,9 @@ describe('CodexPlanner', () => {
       await planner.start('rename the button', undefined, 'draft');
       expect(plan.paramsOf('turn/start')?.effort).toBe('xhigh');
       expect(draft.paramsOf('turn/start')?.effort).toBeUndefined();
-      expect(promptOf(draft)).toContain('Produce exactly one task (no epic)');
+      expect(promptOf(draft)).toContain(
+        'Produce exactly one task (no milestone)'
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

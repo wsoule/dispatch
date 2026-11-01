@@ -66,18 +66,18 @@ interface MemorySaveArgs {
   title: string;
   body: string;
   refs?: { type: string; id: string; at?: string }[];
-  epic?: string | null;
+  milestone?: string | null;
   appliesTo?: string[];
   supersedes?: string;
   projectOnly?: boolean;
 }
 
-// The POST /api/memory body. Personal memory has no epic; the daemon gives a
-// run's shared save that names none its task's parent epic.
+// The POST /api/memory body. Personal memory has no milestone; the daemon gives a
+// run's shared save that names none its task's parent milestone.
 function saveBody(args: MemorySaveArgs): Record<string, unknown> {
-  const { epic, ...rest } = args;
-  if (args.scope === 'personal' || epic === undefined) return rest;
-  return { ...rest, epic };
+  const { milestone, ...rest } = args;
+  if (args.scope === 'personal' || milestone === undefined) return rest;
+  return { ...rest, milestone };
 }
 
 // POSTs a memory write under one Idempotency-Key for both attempts: a dropped
@@ -209,7 +209,7 @@ export function registerMemoryTools(server: McpServer, rootDir: string): void {
             })
           )
           .optional(),
-        epic: z.string().nullable().optional(),
+        milestone: z.string().nullable().optional(),
         appliesTo: z.array(z.string()).optional(),
         supersedes: z.string().optional(),
         projectOnly: z.boolean().optional(),

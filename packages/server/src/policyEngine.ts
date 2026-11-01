@@ -40,7 +40,7 @@ import type {
 } from './orchestrator/verify.js';
 
 /**
- * The gate side of the policy engine (epic e-ad1978, ladder settled in
+ * The gate side of the policy engine (milestone e-ad1978, ladder settled in
  * docs/design/autonomy-ladder.md): every existing human gate consults the
  * project's policy before parking work on a person. Below the task's
  * effective rung a gate blocks exactly as before; at or above it, the gate
@@ -276,7 +276,7 @@ export class PolicyEngine {
   // Floor holds already written to the ledger, keyed `<check>:<run id>`, so a
   // re-broadcast of the same signal records the hold once, not per event.
   // Not a hazard receipt's substitute: the ledger entry is the receipt the
-  // epic promises — an auto-decision that did NOT happen, and why.
+  // milestone promises — an auto-decision that did NOT happen, and why.
   private readonly recordedFloorHolds = new Set<string>();
 
   constructor(private readonly ctx: PolicyEngineContext) {}
@@ -603,7 +603,7 @@ export class PolicyEngine {
     this.recordedFloorHolds.add(key);
     const task = this.ctx.store.get(taskId);
     this.ctx.ledgerStore.add({
-      epicId: task?.meta.parent ?? null,
+      milestoneId: task?.meta.parent ?? null,
       sourceTaskId: taskId,
       kind: 'decision',
       title,
@@ -627,7 +627,7 @@ export class PolicyEngine {
     const authorization = describePolicyAuthorization(ruling);
     const task = this.ctx.store.get(taskId);
     this.ctx.ledgerStore.add({
-      epicId: task?.meta.parent ?? null,
+      milestoneId: task?.meta.parent ?? null,
       sourceTaskId: taskId,
       kind: 'decision',
       title,

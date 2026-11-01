@@ -62,3 +62,46 @@ describe('linear.teamIds', () => {
     ).toThrow(ConfigError);
   });
 });
+
+describe('linear.archiveFinished', () => {
+  it('is off by default', () => {
+    expect(loadConfig(writeConfig('')).linear.archiveFinished).toBe(false);
+    const bare = mkdtempSync(join(tmpdir(), 'dispatch-linear-config-'));
+    expect(loadConfig(bare).linear.archiveFinished).toBe(false);
+  });
+
+  it('reads archiveFinished from config.yml', () => {
+    const linear = loadConfig(
+      writeConfig('linear:\n  archiveFinished: true\n')
+    ).linear;
+    expect(linear.archiveFinished).toBe(true);
+  });
+
+  it('refuses a non-boolean archiveFinished', () => {
+    expect(() =>
+      loadConfig(writeConfig('linear:\n  archiveFinished: sometimes\n'))
+    ).toThrow(ConfigError);
+    const dir = writeConfig('linear:\n  enabled: true\n');
+    const before = readFileSync(join(dir, '.dispatch/config.yml'), 'utf8');
+    expect(() =>
+      updateConfig(dir, { linear: { archiveFinished: 'true' as never } })
+    ).toThrow(ConfigError);
+    expect(readFileSync(join(dir, '.dispatch/config.yml'), 'utf8')).toBe(
+      before
+    );
+  });
+
+  it('round-trips archiveFinished through updateConfig and keeps the rest of the block', () => {
+    const dir = writeConfig('linear:\n  enabled: true\n  teamId: team-1\n');
+    updateConfig(dir, { linear: { archiveFinished: true } });
+    const file = readFileSync(join(dir, '.dispatch/config.yml'), 'utf8');
+    expect(file).toContain('archiveFinished: true');
+    expect(loadConfig(dir).linear).toMatchObject({
+      archiveFinished: true,
+      enabled: true,
+      teamIds: ['team-1'],
+    });
+    updateConfig(dir, { linear: { archiveFinished: false } });
+    expect(loadConfig(dir).linear.archiveFinished).toBe(false);
+  });
+});

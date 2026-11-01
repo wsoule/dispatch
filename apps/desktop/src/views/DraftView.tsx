@@ -15,7 +15,7 @@ import {
 } from '../components/guide/SendToAgent';
 import { PlanQuestionsForm } from '../components/plans/PlanQuestionsForm';
 import {
-  EpicControl,
+  MilestoneControl,
   PriorityControl,
   StatusControl,
 } from '../components/tasks/PropertyControls';
@@ -63,7 +63,7 @@ interface DraftViewProps {
 
 /** A settled AI task draft's review page on the issue-page grammar (§8): the task title is the
  * 24px page heading, the description is 15px prose with the acceptance criteria as a checklist
- * under it, and status/priority/epic live in a `Properties` rail. Every field is editable and
+ * under it, and status/priority/milestone live in a `Properties` rail. Every field is editable and
  * nothing is written until "Create task". Reviews only the proposal's first task. */
 export function DraftView({
   data,
@@ -394,9 +394,9 @@ export function DraftView({
               onChange={(priority: Priority) => editDraft({ priority })}
               variant="row"
             />
-            <EpicControl
+            <MilestoneControl
               value={editable.parent}
-              epics={data.epics}
+              milestones={data.milestones}
               onChange={(parent) => editDraft({ parent })}
               variant="row"
             />

@@ -203,7 +203,7 @@ function saveInputOf(body: Body): SaveInput {
     title: stringField(body, 'title'),
     body: stringField(body, 'body'),
     refs: optionalRefs(body),
-    epic: optionalNullableString(body, 'epic'),
+    milestone: optionalNullableString(body, 'milestone'),
     appliesTo: optionalStrings(body, 'appliesTo'),
     supersedes: optionalNullableString(body, 'supersedes'),
     projectOnly: optionalBoolean(body, 'projectOnly'),
@@ -351,11 +351,11 @@ function recalledIndex(
 ): { out: RenderedIndex; personalHidden: number } {
   const shared = requireShared(ctx);
   const taskId = ctx.orchestrator.getRun(runId)?.meta.taskId ?? null;
-  const epic =
+  const milestone =
     taskId === null
       ? null
-      : (ctx.memory.host.taskContext(taskId)?.epic ?? null);
-  const rankCtx: RankContext = { taskId, epic };
+      : (ctx.memory.host.taskContext(taskId)?.milestone ?? null);
+  const rankCtx: RankContext = { taskId, milestone };
   const entries = indexedEntries(shared, runId);
   const own = personal === null ? [] : indexedEntries(personal, runId);
   if (showPersonal) entries.push(...own);

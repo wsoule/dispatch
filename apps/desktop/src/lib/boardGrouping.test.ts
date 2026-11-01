@@ -71,50 +71,60 @@ describe('groupTasksByStatus', () => {
 
 describe('groupTasksByLane', () => {
   const statuses = ['ready', 'landed'];
-  const epic = makeTask('e-1', 'ready', {
+  const milestone = makeTask('e-1', 'ready', {
     kind: 'milestone',
     title: 'Payments',
   });
   const tasks = [
-    epic,
+    milestone,
     makeTask('a', 'ready', { parent: 'e-1', priority: 'high' }),
     makeTask('b', 'landed', { assignee: 'agent:claude' }),
   ];
 
   test('`none` is the one headerless lane the flat board draws', () => {
-    const lanes = groupTasksByLane(tasks, statuses, [epic], 'none');
+    const lanes = groupTasksByLane(tasks, statuses, [milestone], 'none');
     expect(lanes).toHaveLength(1);
     expect(lanes[0]).toMatchObject({
       key: 'all',
       kind: 'none',
-      epicId: null,
+      milestoneId: null,
       title: '',
       total: 2,
     });
     expect(lanes[0].columns.map((c) => c.status)).toEqual(statuses);
   });
 
-  test('`epic` delegates to the epic lanes, stamped with their key and kind', () => {
-    const lanes = groupTasksByLane(tasks, statuses, [epic], 'epic');
-    expect(lanes.map((l) => [l.key, l.kind, l.epicId, l.title])).toEqual([
-      ['e-1', 'epic', 'e-1', 'Payments'],
-      ['__no-epic__', 'epic', null, 'No epic'],
+  test('`milestone` delegates to the milestone lanes, stamped with their key and kind', () => {
+    const lanes = groupTasksByLane(tasks, statuses, [milestone], 'parent');
+    expect(lanes.map((l) => [l.key, l.kind, l.milestoneId, l.title])).toEqual([
+      ['e-1', 'parent', 'e-1', 'Payments'],
+      ['__no-milestone__', 'parent', null, 'No milestone'],
     ]);
   });
 
-  test('`assignee` and `priority` lane on the task field, epics never becoming cards', () => {
-    const byAssignee = groupTasksByLane(tasks, statuses, [epic], 'assignee');
+  test('`assignee` and `priority` lane on the task field, milestones never becoming cards', () => {
+    const byAssignee = groupTasksByLane(
+      tasks,
+      statuses,
+      [milestone],
+      'assignee'
+    );
     expect(byAssignee.map((l) => [l.key, l.kind, l.title, l.total])).toEqual([
       ['assignee:agent:claude', 'assignee', 'claude', 1],
       ['assignee:none', 'assignee', 'Unassigned', 1],
     ]);
-    const byPriority = groupTasksByLane(tasks, statuses, [epic], 'priority');
+    const byPriority = groupTasksByLane(
+      tasks,
+      statuses,
+      [milestone],
+      'priority'
+    );
     expect(byPriority.map((l) => [l.key, l.kind, l.title, l.total])).toEqual([
       ['priority:high', 'priority', 'High', 1],
       ['priority:none', 'priority', 'No priority', 1],
     ]);
     for (const lane of [...byAssignee, ...byPriority]) {
-      expect(lane.epicId).toBeNull();
+      expect(lane.milestoneId).toBeNull();
       for (const column of lane.columns) {
         expect(column.tasks.some((t) => t.meta.kind === 'milestone')).toBe(
           false

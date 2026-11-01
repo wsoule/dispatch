@@ -6,6 +6,7 @@ import type {
   LinearIssue,
   LinearIssueInput,
   LinearLabel,
+  LinearLabelMatch,
   LinearMilestoneInput,
   LinearProject,
   LinearProjectInput,
@@ -27,8 +28,19 @@ const LINEAR_API_URL = 'https://api.linear.app/graphql';
 // is reported (`truncated`) rather than silently dropping the rest.
 const MAX_WALK_NODES = 12_000;
 
-/** Why a call failed, so callers can back off on `rate-limit` instead of retrying blindly. */
-type LinearErrorKind = 'auth' | 'rate-limit' | 'network' | 'graphql' | 'http';
+// Ceiling on a closed-issue count for capacity(): a status read must not
+// spend the hourly budget walking a large paid workspace.
+const COUNT_WALK_NODES = 2_500;
+
+/** Why a call failed, so callers can back off on `rate-limit` and stop
+ *  creating on `usage-limit` instead of retrying blindly. */
+export type LinearErrorKind =
+  | 'auth'
+  | 'rate-limit'
+  | 'usage-limit'
+  | 'network'
+  | 'graphql'
+  | 'http';
 
 export interface LinearFailure {
   ok: false;
@@ -36,6 +48,24 @@ export interface LinearFailure {
   error: string;
   /** Milliseconds to wait before the next attempt; only set on `rate-limit`. */
   retryAfterMs?: number;
+  /** Linear's own wording, when it differs from `error`. */
+  detail?: string;
+  /** Set by createLabel when Linear refused the name as taken; kind stays `graphql`. */
+  code?: 'duplicate';
+}
+
+/** What a usage-limit failure says, in place of Linear's own wording. */
+export const LINEAR_USAGE_LIMIT_MESSAGE =
+  'Workspace is at its issue limit — archive closed issues or upgrade';
+
+/** Non-archived issues a Free-plan workspace may hold. */
+export const FREE_PLAN_ISSUE_LIMIT = 250;
+
+// The state types a closed kind covers: Linear's 'duplicate' is a canceled one.
+function closedTypes(types: readonly ('completed' | 'canceled')[]): string[] {
+  return types.flatMap((t) =>
+    t === 'canceled' ? ['canceled', 'duplicate'] : [t]
+  );
 }
 
 export type LinearResult<T> = { ok: true; data: T } | LinearFailure;
@@ -90,6 +120,29 @@ export interface LinearProbe {
   documents: boolean;
 }
 
+/** Issue counts measured against the workspace's plan cap. */
+export interface LinearCapacity {
+  /** Per team: non-archived issues, and how many of those are closed. */
+  teams: {
+    id: string;
+    key: string;
+    name: string;
+    active: number;
+    completed: number;
+    canceled: number;
+  }[];
+  /** Non-archived issues across `activeScope`; null when not measured. */
+  active: number | null;
+  activeScope: 'workspace' | 'linked-teams';
+  limit: number | null;
+  limitSource: 'plan' | 'observed' | null;
+  plan: 'free' | 'paid' | 'trial' | 'unknown';
+  limitHitAt: string | null;
+  /** A closed count stopped at its cap, so it is a floor. */
+  truncated: boolean;
+  checkedAt: string;
+}
+
 export interface LinearWebhookInput {
   url: string;
   teamId: string;
@@ -106,6 +159,21 @@ export interface LinearClient {
   workspace(teamId: string): Promise<LinearResult<LinearWorkspace>>;
   /** The team's labels plus workspace labels, group labels excluded. */
   labels(teamId: string): Promise<LinearResult<LinearLabel[]>>;
+  /** Every label named `name` in any case, in any team, groups, archived and
+   *  retired ones included and flagged. */
+  labelsNamed(name: string): Promise<LinearResult<LinearLabelMatch[]>>;
+  /** Issue counts against the plan's cap; `teamIds` picks the teams detailed
+   *  (every team when absent), while `active` covers the whole workspace.
+   *  A team in `reuse` keeps those closed counts instead of walking them. */
+  capacity(
+    teamIds?: readonly string[],
+    reuse?: Pick<LinearCapacity, 'teams' | 'truncated'>
+  ): Promise<LinearResult<LinearCapacity>>;
+  /** The team's non-archived issues in a closed state of one of `types`. */
+  closedIssues(
+    teamId: string,
+    types: readonly ('completed' | 'canceled')[]
+  ): Promise<LinearResult<LinearPage<LinearIssueRef>>>;
   cycles(teamId: string): Promise<LinearResult<TaskCycle[]>>;
   users(ids: string[]): Promise<LinearResult<LinearUser[]>>;
   /** Documents are asked about after their own cursor, `documentsSince`. */
@@ -228,7 +296,11 @@ export interface LinearClient {
 
 interface GraphQLError {
   message?: string;
-  extensions?: { code?: string; type?: string };
+  extensions?: {
+    code?: string;
+    type?: string;
+    userPresentableMessage?: string;
+  };
 }
 
 interface GraphQLBody<T> {
@@ -347,8 +419,17 @@ interface LabelNode {
   name: string;
   color: string | null;
   isGroup?: boolean;
+  archivedAt?: string | null;
+  retiredAt?: string | null;
   team: IdRef;
   parent: { name: string } | null;
+}
+
+interface TeamCountNode {
+  id: string;
+  key: string;
+  name: string;
+  issueCount: number;
 }
 
 interface UserNode {
@@ -560,6 +641,15 @@ function toLabel(node: LabelNode): LinearLabel {
   };
 }
 
+function toLabelMatch(node: LabelNode): LinearLabelMatch {
+  return {
+    ...toLabel(node),
+    isGroup: node.isGroup === true,
+    archived: (node.archivedAt ?? null) !== null,
+    retired: (node.retiredAt ?? null) !== null,
+  };
+}
+
 function toUser(node: UserNode): LinearUser {
   return {
     id: node.id,
@@ -581,6 +671,20 @@ function isRateLimited(errors: GraphQLError[]): boolean {
       (e.message ?? '').toUpperCase().includes('RATELIMIT')
   );
 }
+
+// The plan's issue cap (the SDK's UsageLimitExceeded) names itself in the
+// extension type or code, or only in the message.
+function isUsageLimited(errors: GraphQLError[]): boolean {
+  return errors.some(
+    (e) =>
+      /usage.?limit/i.test(e.extensions?.type ?? '') ||
+      /usage.?limit/i.test(e.extensions?.code ?? '') ||
+      /usage limit exceeded/i.test(e.message ?? '')
+  );
+}
+
+// Linear's wording of a label create refused because the name is taken.
+const DUPLICATE_LABEL = /duplicate label name|already exists/i;
 
 function isAuthError(status: number, errors: GraphQLError[]): boolean {
   if (status === 401 || status === 403) return true;
@@ -701,6 +805,18 @@ export class HttpLinearClient implements LinearClient {
       }
       const joined = errors.map((e) => e.message ?? 'unknown error').join('; ');
       const message = joined === '' ? `linear responded ${res.status}` : joined;
+      const shown = errors
+        .map((e) => e.extensions?.userPresentableMessage ?? '')
+        .filter((m) => m !== '')
+        .join('; ');
+      if (isUsageLimited(errors)) {
+        return {
+          ok: false,
+          kind: 'usage-limit',
+          error: LINEAR_USAGE_LIMIT_MESSAGE,
+          detail: this.redact(shown === '' ? message : shown),
+        };
+      }
       return {
         ok: false,
         kind: isAuthError(res.status, errors)
@@ -709,6 +825,9 @@ export class HttpLinearClient implements LinearClient {
             ? 'graphql'
             : 'http',
         error: this.redact(message),
+        ...(shown === '' || shown === message
+          ? {}
+          : { detail: this.redact(shown) }),
       };
     }
 
@@ -724,13 +843,14 @@ export class HttpLinearClient implements LinearClient {
     query: string,
     variables: Record<string, unknown>,
     pick: (data: unknown) => Connection<N> | null | undefined,
-    onPage?: (fetched: number) => void
+    onPage?: (fetched: number) => void,
+    cap: number = MAX_WALK_NODES
   ): Promise<LinearResult<LinearPage<N>>> {
     const nodes: N[] = [];
     let after: string | null = null;
     let truncated = false;
     for (;;) {
-      if (nodes.length >= MAX_WALK_NODES) {
+      if (nodes.length >= cap) {
         truncated = true;
         break;
       }
@@ -896,6 +1016,134 @@ export class HttpLinearClient implements LinearClient {
       }
     );
     return result.ok ? { ok: true, data: result.data.nodes } : result;
+  }
+
+  async labelsNamed(name: string): Promise<LinearResult<LinearLabelMatch[]>> {
+    const result = await this.walk(
+      Q.LABELS_NAMED_QUERY,
+      { name },
+      'issueLabels',
+      toLabelMatch
+    );
+    return result.ok ? { ok: true, data: result.data.nodes } : result;
+  }
+
+  async capacity(
+    teamIds?: readonly string[],
+    reuse?: Pick<LinearCapacity, 'teams' | 'truncated'>
+  ): Promise<LinearResult<LinearCapacity>> {
+    const counted = await this.walk<TeamCountNode, TeamCountNode>(
+      Q.TEAM_ISSUE_COUNTS,
+      {},
+      'teams',
+      (t) => t
+    );
+    if (!counted.ok) return counted;
+    const all = counted.data.nodes;
+    const detailed =
+      teamIds === undefined
+        ? all
+        : teamIds.flatMap((id) => all.filter((t) => t.id === id));
+    const teams: LinearCapacity['teams'] = [];
+    let truncated = false;
+    for (const team of detailed) {
+      const known = reuse?.teams.find((t) => t.id === team.id);
+      if (known !== undefined) {
+        truncated ||= reuse?.truncated === true;
+        teams.push({
+          id: team.id,
+          key: team.key,
+          name: team.name,
+          active: team.issueCount,
+          completed: known.completed,
+          canceled: known.canceled,
+        });
+        continue;
+      }
+      const completed = await this.countClosed(team.id, 'completed');
+      if (!completed.ok) return completed;
+      const canceled = await this.countClosed(team.id, 'canceled');
+      if (!canceled.ok) return canceled;
+      truncated ||= completed.data.truncated || canceled.data.truncated;
+      teams.push({
+        id: team.id,
+        key: team.key,
+        name: team.name,
+        active: team.issueCount,
+        completed: completed.data.count,
+        canceled: canceled.data.count,
+      });
+    }
+    const plan = await this.plan();
+    if (!plan.ok) return plan;
+    const free = plan.data === 'free';
+    return {
+      ok: true,
+      data: {
+        teams,
+        active: all.reduce((n, t) => n + t.issueCount, 0),
+        activeScope: 'workspace',
+        limit: free ? FREE_PLAN_ISSUE_LIMIT : null,
+        limitSource: free ? 'plan' : null,
+        plan: plan.data,
+        limitHitAt: null,
+        truncated,
+        checkedAt: new Date().toISOString(),
+      },
+    };
+  }
+
+  // Free when the organization has no subscription. A refused read (a key
+  // that cannot see billing) is 'unknown'; a throttle, a timeout or a server
+  // error fails the call, so a transient failure is not taken as an answer.
+  private async plan(): Promise<LinearResult<LinearCapacity['plan']>> {
+    const result = await this.request<{
+      organization: { subscription: { type: string | null } | null } | null;
+    }>(Q.ORGANIZATION_PLAN);
+    if (!result.ok) {
+      return result.kind === 'graphql' || result.kind === 'auth'
+        ? { ok: true, data: 'unknown' }
+        : result;
+    }
+    const org = result.data.organization;
+    if (org === null) return { ok: true, data: 'unknown' };
+    return { ok: true, data: org.subscription === null ? 'free' : 'paid' };
+  }
+
+  // How many of the team's non-archived issues sit in a `type` state, walked
+  // up to COUNT_WALK_NODES.
+  private async countClosed(
+    teamId: string,
+    type: 'completed' | 'canceled'
+  ): Promise<LinearResult<{ count: number; truncated: boolean }>> {
+    const result = await this.paginate<unknown>(
+      Q.CLOSED_ISSUE_COUNT_QUERY,
+      { teamId, types: closedTypes([type]) },
+      (data) => (data as { issues?: Connection<unknown> }).issues,
+      undefined,
+      COUNT_WALK_NODES
+    );
+    return result.ok
+      ? {
+          ok: true,
+          data: {
+            count: result.data.nodes.length,
+            truncated: result.data.truncated,
+          },
+        }
+      : result;
+  }
+
+  closedIssues(
+    teamId: string,
+    types: readonly ('completed' | 'canceled')[]
+  ): Promise<LinearResult<LinearPage<LinearIssueRef>>> {
+    return this.walk(
+      Q.CLOSED_ISSUES_QUERY,
+      { teamId, types: closedTypes(types) },
+      'issues',
+      (r: LinearIssueRef) => r
+    );
   }
 
   async cycles(teamId: string): Promise<LinearResult<TaskCycle[]>> {
@@ -1195,12 +1443,14 @@ export class HttpLinearClient implements LinearClient {
     );
   }
 
-  createLabel(input: {
+  // A create refused because the name is taken is marked `duplicate`, so the
+  // pass can look the existing label up instead of reporting it.
+  async createLabel(input: {
     name: string;
     teamId: string;
     color?: string;
   }): Promise<LinearResult<LinearLabel>> {
-    return this.mutate(
+    const result = await this.mutate(
       Q.LABEL_CREATE,
       { input },
       'issueLabelCreate',
@@ -1208,6 +1458,10 @@ export class HttpLinearClient implements LinearClient {
       toLabel,
       'label'
     );
+    if (result.ok || result.kind !== 'graphql') return result;
+    return DUPLICATE_LABEL.test(`${result.error}\n${result.detail ?? ''}`)
+      ? { ...result, code: 'duplicate' }
+      : result;
   }
 
   updateLabel(

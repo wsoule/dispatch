@@ -4,7 +4,7 @@ import { rankEntries, reaches, specificity } from '../src/rank.js';
 import { newMemoryEntry } from '../src/records.js';
 import type { MemoryEntry } from '../src/types.js';
 
-const ctx = { taskId: 't-1a2b3c', epic: 'e-000001' };
+const ctx = { taskId: 't-1a2b3c', milestone: 'e-000001' };
 let n = 0;
 function e(over: Partial<MemoryEntry> = {}): MemoryEntry {
   n += 1;
@@ -46,12 +46,10 @@ describe('rank', () => {
       'decision',
       'task-fact',
     ]);
-    const epicFact = e({ epic: 'e-000001', title: 'epic-fact' });
-    expect(order([r(e({ title: 'wide' })), r(epicFact), r(taskFact)])).toEqual([
-      'task-fact',
-      'epic-fact',
-      'wide',
-    ]);
+    const milestoneFact = e({ milestone: 'e-000001', title: 'milestone-fact' });
+    expect(
+      order([r(e({ title: 'wide' })), r(milestoneFact), r(taskFact)])
+    ).toEqual(['task-fact', 'milestone-fact', 'wide']);
     expect(
       order([
         r(e({ title: 'unmatched' })),
@@ -74,8 +72,10 @@ describe('rank', () => {
     ).toEqual(['recalled', 'old']);
   });
 
-  it('reaches by epic, appliesTo and personal project key', () => {
-    expect(reaches(e({ epic: 'e-000009' }), ctx, 'aaaaaaaaaaaa')).toBe(false);
+  it('reaches by milestone, appliesTo and personal project key', () => {
+    expect(reaches(e({ milestone: 'e-000009' }), ctx, 'aaaaaaaaaaaa')).toBe(
+      false
+    );
     expect(reaches(e({ appliesTo: ['t-ffffff'] }), ctx, 'aaaaaaaaaaaa')).toBe(
       false
     );
@@ -92,21 +92,28 @@ describe('rank', () => {
     // No task context (the overseer, an empty search): everything shared reaches, ranked as specificity 1.
     expect(
       reaches(
-        e({ epic: 'e-000009' }),
-        { taskId: null, epic: null },
+        e({ milestone: 'e-000009' }),
+        { taskId: null, milestone: null },
         'aaaaaaaaaaaa'
       )
     ).toBe(true);
     expect(
-      specificity(e({ epic: 'e-000009' }), { taskId: null, epic: null })
+      specificity(e({ milestone: 'e-000009' }), {
+        taskId: null,
+        milestone: null,
+      })
     ).toBe(1);
   });
 
-  // An epic's page lists the lessons its tasks' runs narrowed to it.
-  it('reaches the epic itself with an entry narrowed to it', () => {
-    const epic = { taskId: 'e-000001', epic: null };
-    expect(reaches(e({ epic: 'e-000001' }), epic, 'aaaaaaaaaaaa')).toBe(true);
-    expect(reaches(e({ epic: 'e-000009' }), epic, 'aaaaaaaaaaaa')).toBe(false);
-    expect(specificity(e({ epic: 'e-000001' }), epic)).toBe(2);
+  // A milestone's page lists the lessons its tasks' runs narrowed to it.
+  it('reaches the milestone itself with an entry narrowed to it', () => {
+    const milestone = { taskId: 'e-000001', milestone: null };
+    expect(
+      reaches(e({ milestone: 'e-000001' }), milestone, 'aaaaaaaaaaaa')
+    ).toBe(true);
+    expect(
+      reaches(e({ milestone: 'e-000009' }), milestone, 'aaaaaaaaaaaa')
+    ).toBe(false);
+    expect(specificity(e({ milestone: 'e-000001' }), milestone)).toBe(2);
   });
 });

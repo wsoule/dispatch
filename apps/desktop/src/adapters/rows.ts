@@ -4,17 +4,17 @@ import type {
   TaskListItem,
 } from '@dispatch-foo/core/browser';
 import {
-  canonicalKind,
   isContainerKind,
   isDoneStatus,
   statusType,
+  storedKind,
 } from '@dispatch-foo/core/browser';
 import type {
-  EpicChildPhase,
-  EpicProgress,
-  EpicProgressChild,
   LinearIssueLink,
   MergeQueueEntryState,
+  MilestoneChildPhase,
+  MilestoneProgress,
+  MilestoneProgressChild,
   RunState,
 } from '@dispatch/client';
 import type {
@@ -31,10 +31,10 @@ import type {
 } from '@dispatch/ui';
 
 import { containerStatus } from '../lib/containerStatus';
-import { PHASE_LABEL, showsPhasePill } from '../lib/epicSession';
 import { landingBadgeTitle } from '../lib/landingBadge';
 import { resolveLinearLink } from '../lib/linearSettings';
 import type { ListGroup, ListGroupRow } from '../lib/listGrouping';
+import { PHASE_LABEL, showsPhasePill } from '../lib/milestoneSession';
 import { dueDateInfo } from '../lib/taskDates';
 import { assigneeRef, priorityLabel, statusLabel } from '../lib/taskDisplay';
 import {
@@ -90,8 +90,8 @@ export interface RowContext {
   liveRunStateByTaskId?: ReadonlyMap<string, RunState>;
   /** Where a task's run stands in the merge queue (`landingStateByTaskId`). */
   landingByTaskId?: ReadonlyMap<string, MergeQueueEntryState>;
-  /** Fan-out progress per epic: each child's phase, the session's state. */
-  epicProgressById?: ReadonlyMap<string, EpicProgress>;
+  /** Fan-out progress per milestone: each child's phase, the session's state. */
+  milestoneProgressById?: ReadonlyMap<string, MilestoneProgress>;
   /** Open asks per task (`needsYou().byTask`), for a container header. */
   asksByTaskId?: ReadonlyMap<string, number>;
   /** Unread messages to me per task. */
@@ -186,7 +186,7 @@ export function liveRunWord(live: RunState | undefined): string | undefined {
 
 // A fan-out phase's hue, following the old pill's tints: motion blue, a pause
 // amber, a failure red.
-const PHASE_TONE: Partial<Record<EpicChildPhase, UiTone>> = {
+const PHASE_TONE: Partial<Record<MilestoneChildPhase, UiTone>> = {
   working: 'info',
   reviewing: 'info',
   fixing: 'info',
@@ -200,7 +200,7 @@ const PHASE_TONE: Partial<Record<EpicChildPhase, UiTone>> = {
 // The phases whose word the bucket chip already says, so the row does not
 // print "Agent working" and "Working" side by side (a `waiting` child is one
 // waiting on its blockers: "Blocked" already says it).
-const PHASE_SAID_BY_BUCKET: Partial<Record<EpicChildPhase, TaskBucket>> = {
+const PHASE_SAID_BY_BUCKET: Partial<Record<MilestoneChildPhase, TaskBucket>> = {
   working: 'working',
   waiting: 'blocked',
   failed: 'failed',
@@ -231,7 +231,7 @@ function containersAbove(
     if (node === undefined) break;
     if (isContainerKind(node.meta.kind)) {
       out.nearest ??= node;
-      const kind = canonicalKind(node.meta.kind);
+      const kind = storedKind(node.meta.kind);
       if (kind === 'milestone') out.milestone ??= node;
       if (kind === 'project') out.project ??= node;
     }
@@ -243,14 +243,17 @@ function containersAbove(
 // Each fan-out's children by id, built once per progress snapshot (the
 // snapshot object is stable until the query refetches), so a row's phase is
 // one map lookup instead of a scan of the epic's children.
-const childIndex = new WeakMap<EpicProgress, Map<string, EpicProgressChild>>();
+const childIndex = new WeakMap<
+  MilestoneProgress,
+  Map<string, MilestoneProgressChild>
+>();
 
 function phaseOf(
   doc: TaskListItem,
   ctx: RowContext
-): EpicProgressChild | undefined {
+): MilestoneProgressChild | undefined {
   if (doc.meta.parent === null) return undefined;
-  const progress = ctx.epicProgressById?.get(doc.meta.parent);
+  const progress = ctx.milestoneProgressById?.get(doc.meta.parent);
   if (progress === undefined) return undefined;
   let byId = childIndex.get(progress);
   if (byId === undefined) {
@@ -425,7 +428,7 @@ export interface GroupOptions {
 // What an empty group says, by what it groups.
 const EMPTY_LABEL: Record<ListGroup['kind'], string> = {
   status: 'No issues in this status',
-  epic: 'No issues here yet',
+  parent: 'No issues here yet',
   milestone: 'No issues here yet',
   assignee: 'Nothing assigned',
   priority: 'No issues at this priority',
@@ -488,7 +491,7 @@ function containerHeading(
       out.dueTone = 'warning';
     }
   }
-  const session = ctx.epicProgressById?.get(container.meta.id)?.session;
+  const session = ctx.milestoneProgressById?.get(container.meta.id)?.session;
   if (session?.state === 'paused') out.tags = ['Paused'];
   if (finished) out.muted = true;
   return out;
@@ -513,7 +516,7 @@ function groupMark(group: ListGroup, ctx: RowContext): PickerMark | undefined {
             ? ''
             : assigneeDisplay(icon.assignee, ctx.personFor).label,
       };
-    case 'epic':
+    case 'parent':
     case 'milestone':
       return undefined;
   }
@@ -524,8 +527,8 @@ function groupMark(group: ListGroup, ctx: RowContext): PickerMark | undefined {
  * state and drop targets line up), titled by its container (an assignee group
  * by the person's name, the headerless `all` group "All issues"), with the
  * parent container as its eyebrow and `containerHeading`'s facts when it
- * stands for an epic or a milestone, else a state, priority or avatar mark.
- * Status, epic and milestone groups take drops (`dropTargetFor` says what a
+ * stands for a parent or a milestone, else a state, priority or avatar mark.
+ * Status, parent and milestone groups take drops (`dropTargetFor` says what a
  * drop does); the Archived group is muted and takes none.
  */
 export function toTaskGroup(
@@ -534,8 +537,10 @@ export function toTaskGroup(
   opts: GroupOptions = {}
 ): TaskGroupData {
   const container =
-    group.epicId === null ? undefined : ctx.tasksById.get(group.epicId);
-  const byContainer = group.kind === 'epic' || group.kind === 'milestone';
+    group.milestoneId === null
+      ? undefined
+      : ctx.tasksById.get(group.milestoneId);
+  const byContainer = group.kind === 'parent' || group.kind === 'milestone';
   const rowOpts: RowOptions = {
     projectNamed: byContainer || opts.projectNamed === true,
     archived: group.archived,
@@ -637,15 +642,15 @@ export function rowGroupIndex(
 }
 
 /** What dropping rows on a group does: move them to a status, or re-parent
- * them (null = no parent, the "No epic" / "No milestone" group). */
+ * them (null = no parent, the "No parent" group). */
 export type DropTarget =
   | { kind: 'status'; status: string }
   | { kind: 'parent'; parentId: string | null };
 
 /**
  * The drop a group key stands for: `status:<s>` moves to that status;
- * `epic:<id>` and `milestone:<id>` re-parent under that container,
- * `epic:none` under nothing. Assignee, priority, `all` and `archived` groups
+ * `parent:<id>` and `milestone:<id>` re-parent under that container,
+ * `parent:none` under nothing. Assignee, priority, `all` and `archived` groups
  * take no drops (null), as `toTaskGroup` marks them.
  */
 export function dropTargetFor(groupId: string): DropTarget | null {
@@ -655,7 +660,7 @@ export function dropTargetFor(groupId: string): DropTarget | null {
   const value = groupId.slice(colon + 1);
   if (value === '') return null;
   if (kind === 'status') return { kind: 'status', status: value };
-  if (kind === 'epic') {
+  if (kind === 'parent') {
     return { kind: 'parent', parentId: value === 'none' ? null : value };
   }
   if (kind === 'milestone') return { kind: 'parent', parentId: value };
@@ -799,9 +804,9 @@ export function filterChips(
       summary: chipSummary(clause.op, parts.values),
       removeLabel: `Remove ${parts.facet.toLowerCase()} filter`,
     };
-    const titles = ctx.epicTitleById;
+    const titles = ctx.milestoneTitleById;
     if (
-      clause.facet === 'epic' &&
+      clause.facet === 'milestone' &&
       titles !== undefined &&
       clause.values.some((value) => value !== FILTER_NONE && !titles.has(value))
     ) {

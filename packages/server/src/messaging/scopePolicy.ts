@@ -114,7 +114,7 @@ export function applyScopeAnswer(
     title: scopeExtensionTitle(runId),
     detail: `${gate.paths.join(', ')} — ${gate.reason}${note} [decided by ${answer.from}] ${tag}`,
     authoredBy: byPolicy ? deps.owner : answer.from,
-    epicId: parent,
+    milestoneId: parent,
     sourceTaskId: run.taskId,
   });
   deps.broadcastLedgerChanged();

@@ -1,26 +1,34 @@
 import { statusModelOf } from '@dispatch-foo/core/browser';
 import type { LinearConfig, StatusRoles } from '@dispatch-foo/core/browser';
+import { LINEAR_USAGE_LIMIT_MESSAGE } from '@dispatch/client';
 import type {
   LinearSyncSummary,
   LinearTeam,
   LinearViewer,
 } from '@dispatch/client';
-import { CheckCircle2, RefreshCw } from 'lucide-react';
+import { CheckCircle2, CircleAlert, RefreshCw, Upload } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import {
+  capacityPaused,
+  describeBulkOutcome,
   describeFetchFailure,
   describeLinearDelivery,
+  describeMigrated,
   formatLinearProgress,
   formatSyncCounts,
   isLinearConfigured,
   linearKeySourceNote,
+  progressFor,
   STATUS_ROLE_ROWS,
 } from '../../lib/linearSettings';
 import { useSettingsAccess } from './access';
 import { SettingsSwitch } from './fields';
+import { LinearCapacityGroup } from './LinearCapacityGroup';
+import { LinearCoverageGroup } from './LinearCoverageGroup';
+import { LinearExportDialog } from './LinearExportDialog';
 import {
   SettingsGroup,
   SettingsHint,
@@ -29,6 +37,7 @@ import {
 } from './SettingsGroup';
 import { cn } from '@/lib/utils';
 import { PillButton } from '@/ui/ai/pill';
+import { Alert, AlertDescription, AlertTitle } from '@/ui/alert';
 import { Button } from '@/ui/button';
 import { Checkbox } from '@/ui/checkbox';
 import { PanelRow } from '@/ui/chrome';
@@ -227,9 +236,13 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
   const [importResult, setImportResult] = useState<LinearSyncSummary | null>(
     null
   );
+  const [exportOpen, setExportOpen] = useState(false);
   // The key decides whose Linear account the board is sent to, so the daemon
   // lets only the owner set or remove it; import and sync just use it.
   const { canOperate } = useSettingsAccess();
+  // Coverage, capacity and the export preview are fetched only while shown.
+  const { watchLinearDetails } = data;
+  useEffect(() => watchLinearDetails(), [watchLinearDetails]);
 
   if (config === null || linearStatus === null) return null;
 
@@ -318,6 +331,38 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
   const keyNote = linearKeySourceNote(linearStatus.keySource);
   const progress = linearStatus.progress ?? null;
   const conflicts = linearStatus.conflicts;
+  const running = linearStatus.running ?? null;
+  const coverage = linearStatus.coverage ?? null;
+  const lastExport =
+    linearStatus.lastExport?.action === 'export'
+      ? linearStatus.lastExport
+      : null;
+  const pullOnly = config.linear.direction === 'pull';
+  const exportBlocked = !configured || pullOnly || running !== null;
+  // Offered once the link is made, until an export has run: linking mirrors
+  // changes from then on, so the tasks made before it stay local otherwise.
+  // Only those count: a task made since goes on its own, and a failed or
+  // queued create has Retry under Coverage.
+  const heldBack = coverage?.heldBack ?? 0;
+  const offerExport =
+    !exportBlocked &&
+    linearStatus.bootstrappedAt !== null &&
+    (linearStatus.lastExport ?? null) === null &&
+    heldBack > 0;
+  // The usage limit's message, unless an error line already shows it.
+  const usageLimited =
+    summary?.usageLimited === true || capacityPaused(linearStatus.capacity);
+  const usageShown =
+    summary?.errors.includes(LINEAR_USAGE_LIMIT_MESSAGE) === true ||
+    (linearStatus.lastError === LINEAR_USAGE_LIMIT_MESSAGE &&
+      !lastErrorInSummary);
+  const teamName =
+    linearTeams.find((t) => t.id === linearStatus.teamId)?.name ?? null;
+  const migrated =
+    summary === null ? null : describeMigrated(summary, teamName);
+  const importProgress = progressFor(progress, 'import');
+  const exportProgress = progressFor(progress, 'export');
+  const exportOutcome = describeBulkOutcome(lastExport);
 
   return (
     <>
@@ -469,6 +514,25 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
               />
             }
           />
+
+          <SettingsRow
+            title="Archive finished tasks in Linear too"
+            subtitle="When you archive a completed or canceled task here, its Linear issue is archived too, which frees room on a plan with an issue limit. Restoring the task leaves the issue archived."
+            keywords="linear archive done finished limit"
+            htmlFor="linear-archive-finished"
+            control={
+              <SettingsSwitch
+                id="linear-archive-finished"
+                // A config from a daemon predating the key carries none.
+                checked={config.linear.archiveFinished ?? false}
+                onCheckedChange={(checked) =>
+                  void data.handleUpdateConfig({
+                    linear: { archiveFinished: checked },
+                  })
+                }
+              />
+            }
+          />
         </SettingsGroup>
       )}
 
@@ -502,8 +566,24 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
         <SettingsGroup
           title="Status roles"
           keywords="workflow states columns"
-          hint="Your statuses are the team’s workflow states, kept in step on every sync. Each role picks the one Dispatch writes as work moves; a role you change here is kept across syncs."
+          hint="Your statuses are the team’s workflow states, kept in step on every sync: linking moves each task onto the matching state (ready to Todo, working to In Progress, landed to Done, dropped to Canceled), and disconnecting keeps these names. Each role picks the one Dispatch writes as work moves; a role you change here is kept across syncs."
         >
+          {roles.review === roles.dispatched && (
+            <PanelRow className="py-2.5">
+              <Alert
+                data-testid="linear-no-review-state"
+                className="rounded-card border-border border-[0.5px] px-3 py-2"
+              >
+                <CircleAlert className="text-muted-foreground size-3.5!" />
+                <AlertTitle className="text-[13px]">
+                  Your team has no review state
+                </AlertTitle>
+                <AlertDescription className="font-book text-[12px]">
+                  {`Finished runs stay in ${roles.dispatched} in Linear. Add an In Review state to the team’s workflow in Linear and the next sync picks it up.`}
+                </AlertDescription>
+              </Alert>
+            </PanelRow>
+          )}
           {STATUS_ROLE_ROWS.map((row) => (
             <StatusRoleRow
               key={row.key}
@@ -519,7 +599,34 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
       )}
 
       {linearStatus.connected && (
-        <SettingsGroup title="Sync" keywords="linear import" requires="none">
+        <SettingsGroup
+          title="Sync"
+          keywords="linear import export"
+          requires="none"
+        >
+          {offerExport && (
+            <PanelRow className="py-2.5">
+              <Alert
+                data-testid="linear-export-offer"
+                className="rounded-card border-border border-[0.5px] px-3 py-2"
+              >
+                <Upload className="text-muted-foreground size-3.5!" />
+                <AlertTitle className="text-[13px]">
+                  {`${heldBack.toLocaleString('en-US')} task${heldBack === 1 ? '' : 's'} here ${heldBack === 1 ? 'isn’t' : 'aren’t'} in Linear yet`}
+                </AlertTitle>
+                <AlertDescription className="font-book flex flex-col gap-2 text-[12px]">
+                  <p>
+                    Linking mirrors changes from now on. Export sends the tasks
+                    you already have.
+                  </p>
+                  <Button size="sm" onClick={() => setExportOpen(true)}>
+                    Export to Linear…
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            </PanelRow>
+          )}
+
           <SettingsRow
             title="Changes"
             subtitle={describeLinearDelivery(linearStatus)}
@@ -537,8 +644,10 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
               </PillButton>
             }
           >
-            {progress !== null && (
-              <SettingsHint>{formatLinearProgress(progress)}</SettingsHint>
+            {importProgress !== null && (
+              <SettingsHint>
+                {formatLinearProgress(importProgress)}
+              </SettingsHint>
             )}
             {importResult !== null && (
               <SettingsHint>{formatSyncCounts(importResult)}</SettingsHint>
@@ -548,6 +657,43 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
                 {importError}
               </span>
             )}
+          </SettingsRow>
+
+          <SettingsRow
+            title="Export to Linear"
+            subtitle={
+              coverage === null
+                ? 'Creates Linear issues for tasks that predate the link.'
+                : `${coverage.linked.toLocaleString('en-US')} of ${coverage.total.toLocaleString('en-US')} tasks are in Linear. Export creates issues for the rest.`
+            }
+            keywords="push unlinked"
+            control={
+              <PillButton
+                disabled={exportBlocked}
+                onClick={() => setExportOpen(true)}
+              >
+                Export to Linear…
+              </PillButton>
+            }
+          >
+            {pullOnly && (
+              <SettingsHint>
+                Pull only: switch the direction to send tasks to Linear.
+              </SettingsHint>
+            )}
+            {exportProgress !== null && (
+              <SettingsHint>
+                {formatLinearProgress(exportProgress)}
+              </SettingsHint>
+            )}
+            {exportOutcome !== null && (
+              <SettingsHint>{exportOutcome}</SettingsHint>
+            )}
+            {lastExport?.errors.map((message) => (
+              <span key={message} className="text-state-failed text-[12px]">
+                {message}
+              </span>
+            ))}
           </SettingsRow>
 
           <SettingsRow
@@ -594,7 +740,13 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
                     Linear rate-limited this pass — it will retry on its own.
                   </span>
                 )}
+                {migrated !== null && <SettingsHint>{migrated}</SettingsHint>}
               </div>
+            )}
+            {usageLimited && !usageShown && (
+              <span className="text-state-failed text-[12px]">
+                {LINEAR_USAGE_LIMIT_MESSAGE}
+              </span>
             )}
             {syncError !== null && (
               <span className="text-state-failed text-[12px]">{syncError}</span>
@@ -609,6 +761,23 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
           )}
         </SettingsGroup>
       )}
+
+      {linearStatus.connected && (
+        <LinearCoverageGroup data={data} configured={configured} />
+      )}
+
+      {linearStatus.connected && teamChosen && (
+        <LinearCapacityGroup data={data} configured={configured} />
+      )}
+
+      <LinearExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        preview={data.linearExportPreview}
+        previewError={data.linearExportPreviewError ?? null}
+        capacity={data.linearCapacity}
+        onExport={data.handleExportLinear}
+      />
     </>
   );
 }

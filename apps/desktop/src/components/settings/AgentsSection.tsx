@@ -201,12 +201,12 @@ export function AgentsSection({
           onSave={(n) => n !== null && void onSave({ maxConcurrency: n })}
         />
         <NumberSetting
-          id="epic-concurrency"
-          title="Runs at once per epic"
-          subtitle="How many of an epic's tasks start together when you dispatch it."
+          id="milestone-concurrency"
+          title="Runs at once per milestone"
+          subtitle="How many of a milestone's tasks start together when you dispatch it."
           keywords="concurrency parallel"
-          value={config.orchestrator.epicConcurrency}
-          onSave={(n) => n !== null && void onSave({ epicConcurrency: n })}
+          value={config.orchestrator.milestoneConcurrency}
+          onSave={(n) => n !== null && void onSave({ milestoneConcurrency: n })}
         />
         <NumberSetting
           id="turn-cap"

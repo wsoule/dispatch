@@ -242,9 +242,14 @@ export function verifyRequest(req: ReceivedRequest, f: VerifyFacts): SigResult {
   const t = tagged(req.headers);
   if (typeof t === 'string') return refuse(t);
   const targetUri = `${origin}${req.path}${req.query}`;
+  // A host reads every POST's body, so a body-less POST (`:subscribe`,
+  // `:cancel`) arrives as zero bytes. The signer covered no digest for it,
+  // so an empty body asks for no more than a missing one. A digest the
+  // signer did cover is still checked against the empty body (see check).
+  const hasBody = req.body !== null && req.body.length > 0;
   const result = check(
     t,
-    requestComponents(req.body !== null),
+    requestComponents(hasBody),
     f,
     req.body,
     req.headers,

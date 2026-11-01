@@ -12,7 +12,7 @@ import { writeRuns } from '../src/runs.js';
 // ---------------------------------------------------------------------------
 // records.ts and runs.ts each hardcode ids/titles that board.ts's TASKS (and
 // repo.ts's BRANCH_FIXES) actually own — a finding's taskId, a ledger
-// entry's epicId/sourceTaskId/appliesTo, an inbox "→ t-…" reference, and a
+// entry's milestoneId/sourceTaskId/appliesTo, an inbox "→ t-…" reference, and a
 // transcript's taskId/taskTitle. Every value happens to be correct today,
 // but nothing asserts it, so an id typo or a title edit in board.ts would
 // silently produce a stale run header or a dangling reference. This file
@@ -48,17 +48,17 @@ test('every finding.taskId resolves to a real TASKS entry', () => {
   }
 });
 
-test('every ledger epicId, sourceTaskId, and appliesTo entry resolves to a real TASKS entry', () => {
+test('every ledger milestoneId, sourceTaskId, and appliesTo entry resolves to a real TASKS entry', () => {
   const { root } = build();
   const ledger = jsonlLines(join(root, '.dispatch', 'ledger.jsonl'));
   expect(ledger.length).toBeGreaterThan(0);
-  let sawEpicId = false;
+  let sawMilestoneId = false;
   let sawSourceTaskId = false;
   let sawAppliesTo = false;
   for (const entry of ledger) {
-    if (entry.epicId !== null) {
-      sawEpicId = true;
-      expect(TASK_IDS.has(entry.epicId as string)).toBe(true);
+    if (entry.milestoneId !== null) {
+      sawMilestoneId = true;
+      expect(TASK_IDS.has(entry.milestoneId as string)).toBe(true);
     }
     if (entry.sourceTaskId !== null) {
       sawSourceTaskId = true;
@@ -71,7 +71,7 @@ test('every ledger epicId, sourceTaskId, and appliesTo entry resolves to a real 
   }
   // Confirms this test actually exercised all three fields rather than
   // passing vacuously because the seeded ledger happened to leave one empty.
-  expect(sawEpicId).toBe(true);
+  expect(sawMilestoneId).toBe(true);
   expect(sawSourceTaskId).toBe(true);
   expect(sawAppliesTo).toBe(true);
 });

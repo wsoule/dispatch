@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { createApiClient } from '../src/apiClient.js';
-import type { TeamKeys } from '../src/apiClient.js';
+import type { ContentE2eStatus, TeamKeys } from '../src/apiClient.js';
 import { describeTeamKeys, switchTeamTransport } from '../src/commands/team.js';
 
 let server: ReturnType<typeof Bun.serve>;
@@ -133,6 +133,9 @@ describe('the API client', () => {
       confirmed: true,
       registrationToken: 'relay-token',
     });
+    const turnedOn: ContentE2eStatus = await client.enableContentE2e();
+    expect(turnedOn).toMatchObject({ ok: true });
+    await client.getContentE2e();
     expect(seen.map((s) => [s.method, s.path, s.body])).toEqual([
       ['POST', '/api/team/found', { name: 'acme' }],
       [
@@ -164,6 +167,8 @@ describe('the API client', () => {
           registrationToken: 'relay-token',
         },
       ],
+      ['POST', '/api/team/content-e2e', {}],
+      ['GET', '/api/team/content-e2e', null],
     ]);
   });
 });

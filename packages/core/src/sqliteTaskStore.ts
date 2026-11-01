@@ -1,7 +1,7 @@
 import { rmSync } from 'node:fs';
 
 import { generateTaskId, isTaskId } from './ids.js';
-import { canonicalKind } from './kinds.js';
+import { storedKind } from './kinds.js';
 import { slugify } from './slug.js';
 import {
   parseEnum,
@@ -179,7 +179,7 @@ function metaFromRow(row: TaskRow): TaskMeta {
     title: row.title,
     status: row.status,
     kind: parseEnum<TaskKind>(
-      typeof row.kind === 'string' ? canonicalKind(row.kind) : row.kind,
+      typeof row.kind === 'string' ? storedKind(row.kind) : row.kind,
       KINDS,
       'tasks',
       id,
@@ -370,7 +370,7 @@ export class SqliteTaskStore implements TaskStorePort {
   }
 
   create(input: CreateInput, now: string = new Date().toISOString()): TaskDoc {
-    const kind = canonicalKind(input.kind ?? 'task') as TaskKind;
+    const kind = input.kind ?? 'task';
     const slug = slugify(input.title);
     // Minted at the TOP of each attempt, so the id this reports on giving up
     // is the last one actually tried. Generating the next candidate at the
@@ -552,10 +552,8 @@ export class SqliteTaskStore implements TaskStorePort {
       params.push(filter.status);
     }
     if (filter.kind !== undefined) {
-      // Rows written before the hierarchy still say `epic` for a milestone.
-      const kind = canonicalKind(filter.kind);
-      clauses.push(kind === 'milestone' ? "kind IN (?, 'epic')" : 'kind = ?');
-      params.push(kind);
+      clauses.push('kind = ?');
+      params.push(filter.kind);
     }
     if (filter.parent !== undefined) {
       clauses.push('parent = ?');

@@ -1,8 +1,10 @@
+import { X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { problemText, sendProblem } from '../../lib/composer';
 import type { Post } from '../../lib/posts';
 import { UNDO_MS } from '../conversation/HomeComposer';
+import { IconButton } from '@/ui/ai/icon-button';
 import { NoticePill } from '@/ui/ai/notice-pill';
 import { Pill } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
@@ -19,7 +21,12 @@ function clock(iso: string): string {
       });
 }
 
-function subjectLabel(subject: string): string {
+// A run subject reads as its address label (the run's task title), not its id.
+function subjectLabel(
+  subject: string,
+  label: (address: string) => string
+): string {
+  if (subject.startsWith('run:')) return label(subject);
   if (subject.startsWith('task:')) return subject.slice('task:'.length);
   if (subject.startsWith('channel:'))
     return `# ${subject.slice('channel:'.length)}`;
@@ -32,6 +39,10 @@ export interface ForYouPostsProps {
   /** Opens the post's home in a peek or page; never switches the view on its own. */
   onOpen: (post: Post) => void;
   onReply: (post: Post, body: string) => Promise<void>;
+  /** Hides a post until a newer message lands on its subject. */
+  onDismiss: (post: Post) => void;
+  /** Hides every post showing. */
+  onClearAll: (posts: readonly Post[]) => void;
   /** During an agent turn new posts wait behind a pill, so the stream holds still. */
   holding: boolean;
 }
@@ -42,6 +53,8 @@ export function ForYouPosts({
   label,
   onOpen,
   onReply,
+  onDismiss,
+  onClearAll,
   holding,
 }: ForYouPostsProps) {
   const [shown, setShown] = useState<readonly Post[]>(posts);
@@ -57,7 +70,24 @@ export function ForYouPosts({
       className="flex flex-col gap-1.5"
     >
       <h2 className="contents">
-        <SectionLabel>For you</SectionLabel>
+        <SectionLabel
+          className="h-6"
+          trailing={
+            shown.length > 0 && (
+              <Button
+                variant="ghost"
+                size="xs"
+                className="ml-auto"
+                onClick={() => onClearAll(shown)}
+                data-testid="for-you-clear-all"
+              >
+                Clear all
+              </Button>
+            )
+          }
+        >
+          For you
+        </SectionLabel>
       </h2>
       {shown.map((post) => (
         <ForYouPost
@@ -66,6 +96,7 @@ export function ForYouPosts({
           label={label}
           onOpen={onOpen}
           onReply={onReply}
+          onDismiss={onDismiss}
         />
       ))}
       {fresh > 0 && (
@@ -82,12 +113,15 @@ function ForYouPost({
   label,
   onOpen,
   onReply,
+  onDismiss,
 }: {
   post: Post;
   label: (address: string) => string;
   onOpen: (post: Post) => void;
   onReply: (post: Post, body: string) => Promise<void>;
+  onDismiss: (post: Post) => void;
 }) {
+  const subject = subjectLabel(post.subject, label);
   const [replying, setReplying] = useState(false);
   const [body, setBody] = useState('');
   const [held, setHeld] = useState<string | null>(null);
@@ -109,7 +143,7 @@ function ForYouPost({
       replyRef.current(post, held).then(
         () =>
           setReceipt(
-            `You replied on ${subjectLabel(post.subject)} · ${clock(new Date().toISOString())}`
+            `You replied on ${subject} · ${clock(new Date().toISOString())}`
           ),
         (err: unknown) => {
           setBody(held);
@@ -119,36 +153,53 @@ function ForYouPost({
       );
     }, UNDO_MS);
     return () => clearTimeout(timer);
-  }, [held, post]);
+  }, [held, post, subject]);
 
   const from = label(post.latest.from);
+  // A question's reply answers it (see App's replyToPost), so the form says so.
+  const asks = post.latest.kind === 'question';
+  const verb = asks ? 'Answer' : 'Reply on';
+  // A run writing about itself reads once, not "Title on Title".
+  const byline = from === subject ? subject : `${from} on ${subject}`;
+  const dismiss = (
+    <IconButton
+      label="Dismiss"
+      data-testid="for-you-post-dismiss"
+      onClick={() => onDismiss(post)}
+    >
+      <X />
+    </IconButton>
+  );
   if (!post.unread && receipt === null && held === null && !replying) {
     return (
-      <Button
-        variant="ghost"
-        size="xs"
-        data-testid="for-you-post-read"
-        onClick={() => onOpen(post)}
-        className="max-w-full min-w-0 justify-start self-start"
-      >
-        <span className="truncate">
-          {from} on {subjectLabel(post.subject)} ·{' '}
-          {clock(post.latest.createdAt)}
-        </span>
-      </Button>
+      <div className="flex max-w-full min-w-0 items-center self-start">
+        <Button
+          variant="ghost"
+          size="xs"
+          data-testid="for-you-post-read"
+          onClick={() => onOpen(post)}
+          className="min-w-0 justify-start"
+        >
+          <span className="truncate">
+            {byline} · {clock(post.latest.createdAt)}
+          </span>
+        </Button>
+        {dismiss}
+      </div>
     );
   }
   return (
     <article
       data-testid="for-you-post"
-      className="bg-background border-border rounded-card flex flex-col gap-1.5 border-[0.5px] px-3 py-2 text-[13px]"
+      className="bg-background border-border rounded-card flex min-w-0 flex-col gap-1.5 border-[0.5px] px-3 py-2 text-[13px]"
     >
       <div className="text-muted-foreground flex items-center gap-2 text-[12px]">
         <span className="text-foreground font-medium">{from}</span>
-        <Pill>{subjectLabel(post.subject)}</Pill>
+        <Pill>{subject}</Pill>
         {post.count > 1 && <span>{post.count} messages</span>}
         <span className="flex-1" />
         <span>{clock(post.latest.createdAt)}</span>
+        {dismiss}
       </div>
       <p className="line-clamp-3 text-(--text-secondary)">{post.latest.body}</p>
       {receipt !== null ? (
@@ -157,9 +208,7 @@ function ForYouPost({
         </p>
       ) : held !== null ? (
         <div role="status" className="flex items-center gap-2 text-[12px]">
-          <span className="flex-1">
-            Sending to {subjectLabel(post.subject)}…
-          </span>
+          <span className="min-w-0 flex-1 truncate">Sending to {subject}…</span>
           <Button
             size="xs"
             variant="outline"
@@ -174,7 +223,7 @@ function ForYouPost({
         </div>
       ) : replying ? (
         <form
-          className="flex items-center gap-2"
+          className="flex min-w-0 items-center gap-2"
           onSubmit={(e) => {
             e.preventDefault();
             const text = body.trim();
@@ -187,13 +236,23 @@ function ForYouPost({
         >
           <Input
             ref={replyInputRef}
-            aria-label={`Reply on ${subjectLabel(post.subject)}`}
+            aria-label={`${verb} ${subject}`}
             value={body}
             onChange={(e) => setBody(e.target.value)}
-            placeholder={`Reply on ${subjectLabel(post.subject)}…`}
+            placeholder={`${verb} ${subject}…`}
+            className="min-w-0 flex-1"
           />
-          <Button size="xs" type="submit" disabled={body.trim() === ''}>
-            Send to {subjectLabel(post.subject)}
+          {/* A short label, so a long address never squeezes the input; the
+              full one stays in the accessible name and the tooltip. */}
+          <Button
+            size="xs"
+            type="submit"
+            disabled={body.trim() === ''}
+            aria-label={`${asks ? 'Answer' : 'Send to'} ${subject}`}
+            title={`${asks ? 'Answer' : 'Send to'} ${subject}`}
+            className="shrink-0"
+          >
+            {asks ? 'Answer' : 'Send'}
           </Button>
         </form>
       ) : (
@@ -202,12 +261,15 @@ function ForYouPost({
             Open
           </Button>
           <Button size="xs" variant="ghost" onClick={() => setReplying(true)}>
-            Reply…
+            {asks ? 'Answer…' : 'Reply…'}
           </Button>
         </div>
       )}
       {error !== null && (
-        <p role="alert" className="text-state-failed text-[12px]">
+        <p
+          role="alert"
+          className="text-state-failed text-[12px] break-words whitespace-normal"
+        >
           {error}
         </p>
       )}

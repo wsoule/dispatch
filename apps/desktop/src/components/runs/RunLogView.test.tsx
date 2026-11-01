@@ -557,12 +557,12 @@ test('a digest is one compact line, linked by the id in its text even from an ol
         from: 'agent',
         fromLabel: 'dispatch',
         digest: true,
-        text: '📬 #epic/e-1 · notice from run:r-000002: api shape changed (m-02)',
+        text: '📬 #milestone/e-1 · notice from run:r-000002: api shape changed (m-02)',
       },
     ],
     onOpen
   );
-  const line = '#epic/e-1 · notice from run:r-000002: api shape changed';
+  const line = '#milestone/e-1 · notice from run:r-000002: api shape changed';
   expect(screen.getByText(line).getAttribute('title')).toBe(line);
   fireEvent.click(
     screen.getByRole('button', {

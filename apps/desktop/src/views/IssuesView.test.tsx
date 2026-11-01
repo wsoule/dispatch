@@ -138,8 +138,8 @@ function dataWith(
     archivedTasks: [],
     showArchived: false,
     setShowArchived: () => {},
-    epics: EPICS,
-    epicProgressById: new Map(),
+    milestones: EPICS,
+    milestoneProgressById: new Map(),
     readyIds: new Set<string>(['t-1', 't-3']),
     blockedIds: new Set<string>(),
     runs: [],
@@ -180,11 +180,11 @@ function dataWith(
       });
       return Promise.resolve();
     },
-    handlePauseEpic: async () => {},
-    handleResumeEpic: async () => {},
-    handleStopEpic: async () => {},
-    handleLandEpic: async () => {},
-    handleWorkEpic: async () => {},
+    handlePauseMilestone: async () => {},
+    handleResumeMilestone: async () => {},
+    handleStopMilestone: async () => {},
+    handleLandMilestone: async () => {},
+    handleWorkMilestone: async () => {},
     ...overrides,
   } as unknown as DispatchProjectData;
 }
@@ -486,7 +486,7 @@ test('the search box narrows by title, id and label before grouping', () => {
 test('display prefs drive the grouping and which cells a row shows', () => {
   writeIssuesDisplay({
     ...ISSUES_DISPLAY,
-    grouping: 'epic',
+    grouping: 'parent',
     properties: new Set(['status']),
   });
   mount();
@@ -496,14 +496,14 @@ test('display prefs drive the grouping and which cells a row shows', () => {
 });
 
 test('a project with no tasks says so instead of blaming a filter', () => {
-  mount({ data: { tasks: [], tasksIncludingArchived: [], epics: [] } });
+  mount({ data: { tasks: [], tasksIncludingArchived: [], milestones: [] } });
   expect(screen.getByText('No tasks yet')).not.toBeNull();
 });
 
 test('the + on a group pre-fills the creator with its container', () => {
   const { log } = mount();
   fireEvent.click(screen.getByRole('button', { name: 'New task in Payments' }));
-  expect(log.presets).toEqual([{ epic: 'e-1' }]);
+  expect(log.presets).toEqual([{ milestone: 'e-1' }]);
 });
 
 test('collapsing a group keeps its header so it can be expanded again', () => {
@@ -709,7 +709,7 @@ test('a change to twenty or more selected rows asks first', async () => {
     task(`m-${i}`, `Many ${i}`, 'todo')
   );
   const { log } = mount({
-    data: { tasks: many, tasksIncludingArchived: many, epics: [] },
+    data: { tasks: many, tasksIncludingArchived: many, milestones: [] },
   });
   fireEvent.click(screen.getByLabelText('Select all 20 shown issues'));
   await settle(() => {

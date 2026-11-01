@@ -10,6 +10,7 @@ import {
   releasesFanoutDependents,
 } from '../src/graph.js';
 import { DEFAULT_STATUS_MODEL } from '../src/status.js';
+import type { StatusModel } from '../src/status.js';
 import type { TaskDoc, TaskMeta } from '../src/types.js';
 import { defaultTaskFields } from '../src/types.js';
 
@@ -67,10 +68,10 @@ describe('readyTasks', () => {
     expect(ids).not.toContain('t-b00000');
     expect(ids).not.toContain('t-o00000'); // not todo
   });
-  it('excludes epics and non-todo statuses', () => {
-    const epic = make({ id: 'e-100000', kind: 'milestone' });
+  it('excludes milestones and non-todo statuses', () => {
+    const milestone = make({ id: 'e-100000', kind: 'milestone' });
     const review = make({ id: 't-200000', status: 'review' });
-    expect(readyTasks([epic, review])).toEqual([]);
+    expect(readyTasks([milestone, review])).toEqual([]);
   });
   it('excludes any task with children, whatever its kind', () => {
     const parent = make({ id: 't-300000' });
@@ -300,6 +301,98 @@ describe('a fan-out’s blocker rule', () => {
       })
     );
     expect(waiting).toEqual(['t-000002']);
+  });
+});
+
+// A Linear team with no review state: the review role falls back to the
+// dispatched one, so status alone cannot tell a live run from finished work.
+describe('a board whose review status is its dispatched one', () => {
+  const SHARED: StatusModel = {
+    definitions: [
+      { name: 'Backlog', type: 'backlog', color: null },
+      { name: 'Todo', type: 'unstarted', color: null },
+      { name: 'In Progress', type: 'started', color: null },
+      { name: 'Done', type: 'completed', color: null },
+      { name: 'Canceled', type: 'canceled', color: null },
+    ],
+    roles: {
+      ready: 'Todo',
+      dispatched: 'In Progress',
+      review: 'In Progress',
+      landing: null,
+      landed: 'Done',
+      dropped: 'Canceled',
+    },
+  };
+  const blocker = make({ id: 't-a00000', status: 'In Progress' });
+  const dependent = make({
+    id: 't-b00000',
+    status: 'Todo',
+    blockedBy: ['t-a00000'],
+  });
+
+  it('holds a dependent while the blocker’s run is live', () => {
+    expect(dispatchableTasks([blocker, dependent], SHARED)).toEqual([]);
+    expect(
+      dispatchableTasks([blocker, dependent], SHARED, () => false)
+    ).toEqual([]);
+    expect(isSatisfiedForDispatch(blocker, SHARED)).toBe(false);
+  });
+
+  it('releases it once the blocker’s run has finished', () => {
+    const finished = (id: string) => id === 't-a00000';
+    expect(
+      dispatchableTasks([blocker, dependent], SHARED, finished).map(
+        (t) => t.meta.id
+      )
+    ).toEqual(['t-b00000']);
+    expect(isSatisfiedForDispatch(blocker, SHARED, true)).toBe(true);
+    // Done needs no run at all.
+    expect(
+      dispatchableTasks(
+        [make({ id: 't-a00000', status: 'Done' }), dependent],
+        SHARED
+      ).map((t) => t.meta.id)
+    ).toEqual(['t-b00000']);
+  });
+
+  it('leaves the built-in board reading review by status alone', () => {
+    const review = make({ id: 't-a00000', status: 'review' });
+    const onReview = make({ id: 't-b00000', blockedBy: ['t-a00000'] });
+    expect(
+      dispatchableTasks([review, onReview], DEFAULT_STATUS_MODEL, () => false)
+    ).toEqual([onReview]);
+    // A finished run never makes a working status satisfy.
+    const working = make({ id: 't-a00000', status: 'working' });
+    expect(
+      dispatchableTasks([working, onReview], DEFAULT_STATUS_MODEL, () => true)
+    ).toEqual([]);
+  });
+
+  it('releases a fan-out only once the run branch’s run has ended', () => {
+    const mine = { held: false, hasRunBranch: true };
+    // An earlier finished run left a branch, but a re-dispatch is live.
+    expect(
+      releasesFanoutDependents('In Progress', SHARED, {
+        ...mine,
+        finishedRun: false,
+      })
+    ).toBe(false);
+    expect(
+      releasesFanoutDependents('In Progress', SHARED, {
+        ...mine,
+        finishedRun: true,
+      })
+    ).toBe(true);
+    // Without the run fact, the run branch stands in for it.
+    expect(releasesFanoutDependents('In Progress', SHARED, mine)).toBe(true);
+    expect(
+      releasesFanoutDependents('In Progress', SHARED, {
+        held: false,
+        hasRunBranch: false,
+        finishedRun: true,
+      })
+    ).toBe(false);
   });
 });
 

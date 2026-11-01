@@ -56,8 +56,8 @@ describe('taskQueryString', () => {
 
   it('encodes multiple filter fields in status/kind/parent order', () => {
     expect(
-      taskQueryString({ status: 'todo', kind: 'task', parent: 'epic-1' })
-    ).toBe('?status=todo&kind=task&parent=epic-1');
+      taskQueryString({ status: 'todo', kind: 'task', parent: 'milestone-1' })
+    ).toBe('?status=todo&kind=task&parent=milestone-1');
   });
 
   it('emits archived=1 only when archived is true', () => {

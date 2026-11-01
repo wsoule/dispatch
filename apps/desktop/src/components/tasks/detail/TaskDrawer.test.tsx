@@ -423,7 +423,7 @@ function mountContainer(taskId: string, log: HostLog) {
           me: 'human:wyat',
           linearLinks: {},
           latestRunByTaskId: new Map(),
-          epicProgressById: new Map(),
+          milestoneProgressById: new Map(),
         }}
       >
         <TaskDrawer taskId={taskId} onClose={() => {}} />

@@ -4,8 +4,8 @@ import type {
   UpdatePatch,
 } from '@dispatch-foo/core/browser';
 import type {
-  EpicProgress,
   MergeQueueEntryState,
+  MilestoneProgress,
   ReadinessReading,
   RunMeta,
   RunState,
@@ -57,7 +57,7 @@ import {
   groupTasksByLane,
   statusFromDropZoneId,
 } from '../../lib/boardGrouping';
-import type { WorkEpicOptions } from '../../lib/epicSession';
+import type { WorkMilestoneOptions } from '../../lib/milestoneSession';
 import { useActiveStatusModel } from '../../lib/statusModel';
 import type { TaskAttention } from '../../lib/taskAttention';
 import { statusLabel } from '../../lib/taskDisplay';
@@ -68,8 +68,8 @@ import {
 import { nearColumnIndexes, sameColumnIndexes } from '../../lib/virtualRows';
 import { useShellActions } from '../shell/ShellActionsContext';
 import { VirtualRows, type VirtualRowsHandle } from '../virtual/VirtualRows';
-import { EpicLaneHeader } from './EpicLaneHeader';
 import { LaneHeader } from './LaneHeader';
+import { MilestoneLaneHeader } from './MilestoneLaneHeader';
 import { StatusIcon } from './StatusIcon';
 import { TaskCardTile } from './TaskCardTile';
 import { cn } from '@/lib/utils';
@@ -101,19 +101,19 @@ interface TaskBoardProps {
   attentionByTaskId?: ReadonlyMap<string, TaskAttention>;
   /** Tasks whose run is in the merge queue, with the entry's state — a `Landing` pill. */
   landingByTaskId?: ReadonlyMap<string, MergeQueueEntryState>;
-  /** Epic dispatch progress per epic id, once fetched. */
+  /** Milestone dispatch progress per milestone id, once fetched. */
   /** Readiness readings per task id (see `useDispatchProject`); a card with none shows no pill. */
   readinessById?: ReadonlyMap<string, ReadinessReading>;
-  epicProgressById: Map<string, EpicProgress>;
-  /** Default concurrency for a fresh epic dispatch session (config's `orchestrator.epicConcurrency`). */
-  epicConcurrencyDefault: number;
-  /** Every epic in the project — one lane per epic that has children, in this order. */
-  epics: TaskListItem[];
-  /** The project's statuses, which roll each epic lane up; defaults to the open project's.
+  milestoneProgressById: Map<string, MilestoneProgress>;
+  /** Default concurrency for a fresh milestone dispatch session (config's `orchestrator.milestoneConcurrency`). */
+  milestoneConcurrencyDefault: number;
+  /** Every milestone in the project — one lane per milestone that has children, in this order. */
+  milestones: TaskListItem[];
+  /** The project's statuses, which roll each milestone lane up; defaults to the open project's.
    * A caller holding config passes its model, which is right in the render config lands. */
   statusModel?: StatusModel;
   /** The Display popover's model — the card properties, and `subGrouping` for the swim
-   * lanes (`none` is the flat board with an epic crumb on each card). Defaults to
+   * lanes (`none` is the flat board with a milestone crumb on each card). Defaults to
    * `DEFAULT_TASKS_DISPLAY`; the ordering is applied by the caller (see `tasks`). */
   display?: TasksDisplayPrefs;
   /** Lane keys (`BoardLane.key`) folded up right now. */
@@ -130,24 +130,27 @@ interface TaskBoardProps {
    * of the header row. */
   hiddenColumnCount?: number;
   onShowHiddenColumns?: () => void;
-  /** Routes epic dispatch through a confirmation preview. See EpicLaneHeader. */
-  onRequestWorkEpic?: (epicId: string) => void;
+  /** Routes milestone dispatch through a confirmation preview. See MilestoneLaneHeader. */
+  onRequestWorkMilestone?: (milestoneId: string) => void;
   onSelect: (id: string) => void;
-  /** Dispatches a plain (non-epic) task from its card's Dispatch action, and every ready
+  /** Dispatches a plain (non-milestone) task from its card's Dispatch action, and every ready
    * task in a column from the column's `···` › Dispatch all ready. Optional — omitting it
    * hides both. */
   onDispatch?: (taskId: string) => Promise<void>;
   /** The lane header's direct dispatch path — a session at the picker's concurrency. */
-  onWorkEpic: (epicId: string, opts: WorkEpicOptions) => Promise<void>;
+  onWorkMilestone: (
+    milestoneId: string,
+    opts: WorkMilestoneOptions
+  ) => Promise<void>;
   /** Pause/Resume/Raise ceiling… on a lane with a session; a header without them shows
-   * only Stop. See EpicLaneHeader. */
-  onPauseEpic?: (epicId: string) => Promise<void>;
-  onResumeEpic?: (epicId: string) => Promise<void>;
-  onRaiseCeilingEpic?: (epicId: string) => void;
-  onStopEpic: (epicId: string) => Promise<void>;
-  /** Lands a finished epic branch on the default base — see EpicLaneHeader's Land button.
+   * only Stop. See MilestoneLaneHeader. */
+  onPauseMilestone?: (milestoneId: string) => Promise<void>;
+  onResumeMilestone?: (milestoneId: string) => Promise<void>;
+  onRaiseCeilingMilestone?: (milestoneId: string) => void;
+  onStopMilestone: (milestoneId: string) => Promise<void>;
+  /** Lands a finished milestone branch on the default base — see MilestoneLaneHeader's Land button.
    * Optional for the same reason as `onDispatch`. */
-  onLandEpic?: (epicId: string) => Promise<void>;
+  onLandMilestone?: (milestoneId: string) => Promise<void>;
   /** Moves a task to a different status — wired to the drag-and-drop drop handler below (and
    * the card's status picker); optional so a board rendered without a live project doesn't
    * need to supply a no-op. */
@@ -640,12 +643,12 @@ function ColumnHeader({
 /**
  * The board (§5): status columns 348px wide sitting directly on the panel, a shared 44px
  * header row that sticks to the top, and — under Display › Sub-grouping — one swim lane
- * per epic (`EpicLaneHeader`), assignee or priority (`LaneHeader`) over its own set of
+ * per milestone (`MilestoneLaneHeader`), assignee or priority (`LaneHeader`) over its own set of
  * columns. Columns come from the project's own `.dispatch/config.yml` order, never a
  * hardcoded status list (the lane split itself is `lib/boardGrouping.ts`'s pure, unit-tested
  * `groupTasksByLane`).
  *
- * Epics are containers rather than cards — they head a lane instead of sitting in a status
+ * Milestones are containers rather than cards — they head a lane instead of sitting in a status
  * column, so only plain tasks are ever dragged. A `PointerSensor` with a 6px activation
  * distance keeps an ordinary click opening the peek (only real pointer travel lifts a
  * card), plus a `KeyboardSensor` for accessible drag. Dropping onto a different column
@@ -660,10 +663,10 @@ export function TaskBoard({
   latestRunByTaskId,
   attentionByTaskId,
   landingByTaskId,
-  epicProgressById,
+  milestoneProgressById,
   readinessById,
-  epicConcurrencyDefault,
-  epics,
+  milestoneConcurrencyDefault,
+  milestones,
   statusModel,
   display = DEFAULT_TASKS_DISPLAY,
   collapsedLaneKeys,
@@ -673,15 +676,15 @@ export function TaskBoard({
   onHideColumn,
   hiddenColumnCount = 0,
   onShowHiddenColumns,
-  onRequestWorkEpic,
+  onRequestWorkMilestone,
   onSelect,
   onDispatch,
-  onWorkEpic,
-  onPauseEpic,
-  onResumeEpic,
-  onRaiseCeilingEpic,
-  onStopEpic,
-  onLandEpic,
+  onWorkMilestone,
+  onPauseMilestone,
+  onResumeMilestone,
+  onRaiseCeilingMilestone,
+  onStopMilestone,
+  onLandMilestone,
   onMoveStatus,
   onEditTask,
   focusedTaskId = null,
@@ -705,8 +708,8 @@ export function TaskBoard({
   // same (pre-sorted) input — deliberately recomputed here rather than passed down, so the two
   // never have to be kept in sync as a pair of props that could disagree.
   const lanes = useMemo<BoardLane[]>(
-    () => groupTasksByLane(tasks, statuses, epics, display.subGrouping),
-    [tasks, statuses, epics, display.subGrouping]
+    () => groupTasksByLane(tasks, statuses, milestones, display.subGrouping),
+    [tasks, statuses, milestones, display.subGrouping]
   );
   const statusCounts = useMemo(
     () => countLaneStatuses(lanes, statuses),
@@ -739,11 +742,11 @@ export function TaskBoard({
     return map;
   }, [lanes, readyIds, archivedTaskIds]);
 
-  const epicById = useMemo(() => {
+  const milestoneById = useMemo(() => {
     const map = new Map<string, TaskListItem>();
-    for (const epic of epics) map.set(epic.meta.id, epic);
+    for (const milestone of milestones) map.set(milestone.meta.id, milestone);
     return map;
-  }, [epics]);
+  }, [milestones]);
 
   const taskById = useMemo(() => {
     const map = new Map<string, TaskListItem>();
@@ -772,9 +775,9 @@ export function TaskBoard({
     [onEditTask]
   );
 
-  // Every epic's children, bucketed in one pass — feeds `EpicLaneHeader`'s rolled-up status
-  // and dependency-graph modal, which need the epic's own children, not the whole project.
-  const childrenByEpicId = useMemo(() => {
+  // Every milestone's children, bucketed in one pass — feeds `MilestoneLaneHeader`'s rolled-up status
+  // and dependency-graph modal, which need the milestone's own children, not the whole project.
+  const childrenByMilestoneId = useMemo(() => {
     const map = new Map<string, TaskListItem[]>();
     for (const doc of tasks) {
       if (doc.meta.parent === null) continue;
@@ -833,7 +836,7 @@ export function TaskBoard({
       >
         {/* One column header row for the whole board rather than a set per lane: the lanes
             already repeat the same statuses in the same order, and a header that sticks to
-            the top stays useful however far down the epics you scroll. */}
+            the top stays useful however far down the milestones you scroll. */}
         <div className="bg-background sticky top-0 z-10 flex w-max items-start">
           {statuses.map((status) => (
             <ColumnHeader
@@ -875,45 +878,49 @@ export function TaskBoard({
             // The flat board's single lane has no header to collapse from — always open.
             const expanded =
               lane.kind === 'none' || !collapsedLaneKeys.has(key);
-            const epic =
-              lane.epicId !== null ? (epicById.get(lane.epicId) ?? null) : null;
+            const milestone =
+              lane.milestoneId !== null
+                ? (milestoneById.get(lane.milestoneId) ?? null)
+                : null;
             return (
               <section key={key} data-lane-key={key}>
-                {lane.kind === 'epic' && (
+                {lane.kind === 'parent' && (
                   <div
                     data-slot="board-lane-header"
                     className={LANE_HEADER_CLASS}
                     style={laneHeaderStyle}
                   >
-                    <EpicLaneHeader
-                      epic={epic}
+                    <MilestoneLaneHeader
+                      milestone={milestone}
                       title={lane.title}
                       total={lane.total}
                       expanded={expanded}
                       onToggle={() => onToggleLane(key)}
                       progress={
-                        epic !== null
-                          ? epicProgressById.get(epic.meta.id)
+                        milestone !== null
+                          ? milestoneProgressById.get(milestone.meta.id)
                           : undefined
                       }
-                      concurrencyDefault={epicConcurrencyDefault}
+                      concurrencyDefault={milestoneConcurrencyDefault}
                       childTasks={
-                        epic !== null
-                          ? (childrenByEpicId.get(epic.meta.id) ?? [])
+                        milestone !== null
+                          ? (childrenByMilestoneId.get(milestone.meta.id) ?? [])
                           : []
                       }
                       model={model}
                       onOpenTask={onSelect}
-                      onWork={onWorkEpic}
-                      onRequestWork={onRequestWorkEpic}
-                      onPause={onPauseEpic}
-                      onResume={onResumeEpic}
-                      onRaiseCeiling={onRaiseCeilingEpic}
-                      onStop={onStopEpic}
-                      onLand={onLandEpic}
+                      onWork={onWorkMilestone}
+                      onRequestWork={onRequestWorkMilestone}
+                      onPause={onPauseMilestone}
+                      onResume={onResumeMilestone}
+                      onRaiseCeiling={onRaiseCeilingMilestone}
+                      onStop={onStopMilestone}
+                      onLand={onLandMilestone}
                       onAdd={() =>
                         shell.openCreateTask(
-                          epic !== null ? { epic: epic.meta.id } : undefined
+                          milestone !== null
+                            ? { milestone: milestone.meta.id }
+                            : undefined
                         )
                       }
                     />
@@ -965,14 +972,14 @@ export function TaskBoard({
                                 )}
                                 run={latestRunByTaskId.get(doc.meta.id)}
                                 readiness={readinessById?.get(doc.meta.id)}
-                                // Epic lanes: the lane heading already names the
-                                // epic, so the card skips the crumb. Every other
-                                // board: the crumb is how a card keeps its epic.
-                                epicTitle={
-                                  lane.kind === 'epic' ||
+                                // Milestone lanes: the lane heading already names the
+                                // milestone, so the card skips the crumb. Every other
+                                // board: the crumb is how a card keeps its milestone.
+                                milestoneTitle={
+                                  lane.kind === 'parent' ||
                                   doc.meta.parent === null
                                     ? undefined
-                                    : (epicById.get(doc.meta.parent)?.meta
+                                    : (milestoneById.get(doc.meta.parent)?.meta
                                         .title ?? doc.meta.parent)
                                 }
                                 statuses={statuses}

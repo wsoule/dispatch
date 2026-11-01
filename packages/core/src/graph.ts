@@ -31,9 +31,10 @@ export function isDone(
  */
 export function isSatisfiedForDispatch(
   t: TaskListItem,
-  model: StatusModel = DEFAULT_STATUS_MODEL
+  model: StatusModel = DEFAULT_STATUS_MODEL,
+  finishedRun = false
 ): boolean {
-  return isSatisfiedForDispatchStatus(t.meta.status, model);
+  return isSatisfiedForDispatchStatus(t.meta.status, model, finishedRun);
 }
 
 /**
@@ -96,14 +97,18 @@ function filterAndSortByReadiness<T extends TaskListItem>(
  * `readyTasks` is what the CLI, the MCP `ready` tool, the board's Blocked
  * badge, and merge-queue ordering all mean by "ready", and none of those
  * should start calling a task with an unmerged blocker ready.
+ *
+ * `finishedRun` says whether a blocker's latest run has ended; a board whose
+ * review status is its dispatched one needs it to tell review from working.
  */
 export function dispatchableTasks<T extends TaskListItem = TaskDoc>(
   tasks: readonly T[],
-  model: StatusModel = DEFAULT_STATUS_MODEL
+  model: StatusModel = DEFAULT_STATUS_MODEL,
+  finishedRun?: (id: string) => boolean
 ): T[] {
   return filterAndSortByReadiness(
     tasks,
-    (t) => isSatisfiedForDispatch(t, model),
+    (t) => isSatisfiedForDispatch(t, model, finishedRun?.(t.meta.id) ?? false),
     model
   );
 }
@@ -114,6 +119,8 @@ export interface FanoutBlocker {
   held: boolean;
   /** Its work sits on a Dispatch run branch a dependent can stack on. */
   hasRunBranch: boolean;
+  /** Its latest run has ended; `hasRunBranch` stands in when omitted. */
+  finishedRun?: boolean;
 }
 
 /**
@@ -131,7 +138,11 @@ export function releasesFanoutDependents(
   return (
     !blocker.held &&
     blocker.hasRunBranch &&
-    isSatisfiedForDispatchStatus(status, model)
+    isSatisfiedForDispatchStatus(
+      status,
+      model,
+      blocker.finishedRun ?? blocker.hasRunBranch
+    )
   );
 }
 

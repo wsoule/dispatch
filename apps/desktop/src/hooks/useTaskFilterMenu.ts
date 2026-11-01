@@ -10,7 +10,7 @@ import {
 import type { DispatchProjectData } from './useDispatchProject';
 
 interface TaskFilterMenu {
-  /** What a clause reads beyond the task itself: live run states and epic titles. */
+  /** What a clause reads beyond the task itself: live run states and milestone titles. */
   filterContext: FilterContext;
   /** The values the Filter menu offers, from the project's own vocabulary. */
   menuContext: FilterMenuContext;
@@ -20,28 +20,28 @@ interface TaskFilterMenu {
 
 /** The Filter menu's inputs for one project, for the Tasks page's header. */
 export function useTaskFilterMenu(data: DispatchProjectData): TaskFilterMenu {
-  const epicTitleById = useMemo(
-    () => new Map(data.epics.map((e) => [e.meta.id, e.meta.title])),
-    [data.epics]
+  const milestoneTitleById = useMemo(
+    () => new Map(data.milestones.map((e) => [e.meta.id, e.meta.title])),
+    [data.milestones]
   );
   const filterContext = useMemo<FilterContext>(
-    () => ({ liveRunStateByTaskId: data.liveRunStateByTaskId, epicTitleById }),
-    [data.liveRunStateByTaskId, epicTitleById]
+    () => ({
+      liveRunStateByTaskId: data.liveRunStateByTaskId,
+      milestoneTitleById,
+    }),
+    [data.liveRunStateByTaskId, milestoneTitleById]
   );
   const menuContext = useMemo<FilterMenuContext>(() => {
     const labels = new Set<string>();
-    const milestones = new Set<string>();
     for (const doc of data.tasks) {
       for (const l of doc.meta.labels) labels.add(l);
-      if (doc.meta.milestone !== null) milestones.add(doc.meta.milestone);
     }
     return {
       statuses: data.config?.statuses ?? [],
-      epics: data.epics,
+      milestones: data.milestones,
       labels: [...labels].sort(),
-      milestones: [...milestones].sort(),
     };
-  }, [data.tasks, data.config, data.epics]);
+  }, [data.tasks, data.config, data.milestones]);
   // The daemon turns a sentence into clauses, parsed like a stored set so an invented facet
   // drops rather than leaking into a `switch`.
   const client = data.client;

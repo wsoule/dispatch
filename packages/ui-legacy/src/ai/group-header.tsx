@@ -7,7 +7,7 @@ import { IconButton } from './icon-button';
 export type GroupHeaderProps = {
   /** The group's status colour; the bar's left edge picks up `--tint-strength` of it. */
   tint?: string;
-  /** 14px status glyph, epic swatch or milestone target. */
+  /** 14px status glyph, milestone swatch or milestone target. */
   icon?: ReactNode;
   /** 13px/500. */
   name: ReactNode;

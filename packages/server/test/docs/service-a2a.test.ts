@@ -32,7 +32,7 @@ beforeEach(() => {
 });
 const as = (p: Parameters<DocsService['actorFor']>[0]) => service.actorFor(p);
 
-// Owner-made docs: one linked as t-1's spec, one as its epic's spec, one unlinked.
+// Owner-made docs: one linked as t-1's spec, one as its milestone's spec, one unlinked.
 function seed(): void {
   service.create(as(OWNER), {
     title: 'Own spec',
@@ -40,7 +40,7 @@ function seed(): void {
     links: [{ target: { type: 'task', id: 't-1' }, rel: 'spec' }],
   });
   service.create(as(OWNER), {
-    title: 'Epic spec',
+    title: 'Milestone spec',
     body: 'x\n',
     links: [{ target: { type: 'task', id: 'e-1' }, rel: 'spec' }],
   });
@@ -143,8 +143,8 @@ describe('A2A-provenance runs', () => {
 
   it('never inlines an ancestor spec for an A2A run without the MCP server', () => {
     service.create(as(OWNER), {
-      title: 'Epic spec',
-      body: 'EPIC\n',
+      title: 'Milestone spec',
+      body: 'MILESTONE\n',
       links: [{ target: { type: 'task', id: 'e-1' }, rel: 'spec' }],
     });
     expect(
@@ -179,7 +179,7 @@ describe('A2A-origin tasks', () => {
     seed();
     expect(service.indexLines(as(OWNER), 't-1').map((l) => l.handle)).toEqual([
       'own-spec',
-      'epic-spec',
+      'milestone-spec',
     ]);
   });
 });

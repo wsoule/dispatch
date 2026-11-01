@@ -1,187 +1,179 @@
 use crate::db::queries;
-use rusqlite::Connection;
+use crate::parser::{FileContext, ParsedRecord};
+use rusqlite::{Connection, OptionalExtension};
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
-/// Reads any bytes appended to `path` since the last recorded offset, returning complete
-/// lines only. A trailing incomplete line (the watcher fired mid-flush, a real possibility
-/// since Claude Code appends while we're reading) is buffered back into `ingest_state` for
-/// next time rather than parsed prematurely. Offset/partial-line bookkeeping is updated in
-/// the same call so a crash between reading and processing can't silently skip bytes.
-pub fn read_new_lines(conn: &Connection, path: &Path) -> anyhow::Result<Vec<String>> {
-    let path_str = path.to_string_lossy().to_string();
-    let state = queries::get_ingest_state(conn, &path_str)?;
+/// Caps bytes read and parsed per commit, including segments containing no complete line.
+pub const SEGMENT_BYTES: u64 = 256 * 1024;
+pub type ParseLine = fn(&str, &mut FileContext) -> Option<ParsedRecord>;
 
-    let mut file = File::open(path)?;
-    let file_len = file.metadata()?.len();
+pub struct Cursor {
+    pub offset: u64,
+    pub partial: Vec<u8>,
+    pub context: FileContext,
+    needs_context: bool,
+}
 
-    // If the file is shorter than our recorded offset (shouldn't happen for Claude Code's
-    // append-only logs, but never trust external state), restart from 0 rather than seek
-    // past EOF and silently miss everything that follows.
-    let start_offset = if (state.byte_offset as u64) > file_len {
-        0
-    } else {
-        state.byte_offset as u64
+pub struct Segment {
+    pub cursor: Cursor,
+    pub lines: Vec<String>,
+    pub mtime: i64,
+}
+
+/// Loads the durable cursor. Reader recovers legacy header context outside the DB mutex;
+/// no additive record effects are replayed during that recovery.
+pub fn cursor(conn: &Connection, path: &Path) -> anyhow::Result<Cursor> {
+    let key = path.to_string_lossy();
+    let state = queries::get_ingest_state(conn, &key)?;
+    let saved: Option<(Option<String>, Option<Vec<u8>>)> = conn
+        .query_row(
+            "SELECT parser_context, partial_bytes FROM ingest_state WHERE file_path = ?1",
+            [key.as_ref()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let (context, partial) = saved.unwrap_or_default();
+    let partial = partial.unwrap_or_else(|| state.partial_line.into_bytes());
+    let needs_context = context.is_none();
+    let context = match context {
+        Some(json) => serde_json::from_str(&json)?,
+        None => FileContext::default(),
     };
+    Ok(Cursor {
+        offset: state.byte_offset.max(0) as u64,
+        partial,
+        context,
+        needs_context,
+    })
+}
 
-    file.seek(SeekFrom::Start(start_offset))?;
-    let mut buf = Vec::new();
-    file.read_to_end(&mut buf)?;
+/// Persists a recovered legacy context without advancing its already committed offset.
+pub fn persist_context(conn: &Connection, path: &Path, cursor: &Cursor) -> anyhow::Result<()> {
+    conn.execute(
+        "UPDATE ingest_state SET parser_context = ?2, partial_bytes = ?3 WHERE file_path = ?1",
+        rusqlite::params![
+            path.to_string_lossy(),
+            serde_json::to_string(&cursor.context)?,
+            cursor.partial
+        ],
+    )?;
+    Ok(())
+}
 
-    let new_text = String::from_utf8_lossy(&buf);
-    let combined = format!("{}{}", state.partial_line, new_text);
+/// A single open file and catch-up boundary keep replacement/appends from mixing file
+/// generations between commits. Later appends are handled by queued watcher events.
+pub struct Reader {
+    file: File,
+    end_offset: u64,
+}
+impl Reader {
+    pub fn open(path: &Path) -> anyhow::Result<Self> {
+        let file = File::open(path)?;
+        let end_offset = file.metadata()?.len();
+        Ok(Self { file, end_offset })
+    }
+    /// Reads the legacy committed prefix outside the DB mutex; never reapplies record effects.
+    pub fn recover_context(
+        &mut self,
+        cursor: &mut Cursor,
+        parse: ParseLine,
+    ) -> anyhow::Result<bool> {
+        let recovered = cursor.needs_context && cursor.offset > 0;
+        if self.end_offset < cursor.offset {
+            cursor.offset = 0;
+            cursor.partial.clear();
+            cursor.context = FileContext::default();
+            cursor.needs_context = false;
+            return Ok(false);
+        }
+        if cursor.needs_context && cursor.offset > 0 {
+            self.file.seek(SeekFrom::Start(0))?;
+            let prefix = Read::by_ref(&mut self.file).take(cursor.offset);
+            let mut reader = BufReader::new(prefix);
+            let mut bytes = Vec::new();
+            cursor.partial.clear();
+            while reader.read_until(b'\n', &mut bytes)? > 0 {
+                if bytes.last() == Some(&b'\n') {
+                    parse(&String::from_utf8_lossy(&bytes), &mut cursor.context);
+                } else {
+                    cursor.partial = bytes.clone();
+                }
+                bytes.clear();
+            }
+        }
+        cursor.needs_context = false;
+        Ok(recovered)
+    }
 
-    let mut lines: Vec<String> = combined.split('\n').map(String::from).collect();
-    // Last element is "" if `combined` ended in `\n`, or an incomplete trailing line
-    // otherwise — either way it must not be parsed yet.
-    let trailing_partial = lines.pop().unwrap_or_default();
-
-    let new_offset = start_offset + buf.len() as u64;
-    let mtime = file
-        .metadata()
-        .ok()
-        .and_then(|m| m.modified().ok())
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-
-    queries::set_ingest_state(conn, &path_str, new_offset as i64, &trailing_partial, mtime)?;
-
-    Ok(lines.into_iter().filter(|l| !l.trim().is_empty()).collect())
+    /// Reads outside the DB mutex. Only the caller owning this file may advance its cursor.
+    pub fn read_segment(&mut self, cursor: Cursor) -> anyhow::Result<Option<Segment>> {
+        let file = &mut self.file;
+        file.seek(SeekFrom::Start(cursor.offset))?;
+        let mut bytes = Vec::new();
+        Read::by_ref(file)
+            .take(SEGMENT_BYTES.min(self.end_offset.saturating_sub(cursor.offset)))
+            .read_to_end(&mut bytes)?;
+        if bytes.is_empty() {
+            return Ok(None);
+        }
+        let offset = cursor.offset + bytes.len() as u64;
+        let mut combined = cursor.partial;
+        combined.extend(bytes);
+        let end = combined
+            .iter()
+            .rposition(|b| *b == b'\n')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let lines = combined[..end]
+            .split(|b| *b == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| String::from_utf8_lossy(line).into_owned())
+            .collect();
+        let partial = combined[end..].to_vec();
+        let mtime = file
+            .metadata()
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        Ok(Some(Segment {
+            cursor: Cursor {
+                offset,
+                partial,
+                context: cursor.context,
+                needs_context: false,
+            },
+            lines,
+            mtime,
+        }))
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Write;
+pub fn read_segment(path: &Path, cursor: Cursor) -> anyhow::Result<Option<Segment>> {
+    Reader::open(path)?.read_segment(cursor)
+}
 
-    /// Cleans up its file on drop so a failing assertion can't leak a stray temp file.
-    struct TempFile(std::path::PathBuf);
-
-    impl TempFile {
-        fn new(name: &str) -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "dispatch-tail-test-{}-{name}.jsonl",
-                std::process::id()
-            ));
-            Self(path)
-        }
-
-        fn path(&self) -> &Path {
-            &self.0
-        }
-
-        fn write(&self, contents: &str) {
-            std::fs::write(&self.0, contents).unwrap();
-        }
-
-        fn append(&self, contents: &str) {
-            let mut f = std::fs::OpenOptions::new()
-                .append(true)
-                .open(&self.0)
-                .unwrap();
-            f.write_all(contents.as_bytes()).unwrap();
-        }
-    }
-
-    impl Drop for TempFile {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.0);
-        }
-    }
-
-    fn in_memory_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("../../migrations/0001_init.sql"))
-            .unwrap();
-        conn
-    }
-
-    const MALFORMED_FIXTURE: &str = include_str!("../../tests/fixtures/malformed_line.jsonl");
-
-    #[test]
-    fn returns_all_complete_lines_including_malformed_ones_and_advances_offset_to_eof() {
-        // tail.rs's job is byte-accurate line splitting, not JSON validity - a malformed but
-        // newline-terminated line is a "complete line" at this layer (parser::parse_line is
-        // what rejects it later). This mirrors PLAN.md verification item: "truncated mid-JSON
-        // line is skipped [by the parser], rest of file still processes, byte_offset still
-        // advances past it" - the byte_offset half of that guarantee lives here.
-        let file = TempFile::new("malformed");
-        file.write(MALFORMED_FIXTURE);
-        let conn = in_memory_db();
-
-        let lines = read_new_lines(&conn, file.path()).unwrap();
-        assert_eq!(
-            lines.len(),
-            3,
-            "all 3 newline-terminated lines returned, malformed one included"
-        );
-
-        let expected_offset = MALFORMED_FIXTURE.len() as i64;
-        let state = queries::get_ingest_state(&conn, &file.path().to_string_lossy()).unwrap();
-        assert_eq!(state.byte_offset, expected_offset);
-        assert_eq!(state.partial_line, "");
-    }
-
-    #[test]
-    fn trailing_incomplete_line_is_buffered_not_returned() {
-        let file = TempFile::new("partial");
-        // No trailing newline - simulates the watcher firing mid-write.
-        file.write(r#"{"type":"user","sessionId":"s","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp","message":{"role":"user","content":"a"}}
-{"type":"user","sessionId":"s","timestamp":"2026-01-01T00:00:01Z","cwd":"/tmp","message":{"role":"user","conte"#);
-        let conn = in_memory_db();
-
-        let lines = read_new_lines(&conn, file.path()).unwrap();
-        assert_eq!(lines.len(), 1, "only the first, complete line is returned");
-
-        let state = queries::get_ingest_state(&conn, &file.path().to_string_lossy()).unwrap();
-        assert!(
-            state
-                .partial_line
-                .starts_with(r#"{"type":"user","sessionId":"s","timestamp":"2026-01-01T00:00:01Z"#),
-            "incomplete trailing line must be buffered as partial_line, got: {}",
-            state.partial_line
-        );
-
-        // Claude Code finishes the flush: the rest of the line plus its newline arrive.
-        file.append(r#"nt":"b"}}"#);
-        file.append("\n");
-
-        let lines = read_new_lines(&conn, file.path()).unwrap();
-        assert_eq!(
-            lines.len(),
-            1,
-            "the now-completed line is returned on the next tail"
-        );
-        assert!(lines[0].contains(r#""content":"b"}}"#));
-
-        let state = queries::get_ingest_state(&conn, &file.path().to_string_lossy()).unwrap();
-        assert_eq!(state.partial_line, "");
-    }
-
-    #[test]
-    fn resumes_from_stored_byte_offset_instead_of_reprocessing_from_scratch() {
-        // Simulates an app restart mid-session: read once, then simulate a fresh process by
-        // calling read_new_lines again against the *same* ingest_state row without the file
-        // changing - it must return nothing new, not re-deliver already-tailed lines.
-        let file = TempFile::new("resume");
-        file.write("line one is not valid json but is newline-terminated\n");
-        let conn = in_memory_db();
-
-        let first = read_new_lines(&conn, file.path()).unwrap();
-        assert_eq!(first.len(), 1);
-
-        let second = read_new_lines(&conn, file.path()).unwrap();
-        assert!(
-            second.is_empty(),
-            "no new bytes since last tail - nothing should be re-delivered"
-        );
-
-        // Now Claude Code appends more while we were "away".
-        file.append("line two also newline-terminated\n");
-        let third = read_new_lines(&conn, file.path()).unwrap();
-        assert_eq!(third.len(), 1);
-        assert!(third[0].contains("line two"));
-    }
+/// All record effects and continuation fields share the caller's SQLite transaction.
+pub fn checkpoint(conn: &Connection, path: &Path, segment: &Segment) -> anyhow::Result<()> {
+    let key = path.to_string_lossy();
+    queries::set_ingest_state(
+        conn,
+        &key,
+        segment.cursor.offset as i64,
+        &String::from_utf8_lossy(&segment.cursor.partial),
+        segment.mtime,
+    )?;
+    conn.execute(
+        "UPDATE ingest_state SET parser_context = ?2, partial_bytes = ?3 WHERE file_path = ?1",
+        rusqlite::params![
+            key,
+            serde_json::to_string(&segment.cursor.context)?,
+            segment.cursor.partial
+        ],
+    )?;
+    Ok(())
 }

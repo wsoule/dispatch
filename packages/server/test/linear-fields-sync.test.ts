@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { TaskCache } from '../src/cache.js';
 import { EventBus } from '../src/events.js';
 import type { ServerEvent } from '../src/events.js';
+import { LINEAR_USAGE_LIMIT_MESSAGE } from '../src/linear/client.js';
 import {
   readBase,
   readLinearState,
@@ -51,6 +52,19 @@ function makeSync(): LinearSync {
     events,
     client: fake,
     localHumanRef: 'human:wyat',
+  });
+}
+
+// A sync whose orchestrator reports a finished run for `id`.
+function withFinished(id: string): LinearSync {
+  return new LinearSync({
+    rootDir: root,
+    store,
+    cache,
+    events,
+    client: fake,
+    localHumanRef: 'human:wyat',
+    finishedRuns: () => new Set([id]),
   });
 }
 
@@ -128,6 +142,115 @@ describe('workflow states and people', () => {
     expect(broadcasts.some((e) => e.type === 'config.changed')).toBe(true);
   });
 
+  it('moves tasks waiting for review into a review state the team adds', async () => {
+    fake.states = STATES.filter((s) => s.name !== 'In Review');
+    const finished = store.create({ title: 'Run finished', status: 'working' });
+    const running = store.create({ title: 'Still running', status: 'working' });
+    const withRuns = () =>
+      new LinearSync({
+        rootDir: root,
+        store,
+        cache,
+        events,
+        client: fake,
+        localHumanRef: 'human:wyat',
+        finishedRuns: () => new Set([finished.meta.id]),
+      });
+    await withRuns().syncOnce();
+    expect(loadConfig(root).statusRoles?.review).toBe('In Progress');
+
+    fake.states = STATES;
+    await withRuns().syncOnce();
+
+    expect(loadConfig(root).statusRoles?.review).toBe('In Review');
+    expect(store.get(finished.meta.id)?.meta.status).toBe('In Review');
+    expect(store.get(running.meta.id)?.meta.status).toBe('In Progress');
+    // Unlinked, so the move is bookkeeping: it does not send the task.
+    expect(store.get(finished.meta.id)?.meta.updated).toBe(
+      finished.meta.updated
+    );
+    expect(fake.created).toHaveLength(0);
+  });
+
+  it('sends a linked task’s move into a review state the team adds', async () => {
+    fake.states = STATES.filter((s) => s.name !== 'In Review');
+    const { id } = await linkedPair();
+    const updated = store.get(id)?.meta.updated;
+    fake.states = STATES;
+
+    await withFinished(id).syncOnce();
+
+    expect(store.get(id)?.meta.status).toBe('In Review');
+    expect(store.get(id)?.meta.updated).toBe(updated);
+    expect(fake.updated.map((u) => u.input.stateId)).toEqual(['s-review']);
+  });
+
+  it('sends that move for a pair with no merge base for its state', async () => {
+    fake.states = STATES.filter((s) => s.name !== 'In Review');
+    const { id } = await linkedPair();
+    const state = readLinearState(root);
+    delete state.bases[id];
+    writeLinearState(root, state);
+    fake.states = STATES;
+
+    await withFinished(id).syncOnce();
+
+    expect(store.get(id)?.meta.status).toBe('In Review');
+    expect(fake.updated.map((u) => u.input.stateId)).toEqual(['s-review']);
+  });
+
+  it('lets a newer state edit in Linear win over that move', async () => {
+    fake.states = STATES.filter((s) => s.name !== 'In Review');
+    const { issue, id } = await linkedPair();
+    const remote = fake.issues.find((i) => i.id === issue.id);
+    if (remote === undefined) throw new Error('issue vanished');
+    // A teammate closed it before the pass, after the task's last edit.
+    remote.state = STATES.find((s) => s.name === 'Done') ?? null;
+    remote.updatedAt = new Date(Date.now() - 1000).toISOString();
+    fake.states = STATES;
+
+    await withFinished(id).syncOnce();
+
+    expect(store.get(id)?.meta.status).toBe('Done');
+    expect(fake.updated.map((u) => u.input.stateId)).not.toContain('s-review');
+  });
+
+  it('moves tasks waiting for review into a review state picked in Settings', async () => {
+    fake.states = STATES.map((s) =>
+      s.id === 's-review' ? { ...s, name: 'QA' } : s
+    );
+    const finished = store.create({ title: 'Run finished', status: 'working' });
+    await withFinished(finished.meta.id).syncOnce();
+    expect(loadConfig(root).statusRoles?.review).toBe('In Progress');
+
+    updateConfig(root, {
+      statusRoles: { ...loadConfig(root).statusRoles!, review: 'QA' },
+    });
+    await withFinished(finished.meta.id).syncOnce();
+
+    expect(store.get(finished.meta.id)?.meta.status).toBe('QA');
+  });
+
+  it('leaves a task moved since a pass last found review shared', async () => {
+    fake.states = STATES.map((s) =>
+      s.id === 's-review' ? { ...s, name: 'QA' } : s
+    );
+    const finished = store.create({ title: 'Run finished', status: 'working' });
+    const id = finished.meta.id;
+    await withFinished(id).syncOnce();
+
+    // With no pass between: review split off in Settings, the finish moved
+    // the task to QA, and a person moved it back to rework it.
+    updateConfig(root, {
+      statusRoles: { ...loadConfig(root).statusRoles!, review: 'QA' },
+    });
+    edit(id, { status: 'QA' });
+    edit(id, { status: 'In Progress' });
+    await withFinished(id).syncOnce();
+
+    expect(store.get(id)?.meta.status).toBe('In Progress');
+  });
+
   it('keeps a role the user overrode, and follows a renamed state', async () => {
     await makeSync().syncOnce();
     updateConfig(root, {
@@ -145,6 +268,32 @@ describe('workflow states and people', () => {
     expect(config.statuses).not.toContain('In Review');
     expect(config.statusRoles?.review).toBe('In Progress');
     expect(store.get(inReview.meta.id)?.meta.status).toBe('Code Review');
+  });
+
+  it('moves a status outside the vocabulary on later passes too, and pushes its state', async () => {
+    const { id, sync } = await linkedPair();
+    const configBefore = loadConfig(root);
+    // A local create or a stale writer: a built-in name the board has dropped.
+    edit(id, { status: 'landed' });
+    const stray = store.create({ title: 'Local', status: 'ready' });
+    const updatedBefore = store.get(stray.meta.id)?.meta.updated;
+    broadcasts = [];
+
+    const summary = await sync.syncOnce();
+
+    expect(store.get(id)?.meta.status).toBe('Done');
+    expect(store.get(stray.meta.id)?.meta.status).toBe('Todo');
+    expect(store.get(stray.meta.id)?.meta.updated).toBe(updatedBefore);
+    expect(summary.migrated).toBe(2);
+    expect(fake.updated.map((u) => u.input.stateId)).toEqual(['s-done']);
+    // Only the tasks moved; the vocabulary itself stayed put.
+    expect(loadConfig(root).statusDefinitions).toEqual(
+      configBefore.statusDefinitions
+    );
+    expect(broadcasts.some((e) => e.type === 'config.changed')).toBe(false);
+
+    const again = await sync.syncOnce();
+    expect(again.migrated).toBe(0);
   });
 
   it('folds team members into people, the key’s own user as the local human', async () => {
@@ -309,6 +458,95 @@ describe('labels', () => {
         ?.labels.map((l) => l.name)
         .sort()
     ).toEqual(['perf', 'web']);
+  });
+
+  it('creates a label a task carries twice only once', async () => {
+    const { id, sync } = await linkedPair();
+    edit(id, { labels: ['web', 'perf', 'Perf'] });
+
+    const summary = await sync.syncOnce();
+
+    expect(fake.calls.filter((c) => c === 'createLabel')).toHaveLength(1);
+    expect(summary.errors).toEqual([]);
+  });
+
+  it('reuses the label Linear already has when it refuses the create as a duplicate', async () => {
+    const { id, sync } = await linkedPair();
+    // Added in Linear after the pass cached the team's labels.
+    fake.labelList.push({ id: 'l-perf', name: 'Perf', teamId: 'team-1' });
+    edit(id, { labels: ['web', 'perf'] });
+
+    const summary = await sync.syncOnce();
+
+    expect(summary.errors).toEqual([]);
+    expect(fake.calls).toContain('labelsNamed');
+    expect(fake.labelList.map((l) => l.id)).toEqual(['l-web', 'l-perf']);
+    expect(new Set(fake.updated[0]?.input.labelIds)).toEqual(
+      new Set(['l-web', 'l-perf'])
+    );
+    expect(store.get(id)?.meta.labels).toEqual(['web', 'perf']);
+  });
+
+  it('names a label group a task carries instead of creating it, once per pass', async () => {
+    fake.issues.push(fake.issue(), fake.issue());
+    fake.labelList.push({
+      id: 'l-type',
+      name: 'Type',
+      isGroup: true,
+      teamId: 'team-1',
+    });
+    const sync = makeSync();
+    await sync.importIssues();
+    const ids = store.list().map((d) => d.meta.id);
+    fake.calls = [];
+    for (const id of ids)
+      edit(id, { title: `Renamed ${id}`, labels: ['web', 'type'] });
+
+    const summary = await sync.syncOnce();
+
+    expect(fake.calls.filter((c) => c === 'createLabel')).toHaveLength(1);
+    expect(fake.calls.filter((c) => c === 'labelsNamed')).toHaveLength(1);
+    expect(summary.errors).toHaveLength(1);
+    expect(summary.errors[0]).toContain('label group');
+    // The rest of each issue still goes out.
+    expect(new Set(fake.updated.map((u) => u.input.title))).toEqual(
+      new Set(ids.map((id) => `Renamed ${id}`))
+    );
+    // The labels field is kept, so the next pass sends the issue again, but
+    // the group is not looked up again: Linear's answer has not changed.
+    fake.calls = [];
+    const again = await sync.syncOnce();
+    expect(fake.calls).not.toContain('createLabel');
+    expect(fake.calls).not.toContain('labelsNamed');
+    expect(again.errors[0]).toContain('label group');
+  });
+
+  it('sends a label whose create failed with a new issue on the next pass', async () => {
+    const sync = makeSync();
+    await sync.syncOnce();
+    const doc = store.create({ title: 'Fresh work', labels: ['web', 'perf'] });
+    fake.failures.createLabel = {
+      ok: false,
+      kind: 'graphql',
+      error: 'label service down',
+    };
+
+    const first = await sync.syncOnce();
+
+    expect(first.createdIssues).toBe(1);
+    expect(first.errors).toEqual(['label service down']);
+    expect(fake.created[0]?.labelIds).toEqual(['l-web']);
+
+    delete fake.failures.createLabel;
+    const second = await sync.syncOnce();
+
+    expect(second.errors).toEqual([]);
+    const perf = fake.labelList.find((l) => l.name === 'perf');
+    expect(new Set(fake.updated[0]?.input.labelIds)).toEqual(
+      new Set(['l-web', perf?.id ?? 'missing'])
+    );
+    // Linear's label-less copy never overwrote the task's labels.
+    expect(store.get(doc.meta.id)?.meta.labels).toEqual(['web', 'perf']);
   });
 
   it('takes a label removed in Linear off the task', async () => {
@@ -478,6 +716,34 @@ describe('archive', () => {
     expect(store.get(id)?.meta.archivedAt).toBeUndefined();
   });
 
+  it('sends no further unarchive once one meets the issue limit, and retries both', async () => {
+    fake.issues.push(fake.issue(), fake.issue());
+    const sync = makeSync();
+    await sync.importIssues();
+    const ids = store.list().map((d) => d.meta.id);
+    for (const id of ids) edit(id, { archivedAt: new Date().toISOString() });
+    await sync.syncOnce();
+    expect(fake.issues.every((i) => i.archivedAt !== null)).toBe(true);
+
+    for (const id of ids) edit(id, { archivedAt: null });
+    fake.issueLimit = 0;
+    fake.calls = [];
+    const capped = await sync.syncOnce();
+
+    expect(capped.usageLimited).toBe(true);
+    expect(capped.errors).toEqual([LINEAR_USAGE_LIMIT_MESSAGE]);
+    expect(fake.calls.filter((c) => c === 'unarchiveIssue')).toHaveLength(1);
+    expect(fake.issues.every((i) => i.archivedAt !== null)).toBe(true);
+
+    fake.issueLimit = null;
+    await sync.syncOnce();
+    expect(fake.issues.every((i) => i.archivedAt === null)).toBe(true);
+    expect(ids.map((id) => store.get(id)?.meta.archivedAt)).toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+
   it('leaves a finished task’s archive to Linear’s own schedule', async () => {
     const done = STATES.find((s) => s.name === 'Done') ?? null;
     const { id, sync } = await linkedPair({ state: done });
@@ -486,6 +752,27 @@ describe('archive', () => {
     await sync.syncOnce();
 
     expect(fake.calls).not.toContain('archiveIssue');
+  });
+
+  it('does not archive an issue a teammate reopened once archiveFinished is on', async () => {
+    const done = STATES.find((s) => s.name === 'Done') ?? null;
+    const started = STATES.find((s) => s.name === 'In Progress') ?? null;
+    const { issue, id, sync } = await linkedPair({ state: done });
+    edit(id, { archivedAt: new Date().toISOString() });
+    await sync.syncOnce();
+    updateConfig(root, { linear: { archiveFinished: true } });
+    const remote = fake.issues.find((i) => i.id === issue.id);
+    if (remote === undefined) throw new Error('issue vanished');
+    remote.state = started;
+    touch(remote);
+    fake.calls = [];
+
+    await sync.syncOnce();
+    await sync.syncOnce();
+
+    expect(fake.calls).not.toContain('archiveIssue');
+    expect(remote.archivedAt).toBeNull();
+    expect(store.get(id)?.meta.status).toBe('In Progress');
   });
 });
 
@@ -673,26 +960,26 @@ describe('relations and hierarchy', () => {
     expect(fake.calls).not.toContain('projectMilestones');
   });
 
-  it('publishes a legacy epic as a parent issue with its tasks as sub-issues', async () => {
+  it('publishes a legacy milestone as a parent issue with its tasks as sub-issues', async () => {
     const sync = makeSync();
     await sync.syncOnce();
-    const epic = store.create(
-      { title: 'Epic', kind: 'milestone' },
+    const milestone = store.create(
+      { title: 'Milestone', kind: 'milestone' },
       new Date(Date.now() + 1000).toISOString()
     );
     store.create(
-      { title: 'Part one', parent: epic.meta.id },
+      { title: 'Part one', parent: milestone.meta.id },
       new Date(Date.now() + 2000).toISOString()
     );
 
     await sync.syncOnce();
 
-    const epicIssue = fake.issues.find((i) => i.title === 'Epic');
+    const milestoneIssue = fake.issues.find((i) => i.title === 'Milestone');
     const part = fake.issues.find((i) => i.title === 'Part one');
-    expect(epicIssue).toBeDefined();
-    expect(part?.parentId).toBe(epicIssue?.id);
-    expect(store.get(epic.meta.id)?.meta.external).toBe(
-      `linear:${epicIssue?.id}`
+    expect(milestoneIssue).toBeDefined();
+    expect(part?.parentId).toBe(milestoneIssue?.id);
+    expect(store.get(milestone.meta.id)?.meta.external).toBe(
+      `linear:${milestoneIssue?.id}`
     );
   });
 

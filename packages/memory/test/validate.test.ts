@@ -33,7 +33,7 @@ describe('validateMemoryInput', () => {
     expect(validateMemoryInput(base)).toEqual({
       ...base,
       refs: [],
-      epic: null,
+      milestone: null,
       appliesTo: [],
       projectKey: null,
     });
@@ -85,9 +85,9 @@ describe('validateMemoryInput', () => {
   it('refuses reach fields on the wrong scope', () => {
     const personal = { ...base, scope: 'personal', kind: 'fact' } as const;
     expect(
-      failure(() => validateMemoryInput({ ...personal, epic: 'e-1a2b3c' }))
+      failure(() => validateMemoryInput({ ...personal, milestone: 'e-1a2b3c' }))
         .field
-    ).toBe('epic');
+    ).toBe('milestone');
     expect(
       failure(() =>
         validateMemoryInput({ ...personal, appliesTo: ['t-1a2b3c'] })
@@ -104,10 +104,11 @@ describe('validateMemoryInput', () => {
     ).toBe('0123456789ab');
   });
 
-  it('checks task ids in epic and appliesTo', () => {
+  it('checks task ids in milestone and appliesTo', () => {
     expect(
-      failure(() => validateMemoryInput({ ...base, epic: 'epic-7' })).field
-    ).toBe('epic');
+      failure(() => validateMemoryInput({ ...base, milestone: 'milestone-7' }))
+        .field
+    ).toBe('milestone');
     expect(
       failure(() =>
         validateMemoryInput({ ...base, appliesTo: ['t-1a2b3c', 'nope'] })

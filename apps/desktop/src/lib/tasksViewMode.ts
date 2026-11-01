@@ -1,9 +1,9 @@
 /**
  * Which layout the Tasks view opens in.
  *
- * `board` is the unified kanban and the default: every epic is an expandable header row with the
+ * `board` is the unified kanban and the default: every milestone is an expandable header row with the
  * project's configured status columns under it, so there is no longer a separate `lanes` mode —
- * the flat status-only board and the epic swim lanes were the same board grouped two ways, and
+ * the flat status-only board and the milestone swim lanes were the same board grouped two ways, and
  * one layout that collapses does both jobs. `list` is the dense grouped list. The former
  * `milestones` layout (the milestone map, later the Graph mode) is a page of its own now
  * (`HostedView` 'graph' in lib/appNav.ts), not a layout of the list.

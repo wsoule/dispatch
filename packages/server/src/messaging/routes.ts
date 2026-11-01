@@ -1,5 +1,4 @@
 import { isClientAddress, isReservedName } from '@dispatch-foo/a2a';
-import { canonicalKind } from '@dispatch-foo/core';
 import type { TaskDoc } from '@dispatch-foo/core';
 import type {
   AgentRecord,
@@ -42,7 +41,7 @@ import {
   registrationKey,
   SYSTEM_SENDER,
 } from './gates.js';
-import { implicitEpicMembers } from './host.js';
+import { implicitMilestoneMembers } from './host.js';
 import { isInternalAgent } from './internalAgents.js';
 import type { Principal } from './principal.js';
 
@@ -853,8 +852,8 @@ interface ChannelSummary {
   members: string[];
 }
 
-// GET /api/channels[?member=me] — every joined channel plus each epic's
-// implicit `epic/<id>` channel, built from one task listing grouped by parent;
+// GET /api/channels[?member=me] — every joined channel plus each milestone's
+// implicit `milestone/<id>` channel, built from one task listing grouped by parent;
 // `member=me` keeps those the caller (a run: its task) belongs to.
 export function listChannels(ctx: ApiContext, url?: URL): Response {
   const member = url?.searchParams.get('member') ?? null;
@@ -864,11 +863,11 @@ export function listChannels(ctx: ApiContext, url?: URL): Response {
   const explicitByName = new Map(explicitChannels.map((c) => [c.name, c]));
 
   const childrenByParent = new Map<string, TaskDoc[]>();
-  const epicIds: string[] = [];
+  const milestoneIds: string[] = [];
   for (const task of ctx.store.list()) {
-    // A milestone is what an epic became; its channel keeps the `epic/` name.
-    if (canonicalKind(task.meta.kind) === 'milestone') {
-      epicIds.push(task.meta.id);
+    // A milestone is what a milestone became; its channel keeps the `milestone/` name.
+    if (task.meta.kind === 'milestone') {
+      milestoneIds.push(task.meta.id);
     }
     if (task.meta.parent !== null) {
       const siblings = childrenByParent.get(task.meta.parent);
@@ -877,17 +876,17 @@ export function listChannels(ctx: ApiContext, url?: URL): Response {
       else siblings.push(task);
     }
   }
-  const childrenOf = (epicId: string): TaskDoc[] =>
-    childrenByParent.get(epicId) ?? [];
+  const childrenOf = (milestoneId: string): TaskDoc[] =>
+    childrenByParent.get(milestoneId) ?? [];
 
   const names = new Set(explicitByName.keys());
-  for (const id of epicIds) names.add(`epic/${id}`);
+  for (const id of milestoneIds) names.add(`milestone/${id}`);
 
   const channels: ChannelSummary[] = [...names].sort().map((name) => {
     const record = explicitByName.get(name);
     const members = new Set([
       ...ctx.messaging.store.members(name),
-      ...implicitEpicMembers(childrenOf, name),
+      ...implicitMilestoneMembers(childrenOf, name),
     ]);
     return { name, auto: record?.auto ?? true, members: [...members] };
   });
@@ -943,7 +942,7 @@ export async function joinChannel(
 }
 
 // DELETE /api/channels/:name/members[/:addr] — no address means the caller's
-// self-acting address; a non-member, or an epic's child in its channel, is a 404.
+// self-acting address; a non-member, or a milestone's child in its channel, is a 404.
 export function leaveChannel(
   ctx: ApiContext,
   name: string,
@@ -956,14 +955,14 @@ export function leaveChannel(
   }
   const removed = ctx.messaging.engine.leave(name, member);
   if (removed) return new Response(null, { status: 204 });
-  const implicit = implicitEpicMembers(
-    (epicId) => ctx.store.list({ parent: epicId }),
+  const implicit = implicitMilestoneMembers(
+    (milestoneId) => ctx.store.list({ parent: milestoneId }),
     name
   );
   if (implicit.includes(member)) {
     return errorResponse(
       404,
-      `${member} cannot leave ${name}: an epic's children are members by parentage`
+      `${member} cannot leave ${name}: a milestone's children are members by parentage`
     );
   }
   return errorResponse(404, `${member} is not a member of ${name}`);

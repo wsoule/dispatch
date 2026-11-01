@@ -18,7 +18,7 @@ const LEDGER_KIND_LABEL: Record<LedgerEntry['kind'], string> = {
   handoff: 'Handoffs',
 };
 
-// The ledger's audit receipts — an epic's, or a plain task's own: policy
+// The ledger's audit receipts — a milestone's, or a plain task's own: policy
 // decisions, scope grants, undeclared writes. Grouped by kind and attributed
 // to the task that raised each one; its lessons live in memory instead.
 export function ReceiptsSection({ entries }: { entries: LedgerEntry[] }) {

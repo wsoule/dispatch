@@ -49,7 +49,7 @@ function mount({
   let done = 0;
   const data = {
     config: { statuses: ['draft', 'ready', 'working', 'landed'] },
-    epics: [],
+    milestones: [],
     handleDismissDraft: (id: string) => {
       dismissed.push(id);
       return Promise.resolve();

@@ -1,6 +1,6 @@
 $schema: 'https://moonrepo.dev/schemas/tasks.json'
 
-# Guard chain for packages the open-core epic will publish. Each such package
+# Guard chain for packages the open-core milestone will publish. Each such package
 # gets "prepublishOnly": "moon run <name>:prepublish".
 #
 # BOTH TASKS ARE runInCI: 'always', and that is the fix for a real hole. They

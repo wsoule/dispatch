@@ -7,10 +7,8 @@ import { join } from 'node:path';
 import { TaskCache } from '../../src/cache.js';
 import { EventBus } from '../../src/events.js';
 import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
-import {
-  BOOT_FORCE_FAIL_ERROR,
-  Orchestrator,
-} from '../../src/orchestrator/orchestrator.js';
+import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
+import { BOOT_FORCE_FAIL_ERROR } from '../../src/orchestrator/types.js';
 import type {
   Executor,
   ExecutorEvents,

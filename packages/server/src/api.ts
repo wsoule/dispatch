@@ -1,5 +1,4 @@
 import {
-  ACCEPTED_KINDS,
   canonicalStatus,
   ConfigError,
   CredentialsUnreadableError,
@@ -9,8 +8,11 @@ import {
   isDoneStatus,
   isEffortLevel,
   isValidAssignee,
+  KINDS,
   loadConfig,
   PRIORITIES,
+  resolveStatusName,
+  statusModelOf,
   syncPlace,
   syncSettings,
   TaskParseError,
@@ -192,6 +194,7 @@ import type { ReadinessReading } from './judgments/readiness.js';
 import { buildLandingSnapshot } from './landing.js';
 import type { LedgerStorePort } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
+import type { LinearExportScope } from './linear/state.js';
 import type { LinearSync } from './linear/sync.js';
 import {
   acceptIngestProblemRoute,
@@ -246,9 +249,9 @@ import type { Messaging } from './messaging/service.js';
 import type { Note, NoteKind } from './notes.js';
 import { NOTE_KINDS, type NoteStore } from './notes.js';
 import { buildAgentSessions } from './orchestrator/agentSessions.js';
-import type { EpicEngine } from './orchestrator/epic.js';
 import type { FixLoop } from './orchestrator/fixLoop.js';
 import type { MergeQueue } from './orchestrator/mergeQueue.js';
+import type { MilestoneEngine } from './orchestrator/milestone.js';
 import type { Orchestrator } from './orchestrator/orchestrator.js';
 import type { OverseerManager } from './orchestrator/overseer.js';
 import { boardSyncDir } from './orchestrator/paths.js';
@@ -299,6 +302,7 @@ import {
 import { statusModelFor } from './statuses.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
+import { ContentKeyMissingError } from './team/federation/content.js';
 import { looksLikeInvite } from './team/federation/onboarding.js';
 import { markPublicRepo } from './team/federation/publicRepo.js';
 import type { FederationContext } from './team/federation/routes.js';
@@ -351,7 +355,7 @@ export interface ApiContext {
   // The project-assistant chat (see orchestrator/overseer.ts) — assembled
   // alongside PlanManager in index.ts against the same shared peers.
   overseerManager: OverseerManager;
-  epicEngine: EpicEngine;
+  milestoneEngine: MilestoneEngine;
   /** Who created and last wrote each task; absent in hand-built test contexts. */
   taskAuthorship?: TaskAuthorship;
   // dispatchd's own messaging engine host — messaging routes read/write
@@ -654,6 +658,27 @@ function validateLinearFields(value: Record<string, unknown>): string | null {
   return null;
 }
 
+// A request's status as one of config.statuses: exact, then case-insensitive,
+// then a legacy alias, then a built-in word read through statusRoles (core's
+// resolveStatusName). Null when none fits.
+function requestStatus(raw: string, config: DispatchConfig): string | null {
+  return resolveStatusName(raw, config.statuses, statusModelOf(config));
+}
+
+// GET /api/tasks?status=, resolved like a write's status. A value that fits no
+// name, or a config that will not load, filters by the raw value as before.
+function listStatusFilter(
+  ctx: Pick<ApiContext, 'rootDir'>,
+  raw: string | null
+): string | undefined {
+  if (raw === null) return undefined;
+  try {
+    return requestStatus(raw, loadConfig(ctx.rootDir)) ?? raw;
+  } catch {
+    return raw;
+  }
+}
+
 // Validates every field createTask/updateTask accept beyond title, entirely
 // before either one touches the store — a request that fails here writes no
 // file. `includeKind` is create-only: UpdatePatch has no `kind` field, since
@@ -665,9 +690,7 @@ function validateTaskFields(
   { includeKind, includeBody }: { includeKind: boolean; includeBody: boolean }
 ): string | null {
   if (includeKind) {
-    // ACCEPTED_KINDS keeps the legacy `epic` valid; the store reads it as a
-    // milestone.
-    const kindError = validateEnumField(value.kind, ACCEPTED_KINDS, 'kind');
+    const kindError = validateEnumField(value.kind, KINDS, 'kind');
     if (kindError) return kindError;
   }
   if (includeBody) {
@@ -682,16 +705,14 @@ function validateTaskFields(
     // would otherwise get the template back with their text silently dropped.
     return 'invalid body: a new task builds its body from the template — set it with PATCH instead';
   }
-  // Canonicalized before the membership check so callers speaking the
-  // pre-rename names ('done', 'in-progress', …) stay valid forever — the
-  // store canonicalizes again at write, so the alias never reaches disk.
-  const statusError = validateEnumField(
-    typeof value.status === 'string'
-      ? canonicalStatus(value.status)
-      : value.status,
-    config.statuses,
-    'status'
-  );
+  // Valid when it resolves onto a configured name (requestStatus), so callers
+  // speaking the pre-rename names or built-in role words stay valid; the
+  // error names what the caller actually sent.
+  const statusError =
+    typeof value.status === 'string' &&
+    requestStatus(value.status, config) !== null
+      ? null
+      : validateEnumField(value.status, config.statuses, 'status');
   if (statusError) return statusError;
   const priorityError = validateEnumField(
     value.priority,
@@ -778,11 +799,16 @@ export function createTaskChecked(
     input.kind ?? 'task'
   );
   if (!legacy.ok) return { ok: false, error: legacy.error };
+  const config = loadConfig(ctx.rootDir);
   const doc = ctx.store.create({
     ...withoutLegacyMilestone(input),
     ...(legacy.parent === undefined ? {} : { parent: legacy.parent }),
-    // Omitted, a task starts in the project's ready role.
-    status: input.status ?? statusModelFor(ctx.rootDir).roles.ready,
+    // Omitted, a task starts in the project's ready role; given, as the
+    // configured name it resolves to.
+    status:
+      input.status === undefined
+        ? statusModelOf(config).roles.ready
+        : (requestStatus(input.status, config) ?? input.status),
   });
   markA2AChild(ctx, doc.meta.id, doc.meta.parent);
   ctx.cache.refresh(ctx.store, [doc.meta.id]);
@@ -911,6 +937,12 @@ async function updateTask(
   const patch: UpdatePatch = {
     ...withoutLegacyMilestone(requested),
     ...(legacy.parent === undefined ? {} : { parent: legacy.parent }),
+    // Written as the configured name it resolves to (validated above).
+    ...(requested.status === undefined
+      ? {}
+      : {
+          status: requestStatus(requested.status, config) ?? requested.status,
+        }),
   };
 
   // A gated A2A draft moves only through its gate; a decide-tier status
@@ -1230,7 +1262,7 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     patch.autoCommit = body.autoCommit;
   }
   for (const key of [
-    'epicConcurrency',
+    'milestoneConcurrency',
     'verifyTimeoutSec',
     'maxConcurrency',
     'runCostEstimateUsd',
@@ -1754,13 +1786,20 @@ function getSyncStatus(ctx: ApiContext): Response {
 }
 
 // Maps a Linear client failure onto a status code: a bad key is the caller's
-// problem, a throttle is worth surfacing distinctly, anything else is upstream.
+// problem, a throttle is worth surfacing distinctly, a workspace at its plan's
+// issue limit needs a plan or an archive, anything else is upstream.
 function linearErrorResponse(failure: {
   kind: string;
   error: string;
 }): Response {
   const status =
-    failure.kind === 'auth' ? 401 : failure.kind === 'rate-limit' ? 429 : 502;
+    failure.kind === 'auth'
+      ? 401
+      : failure.kind === 'rate-limit'
+        ? 429
+        : failure.kind === 'usage-limit'
+          ? 402
+          : 502;
   return errorResponse(status, failure.error);
 }
 
@@ -1811,6 +1850,105 @@ async function linearStates(
     return errorResponse(409, 'no Linear API key configured');
   const result = await client.workflowStates(teamId);
   return result.ok ? jsonResponse(result.data) : linearErrorResponse(result);
+}
+
+const LINEAR_EXPORT_SCOPES: readonly LinearExportScope[] = [
+  'open',
+  'all',
+  'all-archive-finished',
+];
+
+function isTaskIdList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === 'string');
+}
+
+// The caller's `?request=` id for a Linear pass, if it sent one.
+function linearRequestId(url: URL): string | undefined {
+  const id = url.searchParams.get('request');
+  return id === null || id === '' ? undefined : id;
+}
+
+// A bulk start as HTTP: 202 once a background pass is begun (the 65s request
+// timeout would cut an awaited one), 200 when there was nothing to send.
+function linearBulkResponse(
+  start: ReturnType<LinearSync['startExport']>,
+  began: boolean
+): Response {
+  if (!start.ok) return errorResponse(start.status, start.error);
+  if (!began) return jsonResponse({ started: false, candidates: 0 });
+  const { candidates, startedAt } = start;
+  return jsonResponse({ started: true, candidates, startedAt }, 202);
+}
+
+// POST /api/linear/export {scope} — create Linear records for the unlinked
+// tasks the scope covers; progress and the outcome arrive through status.
+async function startLinearExport(
+  req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const scope = LINEAR_EXPORT_SCOPES.find((s) => s === parsed.value.scope);
+  if (scope === undefined) {
+    return errorResponse(400, 'scope must be open|all|all-archive-finished');
+  }
+  const start = ctx.linearSync.startExport(scope);
+  return linearBulkResponse(start, start.ok && start.candidates > 0);
+}
+
+// POST /api/linear/retry {taskIds?} — send the named queued creates now, or
+// every queued one, resetting their backoff and the issue-limit pause.
+async function startLinearRetry(
+  req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const raw = parsed.value.taskIds;
+  if (raw !== undefined && !isTaskIdList(raw)) {
+    return errorResponse(400, 'taskIds must be a list of strings');
+  }
+  const start = ctx.linearSync.startRetry(raw);
+  return linearBulkResponse(start, start.ok && start.candidates > 0);
+}
+
+// POST /api/linear/forget {taskIds} — stop retrying these tasks' creates.
+async function forgetLinear(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const raw = parsed.value.taskIds;
+  if (!isTaskIdList(raw)) {
+    return errorResponse(400, 'taskIds must be a list of strings');
+  }
+  return jsonResponse({ forgotten: ctx.linearSync.forget(raw) });
+}
+
+// GET /api/linear/capacity[?refresh=1] — active issues against the plan's cap.
+async function linearCapacity(
+  ctx: ApiContext,
+  refresh: boolean
+): Promise<Response> {
+  if (ctx.linearSync.client() === null) {
+    return errorResponse(409, 'no Linear API key configured');
+  }
+  const result = await ctx.linearSync.capacity(refresh);
+  return result.ok ? jsonResponse(result.data) : linearErrorResponse(result);
+}
+
+// POST /api/linear/archive-closed {includeCanceled?} — archive the linked
+// teams' closed issues in Linear; their tasks here take the archive too.
+async function startLinearArchiveClosed(
+  req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const includeCanceled = parsed.value.includeCanceled ?? false;
+  if (typeof includeCanceled !== 'boolean') {
+    return errorResponse(400, 'includeCanceled must be a boolean');
+  }
+  const start = ctx.linearSync.startArchiveClosed({ includeCanceled });
+  return linearBulkResponse(start, start.ok);
 }
 
 // A run's metadata, from the in-memory registry first (boot hydrates every
@@ -3396,7 +3534,7 @@ async function confirmPlan(
   const sourceNoteId = ctx.planManager.get(planId).sourceNoteId;
   const result = ctx.planManager.confirm(planId, body.proposal);
   // The confirm body is the human's own text, so they wrote these tasks.
-  for (const id of [result.epicId, ...result.taskIds]) {
+  for (const id of [result.milestoneId, ...result.taskIds]) {
     const doc = id === undefined ? null : ctx.store.get(id);
     if (doc !== null) ctx.taskAuthorship?.created(doc, humanOperator(ctx));
   }
@@ -3547,19 +3685,21 @@ function overseerSpeaker(
   };
 }
 
-// The optional session body POST /api/epics/:id/dispatch and /resume share.
+// The optional session body POST /api/milestones/:id/dispatch and /resume share.
 // Only the shapes are checked here; the engine ranges the values (400 via
 // OrchestratorClientError) so the CLI and desktop see one wording.
-type EpicSessionBody = {
+type MilestoneSessionBody = {
   concurrency?: number;
   executor?: string;
   maxSpendUsd?: number | null;
   maxRuns?: number | null;
 };
 
-function parseEpicSessionBody(
+function parseMilestoneSessionBody(
   value: unknown
-): { ok: true; body: EpicSessionBody } | { ok: false; response: Response } {
+):
+  | { ok: true; body: MilestoneSessionBody }
+  | { ok: false; response: Response } {
   const raw = value as {
     concurrency?: unknown;
     executor?: unknown;
@@ -3602,20 +3742,20 @@ function parseEpicSessionBody(
   };
 }
 
-async function startEpic(
+async function startMilestone(
   req: Request,
   ctx: ApiContext,
-  epicId: string
+  milestoneId: string
 ): Promise<Response> {
   const parsed = await readJsonBodyOptional(req);
   if (!parsed.ok) return parsed.response;
-  const checked = parseEpicSessionBody(parsed.value);
+  const checked = parseMilestoneSessionBody(parsed.value);
   if (!checked.ok) return checked.response;
   // The caller, never the body: their teammates' tasks stay theirs. Only a
   // human credential (the owner's only as the app token) gives the auto-fill
   // runs someone to act for.
   const operator = humanOperator(ctx);
-  const session = await ctx.epicEngine.start(epicId, {
+  const session = await ctx.milestoneEngine.start(milestoneId, {
     ...checked.body,
     startedBy: requestActor(ctx),
     ...(operator === null ? {} : { operator }),
@@ -3623,26 +3763,26 @@ async function startEpic(
   return jsonResponse(session, 201);
 }
 
-// POST /api/epics/:id/pause — bodyless; live runs keep going, no new ones
+// POST /api/milestones/:id/pause — bodyless; live runs keep going, no new ones
 // start until /resume.
-function pauseEpic(ctx: ApiContext, epicId: string): Response {
-  return jsonResponse(ctx.epicEngine.pause(epicId));
+function pauseMilestone(ctx: ApiContext, milestoneId: string): Response {
+  return jsonResponse(ctx.milestoneEngine.pause(milestoneId));
 }
 
-// POST /api/epics/:id/resume — optionally re-ceilings the session on the way
+// POST /api/milestones/:id/resume — optionally re-ceilings the session on the way
 // back to `active`; `executor` is fixed for the session's life so it is
 // dropped here even when sent. The session now acts for whoever resumed it.
-async function resumeEpic(
+async function resumeMilestone(
   req: Request,
   ctx: ApiContext,
-  epicId: string
+  milestoneId: string
 ): Promise<Response> {
   const parsed = await readJsonBodyOptional(req);
   if (!parsed.ok) return parsed.response;
-  const checked = parseEpicSessionBody(parsed.value);
+  const checked = parseMilestoneSessionBody(parsed.value);
   if (!checked.ok) return checked.response;
   const { concurrency, maxSpendUsd, maxRuns } = checked.body;
-  const session = await ctx.epicEngine.resume(epicId, {
+  const session = await ctx.milestoneEngine.resume(milestoneId, {
     concurrency,
     maxSpendUsd,
     maxRuns,
@@ -3651,21 +3791,24 @@ async function resumeEpic(
   return jsonResponse(session);
 }
 
-// POST /api/epics/:id/land — the one action that takes a finished epic
+// POST /api/milestones/:id/land — the one action that takes a finished milestone
 // branch to the default base: a PR through PrManager when the project has
 // the `pr` capability (and the branch actually carries commits to PR),
 // a local merge otherwise. All readiness validation — the partially-done
-// refusal above all — lives in Orchestrator.epicLandStatus, which both
+// refusal above all — lives in Orchestrator.milestoneLandStatus, which both
 // paths run; its typed errors map through handleApi's outer catch.
-async function landEpic(ctx: ApiContext, epicId: string): Promise<Response> {
-  const status = ctx.orchestrator.epicLandStatus(epicId);
+async function landMilestone(
+  ctx: ApiContext,
+  milestoneId: string
+): Promise<Response> {
+  const status = ctx.orchestrator.milestoneLandStatus(milestoneId);
   if (ctx.prCapability && status.hasChanges) {
-    const prUrl = await ctx.prManager.openEpicPr(epicId);
+    const prUrl = await ctx.prManager.openMilestonePr(milestoneId);
     return jsonResponse({ mode: 'pr', prUrl }, 201);
   }
-  // No remote/gh — or nothing to PR at all (a no-commits epic still needs
+  // No remote/gh — or nothing to PR at all (a no-commits milestone still needs
   // closing out, which the local path handles without a merge).
-  const result = ctx.orchestrator.landEpicLocally(epicId);
+  const result = ctx.orchestrator.landMilestoneLocally(milestoneId);
   return jsonResponse({ mode: 'merge', mergeCommit: result.mergeCommit });
 }
 
@@ -3870,7 +4013,7 @@ async function addInbox(req: Request, ctx: ApiContext): Promise<Response> {
     return errorResponse(400, 'text contained no capturable lines');
   }
   ctx.events.broadcast({ type: 'inbox.changed' });
-  // The kind, epic and duplicate reading lands a moment later, off the
+  // The kind, milestone and duplicate reading lands a moment later, off the
   // request: the row must appear the instant it is typed.
   ctx.inboxTriage.request();
   return jsonResponse(created, 201);
@@ -3910,7 +4053,7 @@ async function convertInbox(req: Request, ctx: ApiContext): Promise<Response> {
   if (ids.length === 0) return errorResponse(400, 'ids is required');
 
   const items = new Map(ctx.inboxStore.list().map((i) => [i.id, i]));
-  // The triage's reading of each item, when it has one: a confident epic
+  // The triage's reading of each item, when it has one: a confident milestone
   // becomes the new task's parent, and the strongest duplicate that is a
   // real task is reported back — never a refusal, a person asked for this.
   const triage = new InboxTriageSnapshotStore(ctx.rootDir).load();
@@ -3941,8 +4084,9 @@ async function convertInbox(req: Request, ctx: ApiContext): Promise<Response> {
       const description = restLines.join('\n').trim();
       const reading = triage?.items[id];
       const parent =
-        reading?.epicId != null && ctx.cache.isContainer(reading.epicId)
-          ? reading.epicId
+        reading?.milestoneId != null &&
+        ctx.cache.isContainer(reading.milestoneId)
+          ? reading.milestoneId
           : null;
       const duplicateOf = reading?.duplicates.find(
         (d) => ctx.cache.get(d.id) !== null
@@ -3987,7 +4131,7 @@ async function convertInbox(req: Request, ctx: ApiContext): Promise<Response> {
 // context — which files it touches, what the code does today, what "done"
 // means — so this asks the planner to go read the repo and spend that
 // research on ONE task that keeps the note's original intent, rather than the
-// epic-plus-breakdown a free-form plan prompt invites. The surrounding
+// milestone-plus-breakdown a free-form plan prompt invites. The surrounding
 // planner wrapper (planners/claude.ts) supplies the read-only framing and the
 // output schema; this only supplies the request.
 function buildNoteEnrichPrompt(note: Note): string {
@@ -3999,7 +4143,7 @@ function buildNoteEnrichPrompt(note: Note): string {
     note.body.trim() === '' ? null : `Notes: ${note.body.trim()}`,
     'Read enough of this repository to ground it: which files and functions ' +
       'are actually involved, what the code does today, and what would have ' +
-      'to change. Then propose exactly ONE task, and no epic. Keep the ' +
+      'to change. Then propose exactly ONE task, and no milestone. Keep the ' +
       "original intent — sharpen the title, don't replace the request — and " +
       'write a description that gives an implementing agent the context this ' +
       'one-liner is missing, naming concrete paths where you found them. ' +
@@ -4093,7 +4237,7 @@ export function buildTaskEnrichPrompt(task: TaskDoc, a2a = false): string {
       : `Its current description and criteria:\n\n${a2a ? untrustedFenced('an A2A client wrote this', existing) : existing}`,
     'Read enough of this repository to ground it: which files and functions are actually ' +
       'involved, what the code does today, and what would have to change. Then propose exactly ' +
-      "ONE task, and no epic, keeping this task's title and intent. " +
+      "ONE task, and no milestone, keeping this task's title and intent. " +
       'PRESERVE everything already written that is still correct — you are adding the context ' +
       "this task is missing, not rewriting someone else's specification. Name concrete paths " +
       'where you found them. Acceptance criteria should be checkable statements about the ' +
@@ -4256,6 +4400,8 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // GET team/status is absent on purpose: below decide its route answers
   // only the summary line (teamStatusFor), so a stuck joiner can still read it.
   { method: 'GET', segments: ['team', 'presence'], tier: 'decide' },
+  // Which content keys this machine holds and which machines lack the cap.
+  { method: 'GET', segments: ['team', 'content-e2e'], tier: 'decide' },
   // Where the daemon is reachable is only useful to someone handing out a
   // token, and it names the operator's network addresses.
   { method: 'GET', segments: ['team', 'address'], tier: 'decide' },
@@ -4288,6 +4434,8 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'POST', segments: ['team', 'abandon-invite'], tier: 'operator' },
   // Moves the whole team's sync to another transport, after its disclosure.
   { method: 'POST', segments: ['team', 'transport'], tier: 'operator' },
+  // Seals the team's content end to end, for good: an admin's roster op.
+  { method: 'POST', segments: ['team', 'content-e2e'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'problems', 'ack'], tier: 'decide' },
   // An admin's pick between two machines that each claim a run first.
   {
@@ -4394,8 +4542,14 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // control is not half-privileged. Using the key once set stays on the
   // request tier: sync pushes board data the caller can already read to a
   // destination higher tiers chose, and import only brings issues in.
+  // Export and retry push no more than sync {taskIds} already may, and
+  // forget only holds a local task back, so they stay there too.
   { method: 'POST', segments: ['linear', 'connect'], tier: 'operator' },
   { method: 'POST', segments: ['linear', 'disconnect'], tier: 'operator' },
+  // Archiving closed issues acts on records teammates made in a shared
+  // tracker, not only Dispatch's, so an agent token must not start it. Decide
+  // rather than operator: connecting already chose the workspace.
+  { method: 'POST', segments: ['linear', 'archive-closed'], tier: 'decide' },
   // `evaluate` runs arbitrary JavaScript in a browser carrying the user's own
   // session cookies, which is at least the authority a shell has. The whole
   // family stays together for that reason.
@@ -5171,8 +5325,10 @@ export async function handleApi(
     }
 
     if (segments[0] === 'linear' && segments.length === 2) {
+      // `?request=` on status, sync and import: a caller's own id for its
+      // pass, so one whose sync or import was cut can find what it got.
       if (segments[1] === 'status' && method === 'GET') {
-        return jsonResponse(ctx.linearSync.status());
+        return jsonResponse(ctx.linearSync.status(linearRequestId(url)));
       }
       if (segments[1] === 'connect' && method === 'POST') {
         return await connectLinear(req, ctx);
@@ -5191,7 +5347,9 @@ export async function handleApi(
       // POST /api/linear/import — bring down Linear issues that have no local
       // task. Deliberately explicit: an ordinary sync never imports a backlog.
       if (segments[1] === 'import' && method === 'POST') {
-        return jsonResponse(await ctx.linearSync.importIssues());
+        return jsonResponse(
+          await ctx.linearSync.importIssues(linearRequestId(url))
+        );
       }
       if (segments[1] === 'states' && method === 'GET') {
         return await linearStates(ctx, url.searchParams.get('teamId'));
@@ -5202,13 +5360,40 @@ export async function handleApi(
         const parsed = await readJsonBodyOptional(req);
         if (!parsed.ok) return parsed.response;
         const raw = parsed.value.taskIds;
-        if (
-          raw !== undefined &&
-          (!Array.isArray(raw) || !raw.every((v) => typeof v === 'string'))
-        ) {
+        if (raw !== undefined && !isTaskIdList(raw)) {
           return errorResponse(400, 'taskIds must be a list of strings');
         }
-        return jsonResponse(await ctx.linearSync.syncOnce(raw));
+        return jsonResponse(
+          await ctx.linearSync.syncOnce(raw, linearRequestId(url))
+        );
+      }
+      // GET /api/linear/export — how many tasks each export scope would send.
+      // Reads the task cache only; Linear is not called.
+      if (segments[1] === 'export' && method === 'GET') {
+        return jsonResponse(ctx.linearSync.exportPreview());
+      }
+      if (segments[1] === 'export' && method === 'POST') {
+        return await startLinearExport(req, ctx);
+      }
+      // GET /api/linear/coverage — which tasks have a Linear record, and why
+      // the rest do not. No Linear call, so it answers while disconnected.
+      if (segments[1] === 'coverage' && method === 'GET') {
+        return jsonResponse(ctx.linearSync.coverage());
+      }
+      if (segments[1] === 'retry' && method === 'POST') {
+        return await startLinearRetry(req, ctx);
+      }
+      if (segments[1] === 'forget' && method === 'POST') {
+        return await forgetLinear(req, ctx);
+      }
+      if (segments[1] === 'capacity' && method === 'GET') {
+        return await linearCapacity(
+          ctx,
+          url.searchParams.get('refresh') === '1'
+        );
+      }
+      if (segments[1] === 'archive-closed' && method === 'POST') {
+        return await startLinearArchiveClosed(req, ctx);
       }
     }
 
@@ -5349,7 +5534,7 @@ export async function handleApi(
       }
       if (segments.length === 1 && method === 'GET') {
         const filter = {
-          status: url.searchParams.get('status') ?? undefined,
+          status: listStatusFilter(ctx, url.searchParams.get('status')),
           kind: url.searchParams.get('kind') ?? undefined,
           parent: url.searchParams.get('parent') ?? undefined,
           includeArchived: url.searchParams.get('archived') === '1',
@@ -6496,62 +6681,62 @@ export async function handleApi(
       }
     }
 
-    if (segments[0] === 'epics') {
-      // Bulk progress sits at /api/epics/progress, so it must be matched
-      // before the /:id/... branches would read `progress` as an epic id.
+    if (segments[0] === 'milestones') {
+      // Bulk progress sits at /api/milestones/progress, so it must be matched
+      // before the /:id/... branches would read `progress` as a milestone id.
       if (
         segments.length === 2 &&
         segments[1] === 'progress' &&
         method === 'GET'
       ) {
-        return jsonResponse(ctx.epicEngine.progressAll());
+        return jsonResponse(ctx.milestoneEngine.progressAll());
       }
       if (
         segments.length === 3 &&
         segments[2] === 'dispatch' &&
         method === 'POST'
       ) {
-        return await startEpic(req, ctx, segments[1]);
+        return await startMilestone(req, ctx, segments[1]);
       }
       if (
         segments.length === 3 &&
         segments[2] === 'pause' &&
         method === 'POST'
       ) {
-        return pauseEpic(ctx, segments[1]);
+        return pauseMilestone(ctx, segments[1]);
       }
       if (
         segments.length === 3 &&
         segments[2] === 'resume' &&
         method === 'POST'
       ) {
-        return await resumeEpic(req, ctx, segments[1]);
+        return await resumeMilestone(req, ctx, segments[1]);
       }
       if (
         segments.length === 3 &&
         segments[2] === 'stop' &&
         method === 'POST'
       ) {
-        return jsonResponse(ctx.epicEngine.stop(segments[1]));
+        return jsonResponse(ctx.milestoneEngine.stop(segments[1]));
       }
       if (
         segments.length === 3 &&
         segments[2] === 'progress' &&
         method === 'GET'
       ) {
-        return jsonResponse(ctx.epicEngine.progress(segments[1]));
+        return jsonResponse(ctx.milestoneEngine.progress(segments[1]));
       }
       if (
         segments.length === 3 &&
         segments[2] === 'land' &&
         method === 'POST'
       ) {
-        return await landEpic(ctx, segments[1]);
+        return await landMilestone(ctx, segments[1]);
       }
-      // The epic branch's diff against the default base — served from the
+      // The milestone branch's diff against the default base — served from the
       // land-time snapshot once the branch itself is gone.
       if (segments.length === 3 && segments[2] === 'diff' && method === 'GET') {
-        return jsonResponse(ctx.orchestrator.epicDiff(segments[1]));
+        return jsonResponse(ctx.orchestrator.milestoneDiff(segments[1]));
       }
     }
 
@@ -6626,6 +6811,13 @@ export async function handleApi(
       return jsonResponse(
         { error: err.message, code: 'too_large', field: err.field },
         413
+      );
+    }
+    // Team content is e2e and this machine has no key yet: nothing was written.
+    if (err instanceof ContentKeyMissingError) {
+      return jsonResponse(
+        { error: err.message, code: 'content_key_missing' },
+        409
       );
     }
     // Messaging routes let @dispatch-foo/protocol's MessagingError surface

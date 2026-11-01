@@ -2,7 +2,7 @@ import type { TaskDoc } from '@dispatch-foo/core/browser';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 
-import type { WorkEpicOptions } from '../../lib/epicSession';
+import type { WorkMilestoneOptions } from '../../lib/milestoneSession';
 import { DispatchDialog } from './DispatchDialog';
 
 function task(id: string, writes: string[] = [`src/${id}.ts`]): TaskDoc {
@@ -18,7 +18,7 @@ const allTwelve = new Set(twelve.map((t) => t.meta.id));
 function mount(
   overrides: Partial<React.ComponentProps<typeof DispatchDialog>> = {}
 ) {
-  const confirmed: WorkEpicOptions[] = [];
+  const confirmed: WorkMilestoneOptions[] = [];
   let cancelled = 0;
   render(
     <DispatchDialog

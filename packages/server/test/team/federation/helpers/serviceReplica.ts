@@ -9,6 +9,7 @@ import { SyncLedger } from '../../../../src/team/boardSync/ledger.js';
 import type { RepoSyncResult } from '../../../../src/team/boardSync/repo.js';
 import { personOf, SyncRepo } from '../../../../src/team/boardSync/repo.js';
 import { SyncedTaskStore } from '../../../../src/team/boardSync/syncedStore.js';
+import { contentKeyring } from '../../../../src/team/federation/content.js';
 import { readHints } from '../../../../src/team/federation/daemon.js';
 import { GitFederationTransport } from '../../../../src/team/federation/git.js';
 import { loadOrCreateKeys } from '../../../../src/team/federation/keys.js';
@@ -105,7 +106,12 @@ export function serviceReplica(
   const ledger = new SyncLedger(join(dir, 'state.db'), handle, () =>
     clock.now.getTime()
   );
-  const fed = new FedStore(ledger, loadOrCreateKeys(dir, ledger.replica), now);
+  const fed = new FedStore(
+    ledger,
+    loadOrCreateKeys(dir, ledger.replica),
+    now,
+    contentKeyring(dir)
+  );
   const repo =
     opts.gitRemote === undefined
       ? null

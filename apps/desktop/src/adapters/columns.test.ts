@@ -20,7 +20,6 @@ const EVERYTHING: readonly TaskProperty[] = [
   'status',
   'assignee',
   'priority',
-  'epic',
   'milestone',
   'labels',
   'links',
@@ -71,13 +70,8 @@ describe('columnsForPrefs', () => {
     ]);
   });
 
-  test('either hierarchy toggle (Epic, Milestone) shows the project and milestone columns', () => {
-    expect(columnsForPrefs(prefs(['epic']))).toEqual(['project', 'milestone']);
+  test('the Milestone toggle shows the project and milestone columns', () => {
     expect(columnsForPrefs(prefs(['milestone']))).toEqual([
-      'project',
-      'milestone',
-    ]);
-    expect(columnsForPrefs(prefs(['epic', 'milestone']))).toEqual([
       'project',
       'milestone',
     ]);
@@ -90,7 +84,7 @@ describe('columnsForPrefs', () => {
   });
 
   test('grouping by a container drops the hierarchy columns its headers already name', () => {
-    for (const grouping of ['epic', 'milestone'] as const) {
+    for (const grouping of ['parent', 'milestone'] as const) {
       expect(columnsForPrefs(prefs(EVERYTHING, { grouping }))).toEqual([
         'state',
         'priority',
@@ -121,14 +115,17 @@ describe('columnsForPrefs', () => {
 
   test('an explicit grouping argument wins over the prefs grouping (the board asks per lane)', () => {
     const byStatus = prefs(EVERYTHING, { grouping: 'status' });
-    expect(columnsForPrefs(byStatus, 'epic')).toEqual([
+    expect(columnsForPrefs(byStatus, 'parent')).toEqual([
       'state',
       'priority',
       'assignee',
       'due',
     ]);
-    const byEpic = prefs(['epic'], { grouping: 'epic' });
-    expect(columnsForPrefs(byEpic, 'status')).toEqual(['project', 'milestone']);
+    const byParent = prefs(['milestone'], { grouping: 'parent' });
+    expect(columnsForPrefs(byParent, 'status')).toEqual([
+      'project',
+      'milestone',
+    ]);
   });
 });
 

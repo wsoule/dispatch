@@ -51,6 +51,7 @@ import {
   assembleTeamKeys,
   redactCredentials,
   RELAY_DISCLOSURE,
+  relayDisclosure,
   withoutCredentials,
 } from './teamKeys.js';
 
@@ -178,6 +179,7 @@ const ACTIONS = new Set([
   'runs',
   'presence',
   'transport',
+  'content-e2e',
 ]);
 
 // Notes a person may acknowledge: a race, a cut that cannot be checked, a
@@ -287,6 +289,12 @@ export async function handleFederationRoute(
   }
   if (method === 'GET' && segments.length === 2 && segments[1] === 'keys')
     return jsonResponse(teamKeys(fedCtx, service));
+  if (
+    method === 'GET' &&
+    segments.length === 2 &&
+    segments[1] === 'content-e2e'
+  )
+    return jsonResponse(service.content.status());
   if (method === 'GET' && segments.length === 2 && segments[1] === 'presence') {
     const task = new URL(req.url).searchParams.get('task') ?? '';
     return jsonResponse(
@@ -455,6 +463,11 @@ async function act(
       return after(null);
     case 'transport':
       return switchTransport(fedCtx, service, body, after);
+    // An admin switches team content to e2e: every machine must speak it and
+    // the legacy window be closed; the switch's key goes out with it.
+    case 'content-e2e':
+      service.content.switchOn();
+      return after({ ...service.content.status() });
     default:
       return errorResponse(404, 'not found');
   }
@@ -521,7 +534,7 @@ async function switchTransport(
         {
           error: 'confirm what the relay can read first',
           code: 'confirm_required',
-          disclosure: RELAY_DISCLOSURE,
+          disclosure: relayDisclosure(view),
         },
         409
       );
@@ -539,7 +552,7 @@ async function switchTransport(
         502
       );
     roster.setTransport('relay', url);
-    return after({ ok: true, disclosure: RELAY_DISCLOSURE });
+    return after({ ok: true, disclosure: relayDisclosure(view) });
   }
   roster.setTransport('git');
   return after(null);

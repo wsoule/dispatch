@@ -272,9 +272,9 @@ describe('backup refs', () => {
     // Rewrite the branch to something else, then restore. `update-ref` (not
     // `git branch -f`) is used here because the branch is checked out in the
     // worktree at `path` — `branch -f` refuses to force-move a branch used by
-    // another worktree, but a real restack (via jj or a raw ref update) can
-    // and does move it out from under that worktree, which is exactly the
-    // scenario a backup ref exists to make reversible.
+    // another worktree, but a raw ref update can and does move it out from
+    // under that worktree, which is exactly the scenario a backup ref exists
+    // to make reversible.
     runGitSync(repo, ['update-ref', 'refs/heads/dispatch/t-a', base]);
     expect(runGitSync(repo, ['rev-parse', 'dispatch/t-a']).trim()).not.toBe(
       tip
@@ -338,12 +338,11 @@ describe('resyncToBranch', () => {
     rmSync(repo, { recursive: true, force: true });
   });
 
-  // The case the jj restack path actually produces, and the one a plain
-  // `git checkout` silently fails to repair. jj's `git export` writes
-  // refs/heads/<branch> from the main checkout while that branch is checked
-  // out in a worktree — git only refuses that for `git branch -f`, not for a
-  // raw ref write — so the worktree's HEAD symref starts resolving to the new
-  // commit while its index and working tree still hold the old content.
+  // The case a plain `git checkout` silently fails to repair: a raw ref write
+  // moves refs/heads/<branch> from the main checkout while that branch is
+  // checked out in a worktree — git only refuses that for `git branch -f` —
+  // so the worktree's HEAD symref starts resolving to the new commit while
+  // its index and working tree still hold the old content.
   it('repairs a worktree whose branch ref moved underneath it', () => {
     const repo = initGitRepo('dispatch-wt-');
     const wt = new WorktreeManager(repo);
@@ -357,8 +356,7 @@ describe('resyncToBranch', () => {
     runGitSync(repo, ['commit', '-m', 'base work']);
     const mainTip = runGitSync(repo, ['rev-parse', 'main']).trim();
 
-    // What `jj git export` does: move the branch ref from outside the
-    // worktree that has it checked out.
+    // Move the branch ref from outside the worktree that has it checked out.
     runGitSync(repo, ['update-ref', 'refs/heads/dispatch/t-refmove', mainTip]);
 
     // HEAD already follows the moved ref, but the working tree does not: the

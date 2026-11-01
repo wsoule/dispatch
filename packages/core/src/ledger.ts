@@ -6,12 +6,12 @@ export type LedgerKind = 'constraint' | 'hazard' | 'decision' | 'handoff';
 
 export interface LedgerEntry {
   id: string; // 'l-' + 6 hex
-  epicId: string | null; // null = project-wide
+  milestoneId: string | null; // null = project-wide
   sourceTaskId: string | null;
   kind: LedgerKind;
   title: string;
   detail: string;
-  /** Task ids this applies to; empty means every task under the epic. */
+  /** Task ids this applies to; empty means every task under the milestone. */
   appliesTo: string[];
   createdAt: string;
   /** Serialized ActorRef of whoever wrote it; empty for pre-team records. */
@@ -23,7 +23,7 @@ export interface LedgerEntry {
 // `kind: 'decision'`, not a record of its own.
 
 export interface AddLedgerInput {
-  epicId?: string | null;
+  milestoneId?: string | null;
   sourceTaskId?: string | null;
   kind: LedgerKind;
   title: string;
@@ -34,7 +34,7 @@ export interface AddLedgerInput {
 }
 
 export interface LedgerListFilter {
-  epicId?: string | null;
+  milestoneId?: string | null;
 }
 
 // Runtime counterpart of LedgerKind — see the note on FINDING_SEVERITIES.

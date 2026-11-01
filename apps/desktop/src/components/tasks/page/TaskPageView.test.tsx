@@ -1,4 +1,4 @@
-import type { ApiClient } from '@dispatch/client';
+import type { ApiClient, ConversationQuery, Message } from '@dispatch/client';
 import {
   act,
   cleanup,
@@ -569,5 +569,91 @@ describe('a request-tier window', () => {
     expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
       'Copy id',
     ]);
+  });
+});
+
+// A message about t-1, with the fields the rail reads.
+function a2aMessage(over: Partial<Message>): Message {
+  return {
+    id: 'm-1',
+    thread: 'th-1',
+    replyTo: null,
+    from: 'run:r-1',
+    to: ['task:t-1'],
+    kind: 'message',
+    body: 'hi',
+    refs: [],
+    urgent: false,
+    blocking: false,
+    wake: 'none',
+    createdAt: '2026-10-29T10:00:00.000Z',
+    ...over,
+  };
+}
+
+function mountWithConversation(
+  messages: Message[],
+  { canMessage = true }: { canMessage?: boolean } = {}
+) {
+  const asked: ConversationQuery[] = [];
+  mount(
+    fakeHost(newLog(), {
+      tasks: [task('t-1')],
+      client: {
+        getConversation: (query) => {
+          asked.push(query);
+          return Promise.resolve({ messages, next: null });
+        },
+      },
+      project: {
+        messageAccess: { canDecide: true, canMessage, explanation: null },
+      },
+    })
+  );
+  return asked;
+}
+
+describe('TaskPageView outside agents', () => {
+  test("lists each outside agent in the task's conversation with what's waiting", async () => {
+    const asked = mountWithConversation([
+      a2aMessage({ id: 'q1', kind: 'question', to: ['a2a:acme-billing'] }),
+      a2aMessage({
+        id: 'q2',
+        kind: 'question',
+        from: 'agent:wyat/a2a.ci-bot',
+        to: ['task:t-1'],
+      }),
+    ]);
+    expect(await screen.findByText('Outside agents')).toBeDefined();
+    const summaries = Array.from(
+      document.querySelectorAll('[data-slot=outside-agent-summary]'),
+      (el) => el.textContent
+    );
+    // The agent waiting on you comes first.
+    expect(summaries).toEqual([
+      'Waiting on you · 1 question',
+      'Waiting on them · 1 question',
+    ]);
+    expect(asked[0]).toMatchObject({ about: 'task:t-1' });
+  });
+
+  test('a task no outside agent has talked to shows no section', async () => {
+    mountWithConversation([a2aMessage({ from: 'human:wyat' })]);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[data-slot=outside-agents]')).toBeNull();
+  });
+
+  test('without messaging access the rail never asks for the conversation', async () => {
+    const asked = mountWithConversation(
+      [a2aMessage({ kind: 'question', to: ['a2a:acme-billing'] })],
+      { canMessage: false }
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(asked).toEqual([]);
+    expect(document.querySelector('[data-slot=outside-agents]')).toBeNull();
   });
 });

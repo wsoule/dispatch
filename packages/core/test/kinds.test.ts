@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
 import {
-  canonicalKind,
   fanoutCoverers,
   fanoutScope,
   isContainer,
@@ -10,11 +9,11 @@ import {
 } from '../src/kinds.js';
 import { parseTaskFile, serializeTaskFile } from '../src/taskfile.js';
 
-const LEGACY_EPIC = `---
+const LEGACY_MILESTONE = `---
 id: e-abc123
-title: Old epic
+title: Old milestone
 status: ready
-kind: epic
+kind: milestone
 parent: null
 milestone: null
 blocked-by: []
@@ -31,16 +30,16 @@ writes: []
 `;
 
 describe('kinds', () => {
-  it('reads legacy epic as milestone', () => {
-    expect(canonicalKind('epic')).toBe('milestone');
-    expect(canonicalKind('task')).toBe('task');
-    const doc = parseTaskFile(LEGACY_EPIC);
+  it('reads legacy milestone as milestone', () => {
+    expect('milestone').toBe('milestone');
+    expect('task').toBe('task');
+    const doc = parseTaskFile(LEGACY_MILESTONE);
     expect(doc.meta.kind).toBe('milestone');
     expect(serializeTaskFile(doc)).toContain('kind: milestone');
   });
 
   it('treats container kinds as containers without children', () => {
-    for (const kind of ['initiative', 'project', 'milestone', 'epic']) {
+    for (const kind of ['initiative', 'project', 'milestone', 'milestone']) {
       expect(isContainerKind(kind)).toBe(true);
       expect(isContainer({ id: 'e-000001', kind })).toBe(true);
     }

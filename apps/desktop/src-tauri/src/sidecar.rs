@@ -15,6 +15,9 @@
 //! runs the standalone `bun build --compile`d binaries bundled under the
 //! app's Resource dir, so a shipped app needs neither `bun` nor the checkout.
 
+mod process;
+
+use process::{process_state, ProcessState};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
@@ -27,13 +30,12 @@ use std::time::{Duration, Instant};
 /// Mirrors `packages/server/src/daemonfile.ts`'s `DaemonFileInfo` shape
 /// exactly — this is deserialized straight from the JSON file that Bun
 /// writes, so field names (via `rename_all`) must match verbatim.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DaemonFileInfo {
     port: u16,
     pid: u32,
     root_dir: String,
-    #[allow(dead_code)]
     started_at: String,
     /// Request-tier credential, written to the 0600 daemon file. `Option` on
     /// purpose: a daemon file left behind by a build predating token auth still
@@ -68,16 +70,16 @@ pub struct DaemonConnection {
     pub background: bool,
 }
 
-/// The subset of dispatchd's `/api/health` response this cares about: `ok`
-/// (is the daemon alive and answering) and `rootDir` (which project root
-/// it's actually serving — see `should_kill_superseded_daemon`, which
-/// cross-checks this against the daemon file's own claimed `rootDir` before
-/// ever killing the pid the file names).
+/// Health verifies readiness, root and the daemon generation. These fields
+/// already exist in the server response; no new wire identity is needed.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct HealthResponse {
     ok: bool,
     root_dir: Option<String>,
+    pid: Option<u32>,
+    started_at: Option<String>,
+    identity: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -156,88 +158,147 @@ fn read_daemon_file(root_dir: &str) -> Option<DaemonFileInfo> {
 /// Parses dispatchd's `/api/health` response body — just its `ok` flag.
 /// Split out from the actual HTTP call so it's unit-testable without a
 /// network.
+#[cfg(test)]
 fn parse_health_response(body: &str) -> Result<bool, String> {
     let parsed: HealthResponse =
         serde_json::from_str(body).map_err(|e| format!("invalid /api/health response: {e}"))?;
     Ok(parsed.ok)
 }
 
-async fn is_healthy(client: &reqwest::Client, port: u16) -> bool {
-    let Ok(response) = client
-        .get(format!("http://127.0.0.1:{port}/api/health"))
-        .timeout(Duration::from_secs(2))
-        .send()
-        .await
-    else {
-        return false;
-    };
-    let Ok(body) = response.text().await else {
-        return false;
-    };
-    parse_health_response(&body).unwrap_or(false)
+/// Compatibility for wait loops: unknown never authorizes replacement.
+fn pid_alive(pid: u32) -> bool {
+    process_state(pid) != ProcessState::Dead
 }
 
-/// What one `/api/health` probe learned about a port. `Unresponsive` is the
-/// case a plain bool hid: something accepted the connection and then stalled
-/// past the deadline. For the port a daemon file names, that is usually a live
-/// dispatchd too busy to answer (provisioning several run worktrees at once
-/// does it), not a dead one — and spawning a replacement over it force-fails
-/// every run it has in flight (2026-09-07: three daemons stacked up on one
-/// root this way inside ten minutes).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HealthProbe {
-    Healthy,
-    Unresponsive,
+/// A health answer must describe exactly the generation that discovery named.
+fn health_matches(root: &str, info: &DaemonFileInfo, health: &HealthResponse) -> bool {
+    health.ok
+        && info.root_dir == root
+        && health.root_dir.as_deref() == Some(root)
+        && health.pid == Some(info.pid)
+        && health.started_at.as_deref() == Some(info.started_at.as_str())
+        && health
+            .identity
+            .as_deref()
+            .map_or(true, |identity| identity == "ok")
+}
+
+#[derive(Debug)]
+enum DiscoveryState {
+    Missing,
+    Changed,
+    Obsolete(DaemonFileInfo),
+    Ready(DaemonFileInfo),
+    Stalled(DaemonFileInfo),
+    Down(DaemonFileInfo),
+    Mismatch,
+}
+
+/// Never probe a proven obsolete snapshot. Re-read after classification and
+/// after HTTP so neither a replacement file nor its credentials are inferred
+/// from an old endpoint. Obsolescence belongs to a complete snapshot, not a PID.
+async fn inspect_discovery(
+    client: &reqwest::Client,
+    root: &str,
+    obsolete: &[DaemonFileInfo],
+) -> DiscoveryState {
+    inspect_with(
+        || read_daemon_file(root),
+        process_state,
+        obsolete,
+        |info| async move { probe_identity(client, root, &info).await },
+    )
+    .await
+}
+
+/// Injectable observation boundary for replacement-race and unknown-state tests.
+async fn inspect_with<R, L, P, F>(
+    mut read: R,
+    liveness: L,
+    obsolete: &[DaemonFileInfo],
+    probe: P,
+) -> DiscoveryState
+where
+    R: FnMut() -> Option<DaemonFileInfo>,
+    L: FnOnce(u32) -> ProcessState,
+    P: FnOnce(DaemonFileInfo) -> F,
+    F: std::future::Future<Output = IdentityProbe>,
+{
+    let Some(info) = read() else {
+        return DiscoveryState::Missing;
+    };
+    let state = liveness(info.pid);
+    if read().as_ref() != Some(&info) {
+        return DiscoveryState::Changed;
+    }
+    if state == ProcessState::Dead || obsolete.contains(&info) {
+        return DiscoveryState::Obsolete(info);
+    }
+    let result = probe(info.clone()).await;
+    if read().as_ref() != Some(&info) {
+        return DiscoveryState::Changed;
+    }
+    match result {
+        IdentityProbe::Ready => DiscoveryState::Ready(info),
+        IdentityProbe::Stalled => DiscoveryState::Stalled(info),
+        IdentityProbe::Down => DiscoveryState::Down(info),
+        IdentityProbe::Mismatch => DiscoveryState::Mismatch,
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum IdentityProbe {
+    Ready,
+    Stalled,
     Down,
+    Mismatch,
 }
 
-async fn probe_health(client: &reqwest::Client, port: u16) -> HealthProbe {
-    match client
-        .get(format!("http://127.0.0.1:{port}/api/health"))
+/// Only an explicit local connection refusal proves the endpoint is absent.
+/// Resets and other transport failures do not authorize spawning over live work.
+fn connection_refused(mut error: &(dyn std::error::Error + 'static)) -> bool {
+    loop {
+        if error
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::ConnectionRefused)
+        {
+            return true;
+        }
+        match error.source() {
+            Some(source) => error = source,
+            None => return false,
+        }
+    }
+}
+
+/// One full health request verifies root and generation; the safety timeout
+/// remains two seconds for a live or unclassifiable process.
+async fn probe_identity(
+    client: &reqwest::Client,
+    root: &str,
+    info: &DaemonFileInfo,
+) -> IdentityProbe {
+    let response = match client
+        .get(format!("http://127.0.0.1:{}/api/health", info.port))
         .timeout(Duration::from_secs(2))
         .send()
         .await
     {
-        Ok(response) => match response.text().await {
-            Ok(body) if parse_health_response(&body).unwrap_or(false) => HealthProbe::Healthy,
-            _ => HealthProbe::Down,
-        },
-        Err(e) if e.is_timeout() => HealthProbe::Unresponsive,
-        Err(_) => HealthProbe::Down,
+        Ok(response) => response,
+        Err(error) if error.is_timeout() => return IdentityProbe::Stalled,
+        Err(error) if connection_refused(&error) => return IdentityProbe::Down,
+        Err(_) => return IdentityProbe::Stalled,
+    };
+    if !response.status().is_success() {
+        return IdentityProbe::Mismatch;
     }
-}
-
-/// Whether `pid` is still a live process — `kill -0` sends no signal, it only
-/// checks. Same shell-out rationale as `kill_pid_best_effort`.
-fn pid_alive(pid: u32) -> bool {
-    Command::new("kill")
-        .arg("-0")
-        .arg(pid.to_string())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-}
-
-/// What the reuse fast path should do with the daemon a daemon file names.
-#[derive(Debug, PartialEq, Eq)]
-enum ReuseDecision {
-    /// It answered: attach to it.
-    Reuse,
-    /// Its pid is alive but it stalled: keep polling, never spawn over it.
-    WaitForStalled,
-    /// Nothing dispatch-like is there: spawn a fresh daemon.
-    Spawn,
-}
-
-/// Pure decision behind the reuse fast path, split out so the one rule that
-/// matters — a stalled daemon whose pid is alive is waited on, not replaced —
-/// is unit-testable without a network.
-fn reuse_decision(probe: HealthProbe, pid_alive: bool) -> ReuseDecision {
-    match probe {
-        HealthProbe::Healthy => ReuseDecision::Reuse,
-        HealthProbe::Unresponsive if pid_alive => ReuseDecision::WaitForStalled,
-        HealthProbe::Unresponsive | HealthProbe::Down => ReuseDecision::Spawn,
+    match response.text().await {
+        Ok(body) => match parse_health(&body) {
+            Some(health) if health_matches(root, info, &health) => IdentityProbe::Ready,
+            _ => IdentityProbe::Mismatch,
+        },
+        Err(error) if error.is_timeout() => IdentityProbe::Stalled,
+        Err(_) => IdentityProbe::Mismatch,
     }
 }
 
@@ -245,88 +306,9 @@ fn reuse_decision(probe: HealthProbe, pid_alive: bool) -> ReuseDecision {
 /// an error rather than spawning a second one.
 const STALLED_DAEMON_WAIT: Duration = Duration::from_secs(30);
 
-/// Parses `/api/health`'s response body in full (both `ok` and `rootDir`) —
-/// used by `fetch_health`, which lets the stale-daemon kill decision
-/// (`should_kill_superseded_daemon`) get both signals it needs from a single
-/// GET instead of two (previously `is_healthy` and a separate rootDir-only
-/// fetch each issued their own request against the same endpoint). `None`
-/// for malformed JSON.
+/// Parses readiness and the root/PID/start identity from one health response.
 fn parse_health(body: &str) -> Option<HealthResponse> {
     serde_json::from_str(body).ok()
-}
-
-/// One GET against `/api/health` (same 2s timeout as `is_healthy`), parsed
-/// into both fields the kill decision needs (`ok` and `rootDir`) rather than
-/// issuing a second request for the rootDir alone. `is_healthy` is left as
-/// its own independent GET rather than being rewritten in terms of this: it
-/// only ever needs the `ok` flag and is called from hot polling loops
-/// (`poll_for_healthy_daemon`) and the reuse fast path, so keeping its
-/// public shape (a plain `bool`) unchanged there avoids touching those
-/// call sites for a duplicate-fetch fix that's only actually needed at the
-/// single kill-decision call site below.
-async fn fetch_health(client: &reqwest::Client, port: u16) -> Option<HealthResponse> {
-    let response = client
-        .get(format!("http://127.0.0.1:{port}/api/health"))
-        .timeout(Duration::from_secs(2))
-        .send()
-        .await
-        .ok()?;
-    let body = response.text().await.ok()?;
-    parse_health(&body)
-}
-
-/// Pure decision for whether a live process named by an on-disk daemon file
-/// should be killed before `ensure_dispatchd` replaces it with a freshly
-/// spawned dispatchd for the same root. `root` is the (already normalized)
-/// root this call is ensuring a daemon for; `daemon_root_dir` is what the
-/// daemon *file* itself claims its root is; `health_ok`/`health_root_dir`
-/// are independently fetched from the live process's own `/api/health` at
-/// the moment of the check.
-///
-/// True only when every signal agrees: the health check actually passed
-/// (the file could be stale — its process already dead, or dead and
-/// reused by some unrelated program under the same pid) AND both the
-/// daemon file's claimed root and the live health response's claimed root
-/// exactly match `root`.
-///
-/// What this actually guarantees: `kill_pid_best_effort` is only ever called
-/// with the pid the daemon *file* names — there is no independent source for
-/// that pid, and this function never verifies that the pid is the process
-/// actually bound to the file's port (the health check confirms something
-/// is answering on the PORT, not that it *is* the named pid). The kill is
-/// gated on that port being answered, right now, by a live dispatchd
-/// claiming the exact same `rootDir` this call is ensuring a daemon for —
-/// never on the daemon file's pid/rootDir claims alone. The residual risk is
-/// the coincidence of the original process having exited, its pid having
-/// been reused by an unrelated program, AND some other dispatchd instance
-/// having landed on the exact same port and happening to serve the same
-/// rootDir — at which point this would kill that unrelated pid. This is
-/// mitigated (not eliminated) by dispatchd binding an ephemeral port per
-/// instance, which makes two unrelated processes coinciding on the identical
-/// port for the identical root vanishingly unlikely. Actually verifying the
-/// pid owns the port (e.g. via `lsof`/procfs) would close this gap but is
-/// out of scope here.
-fn should_kill_superseded_daemon(
-    root: &str,
-    daemon_root_dir: &str,
-    health_ok: bool,
-    health_root_dir: Option<&str>,
-) -> bool {
-    health_ok && daemon_root_dir == root && health_root_dir == Some(root)
-}
-
-/// Best-effort termination of `pid` by shelling out to the platform `kill`
-/// command — see `should_kill_superseded_daemon` for the safety gating that
-/// must pass before this is ever called; this function itself makes no
-/// judgment about whether killing is safe. `std::process::Command("kill")`
-/// rather than a raw libc signal call: this only ever needs to run on macOS/
-/// Linux (where dispatchd and the desktop app run), and shelling out avoids
-/// pulling in a raw-syscall FFI dependency for one best-effort signal send.
-/// Any failure (already exited, permission denied, no such pid) is
-/// swallowed — "nothing left running under that pid" is exactly the outcome
-/// wanted anyway.
-fn kill_pid_best_effort(pid: u32) {
-    let _ = Command::new("kill").arg(pid.to_string()).status();
 }
 
 // ---------------------------------------------------------------------------
@@ -356,6 +338,7 @@ fn dispatchd_bin_path(manifest_dir: &Path) -> PathBuf {
 /// runs the standalone `bun build --compile`d binary directly and points it at
 /// the equally-standalone bundled MCP binary (via `DISPATCH_MCP_BIN`), so a
 /// shipped app needs neither `bun` on `PATH` nor the checkout on disk.
+#[derive(Clone)]
 pub enum DaemonLaunch {
     /// `bun <bin.ts> --root <root>` — the dev/`dispatch serve` path.
     BunScript(PathBuf),
@@ -661,9 +644,9 @@ fn forward_child_output(
 /// dispatchd otherwise has no parent-death signal of its own and would keep
 /// running as an orphan after the desktop app closes. Uses `Child::kill`
 /// (a hard kill, not `SIGTERM`), so a killed dispatchd's on-disk daemon file
-/// can be left behind stale; that's fine — `ensure_dispatchd`'s health check
-/// on the next launch already treats a stale file as "no daemon" and spawns
-/// a fresh one.
+/// can be left behind stale. The next ensure classifies the process before
+/// probing HTTP and skips that exact dead discovery generation. Parent-side
+/// unlinking is unsafe: another daemon can replace the file during cleanup.
 pub struct DispatchdChildren(pub Mutex<Vec<Child>>);
 
 impl DispatchdChildren {
@@ -725,7 +708,7 @@ impl Default for DispatchdChildren {
 }
 
 /// App tokens captured from daemons *this app instance spawned*, keyed by
-/// project root and stamped with the pid that produced them. Memory only, for
+/// project root and stamped with the complete discovery snapshot that produced them. Memory only, for
 /// the app's lifetime — nothing here is ever written anywhere.
 ///
 /// It exists because `ensure_dispatchd` is called repeatedly for the same root
@@ -733,28 +716,27 @@ impl Default for DispatchdChildren {
 /// the attach fast path, which has no stdout to read. Without this, the app
 /// would silently drop to request tier moments after spawning the daemon that
 /// handed it the token.
-pub struct SpawnedAppTokens(Mutex<HashMap<String, (u32, String)>>);
+pub struct SpawnedAppTokens(Mutex<HashMap<String, (DaemonFileInfo, String)>>);
 
 impl SpawnedAppTokens {
     pub fn new() -> Self {
         Self(Mutex::new(HashMap::new()))
     }
 
-    fn remember(&self, root: &str, pid: u32, token: &str) {
+    fn remember(&self, root: &str, info: &DaemonFileInfo, token: &str) {
         self.0
             .lock()
             .unwrap()
-            .insert(root.to_string(), (pid, token.to_string()));
+            .insert(root.to_string(), (info.clone(), token.to_string()));
     }
 
-    /// The remembered token for `root`, but only if `pid` — read from the
-    /// daemon file we are about to attach to — is the same process we captured
-    /// it from. A different pid means our daemon died and something else now
-    /// serves this root, so the old token is not just useless but wrong.
-    fn get(&self, root: &str, pid: u32) -> Option<String> {
+    /// The remembered token for `root`, but only for the identical discovery
+    /// generation. PID reuse, a changed port, timestamp or request credential
+    /// invalidates the app authority retained from the old child.
+    fn get(&self, root: &str, info: &DaemonFileInfo) -> Option<String> {
         let map = self.0.lock().unwrap();
-        let (remembered_pid, token) = map.get(root)?;
-        (*remembered_pid == pid).then(|| token.clone())
+        let (remembered_info, token) = map.get(root)?;
+        (remembered_info == info).then(|| token.clone())
     }
 }
 
@@ -806,6 +788,7 @@ fn format_timeout_error(
 /// case where a fresh dispatchd was just spawned and needs time to finish
 /// booting (bind its port, write its daemon file, answer health checks).
 /// Mirrors `daemon.ts`'s `waitForHealthyDaemon`.
+#[cfg(test)]
 async fn poll_for_healthy_daemon(
     client: &reqwest::Client,
     root: &str,
@@ -813,10 +796,8 @@ async fn poll_for_healthy_daemon(
 ) -> Option<u16> {
     let deadline = Instant::now() + timeout;
     loop {
-        if let Some(info) = read_daemon_file(root) {
-            if is_healthy(client, info.port).await {
-                return Some(info.port);
-            }
+        if let DiscoveryState::Ready(info) = inspect_discovery(client, root, &[]).await {
+            return Some(info.port);
         }
         if Instant::now() >= deadline {
             return None;
@@ -860,7 +841,7 @@ async fn wait_for_app_token(slot: &AppTokenSlot, timeout: Duration) -> Option<St
 ///
 /// `force_spawn` skips the reuse fast path, for the user-initiated restart that
 /// upgrades an attached (request-tier) session to a spawned (decide-tier) one:
-/// see `stop_for_takeover` for when it refuses, and it keeps the old port when
+/// see `stop_verified_daemon` for when it refuses, and it keeps the old port when
 /// it can so other clients reconnect.
 pub async fn ensure_dispatchd(
     spawner: &dyn DaemonSpawner,
@@ -874,105 +855,82 @@ pub async fn ensure_dispatchd(
     let root = root.as_str();
     let client = reqwest::Client::new();
 
-    // Skip the reuse fast path entirely when `root` still needs `--init`: a
-    // healthy daemon already running for this root necessarily predates the
-    // current onboarding attempt, so it was never told to `--init` and can't
-    // retroactively create the tracker now — reusing it here would silently
-    // no-op the "Initialize project" click (the daemon reports healthy, the
-    // caller resolves, and `.dispatch/tasks` still never gets created). Fall
-    // through to a fresh spawn with `--init` instead. That fresh spawn can
-    // race the still-running old daemon's own daemon-file write, but that's
-    // the exact same last-writer-wins race the CLI already accepts via
-    // `resolveRaceWinner` in packages/cli/src/commands/daemon.ts — harmless
-    // here for the same reason: whichever daemon's write lands last is the
-    // one every subsequent health check and root lookup will find anyway.
+    // Onboarding still needs a fresh --init daemon. Validate any existing
+    // generation first, then use the same guarded shutdown as explicit restart.
     let attach = |info: DaemonFileInfo| DaemonConnection {
         port: info.port,
-        app_token: app_tokens.get(root, info.pid),
+        app_token: app_tokens.get(root, &info),
         agent_token: info.agent_token,
         background: is_background(&info.background),
     };
-    // A background daemon (started by the CLI, usually for an agent) printed its
-    // app token to nobody; attaching would leave this window on the agent token.
-    let mut auto_takeover = false;
-    if !needs_init(root) && !force_spawn {
-        if let Some(info) = read_daemon_file(root) {
-            match reuse_decision(probe_health(&client, info.port).await, pid_alive(info.pid)) {
-                ReuseDecision::Reuse if is_background(&info.background) => auto_takeover = true,
-                ReuseDecision::Reuse => return Ok(attach(info)),
-                ReuseDecision::WaitForStalled => {
-                    let (pid, port) = (info.pid, info.port);
-                    if poll_for_healthy_daemon(&client, root, STALLED_DAEMON_WAIT)
-                        .await
-                        .is_some()
-                    {
-                        if let Some(info) = read_daemon_file(root) {
-                            return Ok(attach(info));
-                        }
-                    }
-                    return Err(format!(
-                        "dispatchd for this project (pid {pid}, port {port}) is running but has not answered a health check in {}s — it is probably overloaded. Wait and retry, or restart it once no run is in flight; a second daemon would force-fail the runs it has in flight.",
-                        STALLED_DAEMON_WAIT.as_secs()
-                    ));
-                }
-                ReuseDecision::Spawn => {}
-            }
-        }
-    }
-
-    // A takeover stops the daemon serving this root only once it has nothing
-    // in flight, and then offers its port to the replacement.
-    let mut stopped_pid = None;
+    let mut obsolete = Vec::new();
     let mut port_choice = None;
-    if force_spawn || auto_takeover {
-        if let Some(info) = read_daemon_file(root) {
-            // Unasked, only an idle daemon is replaced; otherwise attach as before.
-            match stop_for_takeover(&client, root, &info, force_spawn).await {
-                Ok(Some(port)) => {
-                    stopped_pid = Some(info.pid);
-                    port_choice = Some(port);
+    let deadline = Instant::now() + STALLED_DAEMON_WAIT;
+    let mut stalled: Option<DaemonFileInfo> = None;
+    loop {
+        match inspect_discovery(&client, root, &obsolete).await {
+            DiscoveryState::Changed => {
+                if Instant::now() >= deadline { return Err("Daemon discovery kept changing; retry once it settles.".into()); }
+                continue;
+            }
+            DiscoveryState::Mismatch => return Err("Daemon discovery does not match the endpoint's root or generation; it was left alone.".into()),
+            DiscoveryState::Stalled(info) => {
+                stalled = Some(info.clone());
+                if Instant::now() >= deadline {
+                    return Err(format!("dispatchd for this project (pid {}, port {}) is running but has not answered a health check in {}s — it is probably overloaded. Wait and retry; a second daemon would force-fail its runs.", info.pid, info.port, STALLED_DAEMON_WAIT.as_secs()));
                 }
-                Ok(None) => {}
-                Err(_) if auto_takeover => return Ok(attach(info)),
-                Err(refusal) => return Err(refusal),
+                tokio::time::sleep(POLL_INTERVAL).await;
+                continue;
+            }
+            DiscoveryState::Ready(info) => {
+                if !force_spawn && !needs_init(root) && !is_background(&info.background) {
+                    return Ok(attach(info));
+                }
+                match stop_verified_daemon(&client, children, root, &info, force_spawn || needs_init(root)).await {
+                    Ok(Some(port)) => { port_choice = Some(port); obsolete.push(info); continue; }
+                    Ok(None) => continue,
+                    Err(error) if !force_spawn && !needs_init(root) => {
+                        // The same verified generation may still be busy/parked.
+                        // Never attach a replacement based on its predecessor's probe.
+                        if read_daemon_file(root).as_ref() == Some(&info) { return Ok(attach(info)); }
+                        log::debug!("discovery changed during background takeover: {error}");
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            DiscoveryState::Obsolete(info) => {
+                if !obsolete.contains(&info) { obsolete.push(info.clone()); }
+                if read_daemon_file(root).as_ref() != Some(&info) { continue; }
+            }
+            DiscoveryState::Down(info) => {
+                // Refused connections retain the old recovery behavior. A
+                // timeout is Stalled, including when process state is unknown.
+                if read_daemon_file(root).as_ref() != Some(&info) { continue; }
+            }
+            DiscoveryState::Missing => {
+                if read_daemon_file(root).is_some() { continue; }
             }
         }
-    } else if let Some(info) = read_daemon_file(root) {
-        // Control reaches here in two cases: `needs_init(root)` skipped the
-        // reuse fast path entirely (so a healthy, live daemon for this exact
-        // root may still be sitting there, just never checked above), or the
-        // reuse check above found the daemon file's daemon unhealthy already
-        // (in which case the check just below will independently confirm that
-        // too and decline to kill anything). Either way, best-effort kill
-        // whatever live process the daemon file currently names FIRST, before
-        // spawning its replacement — otherwise the about-to-be-spawned daemon
-        // and an orphaned still-running one for the same root would both be
-        // alive at once, racing to write the same daemon file. Re-verifies
-        // health AND rootDir independently right here — never trusting the
-        // daemon file's own claims alone, and never killing before a live,
-        // same-root dispatchd is confirmed answering on the file's port (see
-        // `should_kill_superseded_daemon` for exactly what that does and does
-        // not guarantee about the pid) — since the file is only ever a hint
-        // about which port to probe next, not proof of what's still listening
-        // there.
-        let health = fetch_health(&client, info.port).await;
-        let health_ok = health.as_ref().map(|h| h.ok).unwrap_or(false);
-        let health_root_dir = health.and_then(|h| h.root_dir);
-        if should_kill_superseded_daemon(
-            root,
-            &info.root_dir,
-            health_ok,
-            health_root_dir.as_deref(),
-        ) {
-            kill_pid_best_effort(info.pid);
+        if let Some(prior) = &stalled {
+            if process_state(prior.pid) != ProcessState::Dead {
+                if Instant::now() >= deadline {
+                    return Err(
+                        "The stalled daemon did not recover before its grace period elapsed."
+                            .into(),
+                    );
+                }
+                tokio::time::sleep(POLL_INTERVAL).await;
+                continue;
+            }
         }
+        break;
     }
 
     loop {
         let log_path = daemon_log_path(root);
         let tail: OutputTail = Arc::new(Mutex::new(VecDeque::with_capacity(OUTPUT_TAIL_LINES)));
         let app_token_slot: AppTokenSlot = Arc::new(Mutex::new(None));
-
         let mut child = spawner.spawn(&launch, root, port_choice)?;
         let spawned_pid = child.id();
         forward_child_output(
@@ -982,22 +940,17 @@ pub async fn ensure_dispatchd(
             Arc::clone(&app_token_slot),
         );
         let outcome =
-            wait_for_spawned_daemon(&client, root, &mut child, stopped_pid, POLL_TIMEOUT).await;
+            wait_for_generation(&client, root, &mut child, &mut obsolete, POLL_TIMEOUT).await;
+        let child_running = matches!(child.try_wait(), Ok(None));
         children.push(child);
-
-        let port = match outcome {
-            SpawnOutcome::Healthy(port) => port,
-            // Most likely the kept port was taken in the gap: any port will do.
-            SpawnOutcome::Exited if port_choice.is_some() => {
-                log::warn!(
-                    "dispatchd: could not start on port {}; retrying on a fresh port",
-                    port_choice.unwrap_or_default()
-                );
+        let mut info = match outcome {
+            GenerationOutcome::Ready(info) => info,
+            GenerationOutcome::Exited if port_choice.is_some() => {
                 port_choice = None;
                 continue;
             }
-            SpawnOutcome::Exited | SpawnOutcome::TimedOut => {
-                let lines: Vec<String> = tail.lock().unwrap().iter().cloned().collect();
+            GenerationOutcome::Exited | GenerationOutcome::TimedOut => {
+                let lines = tail.lock().unwrap().iter().cloned().collect::<Vec<_>>();
                 return Err(format_timeout_error(
                     POLL_TIMEOUT,
                     &describe_launch(&launch),
@@ -1006,32 +959,88 @@ pub async fn ensure_dispatchd(
                 ));
             }
         };
-
-        // The healthy daemon on `port` is only ours if the daemon file it wrote
-        // names the pid we spawned; a lost race with another daemon for this root
-        // means the token we captured authorizes a process nobody is talking to.
-        let info = read_daemon_file(root);
-        let ours = info.as_ref().map(|i| i.pid) == Some(spawned_pid);
-        let app_token = if ours {
+        let mut app_token = if child_running && info.pid == spawned_pid {
             wait_for_app_token(&app_token_slot, APP_TOKEN_WAIT).await
         } else {
             None
         };
-        if let Some(token) = &app_token {
-            app_tokens.remember(root, spawned_pid, token);
+        // Token arrival is asynchronous: revalidate the complete snapshot after
+        // that await before returning any credentials or caching app authority.
+        let credential_deadline = Instant::now() + POLL_TIMEOUT;
+        while read_daemon_file(root).as_ref() != Some(&info) {
+            app_token = None;
+            match inspect_discovery(&client, root, &obsolete).await {
+                DiscoveryState::Ready(winner) => {
+                    info = winner;
+                    app_token = app_tokens.get(root, &info);
+                }
+                DiscoveryState::Mismatch => {
+                    return Err(
+                        "Replacement discovery does not match its endpoint; it was left alone."
+                            .into(),
+                    )
+                }
+                _ => {
+                    if Instant::now() >= credential_deadline {
+                        return Err(
+                            "No stable daemon generation appeared while acquiring credentials."
+                                .into(),
+                        );
+                    }
+                    tokio::time::sleep(POLL_INTERVAL).await;
+                }
+            }
         }
-
+        if let Some(token) = &app_token {
+            app_tokens.remember(root, &info, token);
+        }
         return Ok(DaemonConnection {
-            port,
+            port: info.port,
             app_token,
-            agent_token: info.and_then(|i| i.agent_token),
-            background: false,
+            agent_token: info.agent_token,
+            background: is_background(&info.background),
         });
+    }
+}
+
+#[derive(Debug)]
+enum GenerationOutcome {
+    Ready(DaemonFileInfo),
+    Exited,
+    TimedOut,
+}
+
+/// Poll fresh snapshots, skipping only generations proven dead or stopped in
+/// this ensure operation. A competing verified winner is valid request-tier reuse.
+async fn wait_for_generation(
+    client: &reqwest::Client,
+    root: &str,
+    child: &mut Child,
+    obsolete: &mut Vec<DaemonFileInfo>,
+    timeout: Duration,
+) -> GenerationOutcome {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match inspect_discovery(client, root, obsolete).await {
+            DiscoveryState::Ready(info) => return GenerationOutcome::Ready(info),
+            DiscoveryState::Obsolete(info) if !obsolete.contains(&info) => {
+                obsolete.push(info);
+            }
+            _ => {}
+        }
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            return GenerationOutcome::Exited;
+        }
+        if Instant::now() >= deadline {
+            return GenerationOutcome::TimedOut;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
     }
 }
 
 /// How a freshly spawned dispatchd's boot ended.
 #[derive(Debug, PartialEq, Eq)]
+#[cfg(test)]
 enum SpawnOutcome {
     Healthy(u16),
     /// The child exited before any daemon answered for this root.
@@ -1042,6 +1051,7 @@ enum SpawnOutcome {
 /// `poll_for_healthy_daemon`, but also watching the child so a boot that dies
 /// (a taken port) is seen at once. `ignore_pid` skips a daemon file still
 /// naming the daemon a takeover just stopped.
+#[cfg(test)]
 async fn wait_for_spawned_daemon(
     client: &reqwest::Client,
     root: &str,
@@ -1049,20 +1059,14 @@ async fn wait_for_spawned_daemon(
     ignore_pid: Option<u32>,
     timeout: Duration,
 ) -> SpawnOutcome {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if let Some(info) = read_daemon_file(root) {
-            if Some(info.pid) != ignore_pid && is_healthy(client, info.port).await {
-                return SpawnOutcome::Healthy(info.port);
-            }
-        }
-        if matches!(child.try_wait(), Ok(Some(_))) {
-            return SpawnOutcome::Exited;
-        }
-        if Instant::now() >= deadline {
-            return SpawnOutcome::TimedOut;
-        }
-        tokio::time::sleep(POLL_INTERVAL).await;
+    let mut obsolete = read_daemon_file(root)
+        .filter(|i| Some(i.pid) == ignore_pid)
+        .into_iter()
+        .collect();
+    match wait_for_generation(client, root, child, &mut obsolete, timeout).await {
+        GenerationOutcome::Ready(info) => SpawnOutcome::Healthy(info.port),
+        GenerationOutcome::Exited => SpawnOutcome::Exited,
+        GenerationOutcome::TimedOut => SpawnOutcome::TimedOut,
     }
 }
 
@@ -1140,9 +1144,10 @@ async fn fetch_live_work(
 }
 
 /// Polls until `pid` is gone or `timeout` elapses; true once it is gone.
-async fn wait_for_exit(pid: u32, timeout: Duration) -> bool {
+async fn wait_for_exit(children: &DispatchdChildren, pid: u32, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     loop {
+        DispatchdChildren::prune_exited(&mut children.0.lock().unwrap());
         if !pid_alive(pid) {
             return true;
         }
@@ -1158,55 +1163,52 @@ async fn wait_for_exit(pid: u32, timeout: Duration) -> bool {
 /// before its own restart). `Ok(Some(port))` is the port it freed; `Ok(None)`
 /// means nothing live was serving this root. Not `--replace`: that only lets a
 /// second daemon start beside the first, whose runs would keep going unseen.
-async fn stop_for_takeover(
+/// The authenticated daemon shutdown repeats busy/parked checks atomically on
+/// its own event loop, avoiding PID-reuse kills and work starting after our GET.
+async fn stop_verified_daemon(
     client: &reqwest::Client,
+    children: &DispatchdChildren,
     root: &str,
     info: &DaemonFileInfo,
     allow_parked: bool,
 ) -> Result<Option<u16>, String> {
-    match probe_health(client, info.port).await {
-        HealthProbe::Healthy => {}
-        HealthProbe::Unresponsive if pid_alive(info.pid) => {
-            return Err(format!(
-                "Dispatch for this project (pid {}) isn't answering, so this app can't check what it is running. Try again in a moment.",
-                info.pid
-            ));
-        }
-        HealthProbe::Unresponsive | HealthProbe::Down => return Ok(None),
-    }
-    let health = fetch_health(client, info.port).await;
-    let health_ok = health.as_ref().map(|h| h.ok).unwrap_or(false);
-    let health_root_dir = health.and_then(|h| h.root_dir);
-    if !should_kill_superseded_daemon(root, &info.root_dir, health_ok, health_root_dir.as_deref()) {
-        return Ok(None);
-    }
     if let Some(refusal) = live_work_refusal(&fetch_live_work(client, info).await?, allow_parked) {
         return Err(refusal);
     }
-    kill_pid_best_effort(info.pid);
-    if !wait_for_exit(info.pid, STOP_WAIT).await {
+    if read_daemon_file(root).as_ref() != Some(info) {
+        return Ok(None);
+    }
+    let token = info
+        .agent_token
+        .as_ref()
+        .ok_or("Daemon has no request credential; it was left alone.")?;
+    let response = client
+        .post(format!(
+            "http://127.0.0.1:{}/api/daemon/shutdown",
+            info.port
+        ))
+        .bearer_auth(token)
+        .json(&serde_json::json!({"parked": allow_parked}))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|e| format!("Daemon shutdown failed: {e}"))?;
+    if !response.status().is_success() {
         return Err(format!(
-            "Dispatch for this project (pid {pid}) did not stop within {}s. Try again, or stop it yourself (kill {pid}).",
-            STOP_WAIT.as_secs(),
-            pid = info.pid
+            "Daemon refused shutdown: HTTP {}",
+            response.status()
         ));
     }
-    // A clean stop removes the file; wait for that so nothing reads the old
-    // daemon's port and token. A file left by an unclean exit names a dead pid,
-    // which the spawn poll skips anyway.
-    let deadline = Instant::now() + FILE_RELEASE_WAIT;
-    while !daemon_file_released(read_daemon_file(root).as_ref(), info.pid)
-        && Instant::now() < deadline
-    {
-        tokio::time::sleep(POLL_INTERVAL).await;
+    if !wait_for_exit(children, info.pid, STOP_WAIT).await {
+        return Err("Daemon did not exit after agreeing to stop; it was left alone.".into());
     }
+    // Graceful shutdown removes discovery itself. Hard exits remain recoverable
+    // through the caller's obsolete snapshot; do not unlink a replacement file.
     Ok(Some(info.port))
 }
 
-/// How long a takeover waits, after the old pid exits, for its file to go.
-const FILE_RELEASE_WAIT: Duration = Duration::from_secs(3);
-
 /// True once the daemon file no longer names `old_pid`.
+#[cfg(test)]
 fn daemon_file_released(info: Option<&DaemonFileInfo>, old_pid: u32) -> bool {
     info.map(|i| i.pid) != Some(old_pid)
 }
@@ -1302,40 +1304,6 @@ mod tests {
     }
 
     #[test]
-    fn reuse_decision_waits_on_a_stalled_daemon_whose_pid_is_alive() {
-        assert_eq!(
-            reuse_decision(HealthProbe::Unresponsive, true),
-            ReuseDecision::WaitForStalled
-        );
-    }
-
-    #[test]
-    fn reuse_decision_attaches_to_a_healthy_daemon_and_spawns_over_a_dead_one() {
-        assert_eq!(
-            reuse_decision(HealthProbe::Healthy, true),
-            ReuseDecision::Reuse
-        );
-        assert_eq!(
-            reuse_decision(HealthProbe::Healthy, false),
-            ReuseDecision::Reuse
-        );
-        assert_eq!(
-            reuse_decision(HealthProbe::Down, true),
-            ReuseDecision::Spawn
-        );
-        assert_eq!(
-            reuse_decision(HealthProbe::Down, false),
-            ReuseDecision::Spawn
-        );
-        // A stall from a pid that no longer exists is a stale file plus some
-        // unrelated listener on the old port — nothing to wait for.
-        assert_eq!(
-            reuse_decision(HealthProbe::Unresponsive, false),
-            ReuseDecision::Spawn
-        );
-    }
-
-    #[test]
     fn daemon_file_key_matches_the_documented_hash_scheme() {
         // Same fixture packages/cli/test/daemon-cmd.test.ts cross-checks against —
         // equivalent to `printf '%s' /tmp/dispatch-fixture-root | shasum -a 256`,
@@ -1416,64 +1384,6 @@ mod tests {
     #[test]
     fn parse_health_is_none_for_malformed_json() {
         assert!(parse_health("not json").is_none());
-    }
-
-    #[test]
-    fn should_kill_superseded_daemon_true_only_when_every_signal_agrees() {
-        assert!(should_kill_superseded_daemon(
-            "/tmp/root",
-            "/tmp/root",
-            true,
-            Some("/tmp/root")
-        ));
-    }
-
-    #[test]
-    fn should_kill_superseded_daemon_false_when_the_health_check_failed() {
-        // The daemon file's claimed root matches, but the process didn't
-        // actually answer healthy — could be dead already, or a transient
-        // network hiccup; either way, never kill on the file's claim alone.
-        assert!(!should_kill_superseded_daemon(
-            "/tmp/root",
-            "/tmp/root",
-            false,
-            Some("/tmp/root")
-        ));
-    }
-
-    #[test]
-    fn should_kill_superseded_daemon_false_when_the_health_response_root_dir_disagrees() {
-        // The live process is healthy and the daemon file's claimed root
-        // matches, but the live process's OWN health response claims a
-        // different root — e.g. the port now answers for an unrelated
-        // daemon that happened to reuse the same port after the original
-        // one exited. The file's claim alone is not enough.
-        assert!(!should_kill_superseded_daemon(
-            "/tmp/root",
-            "/tmp/root",
-            true,
-            Some("/tmp/other-root")
-        ));
-    }
-
-    #[test]
-    fn should_kill_superseded_daemon_false_when_the_daemon_files_own_root_dir_disagrees() {
-        assert!(!should_kill_superseded_daemon(
-            "/tmp/root",
-            "/tmp/other-root",
-            true,
-            Some("/tmp/root")
-        ));
-    }
-
-    #[test]
-    fn should_kill_superseded_daemon_false_when_the_health_response_omits_root_dir() {
-        assert!(!should_kill_superseded_daemon(
-            "/tmp/root",
-            "/tmp/root",
-            true,
-            None
-        ));
     }
 
     #[test]
@@ -1748,160 +1658,15 @@ mod tests {
     }
 
     /// A process that is not this test's child, so it never lingers as a
-    /// zombie `kill -0` still sees: `sh` backgrounds it and exits.
-    fn spawn_orphan_sleeper() -> u32 {
-        let out = Command::new("sh")
-            .arg("-c")
-            .arg("sleep 30 >/dev/null 2>&1 & echo $!")
-            .output()
-            .expect("sh runs");
-        String::from_utf8(out.stdout)
-            .unwrap()
-            .trim()
-            .parse()
-            .expect("sh prints the pid")
-    }
-
-    /// A one-thread HTTP stand-in for dispatchd: `routes` maps a path to a
-    /// status and body; anything else is a 404.
-    fn fake_daemon(routes: Vec<(&'static str, u16, String)>) -> u16 {
-        use std::io::Read;
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(mut stream) = stream else { return };
-                let mut buf = [0u8; 4096];
-                let n = stream.read(&mut buf).unwrap_or(0);
-                let request = String::from_utf8_lossy(&buf[..n]);
-                let path = request.split_whitespace().nth(1).unwrap_or("");
-                let (status, body) = routes
-                    .iter()
-                    .find(|(p, _, _)| *p == path)
-                    .map(|(_, s, b)| (*s, b.clone()))
-                    .unwrap_or((404, String::new()));
-                let _ = write!(
-                    stream,
-                    "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-            }
-        });
-        port
-    }
-
     fn file_info(port: u16, pid: u32, root: &str) -> DaemonFileInfo {
         DaemonFileInfo {
             port,
             pid,
-            root_dir: root.to_string(),
+            root_dir: root.into(),
             started_at: String::new(),
-            agent_token: Some("agent".to_string()),
+            agent_token: Some("agent".into()),
             background: None,
         }
-    }
-
-    fn healthy(root: &str) -> (&'static str, u16, String) {
-        (
-            "/api/health",
-            200,
-            format!(r#"{{"ok":true,"rootDir":"{root}"}}"#),
-        )
-    }
-
-    #[tokio::test]
-    async fn stop_for_takeover_refuses_a_busy_daemon_and_leaves_it_running() {
-        let root = "/tmp/dispatch-takeover-busy";
-        let port = fake_daemon(vec![
-            healthy(root),
-            (
-                "/api/live-work",
-                200,
-                r#"{"busy":["1 live run"],"parked":0,"waiting":2}"#.to_string(),
-            ),
-        ]);
-        let pid = spawn_orphan_sleeper();
-        let result = stop_for_takeover(
-            &reqwest::Client::new(),
-            root,
-            &file_info(port, pid, root),
-            true,
-        )
-        .await;
-        let alive = pid_alive(pid);
-        kill_pid_best_effort(pid);
-        assert_eq!(
-            result,
-            Err(live_work_refusal(
-                &LiveWork {
-                    busy: vec!["1 live run".to_string()],
-                    parked: 0
-                },
-                true
-            )
-            .unwrap())
-        );
-        assert!(alive, "a refused takeover must not stop the daemon");
-    }
-
-    #[tokio::test]
-    async fn stop_for_takeover_refuses_a_daemon_too_old_to_report() {
-        let root = "/tmp/dispatch-takeover-old";
-        let port = fake_daemon(vec![healthy(root)]);
-        let pid = spawn_orphan_sleeper();
-        let result = stop_for_takeover(
-            &reqwest::Client::new(),
-            root,
-            &file_info(port, pid, root),
-            true,
-        )
-        .await;
-        let alive = pid_alive(pid);
-        kill_pid_best_effort(pid);
-        let err = result.expect_err("an older daemon is left alone");
-        assert!(err.contains("too old"), "{err}");
-        assert!(alive);
-    }
-
-    #[tokio::test]
-    async fn stop_for_takeover_stops_a_daemon_with_only_parked_runs_and_frees_its_port() {
-        let root = "/tmp/dispatch-takeover-idle";
-        let port = fake_daemon(vec![
-            healthy(root),
-            (
-                "/api/live-work",
-                200,
-                r#"{"busy":[],"parked":2,"waiting":2}"#.to_string(),
-            ),
-        ]);
-        let pid = spawn_orphan_sleeper();
-        let result = stop_for_takeover(
-            &reqwest::Client::new(),
-            root,
-            &file_info(port, pid, root),
-            true,
-        )
-        .await;
-        assert_eq!(result, Ok(Some(port)));
-        assert!(!pid_alive(pid));
-    }
-
-    #[tokio::test]
-    async fn stop_for_takeover_never_stops_a_daemon_serving_another_root() {
-        let port = fake_daemon(vec![healthy("/tmp/someone-else")]);
-        let pid = spawn_orphan_sleeper();
-        let root = "/tmp/dispatch-takeover-mine";
-        let result = stop_for_takeover(
-            &reqwest::Client::new(),
-            root,
-            &file_info(port, pid, root),
-            true,
-        )
-        .await;
-        let alive = pid_alive(pid);
-        kill_pid_best_effort(pid);
-        assert_eq!(result, Ok(None));
-        assert!(alive);
     }
 
     #[test]
@@ -2161,13 +1926,24 @@ mod tests {
     #[test]
     fn spawned_app_tokens_only_returns_a_token_for_the_pid_that_produced_it() {
         let tokens = SpawnedAppTokens::new();
-        tokens.remember("/tmp/proj", 4242, "app-token");
+        tokens.remember("/tmp/proj", &file_info(1, 4242, "/tmp/proj"), "app-token");
 
-        assert_eq!(tokens.get("/tmp/proj", 4242).as_deref(), Some("app-token"));
+        assert_eq!(
+            tokens
+                .get("/tmp/proj", &file_info(1, 4242, "/tmp/proj"))
+                .as_deref(),
+            Some("app-token")
+        );
         // A different pid on the same root means our daemon died and something
         // else serves it now — the remembered token is not just stale, it is wrong.
-        assert_eq!(tokens.get("/tmp/proj", 9999), None);
-        assert_eq!(tokens.get("/tmp/other", 4242), None);
+        assert_eq!(
+            tokens.get("/tmp/proj", &file_info(1, 9999, "/tmp/proj")),
+            None
+        );
+        assert_eq!(
+            tokens.get("/tmp/other", &file_info(1, 4242, "/tmp/other")),
+            None
+        );
     }
 
     #[tokio::test]
@@ -2560,3 +2336,7 @@ mod tests {
         let _ = fs::remove_dir_all(&scratch);
     }
 }
+
+#[cfg(test)]
+#[path = "sidecar/lifecycle_tests.rs"]
+mod lifecycle_tests;

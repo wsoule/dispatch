@@ -612,10 +612,10 @@ describe('replyPlan', () => {
   });
 
   it('in a channel thread, writes to the channel', () => {
-    const root = msg('m-01', { to: ['channel:epic/e-4a19c2'] });
+    const root = msg('m-01', { to: ['channel:milestone/e-4a19c2'] });
     expect(replyPlan([root], ME, new Set())).toEqual({
       kind: 'send',
-      to: ['channel:epic/e-4a19c2'],
+      to: ['channel:milestone/e-4a19c2'],
       replyTo: 'm-01',
     });
   });

@@ -22,9 +22,9 @@ const JOIN_STEPS =
   'On their machine: open Dispatch, go to Settings → Members, and paste it under Join a team. Or run dispatch team join in a terminal and paste it there. When they join, their name shows above with an optional check you can read together.';
 
 // Shown beside "Start a team" so pressing it is the confirmation the relay
-// switch needs (F-D31); the daemon's own sentence once the team exists.
+// switch needs (F-D31); a new team starts unencrypted, so this is the off text.
 const RELAY_DISCLOSURE =
-  'Your team syncs through relay.dispatch.foo. The relay can read everything that is not sealed: the board, team memory and team docs, the roster, presence, and who messaged whom and when. It cannot read message contents.';
+  'Your team syncs through relay.dispatch.foo. The relay can read everything that is not sealed: the board, team memory and team docs, the roster, presence, and who messaged whom and when. It cannot read message contents. Once the team is set up, an admin can turn on end-to-end encryption below so the relay carries only ciphertext for team content.';
 
 /**
  * Settings → Team, top: the team in one line, and the three things a person

@@ -19,7 +19,7 @@ function FollowButton({
   room,
 }: {
   data: DispatchProjectData;
-  /** A bare room name: `release`, `epic/t-1`. */
+  /** A bare room name: `release`, `milestone/t-1`. */
   room: string;
 }) {
   const { client, port, me, messageAccess } = data;
@@ -53,7 +53,7 @@ function FollowButton({
   );
 }
 
-/** A task's conversation; a milestone's is its room, `channel:epic/<id>`. */
+/** A task's conversation; a milestone's is its room, `channel:milestone/<id>`. */
 export function TaskConversationHome({
   data,
   taskId,
@@ -72,7 +72,7 @@ export function TaskConversationHome({
     data.me
   );
   if (container) {
-    const room = `epic/${taskId}`;
+    const room = `milestone/${taskId}`;
     const children = data.tasks.filter((t) => t.meta.parent === taskId).length;
     return (
       <ConversationTimeline

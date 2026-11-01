@@ -47,7 +47,8 @@ export function reachTags(entry: MemoryEntry, ctx: RankContext): string[] {
   if (entry.scope === 'project') tags.push('local');
   if (ctx.taskId !== null && entry.appliesTo.includes(ctx.taskId))
     tags.push('task');
-  else if (entry.epic !== null && entry.epic === ctx.epic) tags.push('epic');
+  else if (entry.milestone !== null && entry.milestone === ctx.milestone)
+    tags.push('milestone');
   return tags;
 }
 

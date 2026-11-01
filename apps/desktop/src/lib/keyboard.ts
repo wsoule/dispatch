@@ -200,12 +200,11 @@ export type ListKeyCommand =
   /** `x` — add or remove the focused row from the selection. */
   | 'list-select-toggle'
   /** The single-key property shortcuts on a focused row (Linear's `s`/`p`/`a`/`l`, plus
-   * Dispatch's epic/milestone/dispatch). */
+   * Dispatch's milestone/dispatch). */
   | 'list-set-status'
   | 'list-set-priority'
   | 'list-set-assignee'
   | 'list-set-labels'
-  | 'list-set-epic'
   | 'list-set-milestone'
   | 'list-dispatch'
   /** `f` — open the filter menu. */
@@ -230,7 +229,6 @@ const LIST_KEYS: Record<string, ListKeyCommand> = {
   p: 'list-set-priority',
   a: 'list-set-assignee',
   l: 'list-set-labels',
-  e: 'list-set-epic',
   m: 'list-set-milestone',
   d: 'list-dispatch',
   f: 'list-open-filter',
@@ -258,7 +256,7 @@ export function resolveListKeyCommand(
  * `isTypingTarget` (hooks/useGlobalKeyboard.ts) is the thin DOM-touching wrapper that pulls
  * `tagName`/`isContentEditable` off a real `EventTarget` and calls this; kept separate so the
  * decision itself is testable without a DOM. Any view with a keydown-listening container that
- * also contains real form controls (the Board's roving-focus track wrapping an epic card's
+ * also contains real form controls (the Board's roving-focus track wrapping a milestone card's
  * concurrency `<input>` is the motivating case) should build its `isTyping` this way rather
  * than hardcoding `false`. */
 export function isTypingTagName(
@@ -269,10 +267,10 @@ export function isTypingTagName(
 }
 
 /** True for tag names that are their own interactive controls — a keydown landing on one
- * inside a keydown-listening container (the Board track wraps an epic card's Work/Stop
+ * inside a keydown-listening container (the Board track wraps a milestone card's Work/Stop
  * `<button>`s and the inline "Dispatch →" button) belongs to that control, not to board
  * navigation. Extends the typing guard (INPUT/TEXTAREA/contenteditable) to the click-style
- * controls (BUTTON/A/SELECT) so pressing Enter on an epic's Work button activates it instead
+ * controls (BUTTON/A/SELECT) so pressing Enter on a milestone's Work button activates it instead
  * of moving the roving cursor. Kept DOM-free for testability, like `isTypingTagName`; the
  * view pairs it with `.closest()` so a control wrapping an inner element (e.g. a `<span>`)
  * still counts. */

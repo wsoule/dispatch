@@ -78,10 +78,10 @@ test('an unoffered permission mode shows the escape hatch', () => {
 test('an edited concurrency value saves on blur', () => {
   const r = recorder();
   renderAgents({ onSave: r.onSave });
-  const input = screen.getByLabelText('Runs at once per epic');
+  const input = screen.getByLabelText('Runs at once per milestone');
   fireEvent.change(input, { target: { value: '5' } });
   fireEvent.blur(input);
-  expect(r.saved).toEqual([{ epicConcurrency: 5 }]);
+  expect(r.saved).toEqual([{ milestoneConcurrency: 5 }]);
 });
 
 test('the run limits save as the numbers they are', () => {

@@ -44,6 +44,8 @@ export interface ReadinessInput {
   /** The daemon's judged reading of the spec, when it has one. */
   reading: ReadinessReading | undefined;
   liveClaims: readonly LiveClaim[];
+  /** Whether a task's latest run has ended (`tasksWithFinishedRun`); omitted, none has. */
+  finishedRun?: (id: string) => boolean;
 }
 
 function plural(n: number, word: string): string {
@@ -51,17 +53,23 @@ function plural(n: number, word: string): string {
 }
 
 /** The blockers that still hold `task` back. An id naming no task never blocks, as in the
- * daemon's ready queue. */
+ * daemon's ready queue. `finishedRun` tells review from working where the two share a
+ * status, as on a Linear team with no review state. */
 export function unmetBlockers(
   task: TaskListItem,
   tasksById: ReadonlyMap<string, TaskListItem>,
-  model: StatusModel
+  model: StatusModel,
+  finishedRun?: (id: string) => boolean
 ): string[] {
   return task.meta.blockedBy.filter((id) => {
     const blocker = tasksById.get(id);
     return (
       blocker !== undefined &&
-      !isSatisfiedForDispatchStatus(blocker.meta.status, model)
+      !isSatisfiedForDispatchStatus(
+        blocker.meta.status,
+        model,
+        finishedRun?.(id) ?? false
+      )
     );
   });
 }
@@ -135,10 +143,10 @@ function specCheck(input: ReadinessInput): ReadinessCheck {
  * its own or a closed status stops a dispatch outright; everything else is advice.
  */
 export function dispatchReadiness(input: ReadinessInput): DispatchReadiness {
-  const { task, tasksById, model, liveRun, liveClaims } = input;
+  const { task, tasksById, model, liveRun, liveClaims, finishedRun } = input;
   const checks: ReadinessCheck[] = [];
 
-  const unmet = unmetBlockers(task, tasksById, model);
+  const unmet = unmetBlockers(task, tasksById, model, finishedRun);
   checks.push(blockersCheck(task, tasksById, unmet));
 
   checks.push(specCheck(input));

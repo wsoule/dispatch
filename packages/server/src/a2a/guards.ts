@@ -190,7 +190,7 @@ export async function guardTaskPatch(
       status: 403,
       error: "editing an A2A task's description or body needs the decide tier",
     };
-  // Moving an A2A task under another epic changes what its runs see (XH-R5).
+  // Moving an A2A task under another milestone changes what its runs see (XH-R5).
   if (!deciding && patch.parent !== undefined && isA2ATask(deps, taskId))
     return {
       ok: false,

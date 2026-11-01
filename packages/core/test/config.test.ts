@@ -61,7 +61,7 @@ describe('loadConfig', () => {
       autoCommit: false,
       orchestrator: {
         permissionMode: 'auto',
-        epicConcurrency: 3,
+        milestoneConcurrency: 3,
         verifyTimeoutSec: 600,
         maxConcurrency: 16,
         runCostEstimateUsd: 10,
@@ -188,10 +188,10 @@ describe('loadConfig', () => {
   });
 
   describe('orchestrator block', () => {
-    it('defaults to no turn cap, no budget cap, auto, epicConcurrency 3', () => {
+    it('defaults to no turn cap, no budget cap, auto, milestoneConcurrency 3', () => {
       expect(loadConfig(root).orchestrator).toEqual({
         permissionMode: 'auto',
-        epicConcurrency: 3,
+        milestoneConcurrency: 3,
         verifyTimeoutSec: 600,
         maxConcurrency: 16,
         runCostEstimateUsd: 10,
@@ -203,13 +203,13 @@ describe('loadConfig', () => {
       mkdirSync(join(root, '.dispatch'), { recursive: true });
       writeFileSync(
         join(root, '.dispatch/config.yml'),
-        'orchestrator:\n  maxTurns: 25\n  maxBudgetUsd: 5\n  permissionMode: plan\n  epicConcurrency: 5\n'
+        'orchestrator:\n  maxTurns: 25\n  maxBudgetUsd: 5\n  permissionMode: plan\n  milestoneConcurrency: 5\n'
       );
       expect(loadConfig(root).orchestrator).toEqual({
         maxTurns: 25,
         maxBudgetUsd: 5,
         permissionMode: 'plan',
-        epicConcurrency: 5,
+        milestoneConcurrency: 5,
         verifyTimeoutSec: 600,
         maxConcurrency: 16,
         runCostEstimateUsd: 10,
@@ -250,24 +250,24 @@ describe('loadConfig', () => {
       );
     });
 
-    it('throws when epicConcurrency exceeds the default maxConcurrency', () => {
+    it('throws when milestoneConcurrency exceeds the default maxConcurrency', () => {
       mkdirSync(join(root, '.dispatch'), { recursive: true });
       writeFileSync(
         join(root, '.dispatch/config.yml'),
-        'orchestrator:\n  epicConcurrency: 20\n'
+        'orchestrator:\n  milestoneConcurrency: 20\n'
       );
       expect(() => loadConfig(root)).toThrow(
-        /orchestrator\.epicConcurrency \(20\) must not exceed orchestrator\.maxConcurrency \(16\)/
+        /orchestrator\.milestoneConcurrency \(20\) must not exceed orchestrator\.maxConcurrency \(16\)/
       );
     });
 
-    it('accepts epicConcurrency equal to a raised maxConcurrency', () => {
+    it('accepts milestoneConcurrency equal to a raised maxConcurrency', () => {
       mkdirSync(join(root, '.dispatch'), { recursive: true });
       writeFileSync(
         join(root, '.dispatch/config.yml'),
-        'orchestrator:\n  epicConcurrency: 24\n  maxConcurrency: 24\n'
+        'orchestrator:\n  milestoneConcurrency: 24\n  maxConcurrency: 24\n'
       );
-      expect(loadConfig(root).orchestrator.epicConcurrency).toBe(24);
+      expect(loadConfig(root).orchestrator.milestoneConcurrency).toBe(24);
     });
 
     it('throws when runCostEstimateUsd is not positive', () => {
@@ -281,34 +281,34 @@ describe('loadConfig', () => {
       );
     });
 
-    it('leaves epicConcurrency at the default of 3 when omitted', () => {
+    it('leaves milestoneConcurrency at the default of 3 when omitted', () => {
       mkdirSync(join(root, '.dispatch'), { recursive: true });
       writeFileSync(
         join(root, '.dispatch/config.yml'),
         'orchestrator:\n  maxTurns: 25\n'
       );
-      expect(loadConfig(root).orchestrator.epicConcurrency).toBe(3);
+      expect(loadConfig(root).orchestrator.milestoneConcurrency).toBe(3);
     });
 
-    it('throws when epicConcurrency is not an integer >= 1', () => {
+    it('throws when milestoneConcurrency is not an integer >= 1', () => {
       mkdirSync(join(root, '.dispatch'), { recursive: true });
       writeFileSync(
         join(root, '.dispatch/config.yml'),
-        'orchestrator:\n  epicConcurrency: 0\n'
+        'orchestrator:\n  milestoneConcurrency: 0\n'
       );
       expect(() => loadConfig(root)).toThrow(
-        /orchestrator\.epicConcurrency must be an integer >= 1/
+        /orchestrator\.milestoneConcurrency must be an integer >= 1/
       );
     });
 
-    it('throws when epicConcurrency is not an integer', () => {
+    it('throws when milestoneConcurrency is not an integer', () => {
       mkdirSync(join(root, '.dispatch'), { recursive: true });
       writeFileSync(
         join(root, '.dispatch/config.yml'),
-        'orchestrator:\n  epicConcurrency: 1.5\n'
+        'orchestrator:\n  milestoneConcurrency: 1.5\n'
       );
       expect(() => loadConfig(root)).toThrow(
-        /orchestrator\.epicConcurrency must be an integer >= 1/
+        /orchestrator\.milestoneConcurrency must be an integer >= 1/
       );
     });
 

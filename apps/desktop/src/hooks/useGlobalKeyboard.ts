@@ -11,7 +11,7 @@ import {
 /** True while the event's target is a text field — the DOM-touching half of
  * `GlobalKeyboardContext.isTyping` that `lib/keyboard.ts` itself stays pure of. Exported so
  * any other keydown-listening container that also holds real form controls (e.g. `BoardView`'s
- * roving-focus track, which wraps an epic card's concurrency `<input>`) can build its own
+ * roving-focus track, which wraps a milestone card's concurrency `<input>`) can build its own
  * `isTyping` the same way instead of hardcoding `false`. */
 export function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;

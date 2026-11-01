@@ -11,6 +11,7 @@ import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { NEEDS_DECIDE, useSettingsAccess } from './access';
 import { MachinesGroup } from './MachinesGroup';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
+import { TeamEncryptionGroup } from './TeamEncryptionGroup';
 import { TeamSetupGroup } from './TeamSetupGroup';
 import { cn } from '@/lib/utils';
 import { Pill } from '@/ui/ai/pill';
@@ -150,6 +151,7 @@ export function TeamSection({ data }: TeamSectionProps) {
     return (
       <>
         <TeamSetupGroup data={data} />
+        <TeamEncryptionGroup data={data} />
         <SettingsGroup
           title="Browser access"
           keywords="invite team token"
@@ -210,6 +212,7 @@ export function TeamSection({ data }: TeamSectionProps) {
   return (
     <>
       <TeamSetupGroup data={data} />
+      <TeamEncryptionGroup data={data} />
       <details
         data-testid="team-machines"
         className="group flex flex-col gap-4"

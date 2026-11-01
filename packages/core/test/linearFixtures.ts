@@ -198,7 +198,11 @@ function labelIndex(
 /** A mapping context over `tasks`, with the fixture workspace's vocabulary. */
 export function context(
   tasks: readonly TaskMeta[],
-  opts: { includeAcceptanceCriteria?: boolean; labels?: LinearLabel[] } = {}
+  opts: {
+    includeAcceptanceCriteria?: boolean;
+    archiveFinished?: boolean;
+    labels?: LinearLabel[];
+  } = {}
 ): LinearMapContext {
   const generated = statusesFromWorkflowStates(STATES);
   const labels = opts.labels ?? LABELS;
@@ -222,6 +226,7 @@ export function context(
     labels: labelIndex(labels),
     labelsById: new Map(labels.map((l) => [l.id, l])),
     includeAcceptanceCriteria: opts.includeAcceptanceCriteria ?? true,
+    archiveFinished: opts.archiveFinished ?? false,
     projectStatuses: PROJECT_STATUSES,
   };
 }

@@ -98,15 +98,18 @@ interface TranscriptStateLine {
   // rewrites `baseBranch`. Persisting one without the other is worse than
   // persisting neither — replay would then combine the NEW base with the
   // ORIGINAL parent list, and the merge queue would re-derive an
-  // already-merged blocker, decide the run sits on an unrepairable
-  // multi-parent base, and flag a perfectly healthy run as unmergeable for
-  // good. An empty array means "no parents left" and is distinct from an
+  // already-merged blocker and restack a healthy run a second time, replaying
+  // commits that are already on its new base. An empty array means "no parents left" and is distinct from an
   // absent field, which means "this line says nothing about parents".
   //
-  // `stackBaseCommit` deliberately does NOT appear here: it is fixed at
-  // dispatch and never changes, so the header is its only writer.
+  // `stackBaseCommit` travels with them too, but only for a run that is
+  // still stacked after a restack: rebuilding a multi-parent base over the
+  // blockers that are left gives the run a new commit its own work starts
+  // from, and the next restack has to replay from there. A run restacked onto
+  // a plain base no longer needs one, so those lines leave it out.
   baseBranch?: string;
   stackParents?: string[];
+  stackBaseCommit?: string;
   baseDiscarded?: boolean;
   baseDiscardedReason?: string;
   // See RunMeta.survey — rides along on the state line that marks a run
@@ -195,6 +198,7 @@ export class Transcript {
       prUrl?: string;
       baseBranch?: string;
       stackParents?: string[];
+      stackBaseCommit?: string;
       baseDiscarded?: boolean;
       baseDiscardedReason?: string;
       survey?: RunSurvey;
@@ -362,6 +366,7 @@ export function replayTranscript(path: string): RunDetail | null {
             : (line.reviewFailure ?? undefined),
         baseBranch: line.baseBranch ?? meta.baseBranch,
         stackParents: narrowedStackParents(line, meta),
+        stackBaseCommit: line.stackBaseCommit ?? meta.stackBaseCommit,
         baseDiscarded: line.baseDiscarded ?? meta.baseDiscarded,
         baseDiscardedReason:
           line.baseDiscardedReason ?? meta.baseDiscardedReason,

@@ -121,7 +121,7 @@ function readFinding(value: unknown): Finding | null {
 
 // Same idea for the ledger. `appliesTo` in particular is checked rather than
 // defaulted: entriesFor() calls .includes() on it, and an entry aimed at one
-// task reads as an entry aimed at every task under its epic the moment that
+// task reads as an entry aimed at every task under its milestone the moment that
 // field comes back empty.
 function readLedgerEntry(value: unknown): LedgerEntry | null {
   if (typeof value !== 'object' || value === null) return null;
@@ -140,10 +140,13 @@ function readLedgerEntry(value: unknown): LedgerEntry | null {
   }
   // Same defaulting as readFinding, and for the same reason: `authored_by` is
   // a NOT NULL column, so a pre-team entry without one would fail to insert.
-  const entry = value as unknown as LedgerEntry;
+  // Lines written before epics became milestones carry `epicId` instead.
+  const { epicId, ...entry } = value as unknown as LedgerEntry & {
+    epicId?: string | null;
+  };
   return {
     ...entry,
-    epicId: entry.epicId ?? null,
+    milestoneId: entry.milestoneId ?? epicId ?? null,
     sourceTaskId: entry.sourceTaskId ?? null,
     authoredBy: entry.authoredBy ?? '',
   };

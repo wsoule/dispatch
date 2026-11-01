@@ -26,7 +26,7 @@ export interface MemoryHost {
   operatorOf(principal: Principal): Operator | null;
   // This project's key, which personal entries narrowed to one project carry.
   projectKey(): string;
-  // A task's title, body, writes, epic and A2A provenance, or null when unknown.
+  // A task's title, body, writes, milestone and A2A provenance, or null when unknown.
   taskContext(taskId: string): IndexContext | null;
   // The task an execute run works on, which its proposals carry; null otherwise.
   taskOfPrincipal(principal: Principal): string | null;

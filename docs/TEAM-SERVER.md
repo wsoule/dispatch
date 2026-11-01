@@ -4,7 +4,7 @@ Design document for Dispatch's storage pivot and team tier: tasks leave
 markdown, dispatchd owns state in a local database, and team projects home that
 state on a server. This supersedes the git-native direction in
 `docs/archive/specs/2026-08-02-team-collaboration-design.md` and absorbs the
-storage direction agreed on 2026-08-22 (epic `e-99e113`, "Storage spine:
+storage direction agreed on 2026-08-22 (milestone `e-99e113`, "Storage spine:
 daemon-owned DB with git receipts", building on
 `docs/archive/design/lovable-direction.md`).
 
@@ -152,7 +152,7 @@ With the server authoritative, the earlier mirror/fan-out machinery is
 unnecessary — these become ordinary features of a stateful service. They are
 also server-tier **by decision, not just by architecture**: the team-local
 direction (one shared multi-user dispatchd that teammates reach from browsers —
-epic `e-5f3530` and its satellite tasks) is parked, absorbed by phases 1–4
+milestone `e-5f3530` and its satellite tasks) is parked, absorbed by phases 1–4
 below, so that multiplayer never ships free inside the open client (decided
 2026-08-23):
 
@@ -227,7 +227,7 @@ behind the same seam.
 
 ## 7. Phasing
 
-0. **Storage spine (solo, no server)** — epic `e-99e113`. Extract the
+0. **Storage spine (solo, no server)** — milestone `e-99e113`. Extract the
    `TaskStore` interface, SQLite backend, migration from markdown, receipt
    export, MCP tools through the daemon. Ships as a pure local improvement: sync
    commits gone, real-time board. This phase de-risks everything after it and is

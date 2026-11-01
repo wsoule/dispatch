@@ -467,7 +467,7 @@
                       <input
                         value="{{ feedQuery }}"
                         onChange="{{ setFeedQuery }}"
-                        placeholder="Filter by task, id or epic"
+                        placeholder="Filter by task, id or milestone"
                         style="
                           flex: 1;
                           min-width: 0;
@@ -651,7 +651,7 @@
                                   text-overflow: ellipsis;
                                 "
                               >
-                                {{ r.epic }}
+                                {{ r.milestone }}
                               </div>
                               <div
                                 style="font-family:var(--mono);font-size:11px;color:{{ r.actFg }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis"
@@ -1126,7 +1126,7 @@
                             line-height: 1.5;
                           "
                         >
-                          {{ d.epic }}
+                          {{ d.milestone }}
                         </div>
                         <div style="display: flex; gap: 6px; margin-top: 9px">
                           <span
@@ -2571,7 +2571,7 @@
                       "
                     >
                       <sc-for
-                        list="{{ epics }}"
+                        list="{{ milestones }}"
                         as="e"
                         hint-placeholder-count="3"
                       >
@@ -2821,7 +2821,7 @@
                         class="btn btn-secondary"
                         style="font-size: 12px; padding: 4px 10px"
                       >
-                        Move to an epic
+                        Move to a milestone
                       </button>
                       <button
                         class="btn btn-ghost"
@@ -3326,7 +3326,7 @@
                                       overflow: hidden;
                                       text-overflow: ellipsis;
                                     "
-                                    >{{ td.epicTitle }}</span
+                                    >{{ td.milestoneTitle }}</span
                                   >
                                 </div>
                                 <div
@@ -3479,7 +3479,7 @@
                         "
                         value="{{ planText }}"
                         onChange="{{ setPlan }}"
-                        placeholder="Describe the work — the planner proposes an epic and its tasks…"
+                        placeholder="Describe the work — the planner proposes a milestone and its tasks…"
                       ></textarea>
                       <div
                         style="
@@ -3559,7 +3559,7 @@
                               text-transform: uppercase;
                               color: var(--dim);
                             "
-                            >Proposed epic</span
+                            >Proposed milestone</span
                           >
                           <span
                             style="
@@ -3581,7 +3581,7 @@
                             margin-bottom: 12px;
                           "
                         >
-                          {{ draftEpic }}
+                          {{ draftMilestone }}
                         </div>
                         <sc-for
                           list="{{ draft }}"
@@ -4048,10 +4048,10 @@
                             </button>
                             <button
                               class="btn btn-secondary"
-                              onClick="{{ batchEpic }}"
+                              onClick="{{ batchMilestone }}"
                               style="font-size: 12px; padding: 4px 10px"
                             >
-                              Group into an epic
+                              Group into a milestone
                             </button>
                             <button
                               class="btn btn-secondary"
@@ -4304,8 +4304,8 @@
                             "
                           >
                             {{ clusterN }} items are all about worktrees and
-                            verify retries. They would make a better epic than
-                            three loose tasks.
+                            verify retries. They would make a better milestone
+                            than three loose tasks.
                           </p>
                           <button
                             class="btn btn-primary"
@@ -4514,7 +4514,7 @@
                                 color: var(--dim);
                               "
                             >
-                              {{ m.epics }}
+                              {{ m.milestones }}
                             </div>
                           </div>
                           <div
@@ -5096,7 +5096,7 @@
           steer: '', planText: '', planStage: 'idle', planStream: '', notesOpen: false, stub: '',
           taskView: 'list', rvTab: 'files', rvFile: 0, rvViewed: [4], composeLine: 0, draft: '', noteDraft: '',
           feedQuery: '', feedFilter: [], collapsed: [], expanded: [], histOpen: false, unviewedOnly: false, skipOpen: false,
-          sel: [], openTask: '', dispatchEpic: '', model: 'Opus 5', selfReview: true, noteDraft2: '',
+          sel: [], openTask: '', dispatchMilestone: '', model: 'Opus 5', selfReview: true, noteDraft2: '',
           dumpText: '', dumpSel: [], dumpArchiveOpen: false,
           dumpItems: [
             { id: 'd1', text: 'diffs go blank when the agent is still running', kind: 'bug', age: '2m ago' },
@@ -5124,23 +5124,23 @@
           ],
           draftOff: [], streamText: '', streamIdx: 0, streamChar: 0,
           agents: [
-            { id: 't-8e5196', title: 'Build a full-page, describe-what-you-want task creator', epic: 'Conversational planning', tag: 'ui', st: 'wait', t: 268, frozen: 268, pct: 61, turns: 22, plus: 214, minus: 36,
+            { id: 't-8e5196', title: 'Build a full-page, describe-what-you-want task creator', milestone: 'Conversational planning', tag: 'ui', st: 'wait', t: 268, frozen: 268, pct: 61, turns: 22, plus: 214, minus: 36,
               q: 'It wants to run a database migration against your local dev database.', cmd: 'bun run db:migrate --env local' },
-            { id: 't-364075', title: 'Fix the blank page when diffs are opened mid-run', epic: 'Ship Dispatch v0.1', tag: 'bug', st: 'wait', t: 742, frozen: 742, pct: 38, turns: 9, plus: 41, minus: 318,
+            { id: 't-364075', title: 'Fix the blank page when diffs are opened mid-run', milestone: 'Ship Dispatch v0.1', tag: 'bug', st: 'wait', t: 742, frozen: 742, pct: 38, turns: 9, plus: 41, minus: 318,
               q: 'It wants to delete a file it believes is dead code.', cmd: 'rm app/src/views/DiffLegacy.tsx' },
-            { id: 't-0abf9d', title: 'Add a conversational thread to the Plans view', epic: 'Conversational planning', tag: 'ui', st: 'fail', t: 1985, pct: 88, turns: 31, plus: 180, minus: 24,
+            { id: 't-0abf9d', title: 'Add a conversational thread to the Plans view', milestone: 'Conversational planning', tag: 'ui', st: 'fail', t: 1985, pct: 88, turns: 31, plus: 180, minus: 24,
               err: 'verify failed — 3 tests in planner.thread.test.ts' },
-            { id: 't-1b0325', title: 'Runs session chat box should auto scroll to the bottom', epic: 'Ship Dispatch v0.1', tag: 'ui', st: 'work', t: 214, pct: 44, turns: 14, plus: 62, minus: 9,
+            { id: 't-1b0325', title: 'Runs session chat box should auto scroll to the bottom', milestone: 'Ship Dispatch v0.1', tag: 'ui', st: 'work', t: 214, pct: 44, turns: 14, plus: 62, minus: 9,
               acts: ['editing RunSession.tsx', 'reading useAutoScroll.ts', 'running bun test ws', 'thinking about scroll anchoring'] },
-            { id: 't-d6ee2c', title: 'Wire a Retry button for merge-queue entries blocked on checkout', epic: 'Ship Dispatch v0.1', tag: 'ui', st: 'work', t: 96, pct: 17, turns: 6, plus: 24, minus: 2,
+            { id: 't-d6ee2c', title: 'Wire a Retry button for merge-queue entries blocked on checkout', milestone: 'Ship Dispatch v0.1', tag: 'ui', st: 'work', t: 96, pct: 17, turns: 6, plus: 24, minus: 2,
               acts: ['reading queue/checkout.ts', 'grepping for retryEntry', 'editing MergeQueueRow.tsx', 'thinking about idempotency'] },
-            { id: 't-9f2a41', title: 'Stream agent stdout over the websocket instead of polling', epic: 'Runtime', tag: 'perf', st: 'work', t: 1320, pct: 79, turns: 27, plus: 306, minus: 154,
+            { id: 't-9f2a41', title: 'Stream agent stdout over the websocket instead of polling', milestone: 'Runtime', tag: 'perf', st: 'work', t: 1320, pct: 79, turns: 27, plus: 306, minus: 154,
               acts: ['editing server/ws/stream.ts', 'running bun test ws --watch', 'reading poller.ts', 'thinking about backpressure'] },
-            { id: 't-4a8cce', title: 'Auto-generate a task from a triage note', epic: 'Conversational planning', tag: 'ai', st: 'work', t: 47, pct: 6, turns: 2, plus: 8, minus: 0,
+            { id: 't-4a8cce', title: 'Auto-generate a task from a triage note', milestone: 'Conversational planning', tag: 'ai', st: 'work', t: 47, pct: 6, turns: 2, plus: 8, minus: 0,
               acts: ['reading notes/triage.ts', 'planning the endpoint', 'writing a test first', 'reading planner.ts'] },
-            { id: 't-a2c062', title: 'Headless dispatcher CLI: run, plan, epic, review, approve', epic: 'Ship Dispatch v0.1', tag: 'cli', st: 'review', t: 4260, pct: 100, turns: 41, plus: 412, minus: 58 },
-            { id: 't-c8954b', title: 'Extend the planner backend from one-shot to multi-turn', epic: 'Conversational planning', tag: 'ai', st: 'review', t: 2880, pct: 100, turns: 18, plus: 96, minus: 12 },
-            { id: 't-df3a1e', title: 'Expose planner conversation over the server API and client SDK', epic: 'Conversational planning', tag: 'api', st: 'land', t: 132, pct: 100, turns: 12, plus: 148, minus: 30, checks: 2 }
+            { id: 't-a2c062', title: 'Headless dispatcher CLI: run, plan, milestone, review, approve', milestone: 'Ship Dispatch v0.1', tag: 'cli', st: 'review', t: 4260, pct: 100, turns: 41, plus: 412, minus: 58 },
+            { id: 't-c8954b', title: 'Extend the planner backend from one-shot to multi-turn', milestone: 'Conversational planning', tag: 'ai', st: 'review', t: 2880, pct: 100, turns: 18, plus: 96, minus: 12 },
+            { id: 't-df3a1e', title: 'Expose planner conversation over the server API and client SDK', milestone: 'Conversational planning', tag: 'api', st: 'land', t: 132, pct: 100, turns: 12, plus: 148, minus: 30, checks: 2 }
           ],
           extraTasks: [],
           lines: [
@@ -5212,7 +5212,7 @@
             ['t-77bb01', 'Package the app as a signed Mac build', 'Ship Dispatch v0.1', 'work'],
             ['t-2c9d84', 'Move the worktree pool behind a lock', 'Runtime', 'work'],
             ['t-9e1177', 'Debounce the file watcher on large repos', 'Runtime', 'work'],
-            ['t-b40c2a', 'Show token spend per epic', 'Ship Dispatch v0.1', 'work'],
+            ['t-b40c2a', 'Show token spend per milestone', 'Ship Dispatch v0.1', 'work'],
             ['t-16fe93', 'Keyboard navigation through the feed', 'Ship Dispatch v0.1', 'work'],
             ['t-70aa5c', 'Persist plan threads as markdown', 'Conversational planning', 'review'],
             ['t-3d0e61', 'Retry policy for verify flakes', 'Runtime', 'review'],
@@ -5221,7 +5221,7 @@
             ['t-ea4470', 'Session log export', 'Ship Dispatch v0.1', 'review'],
             ['t-45cc80', 'Stop an agent that fails verify twice', 'Runtime', 'work']
           ].map((f, i) => ({
-            id: f[0], title: f[1], epic: f[2], tag: 'auto', st: f[3],
+            id: f[0], title: f[1], milestone: f[2], tag: 'auto', st: f[3],
             t: 120 + i * 137, pct: 12 + (i * 7) % 80, turns: 3 + i, plus: 20 + i * 13, minus: i * 3, checks: 1,
             acts: ['editing ' + f[1].split(' ')[0].toLowerCase() + '.ts', 'running bun test', 'reading the task', 'thinking it through']
           })) : [];
@@ -5235,9 +5235,9 @@
           });
 
           const n = st => A.filter(a => a.st === st).length;
-          const epicsData = this.epicList();
-          const readyN = epicsData.reduce((k, e) => k + e.tasks.filter(t => t.stateLabel === 'Ready').length, 0);
-          const blockedN = epicsData.reduce((k, e) => k + e.tasks.filter(t => t.stateLabel === 'Blocked').length, 0);
+          const milestonesData = this.milestoneList();
+          const readyN = milestonesData.reduce((k, e) => k + e.tasks.filter(t => t.stateLabel === 'Ready').length, 0);
+          const blockedN = milestonesData.reduce((k, e) => k + e.tasks.filter(t => t.stateLabel === 'Blocked').length, 0);
 
           const ribbonDef = [
             { key: 'wait', label: 'Waiting on you', count: n('wait'), urgent: true, delta: 'oldest ' + this.clock((A.filter(a => a.st === 'wait').map(a => a.t).sort((x, y) => y - x)[0]) || 0) },
@@ -5260,7 +5260,7 @@
 
           const feed = [];
           const query = s.feedQuery.trim().toLowerCase();
-          const passes = a => (!query || (a.title + ' ' + a.id + ' ' + a.epic).toLowerCase().indexOf(query) >= 0) && (!s.feedFilter.length || s.feedFilter.indexOf(a.st) >= 0);
+          const passes = a => (!query || (a.title + ' ' + a.id + ' ' + a.milestone).toLowerCase().indexOf(query) >= 0) && (!s.feedFilter.length || s.feedFilter.indexOf(a.st) >= 0);
           let shownTotal = 0;
           const order = [['wait', 'wait'], ['fail', 'fail'], ['work', 'work'], ['review', 'review'], ['land', 'land']];
           order.forEach(([k]) => {
@@ -5280,7 +5280,7 @@
               const urgent = k === 'wait' || k === 'fail';
               feed.push({
                 isHead: false, isRow: true, gap: '3px',
-                id: a.id, title: a.title, epic: a.epic, color: COL[k],
+                id: a.id, title: a.title, milestone: a.milestone, color: COL[k],
                 stateLabel: LBL[k], stateFg: urgent ? COL[k] : dim2, stateWeight: urgent ? 500 : 400,
                 titleSize: urgent ? '14px' : '13.5px', titleWeight: urgent ? 500 : 400,
                 titleFg: k === 'review' || k === 'land' ? dim2 : 'var(--color-text)',
@@ -5329,7 +5329,7 @@
           ].map(f => ({ path: f.path, plus: f.plus, minus: f.minus, fg: dim2 }));
 
           const d = {
-            id: d0.id, title: d0.title, epic: d0.epic, tag: d0.tag, color: COL[d0.st], stateLabel: LBL[d0.st],
+            id: d0.id, title: d0.title, milestone: d0.milestone, tag: d0.tag, color: COL[d0.st], stateLabel: LBL[d0.st],
             pulse: d0.st === 'work' ? 'breathe 2.2s ease-in-out infinite' : 'none',
             branch: 'dispatch/' + d0.id + '-' + d0.title.toLowerCase().split(' ').slice(0, 4).join('-'),
             time: this.clock(d0.t), turns: d0.turns, filesN: files.length, plus: d0.plus, minus: d0.minus,
@@ -5465,7 +5465,7 @@
             checkFg: 'var(--color-accent-300)',
             threadCount: s.comments.filter(c => !c.resolved).length + ' open',
             summary: [
-              { text: 'Added a headless entrypoint with run, plan, epic, review and approve, sharing the same RPC the desktop app uses.' },
+              { text: 'Added a headless entrypoint with run, plan, milestone, review and approve, sharing the same RPC the desktop app uses.' },
               { text: 'Moved permission prompts behind a --yes flag so unattended runs cannot block forever.' },
               { text: 'Documented every command in docs/cli.md, with the exit codes.' },
               { text: 'Left the worktree pool alone — it needs its own task.' }
@@ -5521,7 +5521,7 @@
             { title: 'Expose planner conversation over the server API', state: 'Merged', err: '', time: '1h' },
             { title: 'Extend the planner backend to a multi-turn conversation', state: 'Merged', err: '', time: '1h' },
             { title: 'Cache the repo index between runs', state: 'Failed', err: 'verify failed: bun run typecheck', time: '2h' },
-            { title: 'Show token spend per epic', state: 'Merged', err: '', time: '3h' },
+            { title: 'Show token spend per milestone', state: 'Merged', err: '', time: '3h' },
             { title: 'Debounce the file watcher on large repos', state: 'Merged', err: '', time: '4h' },
             { title: 'Prune worktrees older than a day', state: 'Merged', err: '', time: '5h' },
             { title: 'Session log export', state: 'Failed', err: 'verify failed: bun run lint', time: '6h' },
@@ -5550,7 +5550,7 @@
           });
 
           const allTasks = [];
-          epicsData.forEach(e => e.tasks.forEach(t => allTasks.push(t)));
+          milestonesData.forEach(e => e.tasks.forEach(t => allTasks.push(t)));
           const colDefs = [
             { label: 'Blocked', match: ['Blocked'], color: 'var(--color-neutral-700)' },
             { label: 'Ready', match: ['Ready'], color: 'var(--color-neutral-400)' },
@@ -5568,7 +5568,7 @@
             const cards = allTasks.filter(t => c.match.indexOf(t.stateLabel) >= 0).map(card);
             return { label: c.label, count: cards.length, color: c.color, cards: cards, headFg: c.urgent && cards.length ? this.mix('var(--st-wait)', 85) : dim };
           });
-          const lanes = epicsData.map(e => ({
+          const lanes = milestonesData.map(e => ({
             id: e.id, title: e.title, pctW: e.pctW, done: e.done, total: e.total,
             hasReady: e.hasReady, dispatchLabel: e.dispatchLabel, dispatch: e.dispatch,
             pulseFg: e.pulseFg, pulseLabel: e.pulseLabel,
@@ -5579,13 +5579,13 @@
           }));
 
           const milestones = [
-            { title: 'Dispatch v0.1 — usable on my own repo', date: 'Aug 4', epics: 'e-4471aa · e-9021cd', done: 14, total: 19, state: 'On track', risk: '' },
-            { title: 'Conversational planning', date: 'Aug 11', epics: 'e-359627', done: 2, total: 6, state: 'At risk', risk: 'Two tasks in this milestone have been waiting on you for over ten minutes.' },
-            { title: 'Multi-repo support', date: 'Sep 1', epics: 'not scoped yet', done: 0, total: 4, state: 'Not started', risk: '' }
+            { title: 'Dispatch v0.1 — usable on my own repo', date: 'Aug 4', milestones: 'e-4471aa · e-9021cd', done: 14, total: 19, state: 'On track', risk: '' },
+            { title: 'Conversational planning', date: 'Aug 11', milestones: 'e-359627', done: 2, total: 6, state: 'At risk', risk: 'Two tasks in this milestone have been waiting on you for over ten minutes.' },
+            { title: 'Multi-repo support', date: 'Sep 1', milestones: 'not scoped yet', done: 0, total: 4, state: 'Not started', risk: '' }
           ].map(m => {
             const risky = m.state === 'At risk';
             return {
-              title: m.title, date: m.date, epics: m.epics, done: m.done, total: m.total, state: m.state,
+              title: m.title, date: m.date, milestones: m.milestones, done: m.done, total: m.total, state: m.state,
               pctW: Math.round(m.done / m.total * 100) + '%',
               bg: risky ? this.mix('var(--st-wait)', 8) : 'transparent',
               edge: risky ? this.mix('var(--st-wait)', 26) : 'var(--line)',
@@ -5612,7 +5612,7 @@
             { id: 'r-4b0606', title: 'Add a conversational thread to the Plans view', model: 'sonnet-4.6', turns: 31, tokens: '142k', len: '33m', state: 'Failed' },
             { id: 'r-b1d725', title: 'Runs session chat box should auto scroll to the bottom', model: 'sonnet-4.6', turns: 14, tokens: '61k', len: '3m', state: 'Running' },
             { id: 'r-75a646', title: 'Build a full-page, describe-what-you-want task creator', model: 'opus-4.6', turns: 22, tokens: '208k', len: '18m', state: 'Waiting' },
-            { id: 'r-c11ea0', title: 'Headless dispatcher CLI: run, plan, epic, review, approve', model: 'opus-4.6', turns: 41, tokens: '386k', len: '1h 11m', state: 'Finished' },
+            { id: 'r-c11ea0', title: 'Headless dispatcher CLI: run, plan, milestone, review, approve', model: 'opus-4.6', turns: 41, tokens: '386k', len: '1h 11m', state: 'Finished' },
             { id: 'r-9ad3f2', title: 'Extend the planner backend to a multi-turn conversation', model: 'sonnet-4.6', turns: 18, tokens: '96k', len: '48m', state: 'Finished' },
             { id: 'r-2ef880', title: 'Cache the repo index between runs', model: 'sonnet-4.6', turns: 7, tokens: '38k', len: '9m', state: 'Killed' },
             { id: 'r-6cd104', title: 'Expose planner conversation over the server API', model: 'sonnet-4.6', turns: 12, tokens: '74k', len: '21m', state: 'Finished' },
@@ -5625,19 +5625,19 @@
           }));
 
           const idx = [];
-          epicsData.forEach(e => e.tasks.forEach(t => idx.push(Object.assign({}, t, { epicTitle: e.title, epicId: e.id }))));
+          milestonesData.forEach(e => e.tasks.forEach(t => idx.push(Object.assign({}, t, { milestoneTitle: e.title, milestoneId: e.id }))));
           const readyAll = idx.filter(t => t.canStart);
           const selTasks = idx.filter(t => s.sel.indexOf(t.id) >= 0);
           const selReady = selTasks.filter(t => t.canStart);
-          const dlgEpic = s.dispatchEpic;
-          const dlgList = dlgEpic === 'all' ? readyAll : readyAll.filter(t => t.epicId === dlgEpic);
+          const dlgMilestone = s.dispatchMilestone;
+          const dlgList = dlgMilestone === 'all' ? readyAll : readyAll.filter(t => t.milestoneId === dlgMilestone);
           const cap = 8;
           const runningNow = A.filter(a => a.st === 'work').length;
           const willStart = Math.min(dlgList.length, Math.max(0, cap - runningNow));
           const openT = idx.filter(t => t.id === s.openTask)[0];
           const td = openT ? {
             id: openT.id, title: openT.title, stateLabel: openT.stateLabel, color: openT.color,
-            epicTitle: openT.epicTitle, pri: openT.pri, priIcon: openT.priIcon, priFg: openT.priFg, label: openT.label,
+            milestoneTitle: openT.milestoneTitle, pri: openT.pri, priIcon: openT.priIcon, priFg: openT.priFg, label: openT.label,
             canStart: openT.canStart, model: s.model,
             desc: [
               { text: 'The merge queue holds a blocked entry instead of failing it into history when the checkout is not mergeable — a dirty tree, a staged index, or the wrong branch. The entry stays in line with a reason naming the offending paths.' },
@@ -5667,7 +5667,7 @@
             hasAgent: !openT.canStart && openT.stateLabel !== 'Blocked' && openT.stateLabel !== 'Done',
             watch: () => this.setState({ screen: 'detail', focus: openT.id, openTask: '' }),
             close: () => this.setState({ openTask: '' }),
-            dispatch: () => this.startAgents([{ id: openT.id, title: openT.title, epic: openT.epicTitle }])
+            dispatch: () => this.startAgents([{ id: openT.id, title: openT.title, milestone: openT.milestoneTitle }])
           } : null;
 
           const KIND = { bug: 'var(--st-fail)', idea: 'var(--color-accent)', task: 'var(--st-ok)', note: 'var(--color-neutral-400)' };
@@ -5701,7 +5701,7 @@
             dumpToPlan: () => this.setState({ screen: 'plan', planText: s.dumpText || s.dumpItems.map(x => x.text).join('. ') }),
             hasSel: selN > 0, selLabel: selN + ' selected',
             batchTasks: () => this.convert(s.dumpSel),
-            batchEpic: () => this.setState({ screen: 'plan', planText: s.dumpItems.filter(x => s.dumpSel.indexOf(x.id) >= 0).map(x => x.text).join('. ') }),
+            batchMilestone: () => this.setState({ screen: 'plan', planText: s.dumpItems.filter(x => s.dumpSel.indexOf(x.id) >= 0).map(x => x.text).join('. ') }),
             batchDismiss: () => this.setState(st => ({ dumpItems: st.dumpItems.filter(x => st.dumpSel.indexOf(x.id) < 0), dumpSel: [] })),
             clearSel: () => this.setState({ dumpSel: [] }),
             hasCluster: clusterIds.length > 1, clusterN: clusterIds.length,
@@ -5779,27 +5779,27 @@
             setSteer: e => this.setState({ steer: e.target.value }),
             sendSteer: e => { if (e.key === 'Enter') this.pushSteer(); },
             sendSteerClick: () => this.pushSteer(),
-            epics: epicsData, tasksSummary: readyN + ' ready · ' + blockedN + ' blocked · ' + n('work') + ' running',
+            milestones: milestonesData, tasksSummary: readyN + ' ready · ' + blockedN + ' blocked · ' + n('work') + ' running',
             hasReadyAll: readyAll.length > 0,
             dispatchAllLabel: 'Dispatch ' + readyAll.length + ' ready',
-            dispatchAll: () => this.setState({ dispatchEpic: 'all' }),
+            dispatchAll: () => this.setState({ dispatchMilestone: 'all' }),
             hasTaskSel: s.sel.length > 0,
             taskSelLabel: s.sel.length + ' selected',
             bulkDispatchLabel: 'Send agents at ' + selReady.length,
-            bulkDispatch: () => this.startAgents(selReady.map(t => ({ id: t.id, title: t.title, epic: t.epicTitle }))),
+            bulkDispatch: () => this.startAgents(selReady.map(t => ({ id: t.id, title: t.title, milestone: t.milestoneTitle }))),
             bulkClear: () => this.setState({ sel: [] }),
-            dlgOpen: !!dlgEpic,
-            dlgTitle: dlgEpic === 'all' ? 'Send agents at everything that is ready' : 'Send agents at this epic',
+            dlgOpen: !!dlgMilestone,
+            dlgTitle: dlgMilestone === 'all' ? 'Send agents at everything that is ready' : 'Send agents at this milestone',
             dlgTasks: dlgList.map((t, i) => ({
-              id: t.id, title: t.title, epic: t.epicTitle,
+              id: t.id, title: t.title, milestone: t.milestoneTitle,
               fg: i < willStart ? 'var(--color-text)' : dim,
               badge: i < willStart ? 'starts now' : 'queued',
               badgeFg: i < willStart ? 'var(--color-accent-300)' : dim
             })),
             dlgNote: runningNow + ' of ' + cap + ' slots are busy, so ' + willStart + ' start now and the rest queue.',
             dlgConfirmLabel: 'Dispatch ' + dlgList.length,
-            dlgConfirm: () => this.startAgents(dlgList.map(t => ({ id: t.id, title: t.title, epic: t.epicTitle }))),
-            dlgCancel: () => this.setState({ dispatchEpic: '' }),
+            dlgConfirm: () => this.startAgents(dlgList.map(t => ({ id: t.id, title: t.title, milestone: t.milestoneTitle }))),
+            dlgCancel: () => this.setState({ dispatchMilestone: '' }),
             td: td, taskOpen: !!td,
             noteDraft2: s.noteDraft2, setNote2: e => this.setState({ noteDraft2: e.target.value }),
             queueSummary: queue.length + ' in the queue · tests run before anything lands',
@@ -5807,7 +5807,7 @@
             planHint: s.planText.length ? s.planText.length + ' characters' : 'The planner reads your repo before it answers.',
             planBtn: s.planStage === 'thinking' ? 'Planning…' : 'Plan work',
             planThinking: s.planStage === 'thinking', planDone: s.planStage === 'done', planStream: s.planStream,
-            draftEpic: 'Conversational planning and natural-language task creation',
+            draftMilestone: 'Conversational planning and natural-language task creation',
             approveLabel: 'Approve ' + (5 - s.draftOff.length) + ' tasks',
             runPlan: () => this.setState({ planStage: 'thinking', planStream: '', planText: s.planText || 'I need to talk to the planner agent instead of one-shotting it, and I want notes to turn into tasks without retyping them.' }),
             resetPlan: () => this.setState({ planStage: 'idle', planStream: '', draftOff: [] }),
@@ -5816,12 +5816,12 @@
         }
 
         startAgents(list) {
-          if (!list.length) { this.setState({ dispatchEpic: '', sel: [] }); return; }
+          if (!list.length) { this.setState({ dispatchMilestone: '', sel: [] }); return; }
           const acts = ['opening a worktree', 'reading the task', 'planning the change', 'writing the first test'];
           this.setState(s => ({
-            dispatchEpic: '', sel: [], openTask: '', screen: 'control',
+            dispatchMilestone: '', sel: [], openTask: '', screen: 'control',
             agents: s.agents.concat(list.map((x, i) => ({
-              id: x.id, title: x.title, epic: x.epic, tag: 'new', st: 'work',
+              id: x.id, title: x.title, milestone: x.milestone, tag: 'new', st: 'work',
               t: 0, pct: 1 + i, turns: 1, plus: 0, minus: 0, acts: acts
             })))
           }));
@@ -5859,7 +5859,7 @@
           this.setState(s => ({ steer: '', lines: s.lines.concat([{ tag: 'you', text: v, kind: 'you' }]) }));
         }
 
-        epicList() {
+        milestoneList() {
           const s = this.state, dim = 'var(--dim)', dim2 = 'var(--dim2)';
           const COL = { work: 'var(--st-work)', wait: 'var(--st-wait)', fail: 'var(--st-fail)', review: 'var(--st-ok)', land: 'var(--st-land)', ready: 'var(--color-neutral-400)', blocked: 'var(--color-neutral-700)', done: 'var(--st-ok)' };
           const LBL = { work: 'Working', wait: 'Waiting on you', fail: 'Failed', review: 'Needs review', land: 'Landing', ready: 'Ready', blocked: 'Blocked', done: 'Done' };
@@ -5872,13 +5872,13 @@
               { id: 't-4a8cce', title: 'Auto-generate a task from a triage note', meta: '' },
               { id: 't-c8954b', title: 'Extend the planner backend from one-shot to multi-turn', meta: '' },
               { id: 't-df3a1e', title: 'Expose planner conversation over the server API and client SDK', meta: '' },
-              { id: 't-bceb06', title: 'Epic progress does not count tasks that were split', stateKey: 'blocked', meta: 'blocked by t-8e5196' }
+              { id: 't-bceb06', title: 'Milestone progress does not count tasks that were split', stateKey: 'blocked', meta: 'blocked by t-8e5196' }
             ] },
             { id: 'e-4471aa', title: 'Ship Dispatch v0.1', tasks: [
               { id: 't-1b0325', title: 'Runs session chat box should auto scroll to the bottom', meta: '' },
               { id: 't-d6ee2c', title: 'Wire a Retry button for merge-queue entries blocked on checkout', meta: '' },
               { id: 't-364075', title: 'Fix the blank page when diffs are opened mid-run', meta: '' },
-              { id: 't-a2c062', title: 'Headless dispatcher CLI: run, plan, epic, review, approve', meta: '' },
+              { id: 't-a2c062', title: 'Headless dispatcher CLI: run, plan, milestone, review, approve', meta: '' },
               { id: 't-77bb01', title: 'Package the app as a signed Mac build', stateKey: 'ready', meta: 'unblocked 20m ago' },
               { id: 't-5dfaf6', title: 'Real-agent end-to-end validation of the headless path', stateKey: 'done', meta: 'landed 6d ago' }
             ] },
@@ -5918,7 +5918,7 @@
                 stateKey: key,
                 pulse: key === 'work' || key === 'land' ? 'breathe 2.2s ease-in-out infinite' : 'none',
                 canStart: key === 'ready',
-                start: ev => { ev.stopPropagation(); this.setState(st => ({ screen: 'control', agents: st.agents.concat([{ id: t.id, title: t.title, epic: e.title, tag: 'new', st: 'work', t: 0, pct: 1, turns: 1, plus: 0, minus: 0, acts: ['reading the task', 'planning the change', 'opening a worktree'] }]) })); },
+                start: ev => { ev.stopPropagation(); this.setState(st => ({ screen: 'control', agents: st.agents.concat([{ id: t.id, title: t.title, milestone: e.title, tag: 'new', st: 'work', t: 0, pct: 1, turns: 1, plus: 0, minus: 0, acts: ['reading the task', 'planning the change', 'opening a worktree'] }]) })); },
                 open: () => this.setState({ openTask: t.id })
               };
             });
@@ -5931,7 +5931,7 @@
               pctW: Math.round(done / tasks.length * 100) + '%',
               readyN: readyN, hasReady: readyN > 0,
               dispatchLabel: 'Dispatch ' + readyN + ' ready',
-              dispatch: ev => { ev.stopPropagation(); this.setState({ dispatchEpic: e.id }); },
+              dispatch: ev => { ev.stopPropagation(); this.setState({ dispatchMilestone: e.id }); },
               pulseFg: needN ? this.mix('var(--st-wait)', 90) : (runN ? 'var(--color-accent-300)' : dim),
               pulseLabel: needN ? needN + ' need you' : (runN ? runN + ' running' : (readyN ? readyN + ' ready' : 'nothing running'))
             };

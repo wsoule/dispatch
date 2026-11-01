@@ -3,9 +3,9 @@ import { defaultTaskFields } from '@dispatch-foo/core/browser';
 import type {
   ConnectEventsOptions,
   Delivery,
-  EpicProgress,
-  EpicSessionOptions,
   Message,
+  MilestoneProgress,
+  MilestoneSessionOptions,
   ReplyInput,
   RunMeta,
   SendInput,
@@ -83,12 +83,12 @@ let mailboxFixture: { delivery: unknown; message: Message }[] = [];
 // The deliveries the daemon reports for the next sends.
 let sendDeliveriesFixture: Partial<Delivery>[] = [];
 
-// The bulk epic-progress listing the daemon returns, how many times it was
-// asked for, and every `startEpic` body the hook sent — the fan-out tests
+// The bulk milestone-progress listing the daemon returns, how many times it was
+// asked for, and every `startMilestone` body the hook sent — the fan-out tests
 // below read these.
-let epicProgressFixture: EpicProgress[] = [];
-let epicProgressFetches = 0;
-const epicStarts: [string, EpicSessionOptions | undefined][] = [];
+let milestoneProgressFixture: MilestoneProgress[] = [];
+let milestoneProgressFetches = 0;
+const milestoneStarts: [string, MilestoneSessionOptions | undefined][] = [];
 
 // The daemon's task list and per-task docs, for the `task.changed` tests. The
 // list rejects until a test opts in, so the others keep seeding it by hand.
@@ -115,6 +115,11 @@ const taskUpdates: [string, object][] = [];
 // What `createRun` answers; a test swaps in a held or refused promise.
 let createRunResult: () => Promise<RunMeta> = () =>
   Promise.reject(new Error('no runs in this test'));
+
+// The Linear status the daemon reports (null rejects the read), and how often
+// each Linear detail was fetched.
+let linearStatusFixture: object | null = null;
+const linearFetches = { coverage: 0, capacity: 0, preview: 0 };
 
 // Only `createApiClient` is replaced — the rest of the module (ApiError, which
 // useOverseerSession's 404 veto instanceof-checks) has to stay real.
@@ -218,14 +223,14 @@ void mock.module('@dispatch/client', () => ({
         downgraded: false,
       });
     },
-    fetchAllEpicProgress: () => {
-      epicProgressFetches += 1;
-      return Promise.resolve(epicProgressFixture);
+    fetchAllMilestoneProgress: () => {
+      milestoneProgressFetches += 1;
+      return Promise.resolve(milestoneProgressFixture);
     },
-    startEpic: (epicId: string, opts?: EpicSessionOptions) => {
-      epicStarts.push([epicId, opts]);
+    startMilestone: (milestoneId: string, opts?: MilestoneSessionOptions) => {
+      milestoneStarts.push([milestoneId, opts]);
       return Promise.resolve({
-        epicId,
+        milestoneId,
         concurrency: opts?.concurrency ?? 1,
         executor: 'claude',
         state: 'active',
@@ -249,9 +254,26 @@ void mock.module('@dispatch/client', () => ({
         createdAt: '2026-09-20T00:00:00Z',
         updatedAt: '2026-09-20T00:00:00Z',
       }),
-    confirmPlan: () => Promise.resolve({ epicId: 'e-1', taskIds: ['t-1'] }),
+    confirmPlan: () =>
+      Promise.resolve({ milestoneId: 'e-1', taskIds: ['t-1'] }),
     fetchLiveWork: () =>
       Promise.resolve({ busy: ['1 terminal'], parked: 1, waiting: 2 }),
+    fetchLinearStatus: () =>
+      linearStatusFixture === null
+        ? Promise.reject(new Error('no Linear status in this test'))
+        : Promise.resolve(linearStatusFixture),
+    fetchLinearCoverage: () => {
+      linearFetches.coverage += 1;
+      return Promise.resolve({ total: 1, linked: 0, unlinked: [] });
+    },
+    fetchLinearCapacity: () => {
+      linearFetches.capacity += 1;
+      return Promise.resolve({ teams: [], active: 3, limit: 250 });
+    },
+    previewLinearExport: () => {
+      linearFetches.preview += 1;
+      return Promise.resolve({ open: 1, all: 1, allArchiveFinished: 1 });
+    },
     fetchWhoami: () =>
       whoamiFixture === null
         ? Promise.reject(new Error('dispatchd is still starting'))
@@ -842,7 +864,7 @@ test('a loose task changing refetches only that task', async () => {
   });
   taskListFetches = 0;
   configFetches = 0;
-  epicProgressFetches = 0;
+  milestoneProgressFetches = 0;
   taskDocs.set('t-1', {
     ...taskDoc('t-1', 'Started', '2026-01-02T00:00:00.000Z'),
     meta: {
@@ -860,7 +882,7 @@ test('a loose task changing refetches only that task', async () => {
   await new Promise((r) => setTimeout(r, 400));
   expect(taskListFetches).toBe(0);
   expect(configFetches).toBe(0);
-  expect(epicProgressFetches).toBe(0);
+  expect(milestoneProgressFetches).toBe(0);
   expect(
     queryClient.getQueryCache().find({ queryKey: ['dispatch-ready-tasks'] })
   ).toBeUndefined();
@@ -1074,7 +1096,7 @@ test('a reconnect judges readiness again after an unjudged answer', async () => 
 
 // Every list row takes the containers. A new copy on each task change (the dispatch's
 // overlay, a patch) redrew every row, though no container had changed.
-test('epics keep their identity while no container changes', async () => {
+test('milestones keep their identity while no container changes', async () => {
   configFixture = {
     statuses: ['draft', 'ready', 'working', 'review', 'landed', 'dropped'],
     notifications: { kinds: null },
@@ -1098,8 +1120,8 @@ test('epics keep their identity while no container changes', async () => {
   await waitFor(() => {
     expect(result.current.readyIds.has('t-1')).toBe(true);
   });
-  const epics = result.current.epics;
-  expect(epics.map((t) => t.meta.id)).toEqual(['t-parent']);
+  const milestones = result.current.milestones;
+  expect(milestones.map((t) => t.meta.id)).toEqual(['t-parent']);
 
   createRunResult = () => new Promise(() => {});
   act(() => {
@@ -1108,7 +1130,7 @@ test('epics keep their identity while no container changes', async () => {
     });
   });
   expect(result.current.readyIds.has('t-1')).toBe(false);
-  expect(result.current.epics).toBe(epics);
+  expect(result.current.milestones).toBe(milestones);
 
   taskDocs.set('t-1', taskDoc('t-1', 'Renamed', '2026-01-02T00:00:00.000Z'));
   act(() => {
@@ -1119,7 +1141,7 @@ test('epics keep their identity while no container changes', async () => {
       result.current.tasks.find((t) => t.meta.id === 't-1')?.meta.title
     ).toBe('Renamed');
   });
-  expect(result.current.epics).toBe(epics);
+  expect(result.current.milestones).toBe(milestones);
   taskDocs.clear();
   taskListFixture = null;
   configFixture = null;
@@ -1839,9 +1861,9 @@ test('a run live on open shows the step its record carries, until run.log says m
   runsFixture = [];
 });
 
-function epicProgressFixtureFor(epicId: string): EpicProgress {
+function milestoneProgressFixtureFor(milestoneId: string): MilestoneProgress {
   return {
-    epicId,
+    milestoneId,
     active: false,
     session: null,
     spend: {
@@ -1858,11 +1880,11 @@ function epicProgressFixtureFor(epicId: string): EpicProgress {
   };
 }
 
-// Mounts the hook against `epics` worth of progress and waits for the bulk
+// Mounts the hook against `milestones` worth of progress and waits for the bulk
 // listing to land, returning the query client and the hook's live result.
-async function mountWithEpics(epics: string[]) {
-  epicProgressFixture = epics.map(epicProgressFixtureFor);
-  epicProgressFetches = 0;
+async function mountWithMilestones(milestones: string[]) {
+  milestoneProgressFixture = milestones.map(milestoneProgressFixtureFor);
+  milestoneProgressFetches = 0;
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -1871,49 +1893,53 @@ async function mountWithEpics(epics: string[]) {
     { wrapper: wrapper(queryClient) }
   );
   await waitFor(() => {
-    expect(rendered.result.current.epicProgressById.size).toBe(epics.length);
+    expect(rendered.result.current.milestoneProgressById.size).toBe(
+      milestones.length
+    );
   });
   return { queryClient, result: rendered.result };
 }
 
 // A fan-out of dozens of milestones used to be a burst of dozens of progress
 // GETs on every run change; the hook now asks once for all of them.
-test('three epics are filled from a single bulk progress fetch', async () => {
-  const { result } = await mountWithEpics(['e-1', 'e-2', 'e-3']);
+test('three milestones are filled from a single bulk progress fetch', async () => {
+  const { result } = await mountWithMilestones(['e-1', 'e-2', 'e-3']);
 
-  expect(epicProgressFetches).toBe(1);
-  expect([...result.current.epicProgressById.keys()].sort()).toEqual([
+  expect(milestoneProgressFetches).toBe(1);
+  expect([...result.current.milestoneProgressById.keys()].sort()).toEqual([
     'e-1',
     'e-2',
     'e-3',
   ]);
-  expect(result.current.epicProgressById.get('e-2')?.epicId).toBe('e-2');
-  epicProgressFixture = [];
+  expect(result.current.milestoneProgressById.get('e-2')?.milestoneId).toBe(
+    'e-2'
+  );
+  milestoneProgressFixture = [];
 });
 
-test('a burst of epic and run events refetches progress once', async () => {
-  await mountWithEpics(['e-1']);
-  epicProgressFetches = 0;
+test('a burst of milestone and run events refetches progress once', async () => {
+  await mountWithMilestones(['e-1']);
+  milestoneProgressFetches = 0;
 
   act(() => {
-    sink?.onEvent({ type: 'epic.changed', epicId: 'e-1' });
+    sink?.onEvent({ type: 'milestone.changed', milestoneId: 'e-1' });
     sink?.onEvent({ type: 'run.changed' });
-    sink?.onEvent({ type: 'epic.changed', epicId: 'e-1' });
+    sink?.onEvent({ type: 'milestone.changed', milestoneId: 'e-1' });
   });
 
   await waitFor(() => {
-    expect(epicProgressFetches).toBe(1);
+    expect(milestoneProgressFetches).toBe(1);
   });
   await new Promise((r) => setTimeout(r, 400));
-  expect(epicProgressFetches).toBe(1);
-  epicProgressFixture = [];
+  expect(milestoneProgressFetches).toBe(1);
+  milestoneProgressFixture = [];
 });
 
 // The paused row is worded from the event's own numbers and the cached task
 // title, so it lands before (and regardless of) the progress refetch the same
 // frame triggers.
-test('epic.paused records a durable inbox row from the event alone', async () => {
-  const { queryClient, result } = await mountWithEpics(['e-1']);
+test('milestone.paused records a durable inbox row from the event alone', async () => {
+  const { queryClient, result } = await mountWithMilestones(['e-1']);
   queryClient.setQueryData(
     ['dispatch-tasks', PORT],
     [
@@ -1921,7 +1947,7 @@ test('epic.paused records a durable inbox row from the event alone', async () =>
         meta: {
           id: 'e-1',
           title: 'Auth rewrite',
-          kind: 'epic',
+          kind: 'milestone',
           blockedBy: [],
         },
       } as unknown as TaskListItem,
@@ -1931,8 +1957,8 @@ test('epic.paused records a durable inbox row from the event alone', async () =>
 
   act(() => {
     sink?.onEvent({
-      type: 'epic.paused',
-      epicId: 'e-1',
+      type: 'milestone.paused',
+      milestoneId: 'e-1',
       reason: 'budget',
       settledUsd: 41.2,
       estimatedLiveUsd: 30,
@@ -1949,28 +1975,118 @@ test('epic.paused records a durable inbox row from the event alone', async () =>
   );
   expect(row?.target).toEqual({ kind: 'task', taskId: 'e-1' });
   expect(row?.read).toBe(false);
-  epicProgressFixture = [];
+  milestoneProgressFixture = [];
 });
 
-// Both the pre-fan-out number form and the options form reach `startEpic`;
+// Both the pre-fan-out number form and the options form reach `startMilestone`;
 // the number is `{ concurrency }` with no ceilings, the options pass through.
-test('handleWorkEpic forwards a bare concurrency and a full options body', async () => {
-  const { result } = await mountWithEpics(['e-1']);
-  epicStarts.length = 0;
+test('handleWorkMilestone forwards a bare concurrency and a full options body', async () => {
+  const { result } = await mountWithMilestones(['e-1']);
+  milestoneStarts.length = 0;
 
   await act(async () => {
-    await result.current.handleWorkEpic('e-1', 3);
+    await result.current.handleWorkMilestone('e-1', 3);
   });
   await act(async () => {
-    await result.current.handleWorkEpic('e-1', {
+    await result.current.handleWorkMilestone('e-1', {
       concurrency: 3,
       maxSpendUsd: 60,
     });
   });
 
-  expect(epicStarts).toEqual([
+  expect(milestoneStarts).toEqual([
     ['e-1', { concurrency: 3, maxSpendUsd: undefined, maxRuns: undefined }],
     ['e-1', { concurrency: 3, maxSpendUsd: 60, maxRuns: undefined }],
   ]);
-  epicProgressFixture = [];
+  milestoneProgressFixture = [];
+});
+
+// Capacity walks the workspace's issues in Linear, so nothing fetches it, or
+// coverage and the export preview, until a view asks; a pass refreshes them
+// only while one still does.
+test('Linear coverage and capacity are fetched only while a view watches them', async () => {
+  linearStatusFixture = { connected: true, teamId: 'team-1' };
+  taskListFixture = [
+    { meta: taskDoc('t-1', 'Before', '2026-01-01T00:00:00.000Z').meta },
+  ];
+  linearFetches.coverage = 0;
+  linearFetches.capacity = 0;
+  linearFetches.preview = 0;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(result.current.linearStatus).not.toBeNull();
+  });
+  expect(linearFetches).toEqual({ coverage: 0, capacity: 0, preview: 0 });
+
+  let release = () => {};
+  act(() => {
+    release = result.current.watchLinearDetails();
+  });
+  await waitFor(() => {
+    expect(result.current.linearCapacity).not.toBeNull();
+    expect(result.current.linearCoverage).not.toBeNull();
+    expect(result.current.linearExportPreview).not.toBeNull();
+  });
+  expect(linearFetches).toEqual({ coverage: 1, capacity: 1, preview: 1 });
+
+  const summary = {
+    at: '2026-01-01T00:00:00.000Z',
+    pulled: 1,
+    pushed: 0,
+    created: 0,
+    createdIssues: 0,
+    conflicts: 0,
+    errors: [],
+    rateLimited: false,
+  };
+  act(() => {
+    sink?.onEvent({ type: 'linear.changed', summary });
+  });
+  await waitFor(() => {
+    expect(linearFetches).toEqual({ coverage: 2, capacity: 2, preview: 2 });
+  });
+
+  act(() => release());
+  act(() => {
+    sink?.onEvent({ type: 'linear.changed', summary });
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(linearFetches).toEqual({ coverage: 2, capacity: 2, preview: 2 });
+  linearStatusFixture = null;
+  taskListFixture = null;
+});
+
+// An export the CLI started reports its progress here before any status
+// refetch: the window's own Export and Archive controls must wait on it.
+test('a bulk action started elsewhere reads as running from its first progress', async () => {
+  linearStatusFixture = { connected: true, teamId: 'team-1', running: null };
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(result.current.linearStatus).not.toBeNull();
+  });
+
+  act(() => {
+    sink?.onEvent({
+      type: 'linear.progress',
+      progress: { phase: 'creating', done: 0, total: 9, action: 'export' },
+    });
+  });
+
+  await waitFor(() => {
+    expect(result.current.linearStatus?.running?.action).toBe('export');
+  });
+  expect(result.current.linearStatus?.progress?.done).toBe(0);
+  linearStatusFixture = null;
 });

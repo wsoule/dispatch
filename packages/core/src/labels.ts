@@ -31,6 +31,11 @@ export function labelRef(label: {
     : `${label.group}/${label.name}`;
 }
 
+/** `labels` with exact repeats dropped, first occurrence kept, order kept. */
+export function uniqueLabels(labels: readonly string[]): string[] {
+  return [...new Set(labels)];
+}
+
 /** Why `value` is not a valid `labels:` entry, or null when it is. */
 export function labelDefinitionError(value: unknown): string | null {
   if (typeof value !== 'object' || value === null) return 'expected a map';

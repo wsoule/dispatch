@@ -178,7 +178,9 @@ export class SyncedTaskStore implements TaskStorePort {
   // capture runs after: a refusal there would leave the board changed but unsynced.
   private checkSize(input: object): void {
     if (this.signer?.active() !== true) return;
-    const hit = oversizedField(input as Record<string, unknown>);
-    if (hit !== null) throw new TaskTooLargeError(hit.field, hit.bytes);
+    this.signer.assertCanPublish();
+    const cap = this.signer.fieldCap();
+    const hit = oversizedField(input as Record<string, unknown>, cap);
+    if (hit !== null) throw new TaskTooLargeError(hit.field, hit.bytes, cap);
   }
 }

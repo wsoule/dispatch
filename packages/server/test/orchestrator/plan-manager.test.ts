@@ -60,7 +60,10 @@ async function startAndSettle(
 }
 
 const SAMPLE_PROPOSAL: PlanProposal = {
-  epic: { title: 'Ship the widget', description: 'Build the whole widget.' },
+  milestone: {
+    title: 'Ship the widget',
+    description: 'Build the whole widget.',
+  },
   tasks: [
     {
       title: 'Design the widget',
@@ -132,58 +135,58 @@ describe('PlanManager.startPlan / get', () => {
 });
 
 describe('PlanManager.confirm', () => {
-  it('writes the epic first, then tasks with parent + blockedBy wired from indices', async () => {
+  it('writes the milestone first, then tasks with parent + blockedBy wired from indices', async () => {
     const manager = makeManager(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
     const started = await startAndSettle(manager, 'build a widget feature');
     const result = manager.confirm(started.id, SAMPLE_PROPOSAL);
 
-    expect(result.epicId).toBeDefined();
+    expect(result.milestoneId).toBeDefined();
     expect(result.taskIds).toHaveLength(2);
 
-    const epic = store.get(result.epicId!);
-    expect(epic?.meta.kind).toBe('milestone');
-    expect(epic?.meta.status).toBe('ready');
-    expect(epic?.meta.title).toBe('Ship the widget');
+    const milestone = store.get(result.milestoneId!);
+    expect(milestone?.meta.kind).toBe('milestone');
+    expect(milestone?.meta.status).toBe('ready');
+    expect(milestone?.meta.title).toBe('Ship the widget');
 
     const [designId, implementId] = result.taskIds;
     const design = store.get(designId);
     const implement = store.get(implementId);
     expect(design?.meta.status).toBe('ready');
-    expect(design?.meta.parent).toBe(result.epicId);
+    expect(design?.meta.parent).toBe(result.milestoneId);
     expect(design?.meta.blockedBy).toEqual([]);
-    expect(implement?.meta.parent).toBe(result.epicId);
+    expect(implement?.meta.parent).toBe(result.milestoneId);
     expect(implement?.meta.blockedBy).toEqual([designId]);
     expect(implement?.meta.priority).toBe('medium');
     expect(implement?.body).toContain('Tests pass');
 
-    // The record and its list row remember the epic confirm() minted.
-    expect(manager.get(started.id).epicId).toBe(result.epicId);
-    expect(manager.list().find((r) => r.id === started.id)?.epicId).toBe(
-      result.epicId
+    // The record and its list row remember the milestone confirm() minted.
+    expect(manager.get(started.id).milestoneId).toBe(result.milestoneId);
+    expect(manager.list().find((r) => r.id === started.id)?.milestoneId).toBe(
+      result.milestoneId
     );
   });
 
-  it('leaves an epic Activity note when a confirmed task has no declared writes', async () => {
+  it('leaves a milestone Activity note when a confirmed task has no declared writes', async () => {
     const manager = makeManager(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
     const started = await startAndSettle(manager, 'build a widget feature');
     const result = manager.confirm(started.id, SAMPLE_PROPOSAL);
 
-    const epic = store.get(result.epicId!);
-    expect(epic?.body).toContain('undeclared writes');
-    // The hold is against every live run in the project, not just this epic's
-    // siblings — see epic.test.ts's "wait on any live claim, even a disjoint one".
-    expect(epic?.body).toContain('no run is live anywhere in the project');
+    const milestone = store.get(result.milestoneId!);
+    expect(milestone?.body).toContain('undeclared writes');
+    // The hold is against every live run in the project, not just this milestone's
+    // siblings — see milestone.test.ts's "wait on any live claim, even a disjoint one".
+    expect(milestone?.body).toContain('no run is live anywhere in the project');
   });
 
-  // A single-task epic is where "serialize" reads as vacuous, but the hold is
+  // A single-task milestone is where "serialize" reads as vacuous, but the hold is
   // project-wide, so that lone task still waits behind an unrelated run.
-  it('leaves the note on a single-task epic as well', async () => {
+  it('leaves the note on a single-task milestone as well', async () => {
     const proposal: PlanProposal = {
-      epic: { title: 'One thing', description: 'Just the one task.' },
+      milestone: { title: 'One thing', description: 'Just the one task.' },
       tasks: [
         {
           title: 'Touches who knows what',
@@ -198,7 +201,7 @@ describe('PlanManager.confirm', () => {
     const started = await startAndSettle(manager, 'do one thing');
     const result = manager.confirm(started.id, proposal);
 
-    expect(store.get(result.epicId!)?.body).toContain('undeclared writes');
+    expect(store.get(result.milestoneId!)?.body).toContain('undeclared writes');
   });
 
   it("carries a task's declared writes/risk onto its created TaskMeta", async () => {
@@ -226,7 +229,7 @@ describe('PlanManager.confirm', () => {
 
   it('leaves no undeclared-writes note when every task declares writes', async () => {
     const proposal: PlanProposal = {
-      epic: { title: 'Ship it', description: 'Two well-scoped tasks.' },
+      milestone: { title: 'Ship it', description: 'Two well-scoped tasks.' },
       tasks: [
         {
           title: 'A',
@@ -250,16 +253,16 @@ describe('PlanManager.confirm', () => {
     const started = await startAndSettle(manager, 'build two things');
     const result = manager.confirm(started.id, proposal);
 
-    const epic = store.get(result.epicId!);
-    expect(epic?.body).not.toContain('undeclared writes');
+    const milestone = store.get(result.milestoneId!);
+    expect(milestone?.body).not.toContain('undeclared writes');
   });
 
-  it('writes a flat task list with no epic when the proposal omits one', async () => {
+  it('writes a flat task list with no milestone when the proposal omits one', async () => {
     const proposal: PlanProposal = {
       tasks: [
         {
           title: 'Solo task',
-          description: 'No epic needed.',
+          description: 'No milestone needed.',
           acceptanceCriteria: [],
           blockedByIndices: [],
           priority: 'none',
@@ -270,10 +273,10 @@ describe('PlanManager.confirm', () => {
     const started = await startAndSettle(manager, 'small thing');
     const result = manager.confirm(started.id, proposal);
 
-    expect(result.epicId).toBeUndefined();
+    expect(result.milestoneId).toBeUndefined();
     const task = store.get(result.taskIds[0]);
     expect(task?.meta.parent).toBeNull();
-    expect(manager.get(started.id).epicId).toBeUndefined();
+    expect(manager.get(started.id).milestoneId).toBeUndefined();
     expect(manager.get(started.id).confirmedAt).toBeDefined();
   });
 
@@ -306,7 +309,7 @@ describe('PlanManager.confirm', () => {
       tasks: [
         {
           title: 'Edited solo task',
-          description: 'Client removed the epic and second task.',
+          description: 'Client removed the milestone and second task.',
           acceptanceCriteria: [],
           blockedByIndices: [],
           priority: 'low',
@@ -440,13 +443,17 @@ describe('PlanManager.confirm', () => {
     );
   });
 
-  it('ignores a client-supplied status field — tasks and epic are always created todo', async () => {
+  it('ignores a client-supplied status field — tasks and milestone are always created todo', async () => {
     const manager = makeManager(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
     const started = await startAndSettle(manager, 'build a widget feature');
     const withStatus = {
-      epic: { title: 'Sneaky epic', description: '', status: 'landed' },
+      milestone: {
+        title: 'Sneaky milestone',
+        description: '',
+        status: 'landed',
+      },
       tasks: [
         {
           title: 'Sneaky task',
@@ -459,7 +466,7 @@ describe('PlanManager.confirm', () => {
       ],
     };
     const result = manager.confirm(started.id, withStatus);
-    expect(store.get(result.epicId!)?.meta.status).toBe('ready');
+    expect(store.get(result.milestoneId!)?.meta.status).toBe('ready');
     expect(store.get(result.taskIds[0])?.meta.status).toBe('ready');
   });
 

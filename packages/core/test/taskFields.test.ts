@@ -116,10 +116,10 @@ CREATE TABLE tasks (
   risk TEXT NOT NULL, model TEXT, archived_at TEXT, exercised INTEGER NOT NULL,
   derived_from TEXT, attachments TEXT, slug TEXT NOT NULL, body TEXT NOT NULL
 );
-INSERT INTO tasks VALUES ('e-abc123', 'Old epic', 'ready', 'epic', NULL, NULL,
+INSERT INTO tasks VALUES ('e-abc123', 'Old milestone', 'ready', 'milestone', NULL, NULL,
   '[]', '[]', 'none', 'none', '2026-01-01T00:00:00.000Z',
   '2026-01-01T00:00:00.000Z', NULL, 1, NULL, '[]', 'routine', NULL, NULL, 0,
-  NULL, NULL, 'old-epic', '');
+  NULL, NULL, 'old-milestone', '');
 PRAGMA user_version = 2;
 `);
     v2.close();

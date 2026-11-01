@@ -6,6 +6,7 @@ import {
   isCompletedStatus,
   isContainerKind,
   isDoneStatus,
+  isReviewStatus,
   loadConfig,
   nextSubagentStatus,
   runSettings,
@@ -59,13 +60,12 @@ import type { LiveText } from '../liveText.js';
 import type { OperatorRouting } from '../messaging/operatorRouting.js';
 import { statusModelFor } from '../statuses.js';
 import { dirSizeBytes } from './dirSize.js';
-import {
-  EPIC_BRANCH_PREFIX,
-  epicBranchName,
-  isEpicBranch,
-} from './epicBranch.js';
-import { JjManager } from './jj.js';
 import { truncateReason } from './mergeQueue.js';
+import {
+  isMilestoneBranch,
+  MILESTONE_BRANCH_PREFIX,
+  milestoneBranchName,
+} from './milestoneBranch.js';
 import { collectOrientation } from './orientation.js';
 import type { RepoOrientation } from './orientation.js';
 import {
@@ -115,6 +115,7 @@ import type {
   RunSurvey,
 } from './types.js';
 import {
+  BOOT_FORCE_FAIL_ERROR,
   DEFAULT_EXECUTOR_PROFILE,
   MergeEnvironmentError,
   OrchestratorClientError,
@@ -123,11 +124,12 @@ import {
   runKind,
   runLineage,
   runOperator,
+  tasksWithFinishedRun,
   TERMINAL_RUN_STATES,
 } from './types.js';
 import type { RunUsage } from './usage.js';
 import type { DiffResult, FollowResult } from './worktree.js';
-import { WorktreeManager } from './worktree.js';
+import { StackBaseConflictError, WorktreeManager } from './worktree.js';
 
 /**
  * The slice of the database's evidence store the orchestrator writes to.
@@ -146,17 +148,11 @@ export interface OrchestratorContext {
   store: TaskStorePort;
   cache: TaskCache;
   events: EventBus;
-  // Optional override for the 2+-blocker stacked-dispatch path — the only
-  // path that mutates the user's actual repository. Production never passes
-  // it (a real JjManager is built below); tests inject one wired to a stub
-  // CommandRunner so that path can be exercised without a jj binary, which is
-  // otherwise structurally untestable.
-  jj?: JjManager;
   // The task's comment thread, also injected into dispatch prompts. Absent,
   // prompts carry no comments.
   comments?: CommentStorePort;
   // Where blocking rulings are read from (see blockedFindingReason). Defaults
-  // to one over `rootDir`, same pattern as `jj`.
+  // to one over `rootDir`.
   findingStore?: FindingStorePort;
   // The database's evidence tables, on the sqlite backend only; `null` (or
   // absent) on the file backend, where the run transcript is the only home
@@ -188,7 +184,7 @@ export interface OrchestratorContext {
   autoResumeQuietMs?: number;
   autoResumeMaxAttempts?: number;
   // The repo-map cache injected into run prompts (see taskBrief). Defaults
-  // to one over `rootDir`, same pattern as `jj`. A test that wants no
+  // to one over `rootDir`. A test that wants no
   // model call at all can pass one built with a stubbed generator.
   digestCache?: RepoDigestCache;
   // How the orchestrator shells out to delete a retired PR review's head ref
@@ -223,12 +219,6 @@ const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 // Minimum gap between opportunistic claims refreshes for one run — see
 // scheduleClaimsRefresh.
 const CLAIMS_REFRESH_COOLDOWN_MS = 5_000;
-
-// The reason stamped onto every run reconcileOnBoot force-fails. The run's
-// agent did nothing wrong — dispatchd lost track of it across a restart — and
-// the process itself survives a daemon restart, so it may still be working.
-export const BOOT_FORCE_FAIL_ERROR =
-  'dispatchd restarted while this run was in flight; the agent process may still be running';
 
 // Minimum gap between opportunistic orphan-work re-surveys for one run — see
 // scheduleOrphanRecheck. An orphaned agent commits on human timescales
@@ -275,12 +265,26 @@ const STATUS_RANK: Record<BranchEntryStatus, number> = {
   active: 3,
   // Integration branches sit below the run-shaped rows: they are context, not
   // work waiting on anyone.
-  epic: 4,
+  milestone: 4,
 };
 
 // `unref`d so a pending quiet window is never the reason a process stays
 // alive: the boot recovery sweep this serves is background work, and the
 // daemon's own server is what should be holding the event loop open.
+/**
+ * The branch a task with two or more unmerged blockers is cut from. The name
+ * is fixed per task so a re-dispatch or a restack rebuilds the same branch
+ * instead of leaving old ones behind.
+ */
+function stackBaseBranch(taskId: string): string {
+  return `dispatch/stack-base-${taskId}`;
+}
+
+// The commit message on a stack base, naming every blocker it combines.
+function stackBaseMessage(taskId: string, parents: readonly string[]): string {
+  return `dispatch: stack base for ${taskId} over ${parents.join(', ')}`;
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms).unref();
@@ -296,16 +300,16 @@ function branchEntryStatus(meta: RunMeta | undefined): BranchEntryStatus {
   return meta.reviewedAt === undefined ? 'reviewable' : 'leftover';
 }
 
-// What epicLandStatus() answers: the landing an epic's integration branch is
+// What milestoneLandStatus() answers: the landing a milestone's integration branch is
 // ready for, once every readiness gate has passed. `hasChanges` is what routes
 // the API between a PR (needs commits to PR) and the local close-out.
-export interface EpicLandStatus {
-  epicId: string;
-  /** The epic's integration branch, `epic/<id>`. */
+export interface MilestoneLandStatus {
+  milestoneId: string;
+  /** The milestone's integration branch, `milestone/<id>`. */
   branch: string;
   /** The default base branch the landing targets. */
   base: string;
-  /** The epic's title — the PR title / merge message. */
+  /** The milestone's title — the PR title / merge message. */
   title: string;
   /** Whether the branch carries any commits beyond the base at all. */
   hasChanges: boolean;
@@ -429,10 +433,6 @@ export class Orchestrator {
   private readonly prRefDeletes = new Map<string, Promise<void>>();
   private readonly runCommand: CommandRunner;
   private readonly worktrees: WorktreeManager;
-  // Only ever used on the multi-blocker dispatch path (see resolveBase):
-  // constructing it is inert — it shells out to jj lazily, per call — so an
-  // unblocked dispatch never touches jj at all.
-  private readonly jj: JjManager;
   private readonly findingStore: FindingStorePort;
   // The repo map injected into every run prompt (see taskBrief). Held on
   // the orchestrator rather than built per dispatch so its single-flight
@@ -442,7 +442,7 @@ export class Orchestrator {
   // Phase 5 P1: callbacks fired exactly once per run, right after it reaches
   // a terminal state AND every bit of bookkeeping that goes with that
   // (task status, Activity) has already landed — see fireTerminalHooks()'s
-  // call sites in handleFinish()/cancel(). The epic dispatch engine is the
+  // call sites in handleFinish()/cancel(). The milestone dispatch engine is the
   // one production subscriber today.
   private readonly terminalHooks: Array<(meta: RunMeta) => void> = [];
   // Phase 5 P1: callbacks fired whenever a run is reviewed — merge, discard,
@@ -450,7 +450,7 @@ export class Orchestrator {
   // have just moved to `done`. A run reaching a terminal state (finished/
   // failed/cancelled) only ever leaves its task at `in-review`
   // (handleFinish); readyTasks() in @dispatch-foo/core gates on a blocker being
-  // `done`/`cancelled`, so the epic engine needs this *second* seam — not
+  // `done`/`cancelled`, so the milestone engine needs this *second* seam — not
   // just onRunTerminal above — to know when a blocked sibling has actually
   // become dispatchable, since that only happens once a review action runs.
   private readonly reviewedHooks: Array<(meta: RunMeta) => void> = [];
@@ -543,7 +543,6 @@ export class Orchestrator {
 
   constructor(private readonly ctx: OrchestratorContext) {
     this.worktrees = new WorktreeManager(ctx.rootDir);
-    this.jj = ctx.jj ?? new JjManager(ctx.rootDir);
     this.findingStore = ctx.findingStore ?? new FindingStore(ctx.rootDir);
     this.digestCache = ctx.digestCache ?? new RepoDigestCache(ctx.rootDir);
     this.claimsRefreshCooldownMs =
@@ -557,7 +556,7 @@ export class Orchestrator {
 
   // Subscribes to "a run just reached a terminal state" — provisioning ->
   // running -> finished/failed/cancelled, exactly once per run. Returns an
-  // unsubscribe function. This is the clean, push-based seam the epic engine
+  // unsubscribe function. This is the clean, push-based seam the milestone engine
   // uses to know when a concurrency slot has freed up instead of polling
   // run state on a timer.
   // The project's status types and lifecycle roles, read per use so a config
@@ -889,7 +888,7 @@ export class Orchestrator {
     }
   }
 
-  // Every live run's current claims, for the epic scheduler. A terminal run
+  // Every live run's current claims, for the milestone scheduler. A terminal run
   // holds no claims — see TERMINAL_RUN_STATES. `dispatchedBy` rides along so a
   // teammate's dialog can see whose work a claim is, not just which run's.
   liveClaims(): {
@@ -935,7 +934,7 @@ export class Orchestrator {
   //   sharing a base pay once.
   // - `landsOn` on every finished run that is unreviewed or merged: 'origin'
   //   when Land pushes to origin (the project has a remote), 'local' when it
-  //   merges into the local base only (no remote, or an epic branch).
+  //   merges into the local base only (no remote, or a milestone branch).
   // - `release` on merged runs that reached origin: the newest release tag and
   //   whether it contains the merge, so "did it ship?" has an answer.
   decorateRunsWithPushed(runs: RunMeta[]): DecoratedRunMeta[] {
@@ -962,7 +961,7 @@ export class Orchestrator {
         run.reviewAction === 'merge' && run.mergeCommit !== undefined;
       if (run.reviewedAt !== undefined && !isMerged) return run;
       const landsOn =
-        hasOrigin && !isEpicBranch(run.baseBranch) ? 'origin' : 'local';
+        hasOrigin && !isMilestoneBranch(run.baseBranch) ? 'origin' : 'local';
       if (!isMerged) return { ...run, landsOn };
       const pushedToOrigin = isPushed(run.mergeCommit!, run.baseBranch);
       const tag = pushedToOrigin ? release?.(run.mergeCommit!) : undefined;
@@ -1014,7 +1013,7 @@ export class Orchestrator {
    * Merged runs whose work never reached origin although the project has
    * one: the split-brain of a squash that landed on the local base only (a
    * merge from before origin-first landings, or a push that failed). The
-   * newest merged run per task, epic bases excluded (those are local by
+   * newest merged run per task, milestone bases excluded (those are local by
    * design), archived runs excluded. The decision feed raises each as
    * "merged locally, not on GitHub yet" and the publish endpoint retries it.
    */
@@ -1027,7 +1026,8 @@ export class Orchestrator {
       if (!newest.has(run.taskId)) newest.set(run.taskId, run);
     }
     const candidates = [...newest.values()].filter(
-      (run) => run.archivedAt === undefined && !isEpicBranch(run.baseBranch)
+      (run) =>
+        run.archivedAt === undefined && !isMilestoneBranch(run.baseBranch)
     );
     if (candidates.length === 0 || !this.worktrees.hasOriginRemote()) {
       return [];
@@ -1147,7 +1147,7 @@ export class Orchestrator {
     executorName: string,
     // `actor` credits who caused this dispatch: omitted (the API's manual
     // dispatch) defaults to the daemon's human, but an automatic caller
-    // (EpicEngine's auto-fill) passes 'none' explicitly — no human pressed
+    // (MilestoneEngine's auto-fill) passes 'none' explicitly — no human pressed
     // dispatch for that specific task. `operator` is who the run acts for;
     // absent means no one, never the actor or the daemon's human.
     // `dispatchedBy` names whom the run is for when the actor is nobody: a
@@ -1541,26 +1541,31 @@ export class Orchestrator {
    *
    * Only `in-review` blockers matter here: a done/cancelled blocker's work is
    * already in the base branch, and an `in-progress` blocker means the task
-   * isn't dispatchable at all (see core's dispatchableTasks).
+   * isn't dispatchable at all (see core's dispatchableTasks). Where review
+   * shares the dispatched status, a blocker is in review only once its latest
+   * run has ended.
    *
-   * Two or more unmerged blockers need a base containing all of their work,
-   * which only jj can express (`jj new -r A -r B`). When jj isn't available
-   * there is no correct base to pick, so the dispatch is REFUSED (spec §4.6):
-   * the task waits, exactly as it did before stacking existed, and is retried
-   * on the next fill. Dispatching it against the default base instead would be
-   * strictly worse than today's behavior — the agent would see neither
-   * blocker's work, and with no `stackParents` recorded the run would never be
-   * restacked and never be flagged.
+   * Two or more unmerged blockers need a base containing all of their work:
+   * `dispatch/stack-base-<task>`, one merge commit over every blocker's branch
+   * (see WorktreeManager.buildStackBase). When the blockers conflict with each
+   * other there is no correct base to pick, so the dispatch is REFUSED: the
+   * task waits and is retried on the next fill, and once the blockers merge
+   * it is cut from the default base like any other task. Dispatching it
+   * against the default base instead would be strictly worse — the agent
+   * would see neither blocker's work, and with no `stackParents` recorded the
+   * run would never be restacked and never be flagged.
    */
   private async resolveBase(
     task: TaskDoc
   ): Promise<{ base: string; stackParents: string[] }> {
     const parents: string[] = [];
+    const model = this.statuses();
+    const finished = tasksWithFinishedRun(this.registry.list());
     for (const blockerId of task.meta.blockedBy) {
       const blocker = this.ctx.store.get(blockerId);
       if (
         blocker === null ||
-        !hasStatusRole(blocker.meta.status, 'review', this.statuses())
+        !isReviewStatus(blocker.meta.status, model, finished.has(blockerId))
       ) {
         continue;
       }
@@ -1568,17 +1573,17 @@ export class Orchestrator {
       if (branch !== null) parents.push(branch);
     }
 
-    // An unblocked task under an epic is cut from the epic's integration
-    // branch (created lazily, right here, on the epic's first dispatch)
-    // instead of the default base — that is the whole epic-branch feature. A
-    // STACKED dispatch deliberately does not create or consult the epic
+    // An unblocked task under a milestone is cut from the milestone's integration
+    // branch (created lazily, right here, on the milestone's first dispatch)
+    // instead of the default base — that is the whole milestone-branch feature. A
+    // STACKED dispatch deliberately does not create or consult the milestone
     // branch: its base is its blockers' branches, and a sibling blocker's
-    // branch is already rooted on the epic branch, so the run ends up there
+    // branch is already rooted on the milestone branch, so the run ends up there
     // anyway once the merge queue restacks it after the blocker lands.
     if (parents.length === 0) {
-      const epicBase = this.ensureEpicBranchFor(task);
+      const milestoneBase = this.ensureMilestoneBranchFor(task);
       return {
-        base: epicBase ?? this.worktrees.defaultBaseBranch(),
+        base: milestoneBase ?? (await this.worktrees.defaultBaseBranchAsync()),
         stackParents: [],
       };
     }
@@ -1586,50 +1591,37 @@ export class Orchestrator {
       return { base: parents[0], stackParents: parents };
     }
 
-    // Only reached with 2+ unmerged blockers — the one case that genuinely
-    // needs jj, so converting the user's repo never happens for a dispatch
-    // that could have been served by plain git.
-    //
-    // The jj calls are wrapped because this is the only part of dispatch that
-    // shells out to a tool the user may not have, in a repo shape jj may
-    // refuse: no jj failure may turn this into an opaque 500. Every failure
-    // converges on the same outcome the jj-unavailable case takes — refuse,
-    // and say why on the task — so the task simply waits (fillQueue skips an
-    // OrchestratorConflictError and retries on the next pass; a manual
-    // dispatch 409s with the reason).
-    let base: string;
+    // Only reached with 2+ unmerged blockers. A conflict between them is the
+    // one expected failure: it is recorded on the task and refused, and
+    // fillQueue skips an OrchestratorConflictError and retries on the next
+    // pass (a manual dispatch 409s with the reason). Any other git failure is
+    // refused the same way rather than turning into an opaque 500.
+    const base = stackBaseBranch(task.meta.id);
     try {
-      const wasColocated = await this.jj.isColocated();
-      if (!(await this.jj.ensureColocated())) {
-        throw new Error('jj is unavailable');
-      }
-      if (!wasColocated) {
-        // Converting a user's repo is never silent — §4.2 of the spec.
-        this.noteTaskActivity(
-          task.meta.id,
-          'stacked dispatch: converted this repository to a colocated jj repo (reversible with `jj git colocation disable`)'
-        );
-      }
-      const bookmark = `dispatch/stack-base-${task.meta.id}`;
-      base = await this.jj.mergeBase(parents, bookmark);
+      this.worktrees.buildStackBase(
+        base,
+        parents,
+        stackBaseMessage(task.meta.id, parents)
+      );
     } catch (err) {
-      const reason = `${parents.length} unmerged blockers need a multi-parent base, which only jj can build (${(err as Error).message}) — waiting until they merge`;
+      const reason =
+        err instanceof StackBaseConflictError
+          ? `${err.message}; waiting until they merge`
+          : `could not build a base over ${parents.length} unmerged blockers (${(err as Error).message}); waiting until they merge`;
       // Once per distinct reason, not once per fill pass. A waiting task is
       // re-attempted on every pass for as long as its blockers stay unmerged,
-      // and the old fallback wrote its line exactly once because it never
-      // retried; an unbounded run of identical lines in the task file would be
-      // pure noise. A reason that CHANGES (a different jj failure) is new
-      // information and is recorded.
+      // and an unbounded run of identical lines in the task file would be
+      // pure noise. A reason that CHANGES is new information and is recorded.
       this.noteTaskActivityOnce(task.meta.id, `stacked dispatch: ${reason}`);
       throw new OrchestratorConflictError(reason);
     }
     return { base, stackParents: parents };
   }
 
-  // Appends one Activity line to a task, mirroring EpicEngine's
-  // appendEpicActivity (epic.ts) so stack decisions leave the same durable
+  // Appends one Activity line to a task, mirroring MilestoneEngine's
+  // appendMilestoneActivity (milestone.ts) so stack decisions leave the same durable
   // trail every other orchestrator lifecycle event does. Every caller
-  // (stacked-dispatch jj bookkeeping, the merge queue's own restack notes via
+  // (stacked-dispatch bookkeeping, the merge queue's own restack notes via
   // appendRunTaskActivity) is the daemon narrating its own mechanics, not a
   // human or agent decision — so this always credits 'none'.
   private appendTaskActivity(taskId: string, text: string): void {
@@ -1647,7 +1639,7 @@ export class Orchestrator {
   // reporting a failure: the note is context on something that went wrong, so
   // a second failure while writing it (a locked/unwritable task file) must not
   // replace the real error with an opaque 500. Same swallow-and-log rule
-  // EpicEngine.recordFillFailure applies to its own Activity append.
+  // MilestoneEngine.recordFillFailure applies to its own Activity append.
   private noteTaskActivity(taskId: string, text: string): void {
     try {
       this.appendTaskActivity(taskId, text);
@@ -1674,25 +1666,25 @@ export class Orchestrator {
   }
 
   /**
-   * The epic integration branch a task should be cut from, creating it if
-   * this is the epic's first dispatch — or null when the task doesn't sit
-   * under an epic. Creation is deliberately lazy (an epic whose children
-   * never dispatch never grows a branch) and is recorded on the epic's own
+   * The milestone integration branch a task should be cut from, creating it if
+   * this is the milestone's first dispatch — or null when the task doesn't sit
+   * under a milestone. Creation is deliberately lazy (a milestone whose children
+   * never dispatch never grows a branch) and is recorded on the milestone's own
    * Activity so the branch's origin is visible where a human looks for it.
    */
-  private ensureEpicBranchFor(task: TaskDoc): string | null {
+  private ensureMilestoneBranchFor(task: TaskDoc): string | null {
     if (task.meta.parent === null) return null;
     const parent = this.ctx.store.get(task.meta.parent);
     if (parent === null || !usesIntegrationBranch(parent.meta.kind)) {
       return null;
     }
-    const branch = epicBranchName(parent.meta.id);
+    const branch = milestoneBranchName(parent.meta.id);
     if (!this.worktrees.hasBranch(branch)) {
       const from = this.worktrees.defaultBaseBranch();
       try {
         this.worktrees.createBranch(branch, from);
       } catch (err) {
-        // Two dispatches under the same epic can race the exists-check; the
+        // Two dispatches under the same milestone can race the exists-check; the
         // loser's create fails on a branch that now exists, which is exactly
         // the state it wanted. Anything else is a real failure.
         if (!this.worktrees.hasBranch(branch)) throw err;
@@ -1700,19 +1692,19 @@ export class Orchestrator {
       }
       this.noteTaskActivity(
         parent.meta.id,
-        `[epic] integration branch ${branch} created from ${from}`
+        `[milestone] integration branch ${branch} created from ${from}`
       );
     }
     return branch;
   }
 
   /**
-   * The epic integration branch a run's own task belongs under, or null when
-   * the task has no parent epic OR that epic's branch does not (yet or any
+   * The milestone integration branch a run's own task belongs under, or null when
+   * the task has no parent milestone OR that milestone's branch does not (yet or any
    * longer) exist in git. The merge queue uses this to notice a restack that
-   * would carry a run AWAY from its epic branch — see MergeQueue.restackRun.
+   * would carry a run AWAY from its milestone branch — see MergeQueue.restackRun.
    */
-  epicBranchForRun(runId: string): string | null {
+  milestoneBranchForRun(runId: string): string | null {
     const meta = this.registry.get(runId);
     if (meta === undefined) return null;
     const task = this.ctx.store.get(meta.taskId);
@@ -1721,7 +1713,7 @@ export class Orchestrator {
     if (parent === null || !usesIntegrationBranch(parent.meta.kind)) {
       return null;
     }
-    const branch = epicBranchName(parent.meta.id);
+    const branch = milestoneBranchName(parent.meta.id);
     return this.worktrees.hasBranch(branch) ? branch : null;
   }
 
@@ -2470,7 +2462,7 @@ export class Orchestrator {
   }
 
   /**
-   * The one entry point for "start work on this task": the HTTP API, the epic
+   * The one entry point for "start work on this task": the HTTP API, the milestone
    * auto-fill and the overseer's dispatch_task all come through here, so a task
    * whose most recent run is resumable is PICKED UP rather than started over.
    * A dispatcher calling dispatch() directly strands that run's worktree and
@@ -2611,7 +2603,7 @@ export class Orchestrator {
   // judgment may lower routine, small work to the `plan` tier when the
   // executor has one; otherwise the caller's default, then the executor's
   // configured `execute` model, which is undefined for an executor left on its
-  // own default. Resolved here rather than per caller so the epic auto-fill,
+  // own default. Resolved here rather than per caller so the milestone auto-fill,
   // the overseer's dispatch tool and the HTTP route all land the same way.
   private async modelForFreshRun(
     taskId: string,
@@ -3035,7 +3027,7 @@ export class Orchestrator {
   /**
    * Whether merging `meta` lands on origin first instead of in the main
    * checkout. True whenever the project has an `origin` remote, unless the
-   * run's base is an epic integration branch: those are local-only by design
+   * run's base is a milestone integration branch: those are local-only by design
    * and land on the default base as a whole later.
    *
    * Deliberately not conditional on a remote-tracking ref for the base
@@ -3045,7 +3037,7 @@ export class Orchestrator {
    * laptop" split this exists to remove.
    */
   landsOnOrigin(meta: RunMeta): boolean {
-    if (isEpicBranch(meta.baseBranch)) return false;
+    if (isMilestoneBranch(meta.baseBranch)) return false;
     return this.worktrees.hasOriginRemote();
   }
 
@@ -3098,7 +3090,7 @@ export class Orchestrator {
   /**
    * Records a run as merged once its squash commit is on origin: the same
    * bookkeeping review('merge') does, minus the local commit. The task file
-   * moves to the landed status but is not committed, the same as an epic-branch
+   * moves to the landed status but is not committed, the same as a milestone-branch
    * or PR landing; the board syncer carries it to trunk.
    *
    * `mergeCommit` is the sha origin now has, so the run reads as pushed the
@@ -3191,7 +3183,7 @@ export class Orchestrator {
   /**
    * The merge commit a publish retry should carry to origin: `runId` must be
    * a merged run whose squash sits on the local base only. Refuses anything
-   * else (unmerged, a PR merge, an epic base, no remote) with a 409.
+   * else (unmerged, a PR merge, a milestone base, no remote) with a 409.
    */
   requirePublishable(runId: string): { commit: string; base: string } {
     const meta = this.requireRun(runId);
@@ -3244,9 +3236,9 @@ export class Orchestrator {
   // superseded predecessor reviewed with the same merge. A failed run resumed
   // into a successor shares that successor's branch, so the successor's merge
   // commit genuinely is where the predecessor's work landed — no new
-  // reviewAction value is needed, and epicLandStatus's "still the base of an
+  // reviewAction value is needed, and milestoneLandStatus's "still the base of an
   // unreviewed run" gate then sees the whole chain as reviewed instead of
-  // refusing to land an epic over runs whose work is already in. Without
+  // refusing to land a milestone over runs whose work is already in. Without
   // this, the only way past that gate was review(id, 'discard') on each
   // predecessor. The walk stops at the first ancestor that is already
   // reviewed (everything before it was closed out when it was) or that is
@@ -3538,19 +3530,19 @@ export class Orchestrator {
     now: string,
     actor: string | undefined
   ): string | undefined {
-    // A run based on an epic integration branch lands THERE, not on whatever
+    // A run based on a milestone integration branch lands THERE, not on whatever
     // the main checkout has checked out — via a checkout-free squash merge
     // that never touches the user's working tree, so none of the checkout
     // gates below apply to it. The one exception: when the user actually HAS
-    // the epic branch checked out, the plumbing path's `update-ref` would
+    // the milestone branch checked out, the plumbing path's `update-ref` would
     // move the ref under a live working tree and leave it inconsistent, so
     // that case falls through to the normal checkout merge below, whose gates
     // handle exactly that situation.
     if (
-      isEpicBranch(meta.baseBranch) &&
+      isMilestoneBranch(meta.baseBranch) &&
       this.currentMainBranch() !== meta.baseBranch
     ) {
-      return this.mergeRunIntoEpicBranch(meta, now, actor);
+      return this.mergeRunIntoMilestoneBranch(meta, now, actor);
     }
     // All three gates below describe the MAIN CHECKOUT, not this run, and all
     // three clear the moment the user commits/stashes/checks out — so they
@@ -3666,18 +3658,18 @@ export class Orchestrator {
   }
 
   /**
-   * mergeRun's epic-branch counterpart: squash-merges a run onto its epic
+   * mergeRun's milestone-branch counterpart: squash-merges a run onto its milestone
    * integration branch entirely in the object database (see
    * WorktreeManager.squashMergeIntoRef), because that branch is never checked
    * out anywhere a `git merge` could run.
    *
    * Bookkeeping follows markRunMergedViaPr's shape, not the checkout path's:
-   * the task file is updated (status -> done) but NOT committed — the epic
+   * the task file is updated (status -> done) but NOT committed — the milestone
    * branch's commit carries exactly the run's own content, and the task edit
    * stays as pending `.dispatch/` bookkeeping in the main checkout, which the
    * dirty gate already treats as expected.
    */
-  private mergeRunIntoEpicBranch(
+  private mergeRunIntoMilestoneBranch(
     meta: RunMeta,
     now: string,
     actor: string | undefined
@@ -3687,7 +3679,7 @@ export class Orchestrator {
     // moved-away base gets, with the reason spelled out.
     if (!this.worktrees.hasBranch(meta.baseBranch)) {
       throw new OrchestratorConflictError(
-        `epic branch ${meta.baseBranch} no longer exists — recreate it or re-dispatch the task`
+        `milestone branch ${meta.baseBranch} no longer exists — recreate it or re-dispatch the task`
       );
     }
     // `diffCommittedOnly` for the same reason mergeRun uses it: the squash
@@ -3728,57 +3720,61 @@ export class Orchestrator {
   }
 
   // ---------------------------------------------------------------------
-  // Landing a finished epic branch on the default base — the epic-level
-  // counterpart of review(id, 'merge'). POST /api/epics/:id/land routes here
-  // (local merge) or through PrManager.openEpicPr (PR), both anchored on
-  // epicLandStatus's validation.
+  // Landing a finished milestone branch on the default base — the milestone-level
+  // counterpart of review(id, 'merge'). POST /api/milestones/:id/land routes here
+  // (local merge) or through PrManager.openMilestonePr (PR), both anchored on
+  // milestoneLandStatus's validation.
   // ---------------------------------------------------------------------
 
-  // `epicId` as an epic TaskDoc — 404 for an unknown id, 400 for a plain
-  // task. The orchestrator's own copy of EpicEngine's private requireEpic:
+  // `milestoneId` as a milestone TaskDoc — 404 for an unknown id, 400 for a plain
+  // task. The orchestrator's own copy of MilestoneEngine's private requireMilestone:
   // the land path must not depend on a dispatch session existing.
-  private requireEpicDoc(epicId: string): TaskDoc {
-    const epic = this.ctx.store.get(epicId);
-    if (epic === null) {
-      throw new OrchestratorNotFoundError(`epic not found: ${epicId}`);
+  private requireMilestoneDoc(milestoneId: string): TaskDoc {
+    const milestone = this.ctx.store.get(milestoneId);
+    if (milestone === null) {
+      throw new OrchestratorNotFoundError(
+        `milestone not found: ${milestoneId}`
+      );
     }
     if (
-      !isContainerKind(epic.meta.kind) &&
-      !this.ctx.cache.isContainer(epicId)
+      !isContainerKind(milestone.meta.kind) &&
+      !this.ctx.cache.isContainer(milestoneId)
     ) {
-      throw new OrchestratorClientError(`not a container: ${epicId}`);
+      throw new OrchestratorClientError(`not a container: ${milestoneId}`);
     }
-    return epic;
+    return milestone;
   }
 
   /**
-   * Validates that an epic's integration branch is ready to land on the
+   * Validates that a milestone's integration branch is ready to land on the
    * default base, and describes the landing: which branch, onto what, and
    * whether it carries any commits at all. Both land paths (local merge here,
-   * PR via PrManager) call this first, so a partially-done epic gets the same
+   * PR via PrManager) call this first, so a partially-done milestone gets the same
    * refusal whichever way the project lands.
    *
    * "Finished" means every child task is `done` or `cancelled` — anything at
-   * `todo`/`in-progress`/`in-review` is work that has not reached the epic
-   * branch yet, and landing now would ship half an epic. A leftover
+   * `todo`/`in-progress`/`in-review` is work that has not reached the milestone
+   * branch yet, and landing now would ship half a milestone. A leftover
    * unreviewed run still based on the branch (its task cancelled by hand, or
    * hand-flipped to done) also refuses: landing deletes the branch that
    * run's diff and merge are anchored on.
    */
-  epicLandStatus(epicId: string): EpicLandStatus {
-    const epic = this.requireEpicDoc(epicId);
-    if (isCompletedStatus(epic.meta.status, this.statuses())) {
-      throw new OrchestratorConflictError(`epic has already landed: ${epicId}`);
+  milestoneLandStatus(milestoneId: string): MilestoneLandStatus {
+    const milestone = this.requireMilestoneDoc(milestoneId);
+    if (isCompletedStatus(milestone.meta.status, this.statuses())) {
+      throw new OrchestratorConflictError(
+        `milestone has already landed: ${milestoneId}`
+      );
     }
-    const branch = epicBranchName(epicId);
+    const branch = milestoneBranchName(milestoneId);
     if (!this.worktrees.hasBranch(branch)) {
       throw new OrchestratorConflictError(
-        `epic has no integration branch to land: ${branch} does not exist ` +
-          '(no child run has been dispatched under this epic)'
+        `milestone has no integration branch to land: ${branch} does not exist ` +
+          '(no child run has been dispatched under this milestone)'
       );
     }
     const children = this.ctx.cache
-      .query({ parent: epicId, includeArchived: true })
+      .query({ parent: milestoneId, includeArchived: true })
       .filter((t) => !isContainerKind(t.meta.kind));
     const unfinished = children.filter(
       (c) => !isDoneStatus(c.meta.status, this.statuses())
@@ -3788,7 +3784,7 @@ export class Orchestrator {
         .map((c) => `${c.meta.id}: ${c.meta.status}`)
         .join(', ');
       throw new OrchestratorConflictError(
-        `epic is only partially done — ${unfinished.length} of ` +
+        `milestone is only partially done — ${unfinished.length} of ` +
           `${children.length} child task(s) still pending (${named}). ` +
           'Finish or cancel them before landing.'
       );
@@ -3798,36 +3794,36 @@ export class Orchestrator {
       .find((r) => r.baseBranch === branch && r.reviewedAt === undefined);
     if (straggler !== undefined) {
       throw new OrchestratorConflictError(
-        `epic branch is still the base of unreviewed run ${straggler.id} ` +
+        `milestone branch is still the base of unreviewed run ${straggler.id} ` +
           `(task ${straggler.taskId}) — merge or discard it first`
       );
     }
     const base = this.worktrees.defaultBaseBranch();
     // Without this, a default base that origin/HEAD names but that has no
     // local ref would make aheadCount read 0, skip both merge paths, and
-    // close the epic out — deleting its branch — with nothing landed.
+    // close the milestone out — deleting its branch — with nothing landed.
     if (!this.worktrees.hasBranch(base)) {
       throw new OrchestratorConflictError(
         `default base branch ${base} does not exist locally — nothing to land onto`
       );
     }
     return {
-      epicId,
+      milestoneId,
       branch,
       base,
-      title: epic.meta.title,
+      title: milestone.meta.title,
       // Commit-based rather than diff-based: `gh pr create` needs commits
       // between the refs, and a merge with no commits to bring over has
-      // nothing to do — landing then just closes the epic out.
+      // nothing to do — landing then just closes the milestone out.
       hasChanges: this.worktrees.aheadCount(branch, base) > 0,
     };
   }
 
   /**
-   * Lands a finished epic branch on the default base as ONE local merge
-   * commit (`--no-ff`, both parents recorded), then closes the epic out the
+   * Lands a finished milestone branch on the default base as ONE local merge
+   * commit (`--no-ff`, both parents recorded), then closes the milestone out the
    * way review-merge closes a run: diff snapshot persisted, branch deleted,
-   * epic status -> done. The API uses this when the project lacks the `pr`
+   * milestone status -> done. The API uses this when the project lacks the `pr`
    * capability, and for the degenerate no-commits landing either way.
    *
    * Mirrors mergeRun's two paths: when the default base is checked out in
@@ -3835,16 +3831,17 @@ export class Orchestrator {
    * otherwise a checkout-free plumbing merge that never touches the user's
    * working tree.
    */
-  landEpicLocally(
-    epicId: string,
+  landMilestoneLocally(
+    milestoneId: string,
     opts: { actor?: string } = {}
-  ): { epicId: string; mergeCommit?: string } {
+  ): { milestoneId: string; mergeCommit?: string } {
     const actor = opts.actor ?? this.ctx.actorContext?.humanRef;
-    const { branch, base, title, hasChanges } = this.epicLandStatus(epicId);
+    const { branch, base, title, hasChanges } =
+      this.milestoneLandStatus(milestoneId);
     // Snapshot input computed before anything moves, same as mergeRun's
     // preMergeDiff — after the merge the branch is gone.
     const preDiff = this.worktrees.diffBetweenRefs(base, branch);
-    const message = `dispatch: ${title} (epic ${epicId})`;
+    const message = `dispatch: ${title} (milestone ${milestoneId})`;
     const now = new Date().toISOString();
 
     let mergeCommit: string | undefined;
@@ -3853,8 +3850,8 @@ export class Orchestrator {
       try {
         mergeCommit = this.worktrees.mergeCommitIntoRef(base, branch, message);
       } catch (err) {
-        // A content conflict (main moved under the epic in a conflicting
-        // way) is a 409 the user can act on — merge the base into the epic
+        // A content conflict (main moved under the milestone in a conflicting
+        // way) is a 409 the user can act on — merge the base into the milestone
         // branch by hand, then land again. The plumbing merge either updates
         // the ref atomically or leaves everything untouched.
         throw new OrchestratorConflictError((err as Error).message);
@@ -3887,13 +3884,13 @@ export class Orchestrator {
     }
 
     // Only now — the merge genuinely exists (or there was nothing to merge)
-    // — record the epic as done, mirroring mergeRun's ordering so a failed
-    // merge never leaves the epic closed with nothing landed.
+    // — record the milestone as done, mirroring mergeRun's ordering so a failed
+    // merge never leaves the milestone closed with nothing landed.
     this.ctx.store.update(
-      epicId,
+      milestoneId,
       {
         status: this.statuses().roles.landed,
-        appendActivity: `${now} [epic] landed on ${base}${
+        appendActivity: `${now} [milestone] landed on ${base}${
           hasChanges ? '' : ' (no commits to merge)'
         }`,
         activityActor: actor,
@@ -3901,10 +3898,10 @@ export class Orchestrator {
       now
     );
     if (baseCheckedOut) {
-      // Fold the epic's own task-file bookkeeping into the merge commit when
+      // Fold the milestone's own task-file bookkeeping into the merge commit when
       // one exists (amend keeps both parents); otherwise the task-only commit
       // IS the landing's entire effect — both mirroring mergeRun.
-      this.stageTaskFile(epicId);
+      this.stageTaskFile(milestoneId);
       const commitArgs = hasChanges
         ? ['commit', '--amend', '--no-edit']
         : ['commit', '-m', message];
@@ -3912,26 +3909,26 @@ export class Orchestrator {
       if (hasChanges) mergeCommit = this.worktrees.resolveCommit('HEAD');
     }
 
-    this.persistEpicDiffSnapshot(epicId, preDiff);
+    this.persistMilestoneDiffSnapshot(milestoneId, preDiff);
     this.worktrees.removeBranchRef(branch);
-    this.ctx.cache.refresh(this.ctx.store, [epicId]);
-    this.ctx.events.broadcast({ type: 'task.changed', ids: [epicId] });
+    this.ctx.cache.refresh(this.ctx.store, [milestoneId]);
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [milestoneId] });
     // The Branches surface just lost a row.
     this.ctx.events.broadcast({ type: 'run.changed' });
-    return { epicId, mergeCommit };
+    return { milestoneId, mergeCommit };
   }
 
   /**
-   * The PR poller's terminal action for an epic PR — GitHub reports the PR
+   * The PR poller's terminal action for a milestone PR — GitHub reports the PR
    * merged, so the landing already happened on the remote. Same closing-out
-   * as landEpicLocally minus any merge: snapshot while the local branch is
-   * still here, delete it, flip the epic to done. Idempotent-ish on purpose:
-   * an epic already done (or deleted) just gets its branch cleaned up, so a
+   * as landMilestoneLocally minus any merge: snapshot while the local branch is
+   * still here, delete it, flip the milestone to done. Idempotent-ish on purpose:
+   * a milestone already done (or deleted) just gets its branch cleaned up, so a
    * poll pass repeated after a crash cannot double-close anything.
    */
-  markEpicMergedViaPr(epicId: string, prUrl: string): void {
-    const epic = this.ctx.store.get(epicId);
-    const branch = epicBranchName(epicId);
+  markMilestoneMergedViaPr(milestoneId: string, prUrl: string): void {
+    const milestone = this.ctx.store.get(milestoneId);
+    const branch = milestoneBranchName(milestoneId);
     if (this.worktrees.hasBranch(branch)) {
       let base: string;
       try {
@@ -3939,48 +3936,48 @@ export class Orchestrator {
       } catch {
         base = 'HEAD';
       }
-      this.persistEpicDiffSnapshot(
-        epicId,
+      this.persistMilestoneDiffSnapshot(
+        milestoneId,
         this.worktrees.diffBetweenRefs(base, branch)
       );
       this.worktrees.removeBranchRef(branch);
     }
     if (
-      epic !== null &&
-      !isCompletedStatus(epic.meta.status, this.statuses())
+      milestone !== null &&
+      !isCompletedStatus(milestone.meta.status, this.statuses())
     ) {
       const now = new Date().toISOString();
       this.ctx.store.update(
-        epicId,
+        milestoneId,
         {
           status: this.statuses().roles.landed,
-          appendActivity: `${now} [epic] landed via PR (${prUrl})`,
+          appendActivity: `${now} [milestone] landed via PR (${prUrl})`,
           // Whoever merged did so on GitHub, outside anything dispatch can
           // attribute — same rule as markRunMergedViaPr.
           activityActor: 'none',
         },
         now
       );
-      this.ctx.cache.refresh(this.ctx.store, [epicId]);
-      this.ctx.events.broadcast({ type: 'task.changed', ids: [epicId] });
+      this.ctx.cache.refresh(this.ctx.store, [milestoneId]);
+      this.ctx.events.broadcast({ type: 'task.changed', ids: [milestoneId] });
     }
     this.ctx.events.broadcast({ type: 'run.changed' });
   }
 
-  // The epic-level twin of diff(): the epic branch's committed diff against
+  // The milestone-level twin of diff(): the milestone branch's committed diff against
   // the default base while the branch exists, falling back to the snapshot
   // persisted at land time once it is gone — so the review surface can still
-  // show what an epic landed after its branch was cleaned up.
-  epicDiff(epicId: string): DiffResult {
-    this.requireEpicDoc(epicId);
-    const branch = epicBranchName(epicId);
+  // show what a milestone landed after its branch was cleaned up.
+  milestoneDiff(milestoneId: string): DiffResult {
+    this.requireMilestoneDoc(milestoneId);
+    const branch = milestoneBranchName(milestoneId);
     if (this.worktrees.hasBranch(branch)) {
       return this.worktrees.diffBetweenRefs(
         this.worktrees.defaultBaseBranch(),
         branch
       );
     }
-    const snapshotPath = diffSnapshotPath(this.ctx.rootDir, epicId);
+    const snapshotPath = diffSnapshotPath(this.ctx.rootDir, milestoneId);
     if (existsSync(snapshotPath)) {
       // Same corrupt-snapshot tolerance as diff(): a truncated file must
       // surface as the 409 below, never a CORS-less 500.
@@ -3988,25 +3985,25 @@ export class Orchestrator {
         return JSON.parse(readFileSync(snapshotPath, 'utf8')) as DiffResult;
       } catch (err) {
         console.error(
-          `dispatchd: failed to read diff snapshot for epic ${epicId}: ${(err as Error).message}`
+          `dispatchd: failed to read diff snapshot for milestone ${milestoneId}: ${(err as Error).message}`
         );
       }
     }
     throw new OrchestratorConflictError(
-      `epic has no integration branch or diff snapshot to diff: ${epicId}`
+      `milestone has no integration branch or diff snapshot to diff: ${milestoneId}`
     );
   }
 
-  // Best-effort persist of the epic branch's diff against the default base —
-  // PrManager calls this when it opens an epic PR, so the review surface has
+  // Best-effort persist of the milestone branch's diff against the default base —
+  // PrManager calls this when it opens a milestone PR, so the review surface has
   // something to serve even if the local branch disappears before the PR
   // merges. A no-op when the branch is already gone.
-  snapshotEpicDiff(epicId: string): void {
-    const branch = epicBranchName(epicId);
+  snapshotMilestoneDiff(milestoneId: string): void {
+    const branch = milestoneBranchName(milestoneId);
     if (!this.worktrees.hasBranch(branch)) return;
     try {
-      this.persistEpicDiffSnapshot(
-        epicId,
+      this.persistMilestoneDiffSnapshot(
+        milestoneId,
         this.worktrees.diffBetweenRefs(
           this.worktrees.defaultBaseBranch(),
           branch
@@ -4014,25 +4011,28 @@ export class Orchestrator {
       );
     } catch (err) {
       console.error(
-        `dispatchd: failed to snapshot diff for epic ${epicId}: ${(err as Error).message}`
+        `dispatchd: failed to snapshot diff for milestone ${milestoneId}: ${(err as Error).message}`
       );
     }
   }
 
-  // persistDiffSnapshot's epic twin — keyed by the epic id in the same
-  // per-project runs directory (run and epic ids live in different
+  // persistDiffSnapshot's milestone twin — keyed by the milestone id in the same
+  // per-project runs directory (run and milestone ids live in different
   // namespaces, so the files can never collide). Best-effort for the same
   // reason: a full disk must never block the landing itself.
-  private persistEpicDiffSnapshot(epicId: string, diff: DiffResult): void {
+  private persistMilestoneDiffSnapshot(
+    milestoneId: string,
+    diff: DiffResult
+  ): void {
     try {
       mkdirSync(runsDir(this.ctx.rootDir), { recursive: true });
       writeFileSync(
-        diffSnapshotPath(this.ctx.rootDir, epicId),
+        diffSnapshotPath(this.ctx.rootDir, milestoneId),
         JSON.stringify(diff)
       );
     } catch (err) {
       console.error(
-        `dispatchd: failed to snapshot diff for epic ${epicId}: ${(err as Error).message}`
+        `dispatchd: failed to snapshot diff for milestone ${milestoneId}: ${(err as Error).message}`
       );
     }
   }
@@ -4065,9 +4065,9 @@ export class Orchestrator {
     // measured against the project's default base. Tolerant of failure: a
     // repo with no remote and an unborn HEAD would otherwise take the whole
     // listing down.
-    const [refs, epicRefs, worktrees, fallbackBase] = await Promise.all([
+    const [refs, milestoneRefs, worktrees, fallbackBase] = await Promise.all([
       this.worktrees.listBranches(DISPATCH_BRANCH_PREFIX),
-      this.worktrees.listBranches(EPIC_BRANCH_PREFIX),
+      this.worktrees.listBranches(MILESTONE_BRANCH_PREFIX),
       this.worktrees.listWorktrees(),
       this.worktrees.defaultBaseBranchAsync().catch(() => 'HEAD'),
     ]);
@@ -4133,14 +4133,14 @@ export class Orchestrator {
       }
     );
 
-    // Epic integration branches (`epic/<id>`) are part of the same surface:
+    // Milestone integration branches (`milestone/<id>`) are part of the same surface:
     // dispatch created them, runs land on them, and a human eventually has to
     // deal with them — so they must be visible wherever run branches are.
-    // Their `behindBase` is the drift signal: dispatch never updates an epic
+    // Their `behindBase` is the drift signal: dispatch never updates a milestone
     // branch against the default base on its own, it only reports how far
     // behind it has fallen.
-    const epicEntries = await mapLimit(
-      epicRefs,
+    const milestoneEntries = await mapLimit(
+      milestoneRefs,
       BRANCH_PROBE_CONCURRENCY,
       async (ref) => {
         const [counts, pushedToOrigin] = await Promise.all([
@@ -4162,11 +4162,11 @@ export class Orchestrator {
           behindBase: counts?.behind ?? 0,
           baseBranch: fallbackBase,
           pushedToOrigin,
-          status: 'epic',
+          status: 'milestone',
         } satisfies BranchEntry;
       }
     );
-    entries.push(...epicEntries);
+    entries.push(...milestoneEntries);
 
     // Most-urgent-first within a stable order so the UI's grouping never has
     // to re-sort, and so two consecutive polls can't shuffle rows around.
@@ -4208,6 +4208,33 @@ export class Orchestrator {
     const meta = this.registry.get(runId);
     if (meta === undefined) return null;
     return this.worktrees.writeBackupRef(meta.branch, runId);
+  }
+
+  /**
+   * Rebuilds a stacked run's multi-parent base over `parents` (the new
+   * default base first, then the blockers still unmerged) and returns the
+   * new base commit. Used by the merge queue after one of the run's blockers
+   * lands; throws StackBaseConflictError when the parents clash.
+   */
+  rebuildStackBase(runId: string, parents: readonly string[]): string {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) throw new Error(`unknown run ${runId}`);
+    return this.worktrees.buildStackBase(
+      stackBaseBranch(meta.taskId),
+      parents,
+      stackBaseMessage(meta.taskId, parents)
+    );
+  }
+
+  // The commit a ref points at in the project's main checkout.
+  resolveRef(ref: string): string {
+    return this.worktrees.resolveCommit(ref);
+  }
+
+  // Deletes a branch nothing is checked out on, ignoring a missing one — used
+  // to drop a stack base once a run no longer sits on it.
+  deleteBranchRef(branch: string): void {
+    this.worktrees.removeBranchRef(branch);
   }
 
   // Replays a run's OWN commits (everything after `oldTip`, the commit it was
@@ -4330,7 +4357,11 @@ export class Orchestrator {
    * run's meta straight back onto the merged-away branch, with nothing left
    * to notice or re-run the restack (see TranscriptStateLine.baseBranch).
    */
-  repointRunBase(runId: string, newBase: string): void {
+  repointRunBase(
+    runId: string,
+    newBase: string,
+    stack?: { parents: string[]; baseCommit?: string }
+  ): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
     const mergedAway = meta.baseBranch;
@@ -4338,17 +4369,26 @@ export class Orchestrator {
     for (const sibling of this.registry.list()) {
       if (sibling.branch !== meta.branch) continue;
       if (sibling.reviewedAt !== undefined) continue;
-      const remaining = (sibling.stackParents ?? []).filter(
-        (branch) => branch !== mergedAway
-      );
+      // A run still stacked after the restack (a multi-parent base rebuilt
+      // over the blockers left) gets its new parents and base commit from the
+      // caller. Otherwise the merged base simply drops out of the parents.
+      const remaining =
+        stack?.parents ??
+        (sibling.stackParents ?? []).filter((branch) => branch !== mergedAway);
       this.registry.updateMeta(sibling.id, {
         baseBranch: newBase,
         stackParents: remaining.length > 0 ? remaining : undefined,
+        ...(stack?.baseCommit !== undefined
+          ? { stackBaseCommit: stack.baseCommit }
+          : {}),
         updatedAt: now,
       });
       this.transcriptFor(sibling.id).appendState(sibling.state, now, {
         baseBranch: newBase,
         stackParents: remaining,
+        ...(stack?.baseCommit !== undefined
+          ? { stackBaseCommit: stack.baseCommit }
+          : {}),
       });
     }
     this.ctx.events.broadcast({ type: 'run.changed' });
@@ -5062,7 +5102,7 @@ export class Orchestrator {
     // "reaching" a terminal state is only fully visible to a subscriber once
     // handleFinish()/cancel() have also finished updating the run's *task*
     // (e.g. flipping it to `in-review`) — firing this mid-transition, before
-    // that task update lands, is exactly the ordering bug that made the epic
+    // that task update lands, is exactly the ordering bug that made the milestone
     // engine see a stale `in-progress` task status on the very same tick a
     // run it was tracking finished. See the explicit fireTerminalHooks()
     // calls at the end of handleFinish()/cancel() instead.
@@ -5117,7 +5157,7 @@ export class Orchestrator {
             meta.taskId,
             {
               appendActivity: `${now} [hook error] ${message}`,
-              // A subscriber (e.g. the epic engine) threw — the daemon's own
+              // A subscriber (e.g. the milestone engine) threw — the daemon's own
               // bookkeeping failed, not something a person or agent did.
               activityActor: 'none',
             },
@@ -5469,7 +5509,7 @@ export class Orchestrator {
         : `$${effectiveFinish.costUsd.toFixed(2)}`;
     const now = new Date().toISOString();
     // An unreadable or unwritable task file must not skip the hooks below,
-    // which are what free the epic engine's next dispatch.
+    // which are what free the milestone engine's next dispatch.
     this.bestEffort(`recording finish for run ${runId}`, () => {
       const task = this.ctx.store.get(meta.taskId);
       if (task === null) return;
@@ -5673,7 +5713,7 @@ export class Orchestrator {
   // recovery sweep — so the Activity line it writes says a restart brought the
   // run back rather than crediting the human whose daemon happened to reboot.
   // `actor` is the same override dispatch() takes, for the callers that resume
-  // on someone else's behalf (dispatchOrResume, reached from the epic
+  // on someone else's behalf (dispatchOrResume, reached from the milestone
   // auto-fill, credits 'none' exactly as its dispatch does). The successor is
   // for `dispatchedBy` when given, else whoever pressed resume, else — the
   // boot sweep, an automatic caller — whomever its predecessor was for.
@@ -5867,20 +5907,20 @@ export class Orchestrator {
   }
 
   // Prompt handed to the executor: the task's own content plus its parent
-  // epic's, assembled by the pure buildTaskPrompt() (see prompt.ts) so the
+  // milestone's, assembled by the pure buildTaskPrompt() (see prompt.ts) so the
   // exact text is unit-testable independent of the orchestrator. A corrupt
-  // parent epic file degrades to "no epic context" rather than failing the
+  // parent milestone file degrades to "no milestone context" rather than failing the
   // whole dispatch — the task being dispatched is still perfectly valid.
-  // The epic and orientation are read once; each call renders with its own
+  // The milestone and orientation are read once; each call renders with its own
   // memory section, so a run's prompt and its fallback share them.
   private taskBrief(
     task: TaskDoc,
     executorName: string,
     runId: string
   ): (memorySection: string | null) => string {
-    // An A2A task's prompt fences its spec, amendments and comments, no epic.
+    // An A2A task's prompt fences its spec, amendments and comments, no milestone.
     const a2aOrigin = this.a2a(task.meta.id);
-    let parentEpic: TaskDoc | null = null;
+    let parentMilestone: TaskDoc | null = null;
     // An A2A task's body is never parent context, whichever task runs.
     if (
       task.meta.parent !== null &&
@@ -5888,7 +5928,7 @@ export class Orchestrator {
       !this.a2a(task.meta.parent)
     ) {
       try {
-        parentEpic = this.ctx.store.get(task.meta.parent);
+        parentMilestone = this.ctx.store.get(task.meta.parent);
       } catch (err) {
         if (!(err instanceof TaskParseError)) throw err;
       }
@@ -5904,7 +5944,7 @@ export class Orchestrator {
     return (memorySection) =>
       buildTaskPrompt(
         task,
-        parentEpic,
+        parentMilestone,
         memorySection,
         orientation,
         dispatchTools,

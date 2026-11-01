@@ -292,7 +292,7 @@ describe('messaging HTTP routes', () => {
     ]);
   });
 
-  it('a run joins a channel as its task; the channel list shows epic children implicitly', async () => {
+  it('a run joins a channel as its task; the channel list shows milestone children implicitly', async () => {
     const { taskId } = await liveRun('Join a channel');
     const runToken = executor.lastRunToken;
 
@@ -303,18 +303,21 @@ describe('messaging HTTP routes', () => {
     });
     expect(joinRes.status).toBe(204);
 
-    const epic = await json<{ meta: { id: string } }>(
+    const milestone = await json<{ meta: { id: string } }>(
       await fetch(`${baseUrl}/api/tasks`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title: 'An epic', kind: 'epic' }),
+        body: JSON.stringify({ title: 'A milestone', kind: 'milestone' }),
       })
     );
     const child = await json<{ meta: { id: string } }>(
       await fetch(`${baseUrl}/api/tasks`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title: 'A child task', parent: epic.meta.id }),
+        body: JSON.stringify({
+          title: 'A child task',
+          parent: milestone.meta.id,
+        }),
       })
     );
 
@@ -326,10 +329,10 @@ describe('messaging HTTP routes', () => {
     // The run joined as its task, so membership outlives the run itself.
     expect(general?.members).toEqual([`task:${taskId}`]);
 
-    const epicChannel = channels.channels.find(
-      (c) => c.name === `epic/${epic.meta.id}`
+    const milestoneChannel = channels.channels.find(
+      (c) => c.name === `milestone/${milestone.meta.id}`
     );
-    expect(epicChannel?.members).toEqual([`task:${child.meta.id}`]);
+    expect(milestoneChannel?.members).toEqual([`task:${child.meta.id}`]);
   });
 
   it('channel join/leave enforce canActAs on the member being added or removed', async () => {
@@ -399,24 +402,24 @@ describe('messaging HTTP routes', () => {
     expect(body.error).toContain('not a member');
   });
 
-  it('leaving an epic channel as one of its children is a 404 that says why', async () => {
-    const epic = await json<{ meta: { id: string } }>(
+  it('leaving a milestone channel as one of its children is a 404 that says why', async () => {
+    const milestone = await json<{ meta: { id: string } }>(
       await fetch(`${baseUrl}/api/tasks`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title: 'An epic', kind: 'epic' }),
+        body: JSON.stringify({ title: 'A milestone', kind: 'milestone' }),
       })
     );
     const child = await json<{ meta: { id: string } }>(
       await fetch(`${baseUrl}/api/tasks`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title: 'A child', parent: epic.meta.id }),
+        body: JSON.stringify({ title: 'A child', parent: milestone.meta.id }),
       })
     );
 
     const res = await fetch(
-      `${baseUrl}/api/channels/${encodeURIComponent(`epic/${epic.meta.id}`)}/members/${encodeURIComponent(`task:${child.meta.id}`)}`,
+      `${baseUrl}/api/channels/${encodeURIComponent(`milestone/${milestone.meta.id}`)}/members/${encodeURIComponent(`task:${child.meta.id}`)}`,
       { method: 'DELETE', headers: { 'content-type': 'application/json' } }
     );
     expect(res.status).toBe(404);

@@ -215,7 +215,7 @@ async function restoreFile(
         title: parsed.title,
         body: parsed.body,
         refs: [],
-        epic: null,
+        milestone: null,
         appliesTo: [],
         projectKey: null,
       },

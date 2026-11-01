@@ -13,7 +13,7 @@ import { useTestAuth } from './testAuth.js';
 
 // The capture-time judgments: a paste is split at confident boundaries, a
 // fresh capture is triaged in the background (its regex kind replaced), and
-// convert prefills the epic and reports a likely duplicate.
+// convert prefills the milestone and reports a likely duplicate.
 
 function initDispatchGitRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), 'dispatch-capture-judge-'));
@@ -49,7 +49,7 @@ afterEach(async () => {
 });
 
 // Answers split questions with "starts" on every line that begins with
-// "new:", and triage questions with kind bug, the first listed epic, and a
+// "new:", and triage questions with kind bug, the first listed milestone, and a
 // 0.9 duplicate on every candidate.
 function scriptedClient(): JudgmentClient {
   return {
@@ -57,7 +57,8 @@ function scriptedClient(): JudgmentClient {
     judge: (state, questions) => {
       const answers: Record<string, unknown> = {};
       const lines = (state as { lines?: string[] }).lines;
-      const epics = (state as { epics?: { id: string }[] }).epics ?? [];
+      const milestones =
+        (state as { milestones?: { id: string }[] }).milestones ?? [];
       for (const key of Object.keys(questions)) {
         if (key.startsWith('boundary_') && lines !== undefined) {
           const line = lines[Number(key.slice('boundary_'.length))] ?? '';
@@ -75,10 +76,10 @@ function scriptedClient(): JudgmentClient {
             confidence: 0.9,
             probabilities: {},
           };
-        } else if (key === 'epic') {
+        } else if (key === 'milestone') {
           answers[key] = {
             type: 'choice',
-            choice: epics[0]?.id ?? 'none',
+            choice: milestones[0]?.id ?? 'none',
             confidence: 0.95,
             probabilities: {},
           };
@@ -172,9 +173,9 @@ describe('capture-time judgments', () => {
     expect(new InboxTriageSnapshotStore(root).load()).toBeNull();
   });
 
-  it('convert prefills the judged epic and reports a likely duplicate task', async () => {
+  it('convert prefills the judged milestone and reports a likely duplicate task', async () => {
     const store = new TaskStore(root);
-    const epic = store.create({ title: 'Landing', kind: 'epic' });
+    const milestone = store.create({ title: 'Landing', kind: 'milestone' });
     const existing = store.create({ title: 'landing rows lose their gate' });
     await boot({ judgments: scriptedClient() });
     const [item] = await capture('landing rows lose their gate chip');
@@ -197,6 +198,6 @@ describe('capture-time judgments', () => {
     ).json()) as {
       meta: { parent: string | null };
     };
-    expect(task.meta.parent).toBe(epic.meta.id);
+    expect(task.meta.parent).toBe(milestone.meta.id);
   });
 });

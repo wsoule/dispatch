@@ -86,13 +86,13 @@ export interface PlanRecord {
   error?: string;
   createdAt: string;
   updatedAt: string;
-  // Set once /confirm has successfully written the epic+tasks for this plan
+  // Set once /confirm has successfully written the milestone+tasks for this plan
   // — the one-way marker double-confirm's 409 check reads (mirrors RunMeta's
   // own reviewedAt marker in orchestrator/types.ts).
   confirmedAt?: string;
-  // The epic confirm() minted for this plan, when the proposal carried one,
+  // The milestone confirm() minted for this plan, when the proposal carried one,
   // so a list row can link straight to its milestone. Absent on a flat plan.
-  epicId?: string;
+  milestoneId?: string;
   // Set when this plan was started from a note (POST /api/notes/:id/enrich)
   // rather than a free-form prompt: the note whose one-liner the planner was
   // asked to expand into a real task. PlanManager itself never reads it —
@@ -107,7 +107,7 @@ export interface PlanRecord {
 }
 
 export interface ConfirmResult {
-  epicId?: string;
+  milestoneId?: string;
   taskIds: string[];
 }
 
@@ -207,7 +207,7 @@ export interface PlanSummary {
   createdAt: string;
   updatedAt: string;
   confirmedAt?: string;
-  epicId?: string;
+  milestoneId?: string;
 }
 
 // The proposal's criteria as the Acceptance Criteria section's `- item` lines.
@@ -222,10 +222,10 @@ function criteriaSection(task: PlannedTask): string {
  * tracking each turn's running -> ready|failed state, the message history, and
  * the latest working proposal in a small in-memory registry (machine-local —
  * a plan that was still `running` when dispatchd restarts is simply gone, same
- * as the epic engine's own state; nothing here is durable the way run
+ * as the milestone engine's own state; nothing here is durable the way run
  * transcripts are), and, on confirm, re-validates the (client-editable)
  * proposal from scratch and
- * writes it via TaskStore: the epic first (if any), then every task with its
+ * writes it via TaskStore: the milestone first (if any), then every task with its
  * `parent` and `blockedBy` wired from proposal indices to the real ids
  * TaskStore just minted. Proposals are NEVER written without an explicit
  * confirm call — this class is the one place that rule is enforced.
@@ -290,7 +290,7 @@ export class PlanManager {
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
         confirmedAt: r.confirmedAt,
-        epicId: r.epicId,
+        milestoneId: r.milestoneId,
       }));
   }
 
@@ -666,15 +666,15 @@ export class PlanManager {
     // The status a plan's work starts in: the ready role, whatever its name.
     const readyStatus = statusModelFor(this.ctx.rootDir).roles.ready;
 
-    let epicId: string | undefined;
-    if (proposal.epic !== undefined) {
-      const epicDoc = this.ctx.store.create({
-        title: proposal.epic.title,
+    let milestoneId: string | undefined;
+    if (proposal.milestone !== undefined) {
+      const milestoneDoc = this.ctx.store.create({
+        title: proposal.milestone.title,
         kind: 'milestone',
         status: readyStatus,
-        description: proposal.epic.description,
+        description: proposal.milestone.description,
       });
-      epicId = epicDoc.meta.id;
+      milestoneId = milestoneDoc.meta.id;
     }
 
     // Pass 1: create every task with no blockedBy yet — blockedByIndices
@@ -688,7 +688,7 @@ export class PlanManager {
           status: readyStatus,
           description: task.description.trim(),
           acceptanceCriteria: criteriaSection(task),
-          parent: epicId ?? null,
+          parent: milestoneId ?? null,
           priority: task.priority,
           writes: task.writes,
           risk: task.risk,
@@ -706,18 +706,18 @@ export class PlanManager {
       this.ctx.store.update(taskIds[i], { blockedBy }, now);
     });
 
-    // Undeclared `writes` conflicts with everything (safe default), so epic
+    // Undeclared `writes` conflicts with everything (safe default), so milestone
     // dispatch holds such a task behind every live run — a trail for why.
     if (
-      epicId !== undefined &&
+      milestoneId !== undefined &&
       proposal.tasks.some(
         (t) => t.writes === undefined || t.writes.length === 0
       )
     ) {
       this.ctx.store.update(
-        epicId,
+        milestoneId,
         {
-          appendActivity: `${now} [plan] confirmed with undeclared writes on at least one task — epic dispatch holds each of those until no run is live anywhere in the project, not only in this epic`,
+          appendActivity: `${now} [plan] confirmed with undeclared writes on at least one task — milestone dispatch holds each of those until no run is live anywhere in the project, not only in this milestone`,
           // confirm() is only ever reached through the human-facing plan
           // confirmation endpoint — no agent tool confirms a plan.
           activityActor: this.ctx.actorContext?.humanRef,
@@ -728,12 +728,12 @@ export class PlanManager {
 
     this.updateRecord(planId, {
       confirmedAt: now,
-      ...(epicId !== undefined ? { epicId } : {}),
+      ...(milestoneId !== undefined ? { milestoneId } : {}),
     });
-    const ids = epicId === undefined ? taskIds : [epicId, ...taskIds];
+    const ids = milestoneId === undefined ? taskIds : [milestoneId, ...taskIds];
     this.ctx.cache.refresh(this.ctx.store, ids);
     this.ctx.events.broadcast({ type: 'task.changed', ids });
 
-    return { epicId, taskIds };
+    return { milestoneId, taskIds };
   }
 }

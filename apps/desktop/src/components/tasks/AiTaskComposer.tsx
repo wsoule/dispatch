@@ -56,18 +56,19 @@ export function AiTaskComposer({
   const [error, setError] = useState<string | null>(null);
   // A milestone's (or any container's) "+" drafts the task inside it.
   const [parent, setParent] = useState<string | null>(
-    createPreset?.epic ?? null
+    createPreset?.milestone ?? null
   );
   const parentTitle =
     parent === null
       ? null
-      : (data.epics.find((e) => e.meta.id === parent)?.meta.title ?? parent);
+      : (data.milestones.find((e) => e.meta.id === parent)?.meta.title ??
+        parent);
 
   // The launch preset with this dialog's parent, so a dropped chip stays dropped.
   function quickAddPreset(): CreateTaskPreset {
     const next: CreateTaskPreset = { ...createPreset };
-    if (parent === null) delete next.epic;
-    else next.epic = parent;
+    if (parent === null) delete next.milestone;
+    else next.milestone = parent;
     return next;
   }
 

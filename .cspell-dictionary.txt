@@ -479,6 +479,7 @@ rkbeef
 rlib
 rollups
 rscript
+rposition
 rsplit
 rusqlite
 rustls
@@ -828,3 +829,7 @@ recents
 Globex
 Initech
 uppercases
+nocapture
+blackhole
+nonblocking
+waitable

@@ -70,6 +70,8 @@ CREATE TABLE IF NOT EXISTS fed_audit (id INTEGER PRIMARY KEY, at TEXT NOT NULL, 
 -- Which tasks each applied v2 task op touched, kept 30 days, so a revocation
 -- that cuts below ops already applied here can list them.
 CREATE TABLE IF NOT EXISTS fed_applied (replica TEXT NOT NULL, seq INTEGER NOT NULL, task TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (replica, seq, task));
+-- Team content keys this machine granted, so each member gets each once.
+CREATE TABLE IF NOT EXISTS fed_content_grants (replica TEXT NOT NULL, epoch TEXT NOT NULL, PRIMARY KEY (replica, epoch));
 -- Every v1 op this root put in its outbox, by any build on it (a trigger fires
 -- for an older build too), so reissue() signs only what this root minted.
 CREATE TABLE IF NOT EXISTS fed_v1_minted (seq INTEGER PRIMARY KEY, op_json TEXT NOT NULL);

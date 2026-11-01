@@ -93,12 +93,12 @@ function makeClient(getRun: (id: string) => Promise<RunDetail>): ApiClient {
     getPlan: () => Promise.reject(new Error('not used')),
     sendPlanMessage: () => Promise.reject(new Error('not used')),
     confirmPlan: () => Promise.reject(new Error('not used')),
-    startEpic: () => Promise.reject(new Error('not used')),
-    pauseEpic: () => Promise.reject(new Error('not used')),
-    resumeEpic: () => Promise.reject(new Error('not used')),
+    startMilestone: () => Promise.reject(new Error('not used')),
+    pauseMilestone: () => Promise.reject(new Error('not used')),
+    resumeMilestone: () => Promise.reject(new Error('not used')),
     fetchExecutors: () => Promise.resolve({ executors: [], default: 'claude' }),
-    stopEpic: () => Promise.reject(new Error('not used')),
-    getEpicProgress: () => Promise.reject(new Error('not used')),
+    stopMilestone: () => Promise.reject(new Error('not used')),
+    getMilestoneProgress: () => Promise.reject(new Error('not used')),
     openDecisions: () => Promise.reject(new Error('not used')),
     listAgentRoster: () => Promise.reject(new Error('not used')),
     getMessage: () => Promise.reject(new Error('not used')),
@@ -163,6 +163,8 @@ function makeClient(getRun: (id: string) => Promise<RunDetail>): ApiClient {
     ackProblem: () => Promise.reject(new Error('not used')),
     resolveRunConflict: () => Promise.reject(new Error('not used')),
     switchTransport: () => Promise.reject(new Error('not used')),
+    getContentE2e: () => Promise.reject(new Error('not used')),
+    enableContentE2e: () => Promise.reject(new Error('not used')),
   };
 }
 
