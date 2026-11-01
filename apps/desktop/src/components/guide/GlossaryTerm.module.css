@@ -1,0 +1,16 @@
+/* A glossary word (GlossaryTerm.tsx): a dotted underline says a hint is
+   there, the help cursor on hover, and Gr8r's focus ring when the
+   keyboard reaches it. */
+
+.term {
+  cursor: help;
+  border-radius: var(--r-xs);
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+.term:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}

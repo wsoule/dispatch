@@ -1,7 +1,7 @@
-import type { ReactNode } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 
 import type { TaskPriority, TaskStateKind } from '../tasks/types';
-import type { UiStatus, UiTone } from '../types';
+import type { DataAttributes, UiStatus, UiTone } from '../types';
 
 // Prop vocabulary of the "edit" family: the controls a host puts into the
 // task view (and anywhere else) to change a task's properties. Every control
@@ -76,6 +76,19 @@ export interface PickerOption {
       of choosing it. It is never shown as chosen, never calls onChange
       and shows no pending note. */
   href?: string;
+  /** A step rather than a value (a filter menu's facet, "Back to
+      filters"): picking it calls onChange with its value (single mode,
+      without the save contract: never shown as chosen or pending, and
+      the returned promise is not awaited) or toggles it (multiple
+      mode), then clears the search, resets the active row and keeps the
+      popover open with focus in its search box or list, so the host can
+      swap `options` and `label` for the next step. */
+  keepOpen?: boolean;
+  /** Action mode only (`action`, which has no value): marks this option
+      as the current one (a saved-views menu's open view), with
+      aria-selected and the trailing tick. Picking still runs it as an
+      action. Ignored in the other modes, where `value` decides. */
+  selected?: boolean;
 }
 
 /**
@@ -136,7 +149,10 @@ export interface EditLabels {
   saveShortcut: string;
 }
 
-interface PickerBaseProps {
+/** A host's `data-*` attributes (DataAttributes) go on the open popover
+    (the role="dialog" layer, the element a host's styling or test hook
+    such as `data-slot="filter-menu"` needs), not on the trigger. */
+interface PickerBaseProps extends DataAttributes {
   /** The property's name ("Assignee"): the trigger's accessible name is
       "Assignee: Ana Moreno", and it names the popover and its list. */
   label: string;
@@ -149,6 +165,14 @@ interface PickerBaseProps {
   placeholderTone?: UiTone;
   /** The search box's placeholder ("Assign to…"). */
   searchPlaceholder?: string;
+  /** The search box's accessible name when it differs from `label`
+      (Filter's "Add filter" box over its "Filter facets" list). Default
+      `label`. */
+  searchLabel?: string;
+  /** The key that opens this picker from the page ("F"): a keycap at the
+      end of the search row (hidden on a phone sheet) and the trigger's
+      aria-keyshortcuts. The host still binds the key itself. */
+  shortcut?: string;
   /** Offers a leading option that clears the value ("No project"); single
       mode picks null, multiple mode picks []. Omit when a value is
       required. */
@@ -476,4 +500,49 @@ export interface DateFieldProps {
   disabled?: boolean;
   id?: string;
   className?: string;
+}
+
+/**
+ * A non-modal panel anchored to a trigger or another element: Gr8r's
+ * `.pop` card holding a host's own content (a display panel, a short
+ * form). A `role="dialog"` named by `label`, never `aria-modal`. Pickers
+ * nested in it are layers of their own: Escape and outside presses close
+ * the innermost first.
+ */
+export interface PopoverProps extends DataAttributes {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Names the dialog ("Display options"). */
+  label: string;
+  /** The button that opens it. It is cloned with aria-haspopup="dialog",
+      aria-expanded, aria-controls and a click that toggles the popover;
+      it must forward `ref` to its element (a DOM element or Button). */
+  trigger?: ReactElement;
+  /** Anchors it to another element instead of the trigger (a field the
+      popover suggests for). With no trigger, focus returns here. */
+  anchorRef?: { readonly current: HTMLElement | null };
+  /** Which anchor edge it lines up with. Default 'start'. */
+  align?: 'start' | 'end';
+  /** The preferred side; it flips when it does not fit. Default 'bottom'. */
+  side?: 'bottom' | 'top';
+  /** A width in px, or 'trigger' for the anchor's width. Default: the
+      content's, between 240px and 400px. */
+  width?: number | 'trigger';
+  /** Where focus goes on open: 'first' (default) the first focusable
+      element inside, else the panel; 'panel' the panel itself; false
+      leaves focus where it is (in the anchor); or an element. */
+  initialFocus?:
+    | 'first'
+    | 'panel'
+    | false
+    | { readonly current: HTMLElement | null };
+  /** Where focus goes when it closes on Escape, Tab or Done: true
+      (default) the trigger or anchor, false nowhere, or a function's
+      element. An outside press leaves focus where the press put it. */
+  returnFocus?: boolean | (() => HTMLElement | null);
+  /** A press outside closes it. Default true. */
+  closeOnOutside?: boolean;
+  /** A row under the content, divided from it (Save, Cancel). */
+  footer?: ReactNode;
+  children: ReactNode;
 }

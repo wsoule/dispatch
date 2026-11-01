@@ -501,22 +501,98 @@ html:where(:not([data-bt-ui-scoped])) {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* The element margins and paddings a page never wants from the browser;
+   a component spaces its own. This is the part of Tailwind's preflight
+   the components (and a host without Tailwind) need. */
 :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) h1,
 :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) h2,
 :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) h3,
 :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) h4,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) h5,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) h6,
 :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) p,
 :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) figure,
 :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) blockquote,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) dl,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) dd,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) pre,
 :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) ul,
-:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) ol {
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) ol,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) menu,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) fieldset,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) legend {
   margin: 0;
   padding: 0;
 }
 
+/* Headings take their size and weight from their class (a block title, a
+   drawer title), never the browser's 2em bold ladder. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) h1,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) h2,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) h3,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) h4,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) h5,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) h6 {
+  font-size: inherit;
+  font-weight: inherit;
+}
+
 :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) ul,
-:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) ol {
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) ol,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) menu {
   list-style: none;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) fieldset {
+  min-width: 0;
+  border: 0;
+}
+
+/* A divider: Gr8r's soft line, not the browser's inset groove. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) hr {
+  height: 0;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  color: inherit;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) abbr:where([title]) {
+  text-decoration: underline dotted;
+}
+
+/* Machine-read text (code, keys, samples) in Geist Mono at the size of
+   the text around it (the browser's monospace shrinks it). */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) code,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) kbd,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) samp,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) pre {
+  font-family: var(--font-mono);
+  font-size: 1em;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) small {
+  font-size: 80%;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) sub,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) sup {
+  position: relative;
+  font-size: 75%;
+  line-height: 0;
+  vertical-align: baseline;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) sub {
+  bottom: -0.25em;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) sup {
+  top: -0.5em;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) summary {
+  display: list-item;
 }
 
 /* Links are undecorated; affordance is supplied per component (an inline
@@ -536,6 +612,31 @@ html:where(:not([data-bt-ui-scoped])) {
   cursor: pointer;
 }
 
+/* Fields speak the page's type and colour; their box (border, fill,
+   padding, radius) comes from .input, .select, .textarea or a module. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) input,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) select,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) optgroup,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) textarea {
+  margin: 0;
+  padding: 0;
+  border: 0 solid;
+  border-radius: 0;
+  background-color: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) textarea {
+  resize: vertical;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) ::placeholder {
+  opacity: 1;
+  color: var(--text-3);
+}
+
 :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) input,
 :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) textarea,
 :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) [contenteditable] {
@@ -543,8 +644,33 @@ html:where(:not([data-bt-ui-scoped])) {
 }
 
 :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) img,
-:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) svg {
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) svg,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) video,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) canvas,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) audio,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) iframe,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) embed,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) object {
   display: block;
+  vertical-align: middle;
+}
+
+/* Media never overflows its column. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) img,
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) video {
+  max-width: 100%;
+  height: auto;
+}
+
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) iframe {
+  border: 0;
+}
+
+/* `hidden` hides, whatever display a class gives the element
+   (hidden="until-found" excepted: the browser reveals it on find). */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui])
+  [hidden]:where(:not([hidden='until-found'])) {
+  display: none !important;
 }
 
 :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) table {

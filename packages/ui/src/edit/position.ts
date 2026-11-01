@@ -16,8 +16,12 @@ export interface PlacementInput {
   margin?: number;
   /** Which trigger edge the popover lines up with. Default 'start' (left
       edges); 'end' lines up the right edges, for a trigger at the right
-      of its row. Either flips when the popover would leave the viewport. */
-  align?: 'start' | 'end';
+      of its row; 'center' centres it on the trigger (a tooltip). Each
+      shifts when the popover would leave the viewport. */
+  align?: 'start' | 'end' | 'center';
+  /** The preferred side. Default 'below'; 'above' (a tooltip on top)
+      flips below when it does not fit above and below has more room. */
+  side?: 'below' | 'above';
 }
 
 export interface Placement {
@@ -38,9 +42,11 @@ export interface Placement {
 /**
  * Places a popover against its trigger. Below wins unless the popover does
  * not fit there and the space above is larger (it flips at the bottom
- * edge). Horizontally it lines up with the trigger's left edge (or right
- * edge with align 'end'); when that leaves the viewport it lines up with
- * the other edge instead, and it is finally clamped inside the margins.
+ * edge); with side 'above' the same holds the other way round.
+ * Horizontally it lines up with the trigger's left edge (or right edge
+ * with align 'end', or its centre with 'center'); when an edge alignment
+ * leaves the viewport it lines up with the other edge instead, and it is
+ * finally clamped inside the margins.
  */
 export function placePopover(input: PlacementInput): Placement {
   const gap = input.gap ?? 4;
@@ -50,12 +56,20 @@ export function placePopover(input: PlacementInput): Placement {
   const below = viewport.height - anchor.bottom - gap - margin;
   const above = anchor.top - gap - margin;
   const side: Placement['side'] =
-    size.height <= below || below >= above ? 'below' : 'above';
+    input.side === 'above'
+      ? size.height <= above || above >= below
+        ? 'above'
+        : 'below'
+      : size.height <= below || below >= above
+        ? 'below'
+        : 'above';
   const maxHeight = Math.max(0, Math.floor(side === 'below' ? below : above));
 
   const width = Math.max(0, Math.min(size.width, viewport.width - 2 * margin));
   let left: number;
-  if (input.align === 'end') {
+  if (input.align === 'center') {
+    left = (anchor.left + anchor.right) / 2 - width / 2;
+  } else if (input.align === 'end') {
     left = anchor.right - width;
     if (left < margin) left = anchor.left;
   } else {

@@ -13,14 +13,21 @@ import { renderToString } from 'react-dom/server';
 
 import {
   type BlockBarProps,
+  type ConfirmDialogProps,
+  cx,
+  type DataAttributes,
+  type DialogProps,
   GraphLegend,
   type PickerMarkViewProps,
+  type PopoverProps,
+  type SpinnerProps,
   type StatusMarkProps,
   type TabItem,
   Tabs,
   type TabsProps,
   ThemeToggle,
   type ThemeToggleProps,
+  type TooltipProps,
   type UiLinkProviderProps,
 } from '../src/index';
 
@@ -161,13 +168,40 @@ describe('GraphLegend focus swatch', () => {
   });
 });
 
+// cx: the package's one class joiner, exported for hosts that build
+// their components on CSS modules (it replaces clsx-style helpers; no
+// merge semantics, which modules do not need).
+describe('cx', () => {
+  test('is exported from the root and drops empty names', () => {
+    expect(cx('row', undefined, false, null, '', 'active')).toBe('row active');
+    expect(cx()).toBe('');
+    expect(cx(undefined)).toBe('');
+  });
+});
+
 // Every public component's props are a named, exported type (a host
 // wrapping one needs no ComponentProps<typeof …>). Checked by tsc.
 export type PublicProps = [
   BlockBarProps,
+  ConfirmDialogProps,
+  DialogProps,
   PickerMarkViewProps,
+  PopoverProps,
+  SpinnerProps,
   StatusMarkProps,
   TabsProps,
   ThemeToggleProps,
+  TooltipProps,
   UiLinkProviderProps,
 ];
+
+// DataAttributes takes any data-* key and nothing else (checked by tsc).
+export const hostHooks: DataAttributes = {
+  'data-testid': 'tasks-back',
+  'data-slot': 'settings-panel',
+  'data-count': 3,
+  'data-open': true,
+  'data-gone': undefined,
+};
+// @ts-expect-error -- a prop that is not data-* is not a host hook
+export const notAHook: DataAttributes = { title: 'Back' };

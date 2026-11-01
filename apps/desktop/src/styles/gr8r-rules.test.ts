@@ -85,6 +85,13 @@ const GR8R_SCOPE: readonly string[] = [
   'lib/taskDates.test.ts',
   'lib/feedState.ts',
   'lib/feedState.test.ts',
+  'components/issues',
+  'lib/taskFilters.ts',
+  'lib/taskFilters.test.ts',
+  'hooks/useTaskFilterMenu.ts',
+  'components/guide/GlossaryTerm.tsx',
+  'components/guide/GlossaryTerm.module.css',
+  'components/guide/GlossaryTerm.test.tsx',
 ];
 
 /** GR8R_SCOPE directory entries allowed to be absent. Every other directory entry must exist

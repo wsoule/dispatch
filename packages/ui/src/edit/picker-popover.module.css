@@ -528,6 +528,14 @@
   display: none;
 }
 
+/* The key that opens this picker from the page (Filter's F), taught where
+   the search starts. */
+.shortcut {
+  flex: none;
+  display: inline-flex;
+  color: var(--text-3);
+}
+
 @media (hover: hover) and (width >= 901px) {
   .close:hover {
     background: var(--surface-2);
@@ -610,6 +618,11 @@
 }
 
 @media (forced-colors: active) {
+  /* Forced colours drop the card's shadow, its only edge: draw one. */
+  .panel {
+    border: 1px solid CanvasText;
+  }
+
   .option[data-active='true'] {
     outline: 2px solid Highlight;
     outline-offset: -2px;
@@ -870,7 +883,8 @@
     border-radius: var(--r-sm);
   }
 
-  .closeKey {
+  .closeKey,
+  .shortcut {
     display: none;
   }
 

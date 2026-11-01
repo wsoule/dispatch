@@ -13,6 +13,7 @@ import {
   RegisterCell,
   RegisterRow,
   type SemanticTone,
+  Spinner,
   StateGlyph,
   StatsStrip,
   TaskDetail,
@@ -309,6 +310,22 @@ describe('ProgressRule', () => {
     // One fact is coloured once: the fill says it, the "3/7" stays quiet.
     expect(rule(sheet, '.label')).toContain('color: var(--text-3)');
     expect(sheet).not.toContain('.toned .label');
+  });
+});
+
+describe('Spinner', () => {
+  test('a tone is emitted as data-tone and draws the arc from the hook', () => {
+    for (const tone of [...SEMANTIC, 'muted', 'accent'] as UiTone[]) {
+      const view = render(<Spinner tone={tone} />);
+      expect(view.container.firstElementChild?.getAttribute('data-tone')).toBe(
+        tone
+      );
+      view.unmount();
+    }
+    const sheet = css('shell/spinner.module.css');
+    // No tone: the surrounding text's colour; a tone: its mark hue.
+    expect(rule(sheet, '.spinner[data-tone]')).toBe('color: var(--tone);');
+    expect(sheet).not.toContain('--accent');
   });
 });
 

@@ -37,6 +37,7 @@ basenames
 bceb
 behaviour
 behavioural
+behaviours
 bigmap
 Bingbot
 birpc
@@ -236,6 +237,7 @@ hookified
 hostable
 hotspot
 hotspots
+hoverable
 HPKE
 hstatus
 httpx

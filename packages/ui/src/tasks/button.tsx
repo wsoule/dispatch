@@ -1,5 +1,6 @@
 'use client';
 
+import { dataAttributes } from '../lib/data-attributes';
 import { Link } from '../lib/link';
 import styles from './button.module.css';
 import { cx } from './class-names';
@@ -17,7 +18,10 @@ function isLink(props: ButtonProps): props is ButtonAsLinkProps {
    quiet the ghost for toolbars, danger a red fill for a destructive or
    irreversible write. sm / md / lg are 26 / 30 / 36px; block stretches it
    across its container. Hover fills are gated off touch. With href it
-   renders through the host's <Link>, so it can sit in any router. */
+   renders through the host's <Link>, so it can sit in any router. busy
+   (a save or send in flight) disables it with aria-busy and swaps its
+   text for busyLabel; it never shows a spinner. A host's data-* hooks
+   land on the root element. */
 export function Button(props: ButtonProps) {
   const {
     variant = 'secondary',
@@ -25,15 +29,19 @@ export function Button(props: ButtonProps) {
     block = false,
     icon,
     iconAfter,
-    children,
     className,
   } = props;
+  const busy = !isLink(props) && props.busy === true;
+  const hasText = props.children !== undefined && props.children !== null;
+  const children =
+    busy && hasText ? (props.busyLabel ?? 'Saving…') : props.children;
+  const hostData = dataAttributes(props);
   const classes = cx(
     styles.button,
     styles[variant],
     styles[size],
     block ? styles.block : undefined,
-    children === undefined || children === null ? styles.iconOnly : undefined,
+    hasText ? undefined : styles.iconOnly,
     className
   );
   const body = (
@@ -43,9 +51,7 @@ export function Button(props: ButtonProps) {
           {icon}
         </span>
       ) : null}
-      {children !== undefined && children !== null ? (
-        <span className={styles.text}>{children}</span>
-      ) : null}
+      {hasText ? <span className={styles.text}>{children}</span> : null}
       {iconAfter !== undefined ? (
         <span className={styles.icon} aria-hidden="true">
           {iconAfter}
@@ -58,11 +64,14 @@ export function Button(props: ButtonProps) {
     const external = props.external === true;
     return (
       <Link
+        {...hostData}
         href={props.href}
         className={classes}
         aria-label={props['aria-label']}
+        aria-describedby={props['aria-describedby']}
         title={props.title}
         onClick={props.onClick}
+        onKeyDown={props.onKeyDown}
         target={external ? '_blank' : undefined}
         rel={external ? 'noreferrer noopener' : undefined}
       >
@@ -76,14 +85,33 @@ export function Button(props: ButtonProps) {
 
   return (
     <button
+      {...hostData}
+      ref={props.ref}
+      id={props.id}
       type={props.type ?? 'button'}
       className={classes}
-      disabled={props.disabled}
+      disabled={props.disabled === true || busy}
+      tabIndex={props.tabIndex}
+      form={props.form}
+      name={props.name}
+      // A host's choice (a dialog's one field-less action); off by default.
+      // oxlint-disable-next-line jsx-a11y/no-autofocus
+      autoFocus={props.autoFocus}
       onClick={props.onClick}
+      onKeyDown={props.onKeyDown}
+      onPointerDown={props.onPointerDown}
+      onMouseDown={props.onMouseDown}
+      onPointerEnter={props.onPointerEnter}
+      onPointerLeave={props.onPointerLeave}
+      onFocus={props.onFocus}
+      onBlur={props.onBlur}
       aria-label={props['aria-label']}
+      aria-describedby={props['aria-describedby']}
       aria-pressed={props['aria-pressed']}
       aria-expanded={props['aria-expanded']}
       aria-controls={props['aria-controls']}
+      aria-haspopup={props['aria-haspopup']}
+      aria-busy={busy ? 'true' : undefined}
       title={props.title}
       data-variant={variant}
     >

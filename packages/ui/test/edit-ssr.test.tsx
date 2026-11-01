@@ -10,6 +10,7 @@ interface SsrResult {
   hasDocument: boolean;
   controls: string;
   detail: string;
+  popover: string;
 }
 
 function serverRender(): SsrResult {
@@ -72,5 +73,21 @@ describe('edit family server render', () => {
     expect(html).toContain('aria-label="Add blocked by"');
     expect(html).toContain('&lt;i&gt;hi&lt;/i&gt;');
     expect(html).toContain('aria-label="Comments"');
+  });
+
+  test('a Popover renders its trigger, and its panel when open', () => {
+    const html = result.popover;
+    expect(html).toContain('aria-haspopup="dialog"');
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain('aria-label="Display options"');
+    expect(html).toContain('popover="manual"');
+    expect(html).toContain('data-slot="display-popover"');
+    expect(html).toContain('Apply');
+    expect(html).not.toContain('aria-modal');
+    // The closed one renders its trigger only.
+    expect(html).toContain('Save view…');
+    expect(html).not.toContain('aria-label="Save view"');
   });
 });

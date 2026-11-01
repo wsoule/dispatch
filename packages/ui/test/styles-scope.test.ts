@@ -138,6 +138,12 @@ describe('the issue list modules are scoped', () => {
     'tasks/task-group-table.module.css',
     'tasks/checkbox.module.css',
     'edit/picker-popover.module.css',
+    // The overlays: they sit in the browser's top layer, so nothing in
+    // them may reach a host element either.
+    'edit/popover.module.css',
+    'shell/dialog.module.css',
+    'shell/tooltip.module.css',
+    'shell/spinner.module.css',
   ];
   const keyframeStop = /^(from|to|\d+(\.\d+)?%)$/;
   for (const file of modules) {

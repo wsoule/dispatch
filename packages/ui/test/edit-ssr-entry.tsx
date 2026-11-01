@@ -7,6 +7,7 @@ import {
   InlineTextField,
   LabelPicker,
   MilestonePicker,
+  Popover,
   PriorityPicker,
   ProjectPicker,
   StatePicker,
@@ -100,11 +101,37 @@ const detail = (
   />
 );
 
+// A Popover open on the server (a linkable panel) and one closed: the
+// layer stack, media queries and placement all wait for the client.
+const popover = (
+  <>
+    <Popover
+      open
+      onOpenChange={noop}
+      label="Display options"
+      trigger={<button type="button">Display</button>}
+      footer={<button type="button">Apply</button>}
+      data-slot="display-popover"
+    >
+      <p>Layout</p>
+    </Popover>
+    <Popover
+      open={false}
+      onOpenChange={noop}
+      label="Save view"
+      trigger={<button type="button">Save view…</button>}
+    >
+      <p>Name</p>
+    </Popover>
+  </>
+);
+
 console.log(
   JSON.stringify({
     hasWindow: typeof window !== 'undefined',
     hasDocument: typeof document !== 'undefined',
     controls: renderToString(controls),
     detail: renderToString(detail),
+    popover: renderToString(popover),
   })
 );

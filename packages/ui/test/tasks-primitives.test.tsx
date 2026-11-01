@@ -7,8 +7,11 @@ import {
   Button,
   Checklist,
   Chip,
+  ConfirmDialog,
+  Dialog,
   EmptyState,
   Notice,
+  Popover,
   ProgressRule,
   SegmentedControl,
   Switch,
@@ -87,6 +90,183 @@ describe('Button', () => {
       <Button icon={<svg />} aria-label="Copy link" />
     );
     expect(getByRole('button', { name: 'Copy link' })).toBeTruthy();
+  });
+
+  // The passthrough a host needs to drop its own button: a ref for focus
+  // and anchoring, key and pointer handlers, a description, form wiring.
+  test('passes the ref, handlers, description and form wiring to the element', () => {
+    const ref: { current: HTMLButtonElement | null } = { current: null };
+    const onKeyDown = mock((_key: string) => {});
+    const onPointerDown = mock(() => {});
+    const onFocus = mock(() => {});
+    const { getByRole } = render(
+      <>
+        <form id="save-view" />
+        <Button
+          ref={ref}
+          id="save"
+          type="submit"
+          form="save-view"
+          name="intent"
+          tabIndex={-1}
+          aria-describedby="save-hint"
+          aria-haspopup="dialog"
+          onKeyDown={(event) => onKeyDown(event.key)}
+          onPointerDown={onPointerDown}
+          onFocus={onFocus}
+        >
+          Save view
+        </Button>
+        <p id="save-hint">Saved views are shared.</p>
+      </>
+    );
+    const button = getByRole('button', { name: 'Save view' });
+    expect(ref.current === button).toBe(true);
+    expect(button.id).toBe('save');
+    expect(button.getAttribute('form')).toBe('save-view');
+    expect(button.getAttribute('name')).toBe('intent');
+    expect(button.getAttribute('tabindex')).toBe('-1');
+    expect(button.getAttribute('aria-describedby')).toBe('save-hint');
+    expect(button.getAttribute('aria-haspopup')).toBe('dialog');
+    fireEvent.keyDown(button, { key: 'ArrowDown' });
+    fireEvent.pointerDown(button);
+    button.focus();
+    expect(onKeyDown).toHaveBeenCalledWith('ArrowDown');
+    expect(onPointerDown).toHaveBeenCalledTimes(1);
+    expect(onFocus).toHaveBeenCalledTimes(1);
+  });
+
+  // A save in flight says so in words (never a spinner): disabled,
+  // aria-busy, and the busy text in place of the label.
+  test('busy disables it with aria-busy and swaps the text', () => {
+    const onClick = mock(() => {});
+    const { getByRole, rerender } = render(
+      <Button variant="primary" busy onClick={onClick}>
+        Save
+      </Button>
+    );
+    const button = getByRole('button', { name: 'Saving…' });
+    expect(button.getAttribute('aria-busy')).toBe('true');
+    expect(button.hasAttribute('disabled')).toBe(true);
+    expect(button.querySelector('svg')).toBeNull();
+    fireEvent.click(button);
+    expect(onClick).not.toHaveBeenCalled();
+    rerender(
+      <Button variant="primary" busy busyLabel="Deleting…" onClick={onClick}>
+        Delete
+      </Button>
+    );
+    expect(getByRole('button', { name: 'Deleting…' })).toBeTruthy();
+    rerender(
+      <Button variant="primary" onClick={onClick}>
+        Save
+      </Button>
+    );
+    const idle = getByRole('button', { name: 'Save' });
+    expect(idle.hasAttribute('aria-busy')).toBe(false);
+    expect(idle.hasAttribute('disabled')).toBe(false);
+  });
+
+  test('the link branch forwards data hooks, the description and keys', () => {
+    const onKeyDown = mock((_key: string) => {});
+    const { getByRole } = render(
+      <UiLinkProvider link={HostLink}>
+        <Button
+          href="/runs"
+          data-testid="tasks-back"
+          data-slot="back-link"
+          aria-describedby="runs-hint"
+          onKeyDown={(event) => onKeyDown(event.key)}
+        >
+          Runs
+        </Button>
+      </UiLinkProvider>
+    );
+    const link = getByRole('link', { name: 'Runs' });
+    expect(link.getAttribute('data-testid')).toBe('tasks-back');
+    expect(link.getAttribute('data-slot')).toBe('back-link');
+    expect(link.getAttribute('aria-describedby')).toBe('runs-hint');
+    fireEvent.keyDown(link, { key: 'Enter' });
+    expect(onKeyDown).toHaveBeenCalledWith('Enter');
+  });
+});
+
+// DataAttributes: a host's data-testid and data-slot hooks reach the
+// root element of every primitive that takes them, untouched, and never
+// replace the component's own data-* attributes.
+describe('host data attributes', () => {
+  test('reach the root of Button, as a button and as a link', () => {
+    const { getByRole } = render(
+      <>
+        <Button data-testid="team-start" data-slot="primary-action">
+          Start
+        </Button>
+        <Button href="/docs" data-testid="docs-link" data-slot="nav-link">
+          Docs
+        </Button>
+      </>
+    );
+    const button = getByRole('button', { name: 'Start' });
+    expect(button.getAttribute('data-testid')).toBe('team-start');
+    expect(button.getAttribute('data-slot')).toBe('primary-action');
+    // The component's own hook stays.
+    expect(button.getAttribute('data-variant')).toBe('secondary');
+    const link = getByRole('link', { name: 'Docs' });
+    expect(link.getAttribute('data-testid')).toBe('docs-link');
+    expect(link.getAttribute('data-slot')).toBe('nav-link');
+  });
+
+  test('reach the root of Popover, Dialog and ConfirmDialog', () => {
+    const { getByRole } = render(
+      <>
+        <Popover
+          open
+          onOpenChange={() => {}}
+          label="Display options"
+          trigger={<button type="button">Display</button>}
+          data-testid="display"
+          data-slot="display-popover"
+        >
+          <p>Layout</p>
+        </Popover>
+        <Dialog
+          open
+          onClose={() => {}}
+          title="New doc"
+          data-testid="new-doc"
+          data-slot="dialog-content"
+        >
+          <input aria-label="Title" />
+        </Dialog>
+      </>
+    );
+    const popover = getByRole('dialog', { name: 'Display options' });
+    expect(popover.getAttribute('data-testid')).toBe('display');
+    expect(popover.getAttribute('data-slot')).toBe('display-popover');
+    expect(popover.hasAttribute('data-popover')).toBe(true);
+    const dialog = getByRole('dialog', { name: 'New doc' });
+    expect(dialog.getAttribute('data-testid')).toBe('new-doc');
+    expect(dialog.getAttribute('data-slot')).toBe('dialog-content');
+    cleanup();
+    const confirm = render(
+      <ConfirmDialog
+        open
+        title="Delete this view?"
+        confirmLabel="Delete view"
+        tone="danger"
+        onConfirm={() => {}}
+        onCancel={() => {}}
+        data-testid="delete-view"
+        data-slot="alert-dialog-content"
+      >
+        Its filters are lost.
+      </ConfirmDialog>
+    );
+    const alert = confirm.getByRole('alertdialog', {
+      name: 'Delete this view?',
+    });
+    expect(alert.getAttribute('data-testid')).toBe('delete-view');
+    expect(alert.getAttribute('data-slot')).toBe('alert-dialog-content');
   });
 });
 

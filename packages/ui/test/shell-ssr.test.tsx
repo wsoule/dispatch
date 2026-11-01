@@ -11,6 +11,7 @@ interface SsrResult {
   shell: string;
   switcher: string;
   signedOut: string;
+  overlays: string;
 }
 
 function serverRender(): SsrResult {
@@ -65,5 +66,19 @@ describe('shell family server render', () => {
     expect(switcher).toContain('data-tip="Northwind · Switch workspace"');
     // Closed: no menu rows in the markup.
     expect(switcher).not.toContain('Connect another workspace');
+  });
+
+  test('the overlays render: dialog, confirmation, tooltip, spinner', () => {
+    const { overlays } = serverRender();
+    expect(overlays).toContain('role="dialog"');
+    expect(overlays).toContain('role="alertdialog"');
+    expect(overlays.match(/aria-modal="true"/g)).toHaveLength(2);
+    expect(overlays).toContain('data-slot="dialog-content"');
+    expect(overlays).toContain('Share this doc with the team.');
+    expect(overlays).toContain('Delete view');
+    expect(overlays).toContain('role="tooltip"');
+    expect(overlays).toContain('Visible to the team');
+    expect(overlays).not.toContain('Never shown on the server');
+    expect(overlays).toContain('aria-label="Starting the daemon"');
   });
 });

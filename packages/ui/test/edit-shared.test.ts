@@ -221,4 +221,40 @@ describe('placePopover', () => {
     expect(p.width).toBe(304);
     expect(p.left).toBe(8);
   });
+
+  // A tooltip on top, a Popover with side="top".
+  test("side 'above' prefers above, and flips below at the top edge", () => {
+    const above = placePopover({
+      anchor: anchor(300, 200),
+      size: { width: 120, height: 24 },
+      viewport,
+      side: 'above',
+    });
+    expect(above.side).toBe('above');
+    expect(above.bottom).toBe(800 - 300 + 4);
+    const flipped = placePopover({
+      anchor: anchor(10, 200),
+      size: { width: 120, height: 24 },
+      viewport,
+      side: 'above',
+    });
+    expect(flipped.side).toBe('below');
+  });
+
+  test("align 'center' centres it on the trigger, still inside the margins", () => {
+    const centred = placePopover({
+      anchor: anchor(300, 200, 100),
+      size: { width: 60, height: 24 },
+      viewport,
+      align: 'center',
+    });
+    expect(centred.left).toBe(220);
+    const edge = placePopover({
+      anchor: anchor(300, 0, 20),
+      size: { width: 200, height: 24 },
+      viewport,
+      align: 'center',
+    });
+    expect(edge.left).toBe(8);
+  });
 });

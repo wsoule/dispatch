@@ -1,5 +1,9 @@
-import type { TaskListItem } from '@dispatch-foo/core/browser';
-import type { RunState } from '@dispatch/client';
+import type {
+  Assignee,
+  Priority,
+  TaskListItem,
+} from '@dispatch-foo/core/browser';
+import { ApiError, type RunState } from '@dispatch/client';
 
 import { formatShortDate } from './taskDates';
 import { assigneeLabel, priorityLabel, statusLabel } from './taskDisplay';
@@ -401,4 +405,201 @@ export function clauseParts(
       .map((v) => filterValueLabel(clause.facet, v, ctx))
       .join(', '),
   };
+}
+
+// ---- The Filter picker's vocabulary --------------------------------------------------
+// What `components/issues/FilterPicker.tsx` lists, kept here as plain data so it is
+// unit-tested without React: the values each facet offers, the date quick picks and their
+// bounds, the search match and the AI filter's error sentence. No JSX: a value's glyph is a
+// `FilterOptionMark` the component turns into a picker mark.
+
+/** The values the Filter picker offers, from the project's own vocabulary. */
+export interface FilterPickerContext {
+  /** The project's statuses in config order. */
+  statuses: readonly string[];
+  epics: readonly TaskListItem[];
+  /** Every label in use, sorted. */
+  labels: readonly string[];
+  /** Every milestone name in use, sorted. */
+  milestones: readonly string[];
+}
+
+const PRIORITIES: readonly Priority[] = [
+  'urgent',
+  'high',
+  'medium',
+  'low',
+  'none',
+];
+const ASSIGNEES: readonly Assignee[] = ['agent', 'human', 'none'];
+const RUN_STATES: readonly (RunState | typeof FILTER_NONE)[] = [
+  'running',
+  'provisioning',
+  'awaiting-approval',
+  'finished',
+  'failed',
+  'cancelled',
+  'interrupted-dirty',
+  FILTER_NONE,
+];
+
+export const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** The facets that hold one date bound rather than a list of values. */
+export type DateFacet = 'created' | 'updated';
+
+export function isDateFacet(facet: FilterFacet): facet is DateFacet {
+  return facet === 'created' || facet === 'updated';
+}
+
+export interface DatePick {
+  label: string;
+  op: 'before' | 'after';
+  days: number;
+}
+
+/** The Dates facets take one bound; these are the quick picks a menu can offer without a
+ * date input: `days` ago from now, `before` or `after`. A pick's value is `op:days`. */
+export const DATE_PICKS: readonly DatePick[] = [
+  { label: 'In the last day', op: 'after', days: 1 },
+  { label: 'In the last week', op: 'after', days: 7 },
+  { label: 'In the last month', op: 'after', days: 30 },
+  { label: 'More than a week ago', op: 'before', days: 7 },
+  { label: 'More than a month ago', op: 'before', days: 30 },
+];
+
+/** The glyph a value carries, as data: a status's state ring, a priority's bars, or an
+ * assignee's avatar (a blank name is the dashed "nobody" avatar). */
+export type FilterOptionMark =
+  | { kind: 'state'; status: string }
+  | { kind: 'priority'; priority: Priority }
+  | { kind: 'avatar'; name: string };
+
+/** One value a facet can filter on. */
+export interface FilterOption {
+  value: string;
+  label: string;
+  mark?: FilterOptionMark;
+}
+
+/** Every value a facet can filter on, from the project's own vocabulary, in menu order. */
+export function optionsFor(
+  facet: FilterFacet,
+  ctx: FilterPickerContext
+): FilterOption[] {
+  switch (facet) {
+    case 'status':
+      return ctx.statuses.map((s) => ({
+        value: s,
+        label: filterValueLabel('status', s),
+        mark: { kind: 'state', status: s },
+      }));
+    case 'priority':
+      return PRIORITIES.map((p) => ({
+        value: p,
+        label: filterValueLabel('priority', p),
+        mark: { kind: 'priority', priority: p },
+      }));
+    case 'assignee':
+      return ASSIGNEES.map((a) => {
+        const label = filterValueLabel('assignee', a);
+        return {
+          value: a,
+          label,
+          mark: { kind: 'avatar', name: a === FILTER_NONE ? '' : label },
+        };
+      });
+    case 'labels':
+      return ctx.labels.map((l) => ({ value: l, label: l }));
+    case 'epic':
+      return [
+        { value: FILTER_NONE, label: 'No epic' },
+        ...ctx.epics.map((e) => ({ value: e.meta.id, label: e.meta.title })),
+      ];
+    case 'milestone':
+      return [
+        { value: FILTER_NONE, label: 'No milestone' },
+        ...ctx.milestones.map((m) => ({ value: m, label: m })),
+      ];
+    case 'run':
+      return RUN_STATES.map((s) => ({
+        value: s,
+        label: filterValueLabel('run', s),
+      }));
+    case 'created':
+    case 'updated':
+      return DATE_PICKS.map((pick) => ({
+        value: `${pick.op}:${pick.days}`,
+        label: pick.label,
+      }));
+  }
+}
+
+/** The picker's search: `text` contains the trimmed query, ignoring case. */
+export function matches(query: string, text: string): boolean {
+  return text.toLowerCase().includes(query.trim().toLowerCase());
+}
+
+/** How many values the facet's clause holds (0 without one): the facet row's count. */
+export function selectedCount(
+  filters: TaskFilterSet,
+  facet: FilterFacet
+): number {
+  return filters.clauses.find((c) => c.facet === facet)?.values.length ?? 0;
+}
+
+/**
+ * Which quick pick a date clause shows as chosen. The clause stores a resolved ISO bound, so
+ * it cannot match a pick on value: the chosen pick is the one with the clause's operator
+ * whose `days` is nearest to how old the bound is at `now` (the bound was "then minus
+ * `days`" when it was picked). Null without a clause or with an unreadable bound.
+ */
+export function pickedDateValue(
+  filters: TaskFilterSet,
+  facet: DateFacet,
+  now: number
+): string | null {
+  const clause = filters.clauses.find((c) => c.facet === facet);
+  const bound = Date.parse(clause?.values[0] ?? '');
+  if (clause === undefined || Number.isNaN(bound)) return null;
+  const ageDays = (now - bound) / DAY_MS;
+  const nearest = DATE_PICKS.filter((pick) => pick.op === clause.op).sort(
+    (a, b) => Math.abs(a.days - ageDays) - Math.abs(b.days - ageDays)
+  )[0];
+  return nearest === undefined ? null : `${nearest.op}:${nearest.days}`;
+}
+
+/** A quick pick's value (`after:7`) as the clause it stores: its operator and the ISO bound
+ * `days` before `now`. */
+export function datePickBound(
+  value: string,
+  now: number
+): { op: 'before' | 'after'; bound: string } {
+  const [op, days] = value.split(':');
+  return {
+    op: op === 'before' ? 'before' : 'after',
+    bound: new Date(now - Number(days) * DAY_MS).toISOString(),
+  };
+}
+
+/** Applies a quick pick to the date facet, replacing whatever bound it held. */
+export function applyDatePick(
+  filters: TaskFilterSet,
+  facet: DateFacet,
+  value: string,
+  now: number
+): TaskFilterSet {
+  const { op, bound } = datePickBound(value, now);
+  return setDateFilter(filters, facet, op, bound);
+}
+
+/** What the AI filter shows under its input when the daemon says no: an old daemon has no
+ * route (404), anything else carries its own message. */
+export function aiFilterErrorText(err: unknown): string {
+  if (err instanceof ApiError && err.status === 404) {
+    return 'Update the daemon to use AI filters';
+  }
+  return err instanceof Error && err.message !== ''
+    ? err.message
+    : 'AI filter failed';
 }

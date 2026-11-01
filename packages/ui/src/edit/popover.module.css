@@ -1,0 +1,174 @@
+/* Gr8r's popover (.pop): a --surface card with a 10px radius and the pop
+   shadow, holding a host's own content (a display panel, a short form),
+   anchored under (or over) its trigger in the browser's top layer. It is
+   placed by script (shell/layer.ts positionLayer) through the --popover-*
+   custom properties and stays hidden until it has been. On phones it is a
+   bottom sheet over the --overlay scrim, with a Done button. */
+
+/* The layer resets the browser's popover box; the panel draws the card. */
+.layer {
+  position: fixed;
+  inset: auto;
+  top: var(--popover-top, 0);
+  left: var(--popover-left, 0);
+  z-index: 80;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  background: transparent;
+  color: var(--text);
+  visibility: hidden;
+}
+
+.layer[data-placed='true'] {
+  visibility: visible;
+}
+
+.layer[data-side='above'] {
+  top: auto;
+  bottom: var(--popover-bottom, 0);
+}
+
+/* Inherits nothing from where the trigger sits: the panel sets its own
+   voice. Its width is the content's (240 to 400px) unless the host sets
+   one (`width`: px, or the anchor's). */
+.panel {
+  display: flex;
+  flex-direction: column;
+  width: var(--popover-width, auto);
+  min-width: 240px;
+  max-width: min(400px, calc(100vw - 16px));
+  max-height: min(560px, var(--popover-max-height, 560px));
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: var(--fs);
+  font-weight: var(--fw-regular);
+  letter-spacing: normal;
+  line-height: var(--lh);
+  text-align: start;
+  text-transform: none;
+  white-space: normal;
+}
+
+.layer[data-width='set'] .panel {
+  min-width: 0;
+  max-width: calc(100vw - 16px);
+}
+
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px;
+}
+
+.foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--divider);
+}
+
+/* The phone sheet's close: the accent's text, like the picker's Done. */
+.done {
+  display: inline-flex;
+  align-items: center;
+  height: 36px;
+  margin-left: auto;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs);
+  font-weight: var(--fw-semibold);
+  color: var(--accent-ink);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .panel {
+    transform-origin: top left;
+    animation: popover-in 0.16s var(--ease) both;
+  }
+
+  .layer[data-side='above'] .panel {
+    transform-origin: bottom left;
+  }
+}
+
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---- phones: a bottom sheet -------------------------------------------- */
+
+@media (width <= 640px) {
+  .layer,
+  .layer[data-side='above'] {
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    background: var(--overlay);
+  }
+
+  .panel,
+  .layer[data-width='set'] .panel {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    max-height: min(78vh, 560px);
+    border-radius: var(--r-xl) var(--r-xl) 0 0;
+  }
+
+  .body {
+    padding: 12px 16px;
+  }
+
+  .foot {
+    padding: 6px 12px calc(6px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) and (width <= 640px) {
+  .panel,
+  .layer[data-side='above'] .panel {
+    transform-origin: bottom center;
+    animation: popover-sheet-in 0.28s var(--ease-drawer) both;
+  }
+}
+
+@keyframes popover-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Forced colours drop the shadow: the card keeps an edge. */
+@media (forced-colors: active) {
+  .panel {
+    border: 1px solid CanvasText;
+  }
+}

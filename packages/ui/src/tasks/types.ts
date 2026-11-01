@@ -1,7 +1,14 @@
-import type { KeyboardEvent, MouseEvent, ReactNode, Ref } from 'react';
+import type {
+  FocusEvent,
+  KeyboardEvent,
+  MouseEvent,
+  PointerEvent,
+  ReactNode,
+  Ref,
+} from 'react';
 
 import type { PickerMark } from '../edit/types';
-import type { UiStatus, UiTone } from '../types';
+import type { DataAttributes, UiStatus, UiTone } from '../types';
 
 // Prop vocabulary of the "tasks" family: primitives, the grouped task table,
 // deadlines, stats and registers. Plain data + callbacks only, so the
@@ -13,7 +20,7 @@ import type { UiStatus, UiTone } from '../types';
 export type ButtonVariant = 'primary' | 'secondary' | 'quiet' | 'danger';
 export type ButtonSize = 'sm' | 'md' | 'lg';
 
-interface ButtonCommonProps {
+interface ButtonCommonProps extends DataAttributes {
   /** primary = purple fill (one per view), secondary = white with a strong
    * border, quiet = Gr8r's ghost (no box until hover), danger = red fill
    * (a destructive or irreversible write, e.g. "Assign in Linear now"; the
@@ -31,17 +38,42 @@ interface ButtonCommonProps {
   children?: ReactNode;
   className?: string;
   'aria-label'?: string;
+  /** The id of an element that describes it (a hint, a Tooltip). */
+  'aria-describedby'?: string;
   title?: string;
 }
 
 export interface ButtonAsButtonProps extends ButtonCommonProps {
   href?: undefined;
+  /** The <button> element (a Popover's or Tooltip's anchor, a host's
+      focus return). */
+  ref?: Ref<HTMLButtonElement>;
+  id?: string;
   type?: 'button' | 'submit' | 'reset';
   disabled?: boolean;
+  /** Saving or sending: the button is disabled with `aria-busy`, and its
+      text reads `busyLabel` instead (never a spinner). An icon-only
+      button keeps its icon. */
+  busy?: boolean;
+  /** The text while busy. Default "Saving…". */
+  busyLabel?: string;
+  tabIndex?: number;
+  form?: string;
+  name?: string;
+  autoFocus?: boolean;
   onClick?: (event: MouseEvent<HTMLButtonElement>) => void;
+  onKeyDown?: (event: KeyboardEvent<HTMLButtonElement>) => void;
+  onPointerDown?: (event: PointerEvent<HTMLButtonElement>) => void;
+  onMouseDown?: (event: MouseEvent<HTMLButtonElement>) => void;
+  /** Hover in and out (a Tooltip's trigger). */
+  onPointerEnter?: (event: PointerEvent<HTMLButtonElement>) => void;
+  onPointerLeave?: (event: PointerEvent<HTMLButtonElement>) => void;
+  onFocus?: (event: FocusEvent<HTMLButtonElement>) => void;
+  onBlur?: (event: FocusEvent<HTMLButtonElement>) => void;
   'aria-pressed'?: boolean;
   'aria-expanded'?: boolean;
   'aria-controls'?: string;
+  'aria-haspopup'?: 'dialog' | 'menu' | 'listbox' | 'true' | boolean;
 }
 
 export interface ButtonAsLinkProps extends ButtonCommonProps {
@@ -50,6 +82,7 @@ export interface ButtonAsLinkProps extends ButtonCommonProps {
   /** Opens in a new tab with a screen-reader note. */
   external?: boolean;
   onClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
+  onKeyDown?: (event: KeyboardEvent<HTMLAnchorElement>) => void;
 }
 
 export type ButtonProps = ButtonAsButtonProps | ButtonAsLinkProps;

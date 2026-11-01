@@ -1,7 +1,7 @@
-import type { ComponentType, ReactNode } from 'react';
+import type { ComponentType, ReactElement, ReactNode } from 'react';
 
 import type { SaveResult } from '../edit/types';
-import type { UiStatus, UiTone } from '../types';
+import type { DataAttributes, UiStatus, UiTone } from '../types';
 
 // Prop vocabulary of the shell family (app frame, command palette, toasts,
 // slide-over, skeletons). Plain data plus callbacks only: hosts (the
@@ -519,4 +519,110 @@ export interface KbdKeysProps {
   /** One shortcut: ['G', 'W'] pressed in turn, or ['Ctrl', 'K'] held. */
   keys: readonly string[];
   className?: string;
+}
+
+/**
+ * A short hint on hover and keyboard focus (Gr8r's inverted tip), wired
+ * to its trigger through `aria-describedby`. It never holds interactive
+ * content, and never the only copy of a fact. No provider.
+ */
+export interface TooltipProps {
+  /** The hint (plain text, a key cap). */
+  content: ReactNode;
+  /** One element, cloned with aria-describedby (while shown), a ref and
+      pointer and focus handlers; a component must forward them to its
+      element (Button does). An element that cannot take focus (a span,
+      a disabled button) is wrapped in a focusable span. */
+  children: ReactElement;
+  /** The preferred side; it flips when it does not fit. Default 'top'. */
+  side?: 'top' | 'bottom' | 'left' | 'right';
+  /** Hover delay in ms. Default 300; 0 while another tooltip closed less
+      than 400ms ago. Keyboard focus shows it at once. */
+  delay?: number;
+  /** Shown from the first render (and on the server's markup): a
+      persistent hint, or a test without timers. */
+  defaultOpen?: boolean;
+  /** Never shown. */
+  disabled?: boolean;
+}
+
+/**
+ * A centred modal dialog for a short focused form or a reading view
+ * (a diff, a publish step). Anything with pickers and a long body is a
+ * modal SlideOver instead; a destructive confirmation is ConfirmDialog.
+ */
+export interface DialogProps extends DataAttributes {
+  open: boolean;
+  /** Close it: the close button, Escape, a press on the scrim (with
+      dismissOnOutsideClick). The host flips `open`. */
+  onClose: () => void;
+  /** The heading; names the dialog. */
+  title: ReactNode;
+  /** A sentence under the title; describes the dialog. */
+  description?: ReactNode;
+  /** sm 360px, md 520px (default), lg 880px; a full-width sheet on phones. */
+  size?: 'sm' | 'md' | 'lg';
+  /** A control in the title row, before the title (a Back button). */
+  titleAction?: ReactNode;
+  /** The footer's buttons, at its end (Cancel, then the primary). */
+  actions?: ReactNode;
+  /** Footer content at its start (a note, a secondary link). */
+  footerLeading?: ReactNode;
+  /** Receives focus on open instead of the first field in the body. */
+  initialFocusRef?: { readonly current: HTMLElement | null };
+  /** false while busy: Escape, the scrim and the close button do
+      nothing. Default true. */
+  dismissible?: boolean;
+  /** A press on the scrim closes it. Default true. */
+  dismissOnOutsideClick?: boolean;
+  /** The close button's name. Default "Close". */
+  closeLabel?: string;
+  /** Names what it shows (a step of a flow). A new key while open puts
+      focus on the new step's first field and scrolls the body to the
+      top. */
+  contentKey?: string;
+  /** alertdialog for a confirmation (ConfirmDialog): no close button. */
+  role?: 'dialog' | 'alertdialog';
+  children: ReactNode;
+}
+
+/**
+ * Gr8r's confirmation: a small alertdialog that asks once before a
+ * destructive or irreversible write (delete a view, revoke a key).
+ */
+export interface ConfirmDialogProps extends DataAttributes {
+  open: boolean;
+  /** The question ("Delete this view?"). */
+  title: string;
+  /** What happens, in a sentence or two. */
+  children: ReactNode;
+  /** The confirm button's words ("Delete view"). */
+  confirmLabel: string;
+  /** Default "Cancel". */
+  cancelLabel?: string;
+  /** danger: the confirm button is the red danger Button, and Enter
+      never confirms it. Default 'default' (the primary Button). */
+  tone?: 'danger' | 'default';
+  /** The host's own work is running: both buttons and Escape wait. */
+  busy?: boolean;
+  /** Runs once per opening. A promise keeps the dialog open and the
+      confirm button busy until it settles; a rejection re-enables it. */
+  onConfirm: () => void | Promise<unknown>;
+  /** Cancel, Escape: runs once per opening. */
+  onCancel: () => void;
+}
+
+/**
+ * An in-flight mark for agent or network work only (the daemon starting,
+ * a clone, a drafting run). Never a page load (Skeleton) and never a save
+ * (the new value shows at once).
+ */
+export interface SpinnerProps {
+  /** xs 12px, sm 14px (default), md 16px, lg 20px. */
+  size?: 'xs' | 'sm' | 'md' | 'lg';
+  /** The arc's colour (data-tone). Default: the surrounding text's. */
+  tone?: UiTone;
+  /** Its name for assistive tech ("Starting the daemon"). Default
+      "Loading"; '' hides it (a label beside it already says it). */
+  label?: string;
 }

@@ -810,15 +810,120 @@ describe('PickerPopover as a menu (searchable={false})', () => {
     expect(active()?.textContent).toContain('Open');
   });
 
-  test('a search box keeps Home and End for its caret', () => {
+  test('action mode: a selected option is the current one, picks still run', async () => {
+    const picks: (string | null)[] = [];
+    render(
+      <PickerPopover
+        label="View"
+        options={[
+          { value: 'all', label: 'All', selected: true },
+          { value: 'mine', label: 'Mine' },
+          { value: 'save', label: 'Save view…' },
+        ]}
+        value={null}
+        action
+        searchable={false}
+        onChange={(value) => {
+          picks.push(value);
+        }}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    const all = screen.getByRole('option', { name: 'All' });
+    expect(all.getAttribute('aria-selected')).toBe('true');
+    expect(all.querySelector('svg')).not.toBeNull();
+    expect(
+      screen.getByRole('option', { name: 'Mine' }).getAttribute('aria-selected')
+    ).toBe('false');
+    // The current option is where the list starts.
+    const list = screen.getByRole('listbox');
+    expect(list.getAttribute('aria-activedescendant')).toBe(all.id);
+    await act(async () => {
+      fireEvent.click(all);
+      await Promise.resolve();
+    });
+    expect(picks).toEqual(['all']);
+  });
+
+  test('a search box keeps Home and End for its caret while it holds text', () => {
     render(<Host />);
     fireEvent.click(trigger());
     const box = combobox();
+    fireEvent.change(box, { target: { value: 'o' } });
     const before = box.getAttribute('aria-activedescendant');
     const notPrevented = fireEvent.keyDown(box, { key: 'End' });
     // Not prevented, and the active option did not move.
     expect(notPrevented).toBe(true);
     expect(box.getAttribute('aria-activedescendant')).toBe(before);
+  });
+
+  test('an empty search box hands Home and End to the list', () => {
+    render(<Host />);
+    fireEvent.click(trigger());
+    const box = combobox();
+    expect(fireEvent.keyDown(box, { key: 'End' })).toBe(false);
+    expect(activeOption()?.textContent).toContain('Dev Patel');
+    expect(fireEvent.keyDown(box, { key: 'Home' })).toBe(false);
+    expect(activeOption()?.textContent).toContain('Ana Moreno');
+  });
+
+  test('typeahead: letters jump to the next option starting with them', () => {
+    const NAMES: PickerOption[] = [
+      { value: 'all', label: 'All' },
+      { value: 'mine', label: 'Mine' },
+      { value: 'needs', label: 'Needs you' },
+      { value: 'my-open', label: 'My open' },
+    ];
+    render(
+      <PickerPopover
+        label="View"
+        options={NAMES}
+        value={null}
+        action
+        searchable={false}
+        onChange={() => undefined}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    const list = screen.getByRole('listbox');
+    const active = () =>
+      document.getElementById(list.getAttribute('aria-activedescendant') ?? '');
+    expect(fireEvent.keyDown(list, { key: 'm' })).toBe(false);
+    expect(active()?.textContent).toBe('Mine');
+    // The same letter again walks on to the next match.
+    fireEvent.keyDown(list, { key: 'm' });
+    expect(active()?.textContent).toBe('My open');
+    // A modified key is never typeahead.
+    expect(fireEvent.keyDown(list, { key: 'n', metaKey: true })).toBe(true);
+    expect(active()?.textContent).toBe('My open');
+  });
+
+  test('typeahead: a word typed together narrows past a first-letter match', async () => {
+    const NAMES: PickerOption[] = [
+      { value: 'mine', label: 'Mine' },
+      { value: 'milestone', label: 'Milestone' },
+    ];
+    render(
+      <PickerPopover
+        label="Grouping"
+        options={NAMES}
+        value="mine"
+        searchable={false}
+        onChange={() => undefined}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^Grouping/ }));
+    const list = screen.getByRole('listbox');
+    const active = () =>
+      document.getElementById(list.getAttribute('aria-activedescendant') ?? '');
+    fireEvent.keyDown(list, { key: 'm' });
+    fireEvent.keyDown(list, { key: 'i' });
+    fireEvent.keyDown(list, { key: 'l' });
+    expect(active()?.textContent).toBe('Milestone');
+    // After a pause the search starts over.
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 600)));
+    fireEvent.keyDown(list, { key: 'm' });
+    expect(active()?.textContent).toBe('Mine');
   });
 
   test('an option with an href is followed, never chosen or saved', () => {
@@ -947,6 +1052,22 @@ describe('PickerPopover review additions', () => {
     );
     expect(css).toMatch(/\.disabled \.optionLabel \{\s*white-space: normal;/);
   });
+
+  test('forced colours keep the card an edge once its shadow is gone', () => {
+    const css = readFileSync(
+      path.join(
+        import.meta.dir,
+        '..',
+        'src',
+        'edit',
+        'picker-popover.module.css'
+      ),
+      'utf8'
+    );
+    expect(css).toMatch(
+      /@media \(forced-colors: active\) \{[^@]*\.panel \{\s*border: 1px solid CanvasText;/
+    );
+  });
 });
 
 describe('PickerPopover appearances for lists', () => {
@@ -1043,6 +1164,211 @@ describe('PickerMarkView avatar', () => {
     expect(css).toMatch(/\.avatar \{[^}]*border-radius: 50%;/);
     expect(css).toMatch(
       /\.avatar\[data-empty='true'\]\s*\{[^}]*border: 1\.3px dashed var\(--border-strong\);/
+    );
+  });
+});
+
+// A two-step menu (Filter: facets, then a facet's values): an option with
+// keepOpen is a step, so the popover stays open for the host's next list.
+describe('PickerPopover steps (PickerOption.keepOpen)', () => {
+  const FACETS: PickerOption[] = [
+    { value: 'status', label: 'Status', keepOpen: true },
+    { value: 'priority', label: 'Priority', keepOpen: true },
+  ];
+  const STATUSES: PickerOption[] = [
+    { value: 'back', label: 'Back to filters', keepOpen: true },
+    { value: 'todo', label: 'Todo', group: 'Status' },
+    { value: 'done', label: 'Done', group: 'Status' },
+  ];
+
+  /** A filter menu: the facet list, or the chosen facet's values. */
+  function FilterHost({
+    onStep,
+    onValues,
+  }: {
+    onStep: (value: string | null) => void;
+    onValues: (values: string[]) => void;
+  }) {
+    const [facet, setFacet] = useState<string | null>(null);
+    const [values, setValues] = useState<string[]>([]);
+    if (facet === null) {
+      return (
+        <PickerPopover
+          label="Filter facets"
+          options={FACETS}
+          value={null}
+          action
+          trigger="Filter"
+          triggerLabel="Filter"
+          data-slot="filter-menu"
+          data-testid="filter-popup"
+          onChange={(next) => {
+            onStep(next);
+            setFacet(next);
+          }}
+        />
+      );
+    }
+    return (
+      <PickerPopover
+        label={`${facet} values`}
+        options={STATUSES}
+        value={values}
+        multiple
+        open
+        trigger="Filter"
+        triggerLabel="Filter"
+        data-slot="filter-menu"
+        onChange={(next) => {
+          if (next.includes('back')) {
+            onStep('back');
+            setFacet(null);
+            return;
+          }
+          onValues(next);
+          setValues(next);
+        }}
+      />
+    );
+  }
+
+  test('a step keeps it open, clears the search and resets the active row', () => {
+    const steps: (string | null)[] = [];
+    function Steps() {
+      const [label, setLabel] = useState('Filter facets');
+      return (
+        <PickerPopover
+          label={label}
+          options={FACETS}
+          value={null}
+          action
+          trigger="Filter"
+          triggerLabel="Filter"
+          onChange={(next) => {
+            steps.push(next);
+            setLabel(`${next ?? ''} values`);
+          }}
+        />
+      );
+    }
+    render(<Steps />);
+    fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    fireEvent.change(combobox(), { target: { value: 'priority' } });
+    fireEvent.keyDown(combobox(), { key: 'Enter' });
+    expect(steps).toEqual(['priority']);
+    // Still open, renamed by the host, the search cleared and focused.
+    const dialog = screen.getByRole('dialog', { name: 'priority values' });
+    expect(dialog).toBeTruthy();
+    expect(combobox().value).toBe('');
+    expect(document.activeElement).toBe(combobox());
+    // The active row starts over at the first option, not a stale key.
+    const active = document.getElementById(
+      combobox().getAttribute('aria-activedescendant') ?? ''
+    );
+    expect(active?.textContent).toContain('Status');
+    // A step is never drawn as chosen.
+    expect(
+      screen
+        .getByRole('option', { name: 'Priority' })
+        .getAttribute('aria-selected')
+    ).toBe('false');
+  });
+
+  test('facet, values, back: one popover throughout, with the host hook on it', async () => {
+    const steps: (string | null)[] = [];
+    const picked: string[][] = [];
+    render(
+      <FilterHost
+        onStep={(value) => steps.push(value)}
+        onValues={(values) => picked.push(values)}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    const facets = screen.getByRole('dialog', { name: 'Filter facets' });
+    expect(facets.getAttribute('data-slot')).toBe('filter-menu');
+    expect(facets.getAttribute('data-testid')).toBe('filter-popup');
+    // The library's own hook is kept beside the host's.
+    expect(facets.hasAttribute('data-picker-popup')).toBe(true);
+    fireEvent.click(screen.getByRole('option', { name: 'Status' }));
+    expect(steps).toEqual(['status']);
+    const values = screen.getByRole('dialog', { name: 'status values' });
+    expect(values.getAttribute('data-slot')).toBe('filter-menu');
+    await act(async () => {
+      fireEvent.click(screen.getByRole('option', { name: 'Todo' }));
+      await Promise.resolve();
+    });
+    expect(picked).toEqual([['todo']]);
+    // In multiple mode a step reaches onChange directly: it is not a
+    // value, so nothing is pending and no "Saving" is announced.
+    fireEvent.click(screen.getByRole('option', { name: 'Back to filters' }));
+    expect(steps).toEqual(['status', 'back']);
+    expect(document.querySelector('[data-pending="true"]')).toBeNull();
+    expect(
+      screen
+        .getAllByRole('status')
+        .map((region) => region.textContent)
+        .filter((text) => text?.includes('Saving'))
+    ).toEqual([]);
+    expect(screen.getByRole('dialog', { name: 'Filter facets' })).toBeTruthy();
+  });
+
+  test('searchLabel names the search box apart from the dialog and the list', () => {
+    render(
+      <PickerPopover
+        label="Filter facets"
+        searchLabel="Add filter"
+        searchPlaceholder="Add filter…"
+        options={FACETS}
+        value={null}
+        action
+        trigger="Filter"
+        triggerLabel="Filter"
+        onChange={() => undefined}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    expect(screen.getByRole('dialog', { name: 'Filter facets' })).toBeTruthy();
+    expect(screen.getByRole('listbox', { name: 'Filter facets' })).toBeTruthy();
+    expect(combobox().getAttribute('aria-label')).toBe('Add filter');
+  });
+
+  test('shortcut: a keycap in the search row and aria-keyshortcuts on the trigger', () => {
+    render(
+      <PickerPopover
+        label="Filter facets"
+        shortcut="F"
+        options={FACETS}
+        value={null}
+        action
+        trigger="Filter"
+        triggerLabel="Filter"
+        onChange={() => undefined}
+      />
+    );
+    const button = screen.getByRole('button', { name: 'Filter' });
+    expect(button.getAttribute('aria-keyshortcuts')).toBe('F');
+    fireEvent.click(button);
+    const row = combobox().parentElement;
+    const keycaps = Array.from(row?.querySelectorAll('kbd') ?? []).map(
+      (kbd) => kbd.textContent
+    );
+    expect(keycaps).toContain('F');
+  });
+
+  test('a host data hook stays off the trigger while closed', () => {
+    render(
+      <PickerPopover
+        label="Assignee"
+        options={PEOPLE}
+        value="ana"
+        data-slot="assignee-menu"
+        onChange={() => undefined}
+      />
+    );
+    expect(document.querySelector('[data-slot="assignee-menu"]')).toBeNull();
+    fireEvent.click(trigger());
+    expect(screen.getByRole('dialog').getAttribute('data-slot')).toBe(
+      'assignee-menu'
     );
   });
 });

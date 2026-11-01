@@ -4,12 +4,16 @@ import {
   AlertStrip,
   AppShell,
   CommandPaletteProvider,
+  ConfirmDialog,
+  Dialog,
   Kbd,
   PropertyList,
   SignedOutFrame,
   SkeletonRows,
   SlideOver,
+  Spinner,
   ToastProvider,
+  Tooltip,
 } from '../src/index';
 
 // Run by shell-ssr.test.tsx in a child `bun run`, which has no happy-dom
@@ -119,6 +123,41 @@ const signedOut = renderToString(
   </SignedOutFrame>
 );
 
+// The overlays open on the server (a linkable dialog, a persistent hint):
+// the layer stack, focus, the scroll lock and placement wait for the
+// client.
+const overlays = renderToString(
+  <>
+    <Dialog
+      open
+      onClose={() => undefined}
+      title="Publish"
+      description="Share this doc with the team."
+      actions={<button type="button">Publish</button>}
+      data-slot="dialog-content"
+    >
+      <input aria-label="Title" />
+    </Dialog>
+    <ConfirmDialog
+      open
+      title="Delete this view?"
+      confirmLabel="Delete view"
+      tone="danger"
+      onConfirm={() => undefined}
+      onCancel={() => undefined}
+    >
+      Its filters are lost.
+    </ConfirmDialog>
+    <Tooltip content="Visible to the team" defaultOpen>
+      <button type="button">Visibility</button>
+    </Tooltip>
+    <Tooltip content="Never shown on the server">
+      <button type="button">Quiet</button>
+    </Tooltip>
+    <Spinner label="Starting the daemon" />
+  </>
+);
+
 console.log(
   JSON.stringify({
     hasWindow: typeof window !== 'undefined',
@@ -126,5 +165,6 @@ console.log(
     shell: render(),
     switcher,
     signedOut,
+    overlays,
   })
 );

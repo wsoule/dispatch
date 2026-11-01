@@ -12,12 +12,19 @@ import {
 } from 'react';
 import { flushSync } from 'react-dom';
 
+import { dataAttributes } from '../lib/data-attributes';
 import { useMediaQuery, useScrollLock } from '../shell/dom';
 import { Kbd } from '../shell/kbd';
+import {
+  hideFromTopLayer,
+  positionLayer,
+  SHEET_QUERY,
+  showInTopLayer,
+  useLayer,
+} from '../shell/layer';
 import { cx } from '../tasks/class-names';
 import { PickerMarkView } from './picker-mark';
 import styles from './picker-popover.module.css';
-import { placePopover } from './position';
 import { useLatest, useSaveControl, valueKey } from './save-state';
 import { PendingNote, SaveErrorLine, SavingAnnouncement } from './save-status';
 import {
@@ -35,10 +42,12 @@ import type {
   PickerPopoverProps,
 } from './types';
 
-/** Phones get a bottom sheet instead of an anchored popover. */
-const SHEET_QUERY = '(max-width: 640px)';
 /** Where the pointer may drive the active row (the system's hover gate). */
 const HOVER_QUERY = '(hover: hover) and (min-width: 901px)';
+
+/** Letters typed within this long of each other in a menu add up to one
+    typeahead search ("mi" finds "Mine"); a longer pause starts over. */
+const TYPEAHEAD_MS = 500;
 
 // Layout effects do nothing on the server; this keeps React quiet there.
 const useClientLayoutEffect =
@@ -79,102 +88,6 @@ function optionKey(option: PickerOption): string {
   return `o:${option.value}`;
 }
 
-/** Puts the popover in the browser's top layer when the Popover API is
-    there, so no overflow, transform or z-index of the host can clip or
-    cover it; otherwise it stays a fixed layer (see positionLayer). */
-function showInTopLayer(layer: HTMLElement): void {
-  if (typeof layer.showPopover !== 'function') return;
-  try {
-    if (!layer.matches(':popover-open')) layer.showPopover();
-  } catch {
-    // An engine without :popover-open, or a detached node: the fixed
-    // fallback still positions it.
-  }
-}
-
-/**
- * Anchors the open layer to its trigger: measures the panel at its natural
- * (CSS-capped) size, asks placePopover for a side and offsets, and writes
- * them as custom properties the stylesheet reads. Outside the top layer a
- * transformed ancestor makes `position: fixed` relative to that ancestor,
- * so the layer is measured where it landed and corrected by the
- * difference. On a phone the stylesheet draws a bottom sheet and nothing
- * is measured.
- */
-function positionLayer(
-  layer: HTMLElement,
-  anchor: HTMLElement | { x: number; y: number } | null,
-  panel: HTMLElement | null,
-  sheet: boolean,
-  outset: Outset,
-  align: 'start' | 'end'
-): void {
-  const style = layer.style;
-  if (sheet || anchor === null || panel === null) {
-    layer.dataset.side = 'sheet';
-    layer.dataset.placed = 'true';
-    return;
-  }
-  // A trigger lines up by its drawn frame (the outset); a point (a
-  // context menu at the pointer) is a box of no size.
-  const rect =
-    anchor instanceof HTMLElement
-      ? (() => {
-          const box = anchor.getBoundingClientRect();
-          return {
-            top: box.top - outset.y,
-            bottom: box.bottom + outset.y,
-            left: box.left - outset.x,
-            right: box.right + outset.x,
-          };
-        })()
-      : { top: anchor.y, bottom: anchor.y, left: anchor.x, right: anchor.x };
-  style.setProperty(
-    '--picker-anchor-width',
-    `${Math.round(rect.right - rect.left)}px`
-  );
-  style.removeProperty('--picker-max-height');
-  const clientWidth = document.documentElement.clientWidth;
-  const viewport = {
-    width: clientWidth > 0 ? clientWidth : window.innerWidth,
-    height: window.innerHeight,
-  };
-  const placement = placePopover({
-    anchor: rect,
-    size: { width: panel.offsetWidth, height: panel.offsetHeight },
-    viewport,
-    align,
-  });
-  layer.dataset.side = placement.side;
-  style.setProperty('--picker-max-height', `${placement.maxHeight}px`);
-  style.setProperty('--picker-left', `${placement.left}px`);
-  if (placement.top !== null) {
-    style.setProperty('--picker-top', `${placement.top}px`);
-  }
-  if (placement.bottom !== null) {
-    style.setProperty('--picker-bottom', `${placement.bottom}px`);
-  }
-  const landed = layer.getBoundingClientRect();
-  if (landed.width > 0 || landed.height > 0) {
-    const dx = landed.left - placement.left;
-    if (Math.abs(dx) > 0.5) {
-      style.setProperty('--picker-left', `${placement.left - dx}px`);
-    }
-    if (placement.top !== null) {
-      const dy = landed.top - placement.top;
-      if (Math.abs(dy) > 0.5) {
-        style.setProperty('--picker-top', `${placement.top - dy}px`);
-      }
-    } else if (placement.bottom !== null) {
-      const dy = landed.bottom - (viewport.height - placement.bottom);
-      if (Math.abs(dy) > 0.5) {
-        style.setProperty('--picker-bottom', `${placement.bottom + dy}px`);
-      }
-    }
-  }
-  layer.dataset.placed = 'true';
-}
-
 /** Moves a list's scroll so `el` is fully visible, without scrolling the
     page (scrollIntoView would also scroll every ancestor). */
 function keepInView(scroller: HTMLElement, el: HTMLElement): void {
@@ -212,8 +125,9 @@ function keepInView(scroller: HTMLElement, el: HTMLElement): void {
  * Menus: `searchable={false}` drops the search row, so a short list of
  * actions (Filter, Sort, a row's "…") reads as a menu. The listbox itself
  * then takes focus (aria-activedescendant on it), with the same keys plus
- * Space to pick and Home / End for the first and last option (Gr8r's
- * menus; a search box keeps them for its caret).
+ * Space to pick, Home / End for the first and last option, and typeahead
+ * (letters jump to the next row starting with them). A search box keeps
+ * Home / End for its caret while it holds text.
  */
 export function PickerPopover(props: PickerPopoverProps): ReactNode {
   const {
@@ -222,6 +136,8 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
     placeholder,
     placeholderTone = 'muted',
     searchPlaceholder,
+    searchLabel,
+    shortcut,
     noneLabel,
     noneMark,
     emptyLabel,
@@ -283,6 +199,8 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
   // The arrow keys have been used since the popover opened: on a phone
   // sheet the active row is only drawn then (a tap needs no highlight).
   const [keyboardNav, setKeyboardNav] = useState(false);
+  // A menu's typeahead: the letters typed so far and when the last came.
+  const typed = useRef({ text: '', at: 0 });
 
   const control = useSaveControl<PickerValue>(
     props.value,
@@ -327,8 +245,11 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
   };
 
   function isChosen(row: Row): boolean {
-    if (row.kind === 'retry' || action) return false;
+    if (row.kind === 'retry') return false;
     if (row.kind === 'option' && row.option.href !== undefined) return false;
+    if (row.kind === 'option' && row.option.keepOpen === true) return false;
+    // An action menu has no value: the host marks the current option.
+    if (action) return row.kind === 'option' && row.option.selected === true;
     if (row.kind === 'none') {
       return multiple ? shownList.length === 0 : shownSingle === null;
     }
@@ -377,19 +298,18 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
   }
   const closeRef = useLatest(close);
 
-  // Pointer down anywhere outside the picker closes it (focus goes where
-  // the pointer went).
-  useEffect(() => {
-    if (!isOpen) return undefined;
-    function onPointerDown(event: PointerEvent): void {
-      const root = rootRef.current;
-      if (root === null || !(event.target instanceof Node)) return;
-      if (!root.contains(event.target)) closeRef.current('outside');
-    }
-    document.addEventListener('pointerdown', onPointerDown, true);
-    return () =>
-      document.removeEventListener('pointerdown', onPointerDown, true);
-  }, [isOpen, closeRef]);
+  // One layer of the package's stack: a pointer down outside the picker
+  // (its trigger counts as inside) closes it, focus going where the
+  // pointer went, unless a layer opened over it takes the press; an Escape
+  // with focus outside the popover closes it too. Escape from inside is
+  // the popover's own handler below.
+  useLayer({
+    open: isOpen,
+    kind: 'popover',
+    ref: layerRef,
+    inside: () => [rootRef.current],
+    onDismiss: (reason) => closeRef.current(reason),
+  });
 
   // Closed while focus was inside (a host closing it, an outside click on
   // a blank area): the focused input is gone, so focus would be lost to
@@ -405,27 +325,36 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
     wasOpen.current = isOpen;
   }, [isOpen]);
 
-  // Placement, top layer and first focus, then follow the trigger while
+  // Into the browser's top layer while open (declared before the placement
+  // below, which measures the layer where it landed). Only on open and
+  // close: re-showing on every placement would lift it over a layer that
+  // was opened inside it later.
+  useClientLayoutEffect(() => {
+    const layer = layerRef.current;
+    if (!isOpen || layer === null) return undefined;
+    showInTopLayer(layer);
+    return () => hideFromTopLayer(layer);
+  }, [isOpen]);
+
+  // Placement and first focus, then follow the trigger while
   // the page scrolls or resizes (and while the trigger itself changes size,
   // e.g. a label added in multiple mode).
   useClientLayoutEffect(() => {
     if (!isOpen) return undefined;
     const layer = layerRef.current;
     if (layer === null) return undefined;
-    showInTopLayer(layer);
     let frame = 0;
     const point =
       anchorX === null || anchorY === null ? null : { x: anchorX, y: anchorY };
     const place = (): void => {
       frame = 0;
-      positionLayer(
-        layer,
-        point ?? triggerRef.current,
-        panelRef.current,
+      positionLayer(layer, point ?? triggerRef.current, {
+        panel: panelRef.current,
         sheet,
-        OUTSETS[appearance],
-        align
-      );
+        outset: OUTSETS[appearance],
+        align,
+        prefix: '--picker',
+      });
     };
     place();
     (searchable ? inputRef.current : listRef.current)?.focus({
@@ -473,6 +402,25 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
       window.location.assign(href);
       return;
     }
+    // A step (a facet, "Back"): the host swaps the options next, so the
+    // search and the active row start over and focus stays in the panel.
+    // Never through the save contract: a step is not a value, so it shows
+    // no pending note and announces no "Saving".
+    if (row.kind === 'option' && row.option.keepOpen === true) {
+      if (props.multiple === true) {
+        void props.onChange(
+          (props.resolveToggle ?? toggleValue)(shownList, row.option.value)
+        );
+      } else {
+        void props.onChange(row.option.value);
+      }
+      changeQuery('');
+      setKeyboardNav(false);
+      (searchable ? inputRef.current : listRef.current)?.focus({
+        preventScroll: true,
+      });
+      return;
+    }
     if (props.multiple === true) {
       const next =
         row.kind === 'none'
@@ -508,6 +456,45 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
     setKeyboardNav(true);
   }
 
+  function rowText(row: Row): string {
+    if (row.kind === 'none') return noneLabel ?? '';
+    if (row.kind === 'retry') return labels.retry;
+    return row.option.label;
+  }
+
+  /**
+   * A menu's typeahead (no search box to type in): each letter adds to a
+   * short search over the rows' labels, and the next row starting with it
+   * becomes active. The same letter again walks the rows starting with it
+   * ("m", "m": Mine, then My open); a pause over TYPEAHEAD_MS starts over.
+   * Returns whether a row matched.
+   */
+  function typeAhead(char: string): boolean {
+    const now = Date.now();
+    const state = typed.current;
+    const text =
+      now - state.at > TYPEAHEAD_MS
+        ? char.toLowerCase()
+        : state.text + char.toLowerCase();
+    typed.current = { text, at: now };
+    const letters = Array.from(text);
+    const repeated = letters.every((letter) => letter === letters[0]);
+    const needle = repeated ? (letters[0] ?? '') : text;
+    const current = activeRow === null ? -1 : rows.indexOf(activeRow);
+    // A new letter moves on from the active row; a longer word may match
+    // the active row itself.
+    const from = repeated ? current + 1 : Math.max(current, 0);
+    for (let step = 0; step < rows.length; step += 1) {
+      const row = rows[(from + step) % rows.length];
+      if (rowText(row).toLowerCase().startsWith(needle)) {
+        setActiveKey(row.key);
+        setKeyboardNav(true);
+        return true;
+      }
+    }
+    return false;
+  }
+
   // The search box's keys, and the list's when there is no search box
   // (where Space picks too, as in any menu).
   function onListKeyDown(event: KeyboardEvent<HTMLElement>): void {
@@ -529,8 +516,9 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
       case 'Home':
       case 'End':
         // A menu's list holds focus, so Home and End are its own; in a
-        // search box they move the caret.
-        if (searchable) break;
+        // search box they move the caret, unless it is empty and the
+        // caret has nowhere to go.
+        if (searchable && query !== '') break;
         event.preventDefault();
         jump(event.key === 'Home' ? 0 : -1);
         break;
@@ -542,6 +530,16 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
         close('tab');
         break;
       default:
+        if (
+          !searchable &&
+          event.key.length === 1 &&
+          !event.ctrlKey &&
+          !event.metaKey &&
+          !event.altKey &&
+          typeAhead(event.key)
+        ) {
+          event.preventDefault();
+        }
         break;
     }
   }
@@ -794,6 +792,7 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
 
   const popup = isOpen ? (
     <div
+      {...dataAttributes(props)}
       ref={layerRef}
       id={popupId}
       role="dialog"
@@ -833,7 +832,7 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
               ref={inputRef}
               type="text"
               role="combobox"
-              aria-label={label}
+              aria-label={searchLabel ?? label}
               aria-expanded="true"
               aria-controls={listId}
               aria-autocomplete="list"
@@ -848,6 +847,11 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
               onChange={(event) => changeQuery(event.target.value)}
               onKeyDown={onListKeyDown}
             />
+            {shortcut !== undefined && shortcut !== '' ? (
+              <span className={styles.shortcut} aria-hidden="true">
+                <Kbd>{shortcut}</Kbd>
+              </span>
+            ) : null}
             <button
               type="button"
               tabIndex={-1}
@@ -982,6 +986,9 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
           aria-expanded={isOpen}
           aria-controls={isOpen ? popupId : undefined}
           aria-describedby={!isOpen && saveError !== null ? errorId : undefined}
+          aria-keyshortcuts={
+            shortcut !== undefined && shortcut !== '' ? shortcut : undefined
+          }
           disabled={disabled}
           data-appearance={appearance}
           data-pending={control.pending ? 'true' : undefined}

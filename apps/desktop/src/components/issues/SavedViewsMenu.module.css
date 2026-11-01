@@ -1,0 +1,44 @@
+/* The Issues toolbar's `view:` menu (SavedViewsMenu.tsx): the trigger's
+   face (the view's name, cut with an ellipsis, and a chevron), the star
+   mark of its starred views, and the save and rename name form in its
+   Popover. The picker, Popover and ConfirmDialog draw their own frames. */
+
+.root {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 220px;
+}
+
+.face {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevron {
+  flex: none;
+  margin-left: var(--s-1);
+  color: var(--text-3);
+}
+
+.star {
+  display: inline-flex;
+  color: var(--text-3);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.name {
+  width: 100%;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}

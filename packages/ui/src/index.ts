@@ -34,6 +34,7 @@ export {
 // deadlines, stats strip and registers. Props are typed in ./tasks/types.
 export { Button } from './tasks/button';
 export { Checkbox } from './tasks/checkbox';
+export { cx } from './tasks/class-names';
 export { Checklist } from './tasks/checklist';
 export { Chip } from './tasks/chip';
 export {
@@ -121,9 +122,10 @@ export type {
 
 // ---- shell family (src/shell): the app frame and overlays (architecture
 // §8.3) — AppShell, SignedOutFrame, command palette + shortcuts, toasts,
-// slide-over, property list, alert strip, skeletons, key caps. Props are
-// typed in ./shell/types.
+// slide-over, dialog and confirmation, tooltip, spinner, property list,
+// alert strip, skeletons, key caps. Props are typed in ./shell/types.
 export { default as AlertStrip } from './shell/alert-strip';
+export { ConfirmDialog, Dialog } from './shell/dialog';
 export { default as AppShell, toggleShellCollapsed } from './shell/app-shell';
 export {
   CommandPalette,
@@ -147,7 +149,9 @@ export {
   SkeletonText,
 } from './shell/skeleton';
 export { default as SlideOver, SLIDE_OVER_WIDTH } from './shell/slide-over';
+export { Spinner } from './shell/spinner';
 export { ToastProvider, useOptionalToast, useToast } from './shell/toast';
+export { Tooltip } from './shell/tooltip';
 export type {
   AlertStripAction,
   AlertStripProps,
@@ -155,6 +159,8 @@ export type {
   CommandPaletteApi,
   CommandPaletteProps,
   CommandPaletteProviderProps,
+  ConfirmDialogProps,
+  DialogProps,
   FooterLink,
   KbdKeysProps,
   KbdProps,
@@ -186,10 +192,12 @@ export type {
   SkeletonRowsProps,
   SkeletonTextProps,
   SlideOverProps,
+  SpinnerProps,
   ToastApi,
   ToastInput,
   ToastKind,
   ToastProviderProps,
+  TooltipProps,
 } from './shell/types';
 
 // ---- timeline family (src/timeline): the Gr8r Gantt in the Matrix
@@ -356,7 +364,8 @@ export type {
 } from './task/types';
 
 // ---- edit family (src/edit): the controls an editable host puts into the
-// task view — PickerPopover and its property presets, the relation search,
+// task view — PickerPopover and its property presets, the Popover panel
+// that hosts a host's own controls, the relation search,
 // the in-place title field, the description/comment editor and the date
 // field. Every control is controlled and saves through one contract: the
 // callback returns a promise; pending, then kept, or rolled back with the
@@ -365,6 +374,7 @@ export { DateField, isCompleteDate } from './edit/date-field';
 export { InlineTextField } from './edit/inline-text-field';
 export { PickerMarkView, type PickerMarkViewProps } from './edit/picker-mark';
 export { PickerPopover } from './edit/picker-popover';
+export { Popover } from './edit/popover';
 export {
   type Placement,
   type PlacementInput,
@@ -415,6 +425,7 @@ export type {
   PickerPopoverProps,
   PickerPresetBaseProps,
   PlanChoice,
+  PopoverProps,
   PriorityPickerProps,
   ProjectPickerProps,
   SaveResult,

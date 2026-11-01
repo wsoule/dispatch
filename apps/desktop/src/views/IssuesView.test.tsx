@@ -427,11 +427,59 @@ test('the preset tabs narrow the rows: Mine keeps only my work', () => {
   ).toBe('page');
 });
 
-test('the view menu offers the presets too', () => {
+test('the view menu offers the presets too', async () => {
   mount();
-  fireEvent.click(screen.getByTestId('tasks-preset'));
-  fireEvent.click(screen.getByRole('menuitemradio', { name: 'Mine' }));
+  await settle(() => {
+    fireEvent.click(screen.getByTestId('tasks-preset'));
+  });
+  // The pick saves through the picker's promise, so it settles in an act.
+  await settle(() => {
+    fireEvent.click(screen.getByRole('option', { name: 'Mine' }));
+  });
   expect(rowIds()).toEqual(['t-1']);
+});
+
+test('the Filter picker adds a status clause, stores it, and a chip removes it', async () => {
+  mount();
+  await settle(() => {
+    fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  });
+  const panel = screen.getByRole('dialog', { name: 'Filter facets' });
+  expect(panel.getAttribute('data-slot')).toBe('filter-menu');
+  await settle(() => {
+    fireEvent.click(within(panel).getByRole('option', { name: 'Status' }));
+  });
+  expect(panel.getAttribute('aria-label')).toBe('Status values');
+  await settle(() => {
+    fireEvent.click(optionNamed('Done'));
+  });
+  expect(rowIds()).toEqual(['t-2']);
+  expect(
+    JSON.parse(
+      window.localStorage.getItem('dispatch:two-views-tasks-filters-v1') ?? '{}'
+    )
+  ).toEqual({
+    join: 'and',
+    clauses: [{ facet: 'status', op: 'is', values: ['done'] }],
+  });
+  // Escape steps back to the facets, a second Escape closes on Filter.
+  await settle(() => {
+    fireEvent.keyDown(within(panel).getByRole('combobox'), { key: 'Escape' });
+  });
+  expect(panel.getAttribute('aria-label')).toBe('Filter facets');
+  await settle(() => {
+    fireEvent.keyDown(within(panel).getByRole('combobox'), { key: 'Escape' });
+  });
+  expect(screen.queryByRole('dialog', { name: 'Filter facets' })).toBeNull();
+  expect(document.activeElement).toBe(
+    screen.getByRole('button', { name: 'Filter' })
+  );
+  const chips = screen.getByRole('group', { name: 'Filters' });
+  expect(chips.textContent).toContain('Done');
+  fireEvent.click(
+    within(chips).getByRole('button', { name: 'Remove status filter' })
+  );
+  expect(rowIds()).toEqual(['t-1', 't-2', 't-3']);
 });
 
 test('a stored filter narrows the list and shows as a chip that removes', () => {
@@ -846,7 +894,7 @@ test('selecting a saved view applies its filters and layout', () => {
   );
 });
 
-test('the view menu lists the presets, then starred views, then saved views', () => {
+test('the view menu lists the presets, then starred views, then saved views', async () => {
   window.localStorage.setItem(
     SAVED_VIEWS_KEY,
     JSON.stringify([
@@ -871,16 +919,27 @@ test('the view menu lists the presets, then starred views, then saved views', ()
     JSON.stringify([{ kind: 'view', id: 'v-1' }])
   );
   mount();
-  fireEvent.click(screen.getByTestId('tasks-preset'));
-  const presets = screen
-    .getAllByRole('menuitemradio')
+  await settle(() => {
+    fireEvent.click(screen.getByTestId('tasks-preset'));
+  });
+  const menu = screen.getByRole('dialog', { name: 'View' });
+  const names = within(menu)
+    .getAllByRole('option')
     .map((i) => i.textContent);
-  expect(presets.slice(0, 2)).toEqual(['All', 'Mine']);
-  expect(presets).toContain('Plain one');
-  const items = screen.getAllByRole('menuitem').map((i) => i.textContent);
-  expect(items[0]).toBe('Starred one');
-  expect(items).toContain('Save view…');
-  fireEvent.click(screen.getByRole('menuitem', { name: 'Starred one' }));
+  expect(names.slice(0, 2)).toEqual(['All', 'Mine']);
+  // A starred view is listed under Starred views and again under Saved views.
+  const starredAt = names.indexOf('Starred one');
+  expect(starredAt).toBeGreaterThan(names.indexOf('Mine'));
+  expect(names.lastIndexOf('Starred one')).toBeGreaterThan(starredAt);
+  expect(names.indexOf('Plain one')).toBeGreaterThan(starredAt);
+  expect(names).toContain('Save view…');
+  await settle(() => {
+    const first = within(menu).getAllByRole('option', {
+      name: 'Starred one',
+    })[0];
+    if (first === undefined) throw new Error('no Starred one option');
+    fireEvent.click(first);
+  });
   expect(api?.activeViewId).toBe('v-1');
 });
 

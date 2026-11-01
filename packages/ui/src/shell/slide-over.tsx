@@ -119,7 +119,9 @@ export default function SlideOver({
       <div
         ref={panelRef}
         role="dialog"
-        aria-modal={isPhone ? 'true' : undefined}
+        // Modal on a phone while open; a closing panel (inert, sliding
+        // out) no longer holds the page's shortcuts.
+        aria-modal={isPhone && !closing ? 'true' : undefined}
         aria-labelledby={titleId}
         aria-hidden={closing ? 'true' : undefined}
         inert={closing}

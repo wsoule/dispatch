@@ -34,7 +34,6 @@ export function renderIcon(icon: ShellIcon | undefined): ReactNode {
   return icon as ReactNode;
 }
 
-/** Joins class names, dropping empty ones. */
-export function cx(...names: (string | false | null | undefined)[]): string {
-  return names.filter((n) => typeof n === 'string' && n !== '').join(' ');
-}
+/** Joins class names, dropping empty ones: the package's one `cx`
+    (tasks/class-names), re-exported for the shell family's modules. */
+export { cx } from '../tasks/class-names';

@@ -1,4 +1,4 @@
-import type { ComponentType, ReactNode } from 'react';
+import type { ComponentType, KeyboardEvent, ReactNode } from 'react';
 
 // Shared prop vocabulary. Deliberately free of any planner/Linear types so
 // the components port to other apps (e.g. Dispatch): hosts map their own
@@ -41,16 +41,33 @@ export type SemanticTone = 'danger' | 'warning' | 'success' | 'info';
  */
 export type UiTone = 'default' | 'muted' | 'accent' | SemanticTone;
 
-export interface UiLinkProps {
+/**
+ * `data-*` attributes a host puts on a component (its `data-testid` and
+ * `data-slot` hooks). The components that take them (Button, Popover,
+ * PickerPopover, Dialog, ConfirmDialog) spread them, untouched, on their
+ * root element, so a host keeps its test and styling hooks without the
+ * package knowing their names. A component's own `data-*` attributes win
+ * over a host's of the same name.
+ */
+export type DataAttributes = {
+  [key: `data-${string}`]: string | number | boolean | undefined;
+};
+
+/** What a link (Button with `href`) hands the host's link component. A
+    host component spreads the rest onto its anchor, so the `data-*`
+    hooks, `aria-describedby` and `onKeyDown` reach the element. */
+export interface UiLinkProps extends DataAttributes {
   href: string;
   className?: string;
   children?: ReactNode;
   'aria-current'?: 'page' | undefined;
   'aria-label'?: string;
+  'aria-describedby'?: string;
   title?: string;
   target?: string;
   rel?: string;
   onClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
+  onKeyDown?: (event: KeyboardEvent<HTMLAnchorElement>) => void;
 }
 
 /** The host's link component (next/link, a router Link, or a plain <a>). */

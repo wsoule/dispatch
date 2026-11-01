@@ -89,6 +89,45 @@ describe('SlideOver', () => {
     expect(screen.queryByText('M3 cutover')).toBeNull();
   });
 
+  test('on a phone it is modal while open, and not while it slides out', () => {
+    jest.useFakeTimers();
+    const original = window.matchMedia;
+    window.matchMedia = (query: string) => ({
+      matches: query.includes('max-width'),
+      media: query,
+      onchange: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      dispatchEvent: () => false,
+    });
+    try {
+      render(<Harness />);
+      const opener = screen.getByRole('button', { name: 'Open M3 cutover' });
+      opener.focus();
+      fireEvent.click(opener);
+      expect(
+        screen
+          .getByRole('dialog', { name: 'M3 cutover' })
+          .getAttribute('aria-modal')
+      ).toBe('true');
+      fireEvent.keyDown(document.activeElement ?? document.body, {
+        key: 'Escape',
+      });
+      // Still mounted for the exit slide, but no longer modal: the page's
+      // shortcuts (isAnyModalOpen) are live again at once.
+      expect(screen.getByText('M3 cutover')).toBeTruthy();
+      expect(document.querySelector('[aria-modal="true"]')).toBeNull();
+      act(() => {
+        jest.advanceTimersByTime(400);
+      });
+      expect(screen.queryByText('M3 cutover')).toBeNull();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
   test('the close button closes it too', () => {
     render(<Harness />);
     fireEvent.click(screen.getByRole('button', { name: 'Open M3 cutover' }));

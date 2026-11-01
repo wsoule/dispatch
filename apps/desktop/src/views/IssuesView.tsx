@@ -27,14 +27,14 @@ import {
   presetTabs,
   toTaskPriority,
 } from '../adapters/rows';
+import { DisplayPanel } from '../components/issues/DisplayPanel';
+import { FilterPicker } from '../components/issues/FilterPicker';
+import { SavedViewsMenu } from '../components/issues/SavedViewsMenu';
 import { useSavedViewsContext } from '../components/shell/SavedViewsContext';
 import { BoardPane } from '../components/tasks/BoardPane';
-import { DisplayPopover } from '../components/tasks/DisplayPopover';
-import { FilterMenu } from '../components/tasks/FilterMenu';
 import { NeedsYouBlock } from '../components/tasks/NeedsYouBlock';
 import { TasksExtraGroups } from '../components/tasks/TasksExtraGroups';
 import { TasksBackButton } from '../components/tasks/TasksPageHeader';
-import { TasksViewMenu } from '../components/tasks/TasksViewMenu';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { useTaskFilterMenu } from '../hooks/useTaskFilterMenu';
 import type { TasksMode, TasksPage, TaskTab } from '../lib/appNav';
@@ -447,7 +447,7 @@ export function IssuesView({
             }}
             controls={
               <span className={styles.toolbarGroup}>
-                <FilterMenu
+                <FilterPicker
                   filters={filters}
                   onChange={setFilters}
                   context={menuContext}
@@ -455,7 +455,7 @@ export function IssuesView({
                   onOpenChange={setFilterOpen}
                   onAiFilter={aiFilter}
                 />
-                <DisplayPopover
+                <DisplayPanel
                   mode={display.layout}
                   prefs={display}
                   onPrefsChange={setPrefs}
@@ -494,7 +494,7 @@ export function IssuesView({
                     if (full) onClosePage();
                   }}
                 />
-                <TasksViewMenu
+                <SavedViewsMenu
                   preset={preset}
                   onPreset={onPreset}
                   savedViews={savedViews}
