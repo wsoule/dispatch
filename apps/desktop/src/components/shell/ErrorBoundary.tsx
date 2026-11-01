@@ -1,8 +1,9 @@
+import { Button, Disclosure, EmptyState } from '@dispatch/ui';
 import { OctagonAlert } from 'lucide-react';
 import { Component, type ErrorInfo, Fragment, type ReactNode } from 'react';
 
+import styles from './ErrorBoundary.module.css';
 import { isStaleChunkError } from './errorBoundaryUtils';
-import { Button } from '@/ui/button';
 
 interface ErrorBoundaryProps {
   /** Human-readable name for the crashed view, used in the fallback's message — e.g. "the
@@ -64,35 +65,47 @@ export class ErrorBoundary extends Component<
 
     const staleChunk = isStaleChunkError(error.message);
 
+    // The fallback: the library EmptyState with a danger-toned OctagonAlert, the sentence,
+    // "Try again" (and "Reload app" for a stale chunk), and the thrown message in a mono
+    // block behind "Details". role="alert" so a crash that replaces a view is announced.
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-        <OctagonAlert className="text-destructive size-5" />
-        <p className="text-muted-foreground max-w-sm text-[13px]">
+      <div className={styles.root} role="alert">
+        <EmptyState
+          icon={
+            <span className={styles.icon} data-tone="danger">
+              <OctagonAlert size={22} strokeWidth={1.8} aria-hidden="true" />
+            </span>
+          }
+          action={
+            <div className={styles.actions}>
+              <div className={styles.buttons}>
+                <Button variant="secondary" size="sm" onClick={this.reset}>
+                  Try again
+                </Button>
+                {staleChunk && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => window.location.reload()}
+                  >
+                    Reload app
+                  </Button>
+                )}
+              </div>
+              {staleChunk && (
+                <p className={styles.hint}>
+                  A stale module was requested — reloading usually fixes this
+                  after an update.
+                </p>
+              )}
+              <Disclosure variant="inline" summary="Details">
+                <pre className={styles.detail}>{error.message}</pre>
+              </Disclosure>
+            </div>
+          }
+        >
           Something went wrong rendering {this.props.label ?? 'this view'}
-        </p>
-        <pre className="text-muted-foreground bg-secondary/50 max-h-48 max-w-lg overflow-auto rounded-md p-3 text-left font-mono text-[11px] whitespace-pre-wrap">
-          {error.message}
-        </pre>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={this.reset}>
-            Try again
-          </Button>
-          {staleChunk && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => window.location.reload()}
-            >
-              Reload app
-            </Button>
-          )}
-        </div>
-        {staleChunk && (
-          <p className="text-muted-foreground/70 max-w-sm text-[11px]">
-            A stale module was requested — reloading usually fixes this after an
-            update.
-          </p>
-        )}
+        </EmptyState>
       </div>
     );
   }

@@ -147,6 +147,9 @@ export interface EditLabels {
   unsaved: string;
   /** After the ⌘/Ctrl + Enter key caps. */
   saveShortcut: string;
+  /** A picker's create row (PickerPopover `onCreate`); {query} is
+      replaced by the typed text ('Create "{query}"'). */
+  create: string;
 }
 
 /** A host's `data-*` attributes (DataAttributes) go on the open popover
@@ -219,6 +222,22 @@ interface PickerBaseProps extends DataAttributes {
   onOpenChange?: (open: boolean) => void;
   formatError?: ErrorFormatter;
   labels?: Partial<EditLabels>;
+  /**
+   * Makes a new option from the typed text: a trailing "Create "<text>""
+   * row is listed while the search (trimmed) is not blank and is no
+   * option's label exactly (case aside). Enter on it, or a click, calls
+   * onCreate with the trimmed text, and the save contract applies: a
+   * promise shows the "Saving" note until it settles; then a single
+   * picker closes, and a multiple one (which cleared its search at once)
+   * stays open for the next label; a rejection puts the typed text back
+   * and prints the error like a failed save. The host adds the new
+   * option to `options` (and, usually, to `value`). Not offered in action
+   * mode or without a search box.
+   */
+  onCreate?: (query: string) => SaveResult;
+  /** The create row's words for the typed text. Default `labels.create`,
+      'Create "<text>"'. */
+  createLabel?: (query: string) => string;
   /** id of the trigger button (for a <label htmlFor>). */
   id?: string;
   className?: string;

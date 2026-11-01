@@ -726,6 +726,19 @@
   color: var(--accent-ink);
 }
 
+/* The create row (onCreate): its plus sits where the other rows' marks
+   do; in a multiple picker an empty box-wide gap stands in for the
+   checkbox, so the plus lines up with the marks above it. */
+.checkSpace {
+  flex: none;
+  width: 14px;
+}
+
+/* One create at a time: the row waits while one saves. */
+.createRow[aria-disabled='true'] {
+  cursor: progress;
+}
+
 .statusRow {
   display: flex;
   align-items: center;

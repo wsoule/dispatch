@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { useState } from 'react';
 
+import { Dialog, type PickerOption, PickerPopover } from '../src/index';
 import AlertStrip from '../src/shell/alert-strip';
 import PropertyList from '../src/shell/property-list';
 import SlideOver from '../src/shell/slide-over';
@@ -262,5 +263,395 @@ describe('SlideOver header actions on a phone', () => {
       </SlideOver>
     );
     expect(screen.getByRole('button', { name: 'Open in Linear' })).toBeTruthy();
+  });
+});
+
+// modal, size and footer: the form surface (a task composer) on every
+// viewport. aria-modal while open, a scrim, the page locked, Tab kept in,
+// and a modal layer of the stack, so Escape peels one layer at a time:
+// a picker in it, a dialog over it, then the panel; never a non-modal
+// SlideOver underneath first.
+describe('SlideOver modal', () => {
+  const STATES: PickerOption[] = [
+    { value: 'todo', label: 'Todo' },
+    { value: 'doing', label: 'In Progress' },
+  ];
+
+  function modals(): number {
+    return document.querySelectorAll('[aria-modal="true"]').length;
+  }
+
+  function escape(): void {
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: 'Escape',
+    });
+  }
+
+  /** Focus the button, then press it: a browser focuses on mousedown. */
+  function press(name: string | RegExp): void {
+    const button = screen.getByRole('button', { name });
+    act(() => button.focus());
+    fireEvent.click(button);
+  }
+
+  function scrimOf(panel: HTMLElement): HTMLElement {
+    const scrim = panel.previousElementSibling;
+    if (!(scrim instanceof HTMLElement)) throw new Error('no scrim');
+    return scrim;
+  }
+
+  /** A composer: a modal, wide slide-over with a field, a picker, a
+      button that opens a dialog over it, and a footer. */
+  function Composer() {
+    const [open, setOpen] = useState(false);
+    const [status, setStatus] = useState<string | null>('todo');
+    const [confirm, setConfirm] = useState(false);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)}>
+          New task
+        </button>
+        <SlideOver
+          open={open}
+          onClose={() => setOpen(false)}
+          title="New task"
+          modal
+          size="wide"
+          data-testid="task-composer"
+          data-slot="composer"
+          footer={
+            <>
+              <button type="button" onClick={() => setOpen(false)}>
+                Cancel
+              </button>
+              <button type="button">Create task</button>
+            </>
+          }
+        >
+          <input aria-label="Task title" />
+          <PickerPopover
+            label="Status"
+            options={STATES}
+            value={status}
+            onChange={setStatus}
+          />
+          <button type="button" onClick={() => setConfirm(true)}>
+            Discard…
+          </button>
+          <Dialog
+            open={confirm}
+            onClose={() => setConfirm(false)}
+            title="Discard this draft?"
+          >
+            <button type="button">Keep editing</button>
+          </Dialog>
+        </SlideOver>
+      </>
+    );
+  }
+
+  function composer(): HTMLElement | null {
+    return screen.queryByRole('dialog', { name: 'New task' });
+  }
+
+  test('on a desktop width: aria-modal, a scrim, the page locked, Tab kept inside', () => {
+    jest.useFakeTimers();
+    render(<Composer />);
+    press('New task');
+    const panel = composer();
+    if (panel === null) throw new Error('not open');
+    expect(panel.getAttribute('aria-modal')).toBe('true');
+    expect(panel.getAttribute('data-modal')).toBe('true');
+    expect(scrimOf(panel).getAttribute('aria-hidden')).toBe('true');
+    expect(document.documentElement.style.overflow).toBe('hidden');
+    expect(panel.contains(document.activeElement)).toBe(true);
+    // Tab past the footer's last button wraps to the header's close.
+    const close = screen.getByRole('button', { name: 'Close' });
+    const create = screen.getByRole('button', { name: 'Create task' });
+    create.focus();
+    fireEvent.keyDown(create, { key: 'Tab' });
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(close, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(create);
+    // Closing: no longer modal while it slides out, the page unlocked.
+    escape();
+    expect(document.querySelector('[data-testid="task-composer"]')).not.toBe(
+      null
+    );
+    expect(modals()).toBe(0);
+    expect(document.documentElement.style.overflow).toBe('');
+    act(() => {
+      jest.advanceTimersByTime(400);
+    });
+    expect(document.querySelector('[data-testid="task-composer"]')).toBeNull();
+  });
+
+  test('a press on the scrim closes it, and focus goes back to the opener', () => {
+    render(<Composer />);
+    press('New task');
+    const panel = composer();
+    if (panel === null) throw new Error('not open');
+    const scrim = scrimOf(panel);
+    fireEvent.pointerDown(scrim);
+    fireEvent.mouseDown(scrim);
+    fireEvent.click(scrim);
+    expect(composer()).toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'New task' })
+    );
+  });
+
+  test('a press on the scrim with a picker open closes only the picker', () => {
+    render(<Composer />);
+    press('New task');
+    press(/^Status/);
+    expect(screen.getByRole('dialog', { name: 'Status' })).toBeTruthy();
+    const panel = composer();
+    if (panel === null) throw new Error('not open');
+    const scrim = scrimOf(panel);
+    fireEvent.pointerDown(scrim);
+    fireEvent.click(scrim);
+    expect(screen.queryByRole('dialog', { name: 'Status' })).toBeNull();
+    expect(composer()).not.toBeNull();
+    // The next press on the scrim closes the panel.
+    fireEvent.pointerDown(scrim);
+    fireEvent.click(scrim);
+    expect(composer()).toBeNull();
+  });
+
+  test('Escape with a picker open closes only the picker, then the panel', () => {
+    render(<Composer />);
+    press('New task');
+    press(/^Status/);
+    escape();
+    expect(screen.queryByRole('dialog', { name: 'Status' })).toBeNull();
+    expect(composer()).not.toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: /^Status/ })
+    );
+    escape();
+    expect(composer()).toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'New task' })
+    );
+  });
+
+  test('a Dialog over it: Escape closes the dialog, then the panel, focus back to each opener', () => {
+    render(<Composer />);
+    press('New task');
+    press('Discard…');
+    expect(modals()).toBe(2);
+    expect(
+      screen.getByRole('dialog', { name: 'Discard this draft?' })
+    ).toBeTruthy();
+    escape();
+    expect(
+      screen.queryByRole('dialog', { name: 'Discard this draft?' })
+    ).toBeNull();
+    expect(composer()).not.toBeNull();
+    expect(modals()).toBe(1);
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Discard…' })
+    );
+    escape();
+    expect(composer()).toBeNull();
+    expect(modals()).toBe(0);
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'New task' })
+    );
+  });
+
+  test('Escape with focus fallen to <body> still closes it', () => {
+    render(<Composer />);
+    press('New task');
+    act(() => {
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+    });
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(composer()).toBeNull();
+  });
+
+  test('focus fallen to <body> comes back to the panel, and Tab from <body> moves into it', async () => {
+    render(<Composer />);
+    press('New task');
+    const panel = composer();
+    if (panel === null) throw new Error('not open');
+    function blurActive(): void {
+      act(() => {
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+      });
+    }
+    // A Tab from <body> walks into the panel, never the page behind it.
+    blurActive();
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.keyDown(document.body, { key: 'Tab' });
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Close' })
+    );
+    // A focused control lost with nowhere to go: a tick later the panel
+    // holds focus, so page keys and Tab start from inside it.
+    blurActive();
+    expect(document.activeElement).toBe(document.body);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(document.activeElement).toBe(panel);
+    // A host that moves focus itself first keeps its choice.
+    const field = screen.getByRole('textbox', { name: 'Task title' });
+    act(() => {
+      field.focus();
+      field.blur();
+      screen.getByRole('button', { name: 'Create task' }).focus();
+    });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Create task' })
+    );
+  });
+
+  test('a non-modal panel leaves focus on <body> alone', async () => {
+    render(<Harness />);
+    const opener = screen.getByRole('button', { name: 'Open M3 cutover' });
+    act(() => opener.focus());
+    fireEvent.click(opener);
+    act(() => {
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+    });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  test('the footer stays out of the scrolling body; data hooks reach the panel; wide', () => {
+    render(<Composer />);
+    press('New task');
+    const panel = composer();
+    if (panel === null) throw new Error('not open');
+    const heading = screen.getByRole('heading', { name: 'New task' });
+    const body = heading.parentElement;
+    if (body === null) throw new Error('no body');
+    const create = screen.getByRole('button', { name: 'Create task' });
+    expect(body.contains(create)).toBe(false);
+    expect(panel.lastElementChild?.contains(create)).toBe(true);
+    expect(body.nextElementSibling).toBe(panel.lastElementChild);
+    expect(panel.getAttribute('data-testid')).toBe('task-composer');
+    expect(panel.getAttribute('data-slot')).toBe('composer');
+    expect(panel.getAttribute('data-size')).toBe('wide');
+    // The component's own data-* attributes stay its own.
+    expect(panel.getAttribute('data-state')).toBe('open');
+  });
+
+  test('a modal SlideOver over a non-modal one takes Escape first', () => {
+    function Stack() {
+      const [issue, setIssue] = useState(false);
+      const [composerOpen, setComposerOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setIssue(true)}>
+            Open ENG-12
+          </button>
+          <SlideOver
+            open={issue}
+            onClose={() => setIssue(false)}
+            title="ENG-12"
+          >
+            <button type="button" onClick={() => setComposerOpen(true)}>
+              Add sub-task
+            </button>
+          </SlideOver>
+          <SlideOver
+            open={composerOpen}
+            onClose={() => setComposerOpen(false)}
+            title="New sub-task"
+            modal
+          >
+            <input aria-label="Sub-task title" />
+          </SlideOver>
+        </>
+      );
+    }
+    render(<Stack />);
+    press('Open ENG-12');
+    press('Add sub-task');
+    const sub = screen.getByRole('dialog', { name: 'New sub-task' });
+    expect(sub.getAttribute('aria-modal')).toBe('true');
+    // From inside the modal panel.
+    escape();
+    expect(screen.queryByRole('dialog', { name: 'New sub-task' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'ENG-12' })).toBeTruthy();
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Add sub-task' })
+    );
+    // With focus fallen to <body>: the stack takes it first.
+    press('Add sub-task');
+    act(() => {
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+    });
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'New sub-task' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'ENG-12' })).toBeTruthy();
+    // Then the non-modal one, from its own document listener.
+    escape();
+    expect(screen.queryByRole('dialog', { name: 'ENG-12' })).toBeNull();
+  });
+
+  test('defaults unchanged: a desktop panel has no scrim, no aria-modal, no lock', () => {
+    render(<Harness />);
+    press('Open M3 cutover');
+    const panel = screen.getByRole('dialog', { name: 'M3 cutover' });
+    expect(panel.getAttribute('aria-modal')).toBeNull();
+    expect(panel.getAttribute('data-modal')).toBeNull();
+    expect(panel.getAttribute('data-size')).toBe('default');
+    // The scrim is the one aria-hidden element carrying a data-state.
+    expect(
+      document.querySelector('[aria-hidden="true"][data-state="open"]') === null
+    ).toBe(true);
+    expect(document.documentElement.style.overflow).toBe('');
+    // No footer: the body is the panel's last child.
+    expect(panel.lastElementChild?.querySelector('h2')).not.toBeNull();
+  });
+});
+
+describe('slide-over.module.css: modal, wide and footer', () => {
+  const sheet = readFileSync(
+    path.join(import.meta.dir, '..', 'src', 'shell', 'slide-over.module.css'),
+    'utf8'
+  )
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\s+/g, ' ');
+
+  function rule(selector: string): string {
+    const at = sheet.indexOf(` ${selector} {`);
+    expect({ selector, found: at >= 0 }).toEqual({ selector, found: true });
+    const open = sheet.indexOf('{', at);
+    return sheet.slice(open + 1, sheet.indexOf('}', open));
+  }
+
+  test('wide is min(960px, 90vw), and covers a phone like the default', () => {
+    expect(rule('.panel')).toContain('width: min(620px, 100vw);');
+    expect(rule('.wide')).toContain('width: min(960px, 90vw);');
+    const phone = sheet.slice(sheet.indexOf('@media (width <= 640px)'));
+    expect(phone).toContain('.wide { width: 100vw; }');
+  });
+
+  test('the footer is a row under a --divider rule, outside the scroller', () => {
+    const footer = rule('.footer');
+    expect(footer).toContain('flex: 0 0 auto;');
+    expect(footer).toContain('border-top: 1px solid var(--divider);');
+    expect(rule('.body')).toContain('overflow-y: auto;');
+  });
+
+  test('a modal panel and its scrim sit over a non-modal panel', () => {
+    expect(rule('.panel')).toContain('z-index: 50;');
+    expect(rule(".panel[data-modal='true']")).toContain('z-index: 52;');
+    expect(rule('.scrim')).toContain('z-index: 51;');
+    expect(rule('.scrim')).toContain('background: var(--overlay);');
+    expect(sheet).not.toMatch(/#[0-9a-f]{3,8}\b/i);
   });
 });

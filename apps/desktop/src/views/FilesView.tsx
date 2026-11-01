@@ -33,7 +33,7 @@ interface FilesViewProps {
   data: DispatchProjectData;
   /** The run whose worktree to browse, or null for the project checkout. */
   runId?: string | null;
-  /** Starts the header with "‹ tasks", back to the Tasks list. */
+  /** Starts the header with the back chip to the Tasks list. */
   onBack?: () => void;
   /** Opens with this file selected, e.g. from a file link in a thread. */
   initialPath?: string;

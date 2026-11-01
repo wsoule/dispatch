@@ -1,6 +1,6 @@
 'use client';
 
-import { Check, Search } from 'lucide-react';
+import { Check, Plus, Search } from 'lucide-react';
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -31,10 +31,12 @@ import {
   editLabels,
   filterOptions,
   groupOptions,
+  hasLabel,
   optionMatches,
   queryWords,
   toggleValue,
   withCount,
+  withQuery,
 } from './shared';
 import type {
   PickerAppearance,
@@ -59,6 +61,8 @@ type PickerValue = string | null | readonly string[];
 type Row =
   | { key: 'none'; kind: 'none' }
   | { key: string; kind: 'option'; option: PickerOption }
+  /** onCreate's row: makes a new option from the typed text. */
+  | { key: 'create'; kind: 'create'; text: string }
   | { key: 'retry'; kind: 'retry' };
 
 type CloseReason = 'escape' | 'select' | 'tab' | 'outside' | 'button';
@@ -122,6 +126,11 @@ function keepInView(scroller: HTMLElement, el: HTMLElement): void {
  * anchored below the trigger (above it when it does not fit), sliding left
  * at the right edge; at 640px and below it is a full-width bottom sheet.
  *
+ * Creating: with `onCreate`, a new name typed into the search box (no
+ * option's label, case aside) is offered as a trailing "Create "<name>""
+ * row, reached by the arrow keys like any option; picking it hands the
+ * trimmed text to onCreate under the same save contract (see the prop).
+ *
  * Menus: `searchable={false}` drops the search row, so a short list of
  * actions (Filter, Sort, a row's "…") reads as a menu. The listbox itself
  * then takes focus (aria-activedescendant on it), with the same keys plus
@@ -159,6 +168,8 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
     onOpenChange,
     formatError,
     labels: labelOverrides,
+    onCreate,
+    createLabel,
     id,
     className,
   } = props;
@@ -216,6 +227,20 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
   const shownList: readonly string[] = isList(shown) ? shown : [];
   const shownSingle: string | null = isList(shown) ? null : shown;
 
+  // onCreate under the same save contract: it changes no value of the
+  // picker's own (the host adds the option), so the control only tracks
+  // the pending note and the error.
+  const createControl = useSaveControl<string>(
+    '',
+    (text) => onCreate?.(text),
+    formatError,
+    labels.saveFailed,
+    false
+  );
+  const pending = control.pending || createControl.pending;
+  // Each kind of save clears the other's error when it starts.
+  const saveError = createControl.error ?? control.error;
+
   useScrollLock(isOpen && sheet);
 
   // ---- the list ---------------------------------------------------------
@@ -227,6 +252,22 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
     noneLabel !== undefined && optionMatches({ label: noneLabel }, words);
   const showRetry =
     optionsError !== null && optionsError !== '' && onRetry !== undefined;
+  // The create row: a new name typed into the search box. An action menu
+  // has no value to add it to.
+  const createText = query.trim();
+  const showCreate =
+    onCreate !== undefined &&
+    !action &&
+    createText !== '' &&
+    !hasLabel(
+      noneLabel === undefined
+        ? options.map((option) => option.label)
+        : [noneLabel, ...options.map((option) => option.label)],
+      createText
+    );
+  const createRow: Row | null = showCreate
+    ? { key: 'create', kind: 'create', text: createText }
+    : null;
 
   const rows: Row[] = [];
   if (showNone) rows.push({ key: 'none', kind: 'none' });
@@ -237,6 +278,7 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
       }
     }
   }
+  if (createRow !== null) rows.push(createRow);
   if (showRetry) rows.push({ key: 'retry', kind: 'retry' });
   const rowIndex = new Map(rows.map((row, i) => [row.key, i]));
   const rowId = (key: string): string | undefined => {
@@ -245,7 +287,7 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
   };
 
   function isChosen(row: Row): boolean {
-    if (row.kind === 'retry') return false;
+    if (row.kind === 'retry' || row.kind === 'create') return false;
     if (row.kind === 'option' && row.option.href !== undefined) return false;
     if (row.kind === 'option' && row.option.keepOpen === true) return false;
     // An action menu has no value: the host marks the current option.
@@ -260,7 +302,7 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
 
   function automaticRow(): Row | null {
     if (words.length === 0) {
-      const chosen = rows.find((row) => row.kind !== 'retry' && isChosen(row));
+      const chosen = rows.find((row) => isChosen(row));
       if (chosen !== undefined) return chosen;
     }
     return rows[0] ?? null;
@@ -297,6 +339,8 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
     }
   }
   const closeRef = useLatest(close);
+  const queryNow = useLatest(query);
+  const openNow = useLatest(isOpen);
 
   // One layer of the package's stack: a pointer down outside the picker
   // (its trigger counts as inside) closes it, focus going where the
@@ -395,6 +439,10 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
       onRetry?.();
       return;
     }
+    if (row.kind === 'create') {
+      create(row.text);
+      return;
+    }
     // A link out is followed, never chosen: no save, so no pending note.
     if (row.kind === 'option' && row.option.href !== undefined) {
       const href = row.option.href;
@@ -427,12 +475,41 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
           ? []
           : (props.resolveToggle ?? toggleValue)(shownList, row.option.value);
       setActiveKey(row.key);
-      if (valueKey(next) !== valueKey(shownList)) void control.save(next);
+      if (valueKey(next) !== valueKey(shownList)) {
+        createControl.clearError();
+        void control.save(next);
+      }
       return;
     }
     const next = row.kind === 'none' ? null : row.option.value;
     close('select');
-    if (action || next !== shownSingle) void control.save(next);
+    if (action || next !== shownSingle) {
+      createControl.clearError();
+      void control.save(next);
+    }
+  }
+
+  /**
+   * The create row picked: hands the typed text to onCreate. A multiple
+   * picker clears its search at once, so the next name can be typed while
+   * this one saves; a single one stays open with the "Saving" note and
+   * closes once the save resolves (if it is still open). A rejection
+   * prints the error in the foot and puts the text back in an empty search
+   * box. One create at a time: the row does nothing while one is pending.
+   */
+  function create(text: string): void {
+    if (createControl.pending) return;
+    control.clearError();
+    if (multiple) changeQuery('');
+    void createControl.save(text).then((stored) => {
+      // Unmounted meanwhile: nothing to close or restore.
+      if (rootRef.current === null || !openNow.current) return;
+      if (stored) {
+        if (!multiple) closeRef.current('select');
+        return;
+      }
+      if (multiple && queryNow.current === '') changeQueryRef.current(text);
+    });
   }
 
   function move(delta: 1 | -1): void {
@@ -456,10 +533,22 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
     setKeyboardNav(true);
   }
 
+  /** The create row's words for the typed text. */
+  function createWords(text: string): string {
+    return createLabel?.(text) ?? withQuery(labels.create, text);
+  }
+
   function rowText(row: Row): string {
-    if (row.kind === 'none') return noneLabel ?? '';
-    if (row.kind === 'retry') return labels.retry;
-    return row.option.label;
+    switch (row.kind) {
+      case 'none':
+        return noneLabel ?? '';
+      case 'retry':
+        return labels.retry;
+      case 'create':
+        return createWords(row.text);
+      case 'option':
+        return row.option.label;
+    }
   }
 
   /**
@@ -556,6 +645,7 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
     onQueryChange?.(next);
     setActiveKey(null);
   }
+  const changeQueryRef = useLatest(changeQuery);
 
   // ---- the trigger's face -----------------------------------------------
 
@@ -661,7 +751,6 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
 
   const accessibleName =
     triggerLabel ?? (valueText === '' ? label : `${label}: ${valueText}`);
-  const saveError = control.error;
 
   // ---- rows -------------------------------------------------------------
 
@@ -676,6 +765,9 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
       mark = noneMark !== undefined ? <PickerMarkView mark={noneMark} /> : null;
     } else if (row.kind === 'retry') {
       text = labels.retry;
+    } else if (row.kind === 'create') {
+      text = createWords(row.text);
+      mark = <Plus size={14} strokeWidth={1.8} aria-hidden="true" />;
     } else {
       text = row.option.label;
       hint = row.option.hint;
@@ -690,9 +782,14 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
         id={rowId(row.key)}
         role="option"
         aria-selected={chosen}
+        // One create at a time: the row waits while one saves.
+        aria-disabled={
+          row.kind === 'create' && createControl.pending ? 'true' : undefined
+        }
         className={cx(
           styles.option,
-          row.kind === 'retry' ? styles.retryRow : undefined
+          row.kind === 'retry' ? styles.retryRow : undefined,
+          row.kind === 'create' ? styles.createRow : undefined
         )}
         data-active={active ? 'true' : undefined}
         data-kind={row.kind}
@@ -715,7 +812,10 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
           choose(row);
         }}
       >
-        {boxes && row.kind !== 'retry' ? (
+        {boxes && row.kind === 'create' ? (
+          // No box to tick: the plus lines up with the other rows' marks.
+          <span className={styles.checkSpace} aria-hidden="true" />
+        ) : boxes && row.kind !== 'retry' ? (
           <span
             className={styles.check}
             aria-hidden="true"
@@ -783,12 +883,15 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
 
   const optionCount = rows.filter((row) => row.kind === 'option').length;
   const nothingToPick =
-    !loading && visible.length === 0 && !showNone && !showRetry;
+    !loading && visible.length === 0 && !showNone && !showRetry && !showCreate;
+  // With only the create row left, it says what Enter does.
   const announcement = loading
     ? labels.loading
     : nothingToPick
       ? (emptyLabel ?? labels.noMatch)
-      : withCount(labels.results, optionCount);
+      : optionCount === 0 && showCreate
+        ? createWords(createText)
+        : withCount(labels.results, optionCount);
 
   const popup = isOpen ? (
     <div
@@ -906,6 +1009,7 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
                 </div>
               )
             )}
+            {createRow !== null ? renderRow(createRow) : null}
             {showRetry ? renderRow({ key: 'retry', kind: 'retry' }) : null}
           </div>
           {loading ? (
@@ -929,7 +1033,7 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
           ) : null}
         </div>
         <div className={styles.foot}>
-          {control.pending ? (
+          {pending ? (
             <PendingNote text={labels.saving} />
           ) : saveError !== null ? (
             <SaveErrorLine label={labels.notSaved} message={saveError} />
@@ -991,16 +1095,16 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
           }
           disabled={disabled}
           data-appearance={appearance}
-          data-pending={control.pending ? 'true' : undefined}
+          data-pending={pending ? 'true' : undefined}
           onClick={() => setOpen(!isOpen)}
           onKeyDown={onTriggerKeyDown}
         >
           <span className={styles.face}>{face}</span>
         </button>
-        {control.pending ? <PendingNote text={labels.saving} /> : null}
+        {pending ? <PendingNote text={labels.saving} /> : null}
       </span>
       <SavingAnnouncement
-        pending={control.pending}
+        pending={pending}
         text={`${labels.saving} ${label}`}
       />
       {popup}

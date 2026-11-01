@@ -1,9 +1,7 @@
+import { Button, Disclosure, EmptyState, Spinner } from '@dispatch/ui';
 import { OctagonAlert } from 'lucide-react';
 
-import { DetailsDisclosure } from '../setup/DetailsDisclosure';
-import { Button } from '@/ui/button';
-import { EmptyState } from '@/ui/chrome';
-import { Spinner } from '@/ui/spinner';
+import styles from './DaemonUnavailable.module.css';
 
 interface DaemonUnavailableProps {
   /** The daemon is still starting — a lighter, non-error status line, no Retry button (there
@@ -19,6 +17,11 @@ interface DaemonUnavailableProps {
  * treatment instead of each one growing its own copy (or, worse, silently showing an
  * unrelated "Loading…" state forever when the daemon never came up at all — the bug this was
  * extracted to fix in `TasksListView`).
+ *
+ * Both states fill the parent's height and centre themselves in it (callers place it as a
+ * whole pane). Starting is a Spinner (role="status") beside one sentence; the error is the
+ * library EmptyState with a danger-toned OctagonAlert, a Retry button and, when the failure
+ * carries text, that raw output in a mono block behind a "Details" disclosure.
  */
 export function DaemonUnavailable({
   starting,
@@ -27,32 +30,41 @@ export function DaemonUnavailable({
 }: DaemonUnavailableProps) {
   if (starting) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-        <Spinner className="text-muted-foreground size-5" />
-        <EmptyState
-          message="Starting Dispatch’s background service…"
-          className="p-0"
-        />
+      <div className={styles.root}>
+        <div className={styles.starting}>
+          <Spinner size="md" label="Starting Dispatch’s background service" />
+          <p className={styles.startingText}>
+            Starting Dispatch’s background service…
+          </p>
+        </div>
       </div>
     );
   }
 
   const detail = describeDaemonError(errorDetail);
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-      <OctagonAlert className="text-destructive size-5" />
+    <div className={styles.root}>
       <EmptyState
-        message="Dispatch couldn’t start for this project"
-        className="p-0"
+        icon={
+          <span className={styles.icon} data-tone="danger">
+            <OctagonAlert size={22} strokeWidth={1.8} aria-hidden="true" />
+          </span>
+        }
         action={
-          <>
-            {detail !== null && <DetailsDisclosure text={detail} />}
+          <div className={styles.actions}>
             <Button variant="secondary" size="sm" onClick={onRetry}>
               Retry
             </Button>
-          </>
+            {detail !== null && (
+              <Disclosure variant="inline" summary="Details">
+                <pre className={styles.detail}>{detail}</pre>
+              </Disclosure>
+            )}
+          </div>
         }
-      />
+      >
+        Dispatch couldn’t start for this project
+      </EmptyState>
     </div>
   );
 }

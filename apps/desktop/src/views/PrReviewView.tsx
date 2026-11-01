@@ -29,7 +29,7 @@ interface PrReviewViewProps {
   /** Which repo pull request is open — `navReducer`'s `activePrNumber`. */
   prNumber: number;
   onBack: () => void;
-  /** Two views: "‹ tasks" leads the header and the crumb starts at Pull requests. */
+  /** Two views: the Tasks back chip leads the header and the crumb starts at Pull requests. */
   tasksPage?: boolean;
 }
 

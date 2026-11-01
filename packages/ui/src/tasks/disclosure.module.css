@@ -1,0 +1,160 @@
+/* Gr8r's fold: a trigger and the panel it shows. inline is a quiet text
+   button in the secondary ink ("Details", "+3 more"); bar a full-width
+   row on --surface-2 (a section that folds); plain has no chrome of its
+   own (a host's own face). The chevron turns down while open. Child
+   combinators throughout, so a fold nested in an open one keeps its own
+   chevron and face. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.bar {
+  align-items: stretch;
+}
+
+.plain {
+  gap: 0;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  text-align: start;
+}
+
+.summary {
+  min-width: 0;
+}
+
+.chevron {
+  flex: none;
+}
+
+.root[data-open='true'] > .trigger > .chevron {
+  transform: rotate(90deg);
+}
+
+.inline > .trigger {
+  min-height: 22px;
+  padding: 1px 6px 1px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+}
+
+.bar > .trigger {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  min-height: var(--h-md);
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.bar > .trigger > .chevron {
+  color: var(--text-2);
+}
+
+.plain > .trigger {
+  gap: 6px;
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .inline > .trigger:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .bar > .trigger:hover {
+    background: var(--surface-3);
+  }
+}
+
+.panel {
+  align-self: stretch;
+  min-width: 0;
+}
+
+/* Closed: display none, whatever a host's styles say about the panel. */
+.panel[hidden] {
+  display: none;
+}
+
+/* Motion only when welcome, and only after a press: the chevron turns,
+   the panel fades in; where the browser can animate to height auto, the
+   panel also grows from nothing, clipped while it does (the clip ends
+   with the animation, so no focus ring inside is ever cut). Closing is
+   instant. */
+@media (prefers-reduced-motion: no-preference) {
+  .chevron {
+    transition: transform var(--dur) var(--ease);
+  }
+
+  .inline > .trigger,
+  .bar > .trigger {
+    transition:
+      background-color var(--dur) ease,
+      color var(--dur) ease;
+  }
+
+  .panel[data-motion='true']:not([hidden]) {
+    animation: disclosure-fade 0.16s ease;
+  }
+}
+
+@supports (interpolate-size: allow-keywords) {
+  @media (prefers-reduced-motion: no-preference) {
+    .panel[data-motion='true']:not([hidden]) {
+      interpolate-size: allow-keywords;
+      animation: disclosure-open 0.2s var(--ease);
+    }
+  }
+}
+
+@keyframes disclosure-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes disclosure-open {
+  from {
+    height: 0;
+    opacity: 0;
+    clip-path: inset(0);
+  }
+
+  to {
+    height: auto;
+    opacity: 1;
+    clip-path: inset(0);
+  }
+}
+
+/* Forced colours: the chevron is currentColor already; the face keeps a
+   button edge. */
+@media (forced-colors: active) {
+  .inline > .trigger,
+  .bar > .trigger {
+    border-color: ButtonText;
+  }
+}

@@ -29,7 +29,7 @@ export function isTypingTarget(target: EventTarget | null): boolean {
  * `[aria-modal="true"]` match covers them (Base UI never sets that attribute, so an exiting
  * dialog is not caught twice). Checked live via a DOM query at the moment a keydown fires,
  * rather than threaded through as reactive React state — every dialog instance
- * (CreateTaskModal, SessionDetailModal, DiffModal, CommandPalette, …) only renders into the DOM
+ * (TaskComposerSlideOver, SessionDetailModal, DiffModal, CommandPalette, …) only renders into the DOM
  * while open, so the query is always exactly as current as the state would be, without App.tsx
  * needing to know about every modal that exists anywhere in the component tree (including ones
  * mounted deep inside the Sessions hub). CommandPalette is one of these too (`@dispatch/ui`'s

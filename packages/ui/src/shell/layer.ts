@@ -336,9 +336,9 @@ function removeLayer(entry: LayerEntry): void {
 
 interface UseLayerOptions {
   open: boolean;
-  /** modal: Dialog; popover: PickerPopover, Popover; tooltip: Tooltip
-      (any press hides it, and it never takes a press from the layer
-      under it). */
+  /** modal: Dialog, a modal SlideOver; popover: PickerPopover, Popover;
+      tooltip: Tooltip (any press hides it, and it never takes a press
+      from the layer under it). */
   kind: LayerKind;
   /** The layer's element (the popover, the dialog panel, the tooltip). */
   ref: { readonly current: HTMLElement | null };
@@ -366,9 +366,13 @@ interface UseLayerOptions {
  * A modal surface outside the stack (aria-modal, such as the command
  * palette) keeps its own keys and presses. The layer's own Escape
  * handler must do the same for keys from inside it. `isTop()` says
- * whether this layer is the topmost one now.
+ * whether this layer is the topmost one now; `isTop(true)` looks past
+ * open tooltips, which never take a press from the layer under them (a
+ * modal SlideOver asks it of a press on its scrim).
  */
-export function useLayer(options: UseLayerOptions): { isTop: () => boolean } {
+export function useLayer(options: UseLayerOptions): {
+  isTop: (ignoreTooltips?: boolean) => boolean;
+} {
   const latest = useLatest(options);
   const entryRef = useRef<LayerEntry | null>(null);
   const { open, kind } = options;
@@ -402,9 +406,9 @@ export function useLayer(options: UseLayerOptions): { isTop: () => boolean } {
 
   return useMemo(
     () => ({
-      isTop: () => {
+      isTop: (ignoreTooltips = false) => {
         const entry = entryRef.current;
-        return entry !== null && topLayer(false) === entry;
+        return entry !== null && topLayer(ignoreTooltips) === entry;
       },
     }),
     []

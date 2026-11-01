@@ -26,6 +26,7 @@ export const DEFAULT_EDIT_LABELS: EditLabels = {
   required: 'Cannot be empty.',
   unsaved: 'Unsaved changes · Esc again discards them',
   saveShortcut: 'saves',
+  create: 'Create "{query}"',
 };
 
 /** Merges a host's label overrides over the defaults. */
@@ -62,6 +63,15 @@ export function optionMatches(
     [option.label, option.hint ?? '', ...(option.keywords ?? [])].join(' ')
   );
   return words.every((word) => hay.includes(word));
+}
+
+/** True when `text` is already one of the labels, case aside (a
+    picker's create row is offered only for a new name, so "bug" never
+    makes a second "Bug"). Blank text matches nothing. */
+export function hasLabel(labels: readonly string[], text: string): boolean {
+  const wanted = text.trim().toLowerCase();
+  if (wanted === '') return false;
+  return labels.some((label) => label.trim().toLowerCase() === wanted);
 }
 
 /** The options matching `query`, in the host's order. */
@@ -138,4 +148,10 @@ export function isHexColor(color: string): boolean {
 /** Fills a "{count}" template. */
 export function withCount(template: string, count: number): string {
   return template.replace('{count}', String(count));
+}
+
+/** Fills a "{query}" template (the create row's 'Create "{query}"'). A
+    function replacement, so a `$` in the typed text stays as typed. */
+export function withQuery(template: string, query: string): string {
+  return template.replace('{query}', () => query);
 }

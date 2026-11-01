@@ -186,7 +186,7 @@ export type MainView = 'overseer' | 'tasks';
  * (`HostedView` 'graph'), not a layout of the list. */
 export type TasksMode = 'list' | 'board';
 
-/** Project views shown as a page under Tasks, led by "‹ tasks". Timeline,
+/** Project views shown as a page under Tasks, led by the Tasks back chip. Timeline,
  * Graph and Threads have sidebar rows of their own; Projects (the register)
  * opens from the Projects section's "All", Live from the palette and the Runs
  * page. */

@@ -12,6 +12,7 @@ interface SsrResult {
   drawer: string;
   issueList: string;
   windowedList: string;
+  disclosures: string;
 }
 
 function serverRender(): SsrResult {
@@ -99,5 +100,28 @@ describe('task family server render', () => {
     expect(html).not.toContain('Row 2-0<');
     // Every group header is there.
     expect(html).toContain('aria-label="Group 2"');
+  });
+
+  test('disclosures render closed, open, kept and with a host trigger', () => {
+    const html = result.disclosures;
+    // Closed: the wiring and the hidden panel, no content.
+    expect(html).toContain('aria-expanded="false" aria-controls="fold-closed"');
+    expect(html).toContain('<div id="fold-closed" hidden=""');
+    expect(html).not.toContain('never on the server');
+    // Open from the first render, with the host's hook and no motion.
+    expect(html).toContain('data-testid="setup-fold"');
+    expect(html).toContain('data-open="true" data-variant="bar"');
+    expect(html).toContain('aria-expanded="true" aria-controls="fold-open"');
+    expect(html).toContain('Hide steps');
+    expect(html).toContain('Install the CLI');
+    expect(html).not.toContain('data-motion');
+    // keepMounted: hidden, content in the markup.
+    expect(html).toMatch(
+      /<div id="fold-kept" hidden=""[^>]*><p>Kept while closed/
+    );
+    // A host's trigger, wired.
+    expect(html).toMatch(
+      /<button aria-expanded="false" aria-controls="fold-chip" type="button" class="chip">\+3 more<\/button>/
+    );
   });
 });

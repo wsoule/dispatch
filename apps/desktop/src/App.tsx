@@ -68,7 +68,6 @@ import {
 } from './components/shell/DispatchShell';
 import { PresenceStack } from './components/shell/PresenceStack';
 import { ProjectSwitcher } from './components/shell/ProjectSwitcher';
-import { QuickCaptureDialog } from './components/shell/QuickCaptureDialog';
 import { SavedViewsProvider } from './components/shell/SavedViewsContext';
 import { SettingsPanel } from './components/shell/SettingsPanel';
 import {
@@ -81,8 +80,6 @@ import {
   viewTaskLink,
 } from './components/shell/toastContract';
 import { useToasts } from './components/shell/Toasts';
-import { AiTaskComposer } from './components/tasks/AiTaskComposer';
-import { CreateTaskModal } from './components/tasks/CreateTaskModal';
 import { TaskDrawer } from './components/tasks/detail/TaskDrawer';
 import { NeedsYouBlock } from './components/tasks/NeedsYouBlock';
 import {
@@ -90,6 +87,10 @@ import {
   TaskPageHostContext,
 } from './components/tasks/page/TaskPageHost';
 import { TaskPageView } from './components/tasks/page/TaskPageView';
+import {
+  type ComposerMode,
+  TaskComposerSlideOver,
+} from './components/tasks/TaskComposerSlideOver';
 import { TasksBackButton } from './components/tasks/TasksPageHeader';
 import { useAdminItems } from './hooks/useAdminItems';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
@@ -458,8 +459,8 @@ function App() {
   // task"/"+" affordance (a board column's or list group's hover "+", the palette action,
   // the global `c` shortcut) calls through, so the creator's preset is
   // always explicit rather than a leftover from whichever column's "+" was clicked last.
-  // Describing the task in natural language is the primary path; the structured modal
-  // below is the quick-add fallback.
+  // Describing the task in natural language is the primary path; the composer's Quick add
+  // mode is the structured fallback.
   const openCreateTask = useCallback((preset?: CreateTaskPreset) => {
     setCreatePreset(preset ?? null);
     // The AI composer drafts issues only; a project or milestone opens the form.
@@ -475,9 +476,9 @@ function App() {
     dispatchNav({ type: 'closeNewTask' });
   }, []);
 
-  // The structured quick-add fallback: `CreateTaskModal`, unchanged, for when you already know
+  // The structured quick-add fallback: the composer's Quick add mode, for when you already know
   // the exact fields and don't want to spend an agent round-trip describing them. Reachable
-  // from the palette and from the full-page creator's own "Quick add…" button.
+  // from the palette; the composer's own Mode control switches to the same mode.
   const openQuickAddTask = useCallback((preset?: CreateTaskPreset) => {
     setCreatePreset(preset ?? null);
     setShowCreate(true);
@@ -927,9 +928,66 @@ function App() {
   // dialog. Gates ⌘D and the palette's "Drop a thought" alike.
   const quickCaptureAvailable = activeProject !== null && data.client !== null;
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
+  // Capture is preset-free like every other entry: the composer's Mode control can move on to
+  // Quick add or Describe, which must not inherit the last "+"'s status, kind and parent.
   const openQuickCapture = useCallback(() => {
-    if (quickCaptureAvailable) setQuickCaptureOpen(true);
+    if (!quickCaptureAvailable) return;
+    setCreatePreset(null);
+    setQuickCaptureOpen(true);
   }, [quickCaptureAvailable]);
+
+  // The one task composer stays mounted while any of its three entry states is open, and
+  // shows the mode that state asks for: the structured form (`openQuickAddTask`, or a
+  // non-task preset), the quick capture (⌘D, "Drop a thought"), or Describe (`c`, "New
+  // task"). `null` means the composer is closed.
+  const composerMode: ComposerMode | null = showCreate
+    ? 'quick'
+    : quickCaptureOpen
+      ? 'capture'
+      : navState.composerOpen
+        ? 'describe'
+        : null;
+  // The composer's Mode control: moves to one entry state and clears the other two, so
+  // exactly one is open. Quick add keeps `createPreset`; capture opens only when a capture
+  // can land (see `quickCaptureAvailable`).
+  const changeComposerMode = useCallback(
+    (mode: ComposerMode) => {
+      switch (mode) {
+        case 'describe':
+          setShowCreate(false);
+          setQuickCaptureOpen(false);
+          dispatchNav({ type: 'openNewTask' });
+          break;
+        case 'quick':
+          dispatchNav({ type: 'closeNewTask' });
+          setQuickCaptureOpen(false);
+          setShowCreate(true);
+          break;
+        case 'capture':
+          if (!quickCaptureAvailable) return;
+          dispatchNav({ type: 'closeNewTask' });
+          setShowCreate(false);
+          setQuickCaptureOpen(true);
+          break;
+      }
+    },
+    [quickCaptureAvailable]
+  );
+  // Closing the composer (Escape, the scrim, a submit) clears every entry state and the
+  // preset, so nothing carries over into the next open.
+  const closeComposer = useCallback(() => {
+    dispatchNav({ type: 'closeNewTask' });
+    setShowCreate(false);
+    setQuickCaptureOpen(false);
+    setCreatePreset(null);
+  }, []);
+  // Settings (⌘, works while typing, or the palette) still opens as the legacy dialog, which
+  // would sit under the composer's scrim and lose its Escape to it: opening Settings closes
+  // the composer. Until B3 makes Settings a place in the main column.
+  const settingsOpen = navState.settings !== null;
+  useEffect(() => {
+    if (settingsOpen) closeComposer();
+  }, [settingsOpen, closeComposer]);
 
   const openShortcuts = useCallback(
     () => dispatchNav({ type: 'openShortcuts' }),
@@ -946,7 +1004,7 @@ function App() {
   useGlobalKeyboard({
     // `modalOpen` is computed inside the hook itself, via a live DOM check for any open
     // dialog — so SessionDetailModal/DiffModal mounted deep inside the Sessions hub also
-    // suppress the global commands while open, the same as CreateTaskModal always did.
+    // suppress the global commands while open, the same as TaskComposerSlideOver does.
     onCommand: (command) => {
       // The `goto-*` keys resolve through `keyAction`.
       const action = keyAction(command);
@@ -2420,37 +2478,35 @@ function App() {
                   <div className="bg-frame relative flex h-screen flex-col overflow-hidden">
                     {twoViewsFrame}
 
-                    <QuickCaptureDialog
-                      open={quickCaptureOpen}
-                      onOpenChange={setQuickCaptureOpen}
-                      onCapture={rawData.handleCaptureInbox}
+                    <TaskComposerSlideOver
+                      open={composerMode !== null}
+                      mode={composerMode ?? 'describe'}
+                      onModeChange={changeComposerMode}
+                      projectName={activeProject?.name}
+                      statuses={data.config?.statuses ?? []}
+                      epics={data.epics}
+                      initialStatus={createPreset?.status}
+                      labels={labelCatalogue}
+                      labelDefinitions={data.config?.labels}
+                      onCreate={(input) => data.handleCreate(input)}
+                      onDraft={startDraftAndOpen}
+                      onCapture={
+                        quickCaptureAvailable
+                          ? rawData.handleCaptureInbox
+                          : undefined
+                      }
+                      onUploadAttachments={data.handleUploadAttachments}
+                      daemon={
+                        daemonDown
+                          ? {
+                              starting: data.portLoading,
+                              errorDetail: data.portErrorDetail,
+                              onRetry: data.retryEnsureDispatchd,
+                            }
+                          : null
+                      }
+                      onClose={closeComposer}
                     />
-
-                    {showCreate && data.config !== null && (
-                      <CreateTaskModal
-                        projectName={activeProject?.name}
-                        statuses={data.config.statuses}
-                        epics={data.epics}
-                        initialStatus={createPreset?.status}
-                        labels={labelCatalogue}
-                        onCreate={(input) => data.handleCreate(input)}
-                        onUploadAttachments={data.handleUploadAttachments}
-                        onClose={() => setShowCreate(false)}
-                      />
-                    )}
-
-                    {navState.composerOpen && (
-                      <AiTaskComposer
-                        projectName={activeProject?.name}
-                        data={data}
-                        onStartDraft={startDraftAndOpen}
-                        onQuickAdd={(preset) => {
-                          dispatchNav({ type: 'closeNewTask' });
-                          openQuickAddTask(preset);
-                        }}
-                        onClose={() => dispatchNav({ type: 'closeNewTask' })}
-                      />
-                    )}
 
                     {addProjectOpen && (
                       <AddProjectDialog

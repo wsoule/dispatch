@@ -30,8 +30,9 @@ export {
   type ThemeToggleProps,
 } from './components/theme-toggle';
 
-// ---- tasks family (src/tasks): primitives, the grouped task table,
-// deadlines, stats strip and registers. Props are typed in ./tasks/types.
+// ---- tasks family (src/tasks): primitives (the disclosure among them),
+// the grouped task table, deadlines, stats strip and registers. Props are
+// typed in ./tasks/types.
 export { Button } from './tasks/button';
 export { Checkbox } from './tasks/checkbox';
 export { cx } from './tasks/class-names';
@@ -43,6 +44,7 @@ export {
   toggleCollapsed,
 } from './tasks/collapsed-groups';
 export { DeadlineList } from './tasks/deadline-list';
+export { Disclosure } from './tasks/disclosure';
 export { NavTabs } from './tasks/nav-tabs';
 export { EmptyState, Notice } from './tasks/notice';
 export { ProgressRule } from './tasks/progress-rule';
@@ -85,6 +87,7 @@ export type {
   DeadlineGroup,
   DeadlineItem,
   DeadlineListProps,
+  DisclosureProps,
   EmptyStateProps,
   FilterChipData,
   FilterChipsProps,

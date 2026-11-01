@@ -365,7 +365,13 @@ export interface ToastApi {
   dismiss: (id: string) => void;
 }
 
-export interface SlideOverProps {
+/**
+ * Gr8r's right-hand drawer. By default a peek beside the page (no scrim on
+ * a desktop, modal on a phone); `modal` makes it a form surface on every
+ * viewport. A host's `data-*` hooks go on the panel (the role="dialog"
+ * element).
+ */
+export interface SlideOverProps extends DataAttributes {
   open: boolean;
   onClose: () => void;
   title: ReactNode;
@@ -380,6 +386,23 @@ export interface SlideOverProps {
       while open is a swap in place: the body scrolls to the top and focus
       that was in the panel (or fell to <body>) moves to the panel. */
   contentKey?: string;
+  /**
+   * A form surface (a task composer, a session's detail) on every
+   * viewport, as a phone already has it: aria-modal="true" while open
+   * (so a host's "is a modal open?" check mutes its page shortcuts), the
+   * --overlay scrim (a press on it closes the panel, unless a picker or
+   * popover is open over it: that closes first), Tab kept inside, the
+   * page not scrolling, and a modal layer of the package's stack, so
+   * Escape closes the topmost layer only and never a non-modal SlideOver
+   * underneath first. Default false: the page beside it stays usable.
+   */
+  modal?: boolean;
+  /** default 620px (SLIDE_OVER_WIDTH); wide min(960px, 90vw), for a form
+      or reading view with two columns. Both cover a phone. */
+  size?: 'default' | 'wide';
+  /** An action row under the body (Cancel, Create), divided from it by
+      a rule: it stays in view while the body scrolls. */
+  footer?: ReactNode;
   children?: ReactNode;
 }
 

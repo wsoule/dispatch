@@ -1001,7 +1001,7 @@ test('j and k move through the list', async () => {
   expect(await screen.findByLabelText('Editing auth')).toBeDefined();
 });
 
-test('in Two views the All docs page leads with ‹ tasks and lists docs full width', async () => {
+test('in Two views the All docs page leads with the Tasks back chip and lists docs full width', async () => {
   const calls: string[] = [];
   renderView({
     canDecide: true,

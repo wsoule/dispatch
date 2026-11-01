@@ -303,6 +303,16 @@ describe('TaskDrawer', () => {
     expect(opened).toEqual(['t-1']);
     fireEvent.keyDown(document, { key: 'Enter', metaKey: true });
     expect(opened).toEqual(['t-1', 't-1']);
+    // A ⌘⏎ something nearer already took (a composer over the drawer) stays its own.
+    const taken = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    taken.preventDefault();
+    document.body.dispatchEvent(taken);
+    expect(opened).toEqual(['t-1', 't-1']);
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(closed).toBe(1);
   });

@@ -134,7 +134,7 @@ function toggleGroupByPerson(
   };
 }
 
-// Pages that lead their own header with "‹ tasks"; the rest get a bare one here.
+// Pages that lead their own header with the Tasks back chip; the rest get a bare one here.
 const OWN_HEADER: ReadonlySet<TasksPage['kind']> = new Set([
   'task',
   'docs',

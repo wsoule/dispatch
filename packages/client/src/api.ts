@@ -1517,7 +1517,7 @@ export interface TaskDraft {
 }
 
 // Maps a reviewed `TaskDraft` onto core's `CreateInput` so it saves through the
-// exact same createTask path CreateTaskModal uses, criteria in their own section.
+// exact same createTask path the task composer's Quick add uses, criteria in their own section.
 export function taskDraftToCreateInput(draft: TaskDraft): CreateInput {
   return {
     title: draft.title,

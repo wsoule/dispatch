@@ -1,12 +1,35 @@
 import {
   type CreateInput,
-  type Priority,
+  isValidParentKind,
   providerById,
+  type StatusModel,
+  type TaskListItem,
 } from '@dispatch-foo/core/browser';
 import type { DraftRecord } from '@dispatch/client';
-import { Plus, Sparkles, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import {
+  Button,
+  type PickerOption,
+  PickerPopover,
+  PriorityPicker,
+  PropertyList,
+  type StateChoice,
+  StatePicker,
+} from '@dispatch/ui';
+import {
+  ChevronLeft,
+  type LucideIcon,
+  MessageCircleQuestion,
+  Plus,
+  Scissors,
+  SlidersHorizontal,
+  Sparkles,
+  SpellCheck,
+  X,
+} from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { fromTaskPriority, toTaskPriority } from '../adapters/rows';
+import { stateChoices } from '../adapters/taskDetail';
 import { FailureNotice } from '../components/failure/FailureNotice';
 import {
   type SendChoice,
@@ -14,31 +37,23 @@ import {
   type SendToAgentOptions,
 } from '../components/guide/SendToAgent';
 import { PlanQuestionsForm } from '../components/plans/PlanQuestionsForm';
-import {
-  EpicControl,
-  PriorityControl,
-  StatusControl,
-} from '../components/tasks/PropertyControls';
+import { PageHead } from '../components/shell/PageHead';
+import { ContainerIcon } from '../components/tasks/page/ContainerIcon';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import {
+  selectionWithin,
+  type TextSelection,
+  useTextSelection,
+} from '../hooks/useTextSelection';
+import { useActiveStatusModel } from '../lib/statusModel';
+import { kindLabel } from '../lib/taskDisplay';
 import type { EditableTaskDraft } from '../lib/taskDraft';
 import {
   editableDraftFrom,
   editableDraftToCreateInput,
   isDraftSaveable,
 } from '../lib/taskDraft';
-import { IconButton } from '@/ui/ai/icon-button';
-import { PageHeader } from '@/ui/ai/page-header';
-import { PillButton } from '@/ui/ai/pill';
-import {
-  defaultSelectionActions,
-  selectionActionLabel,
-  SelectionActionsMenu,
-  useTextSelection,
-} from '@/ui/ai/selection-actions';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
-import { Spinner } from '@/ui/spinner';
-import { Textarea } from '@/ui/textarea';
+import styles from './DraftView.module.css';
 
 interface DraftViewProps {
   data: DispatchProjectData;
@@ -61,9 +76,111 @@ interface DraftViewProps {
   };
 }
 
+const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
+
+// A lucide glyph as a picker option's leading mark.
+function iconMark(Icon: LucideIcon): PickerOption['mark'] {
+  return { kind: 'node', node: <Icon {...ICON} /> };
+}
+
+// The prompt menu's first step. Tone is a step (keepOpen) into its three
+// voices; the rest act on the frozen text at once.
+const PROMPT_ACTIONS: readonly PickerOption[] = [
+  { value: 'explain', label: 'Explain', mark: iconMark(MessageCircleQuestion) },
+  { value: 'improve', label: 'Improve', mark: iconMark(Sparkles) },
+  { value: 'shorten', label: 'Shorten', mark: iconMark(Scissors) },
+  {
+    value: 'tone',
+    label: 'Tone',
+    mark: iconMark(SlidersHorizontal),
+    keepOpen: true,
+  },
+  { value: 'grammar', label: 'Grammar', mark: iconMark(SpellCheck) },
+];
+
+// Tone's step: back to the actions, then the three voices.
+const TONE_ACTIONS: readonly PickerOption[] = [
+  {
+    value: 'back',
+    label: 'Back to actions',
+    mark: iconMark(ChevronLeft),
+    keepOpen: true,
+  },
+  { value: 'tone-professional', label: 'Professional' },
+  { value: 'tone-friendly', label: 'Friendly' },
+  { value: 'tone-direct', label: 'Direct' },
+];
+
+/** The words of a prompt action (or one of Tone's voices) by its id, for the
+ * "isn't wired up yet" notice; the id itself when it is unknown. */
+function promptActionLabel(actionId: string): string {
+  const option = [...PROMPT_ACTIONS, ...TONE_ACTIONS].find(
+    (o) => o.value === actionId
+  );
+  return option?.label ?? actionId;
+}
+
+// Two reads of the same selection: a selectionchange that repeats it (focus
+// moving, a click that leaves it) must not reopen a menu just closed.
+function sameSelection(a: TextSelection | null, b: TextSelection): boolean {
+  return (
+    a !== null &&
+    a.text === b.text &&
+    a.rect.left === b.rect.left &&
+    a.rect.top === b.rect.top
+  );
+}
+
+/** The project's statuses as StatePicker choices: the status model's
+ * choices kept to the config's list (all of them before config loads), with
+ * the draft's own status listed even when it is not among them. */
+function draftStateChoices(
+  model: StatusModel,
+  statuses: readonly string[],
+  current: string
+): StateChoice[] {
+  const all = stateChoices(model, current);
+  if (statuses.length === 0) return all;
+  return all.filter(
+    (choice) => choice.id === current || statuses.includes(choice.id)
+  );
+}
+
+/** Where a new task may be filed: containers broad enough to hold a task
+ * (core's `isValidParentKind`), archived ones left out, each with its own
+ * glyph and its kind as the hint. */
+function parentOptions(epics: readonly TaskListItem[]): PickerOption[] {
+  const options: PickerOption[] = [];
+  for (const epic of epics) {
+    if (epic.meta.archivedAt !== undefined) continue;
+    if (!isValidParentKind('task', epic.meta.kind)) continue;
+    options.push({
+      value: epic.meta.id,
+      label: epic.meta.title,
+      hint: kindLabel(epic.meta.kind),
+      mark: {
+        kind: 'node',
+        node: (
+          <ContainerIcon
+            kind={epic.meta.kind}
+            icon={epic.meta.icon}
+            color={epic.meta.color}
+            className={styles.containerMark}
+          />
+        ),
+      },
+    });
+  }
+  return options;
+}
+
+/** The prompt menu while open: the text it acts on, frozen when it opened,
+ * and the viewport point it opened at (null = under its trigger). */
+type PromptMenu = { text: string; point: { x: number; y: number } | null };
+
 /** A settled AI task draft's review page on the issue-page grammar (§8): the task title is the
- * 24px page heading, the description is 15px prose with the acceptance criteria as a checklist
- * under it, and status/priority/epic live in a `Properties` rail. Every field is editable and
+ * page heading, the description is prose with the acceptance criteria as a checklist under it,
+ * and status/priority/parent live in a `Properties` rail of pickers. Every field is editable and
  * nothing is written until "Create task". Reviews only the proposal's first task. */
 export function DraftView({
   data,
@@ -82,6 +199,7 @@ export function DraftView({
   // every render whenever the config hasn't loaded, so depending on the array
   // would re-run that effect each render.
   const defaultStatus = statuses[0] ?? 'backlog';
+  const statusModel = useActiveStatusModel();
 
   const [editable, setEditable] = useState<EditableTaskDraft>(() =>
     editableDraftFrom(
@@ -106,33 +224,68 @@ export function DraftView({
   const [discarding, setDiscarding] = useState(false);
   const [sendingToAgent, setSendingToAgent] = useState(false);
 
-  // Selection actions over the original prompt (the one piece of text on this page that
-  // is plain rendered prose rather than an `<input>`/`<textarea>` — the Selection API this
-  // primitive is built on cannot see a selection made inside a form control at all, so the
-  // title/description fields below are out of reach for it regardless of this page's own
-  // editable-vs-read-only distinction).
+  // The prompt menu over the original prompt (the one piece of plain rendered prose on this
+  // page: the Selection API cannot see a selection inside the title and description fields).
+  // A pointer drag that selects text in the prompt opens it at the selection; its trigger
+  // opens it on the selected text, or the whole prompt when none is selected. A keyboard
+  // selection never opens it by itself (the menu takes focus, so the next Shift+Arrow would
+  // move in the menu instead of extending the selection): the trigger is the keyboard's way
+  // in. The text and point are frozen when it opens, so focus moving into the menu (which
+  // may clear the selection) does not close it.
   const promptRef = useRef<HTMLDivElement>(null);
-  const { text: selectedPromptText, rect: selectionRect } =
-    useTextSelection(promptRef);
-  const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
+  const liveSelection = useTextSelection(promptRef);
+  const [promptMenu, setPromptMenu] = useState<PromptMenu | null>(null);
+  const [toneStep, setToneStep] = useState(false);
+  const [promptNotice, setPromptNotice] = useState<string | null>(null);
+  // The selection the menu last opened over, and whether a pointer drag is still selecting.
+  const handledSelection = useRef<TextSelection | null>(null);
+  const pointerSelecting = useRef(false);
+
+  function openPromptMenu(selection: TextSelection) {
+    handledSelection.current = selection;
+    setToneStep(false);
+    setPromptMenu({
+      text: selection.text,
+      point: { x: selection.rect.left, y: selection.rect.bottom + 4 },
+    });
+  }
+
+  // A selection that is gone (collapsed, or moved out of the prompt) is forgotten, so selecting
+  // the same words again later opens the menu again.
+  useEffect(() => {
+    if (liveSelection === null) handledSelection.current = null;
+  }, [liveSelection]);
+
+  // A pointer drag that started in the prompt ends anywhere on the page: open the menu over
+  // the settled selection, if it is a new one. Only here, after the drag, so the menu never
+  // takes focus mid-drag.
+  useEffect(() => {
+    const onPointerUp = (): void => {
+      if (!pointerSelecting.current) return;
+      pointerSelecting.current = false;
+      const selection = selectionWithin(promptRef.current);
+      if (selection === null) return;
+      if (sameSelection(handledSelection.current, selection)) return;
+      openPromptMenu(selection);
+    };
+    document.addEventListener('pointerup', onPointerUp);
+    return () => document.removeEventListener('pointerup', onPointerUp);
+  }, []);
 
   // Explain/Improve are the only actions with somewhere real to go: the same
   // draft-message path `PlanQuestionsForm` above already uses to talk to the
   // planner about this draft. Shorten/Tone/Grammar have no text-transform
   // endpoint yet, so picking one surfaces an honest "not yet" notice instead
   // of silently no-op'ing or faking a rewrite.
-  function handleSelectionAction(actionId: string) {
+  function handlePromptAction(actionId: string, text: string) {
     if (actionId === 'explain' || actionId === 'improve') {
-      setSelectionNotice(null);
+      setPromptNotice(null);
       const verb = actionId === 'explain' ? 'Explain' : 'Improve';
-      void data.handleSendDraftMessage(
-        draft.id,
-        `${verb} this: "${selectedPromptText}"`
-      );
+      void data.handleSendDraftMessage(draft.id, `${verb} this: "${text}"`);
       return;
     }
-    setSelectionNotice(
-      `${selectionActionLabel(actionId)} isn't wired up yet — coming soon.`
+    setPromptNotice(
+      `${promptActionLabel(actionId)} isn't wired up yet — coming soon.`
     );
   }
 
@@ -157,6 +310,9 @@ export function DraftView({
     nextCriterionKey.current = task.acceptanceCriteria.length;
     setHydrated(true);
   }, [hydrated, task, defaultStatus, draft.parent]);
+
+  const states = draftStateChoices(statusModel, statuses, editable.status);
+  const parents = useMemo(() => parentOptions(data.epics), [data.epics]);
 
   function editDraft(patch: Partial<EditableTaskDraft>) {
     setEditable((prev) => ({ ...prev, ...patch }));
@@ -213,7 +369,7 @@ export function DraftView({
     onDone();
   }
 
-  const crumb =
+  const crumbs =
     projectName !== undefined
       ? [projectName, 'Drafts', 'Draft']
       : ['Drafts', 'Draft'];
@@ -225,23 +381,23 @@ export function DraftView({
     isDraftSaveable(editable);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <PageHeader
-        crumb={crumb}
-        actions={
-          <span className="font-book text-muted-foreground px-2 text-[12px]">
-            {draft.state === 'running'
+    <div className={styles.root}>
+      <div className={styles.bar}>
+        <PageHead
+          crumbs={crumbs}
+          meta={
+            draft.state === 'running'
               ? 'The planner is working on this draft…'
               : send !== undefined
                 ? 'This is what the agent will do. Edit anything, then send it.'
-                : 'Nothing is written until you create the task.'}
-          </span>
-        }
-      />
+                : 'Nothing is written until you create the task.'
+          }
+        />
+      </div>
 
-      <div className="flex min-h-0 flex-1">
-        <div className="min-w-0 flex-1 overflow-y-auto px-10 py-6">
-          <div className="mx-auto flex w-full max-w-[800px] flex-col gap-4">
+      <div className={styles.body}>
+        <div className={styles.main}>
+          <div className={styles.column}>
             {draft.state === 'failed' && (
               <FailureNotice
                 error={draft.error ?? 'Drafting the task failed.'}
@@ -263,7 +419,7 @@ export function DraftView({
             {task === undefined ? (
               // A failed draft's notice says it all; no empty line under it.
               (draft.questions.length > 0 || draft.state !== 'failed') && (
-                <p className="font-book text-muted-foreground text-[13px]">
+                <p className={styles.quiet}>
                   {draft.questions.length > 0
                     ? 'Answer the question above to get a proposed task.'
                     : 'No proposed task yet.'}
@@ -271,99 +427,125 @@ export function DraftView({
               )
             ) : (
               <>
-                <div
-                  ref={promptRef}
-                  className="font-book text-muted-foreground flex items-start gap-2 text-[12px]"
-                >
-                  <Sparkles className="mt-0.5 size-3.5 shrink-0" />
-                  <span className="min-w-0 flex-1">{draft.prompt}</span>
-                </div>
-                {selectionRect !== null && (
-                  <SelectionActionsMenu
-                    actions={defaultSelectionActions}
-                    onAction={handleSelectionAction}
-                    position={selectionRect}
+                <div className={styles.prompt}>
+                  <PickerPopover
+                    label={toneStep ? 'Tone' : 'Prompt actions'}
+                    triggerLabel="Prompt actions"
+                    trigger={<Sparkles {...ICON} />}
+                    appearance="quiet"
+                    searchable={false}
+                    action
+                    value={null}
+                    options={toneStep ? TONE_ACTIONS : PROMPT_ACTIONS}
+                    anchorPoint={promptMenu?.point ?? null}
+                    open={promptMenu !== null}
+                    onOpenChange={(open) => {
+                      setToneStep(false);
+                      // The trigger (a click, or Enter after a keyboard selection) acts on
+                      // the text selected in the prompt, else on the whole prompt.
+                      const selected = open
+                        ? selectionWithin(promptRef.current)
+                        : null;
+                      setPromptMenu(
+                        open
+                          ? {
+                              text: selected?.text ?? draft.prompt,
+                              point: null,
+                            }
+                          : null
+                      );
+                    }}
+                    onChange={(value) => {
+                      if (value === 'tone' || value === 'back') {
+                        setToneStep(value === 'tone');
+                        return;
+                      }
+                      if (value === null || promptMenu === null) return;
+                      handlePromptAction(value, promptMenu.text);
+                    }}
                   />
-                )}
-                {selectionNotice !== null && (
-                  <p
-                    role="status"
-                    className="font-book text-muted-foreground text-[12px]"
+                  <div
+                    ref={promptRef}
+                    className={styles.promptText}
+                    onPointerDown={() => {
+                      pointerSelecting.current = true;
+                    }}
                   >
-                    {selectionNotice}
+                    {draft.prompt}
+                  </div>
+                </div>
+                {promptNotice !== null && (
+                  <p role="status" className={styles.quiet}>
+                    {promptNotice}
                   </p>
                 )}
 
-                <Input
-                  variant="borderless"
+                <input
+                  className={styles.titleInput}
                   value={editable.title}
                   onChange={(e) => editDraft({ title: e.target.value })}
                   aria-label="Task title"
                   placeholder="Task title"
-                  className="text-[24px] leading-8 font-semibold tracking-[-0.16px]"
                 />
-                <Textarea
-                  variant="borderless"
+                <textarea
+                  className={styles.description}
                   value={editable.description}
                   onChange={(e) => editDraft({ description: e.target.value })}
                   aria-label="Task description"
                   placeholder="Add description…"
-                  className="min-h-[96px] text-[15px] leading-6"
                 />
 
                 <section
                   aria-label="Acceptance criteria"
-                  className="flex flex-col gap-1"
+                  className={styles.criteria}
                 >
-                  <h3 className="text-muted-foreground text-[12px] font-medium">
-                    Acceptance criteria
-                  </h3>
+                  <h3 className={styles.sectionTitle}>Acceptance criteria</h3>
                   {editable.acceptanceCriteria.map((criterion, i) => (
                     <div
                       key={criterionKeys[i] ?? i}
-                      className="group/criterion hover:bg-surface-hover rounded-control -mx-2 flex h-8 items-center gap-2 px-2"
+                      className={styles.criterion}
                     >
                       {/* Decorative: a criterion is unchecked until a run proves it. */}
                       <span
                         aria-hidden
                         data-slot="criterion-box"
-                        className="border-border-chip bg-surface-quaternary size-3.5 shrink-0 rounded-[4px] border-[0.5px]"
+                        className={styles.criterionBox}
                       />
-                      <Input
-                        variant="borderless"
+                      <input
+                        className={styles.criterionInput}
                         value={criterion}
                         onChange={(e) => editCriterion(i, e.target.value)}
                         aria-label={`Acceptance criterion ${i + 1}`}
-                        className="flex-1 text-[15px] leading-6"
                       />
-                      <IconButton
-                        label={`Remove acceptance criterion ${i + 1}`}
+                      <Button
+                        variant="quiet"
+                        size="sm"
+                        className={styles.removeCriterion}
+                        aria-label={`Remove acceptance criterion ${i + 1}`}
+                        icon={<X {...ICON} />}
                         onClick={() => removeCriterion(i)}
-                        className="opacity-0 group-hover/criterion:opacity-100 focus-visible:opacity-100"
-                      >
-                        <X />
-                      </IconButton>
+                      />
                     </div>
                   ))}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={addCriterion}
-                    className="self-start"
-                  >
-                    <Plus />
-                    Add criterion
-                  </Button>
+                  <span className={styles.addCriterion}>
+                    <Button
+                      variant="quiet"
+                      size="sm"
+                      icon={<Plus {...ICON} />}
+                      onClick={addCriterion}
+                    >
+                      Add criterion
+                    </Button>
+                  </span>
                 </section>
 
                 {proposal !== null && proposal.tasks.length > 1 && (
-                  <div className="font-book text-muted-foreground text-[12px]">
-                    <p>
+                  <div className={styles.quiet}>
+                    <p className={styles.flush}>
                       Only the first of {proposal.tasks.length} proposed tasks
                       is reviewed here; discarding also drops these:
                     </p>
-                    <ul className="mt-1 list-disc pl-4">
+                    <ul className={styles.dropped}>
                       {proposal.tasks.slice(1).map((t, i) => (
                         <li key={i}>{t.title}</li>
                       ))}
@@ -376,47 +558,72 @@ export function DraftView({
         </div>
 
         {task !== undefined && (
-          <aside
-            aria-label="Properties"
-            className="border-border-subtle flex w-[280px] shrink-0 flex-col gap-1 overflow-y-auto border-l-[0.5px] px-4 py-6"
-          >
-            <h2 className="text-muted-foreground mb-1 px-2 text-[13px] font-medium">
-              Properties
-            </h2>
-            <StatusControl
-              value={editable.status}
-              statuses={statuses}
-              onChange={(status) => editDraft({ status })}
-              variant="row"
-            />
-            <PriorityControl
-              value={editable.priority}
-              onChange={(priority: Priority) => editDraft({ priority })}
-              variant="row"
-            />
-            <EpicControl
-              value={editable.parent}
-              epics={data.epics}
-              onChange={(parent) => editDraft({ parent })}
-              variant="row"
+          <aside aria-label="Properties" className={styles.rail}>
+            <h2 className={styles.railTitle}>Properties</h2>
+            <PropertyList
+              items={[
+                {
+                  id: 'status',
+                  label: 'Status',
+                  value: (
+                    <StatePicker
+                      label="Status"
+                      states={states}
+                      value={editable.status}
+                      onChange={(status) => editDraft({ status })}
+                    />
+                  ),
+                },
+                {
+                  id: 'priority',
+                  label: 'Priority',
+                  value: (
+                    <PriorityPicker
+                      label="Priority"
+                      value={toTaskPriority(editable.priority)}
+                      onChange={(priority) =>
+                        editDraft({ priority: fromTaskPriority(priority) })
+                      }
+                    />
+                  ),
+                },
+                {
+                  id: 'parent',
+                  label: 'Parent',
+                  value: (
+                    <PickerPopover
+                      label="Parent"
+                      options={parents}
+                      value={editable.parent}
+                      valueLabel="Unknown task"
+                      noneLabel="No parent"
+                      placeholder="No parent"
+                      searchPlaceholder="Move to…"
+                      onChange={(parent) => editDraft({ parent })}
+                    />
+                  ),
+                },
+              ]}
             />
           </aside>
         )}
       </div>
 
-      <div className="shadow-hairline-top flex min-h-12 shrink-0 flex-wrap items-center justify-end gap-2 px-6 py-2">
+      <div className={styles.foot}>
         {saveError !== null && (
-          <p role="alert" className="text-red mr-auto text-[13px]">
+          <p role="alert" data-tone="danger" className={styles.error}>
             {saveError}
           </p>
         )}
-        <PillButton
+        <Button
+          variant="secondary"
+          busy={discarding}
+          busyLabel="Discarding…"
+          disabled={saving || sendingToAgent}
           onClick={() => void discard()}
-          disabled={saving || discarding || sendingToAgent}
         >
-          {discarding && <Spinner className="size-3.5" />}
           Discard
-        </PillButton>
+        </Button>
         {send !== undefined && task !== undefined ? (
           <SendToAgent
             options={send.options}
@@ -439,7 +646,7 @@ export function DraftView({
             }}
             extra={
               <Button
-                variant="ghost"
+                variant="quiet"
                 size="sm"
                 disabled={!canCreate}
                 onClick={() => void save()}
@@ -449,14 +656,14 @@ export function DraftView({
             }
           />
         ) : (
-          <Button disabled={!canCreate} onClick={() => void save()}>
-            {saving ? (
-              <>
-                <Spinner className="size-3.5" /> Creating…
-              </>
-            ) : (
-              'Create task'
-            )}
+          <Button
+            variant="primary"
+            busy={saving}
+            busyLabel="Creating…"
+            disabled={!canCreate}
+            onClick={() => void save()}
+          >
+            Create task
           </Button>
         )}
       </div>

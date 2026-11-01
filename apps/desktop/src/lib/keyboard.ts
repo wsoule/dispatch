@@ -24,7 +24,7 @@ export interface GlobalKeyboardContext {
    * regardless, since those are the two shortcuts a person expects to work from inside a text
    * field too (bail out of an edit, or jump to the palette). */
   isTyping: boolean;
-  /** True while a `Modal`-based dialog (CreateTaskModal, SessionDetailModal, DiffModal, …) is
+  /** True while a `Modal`-based dialog (TaskComposerSlideOver, SessionDetailModal, DiffModal, …) is
    * open. `Modal` owns its own Escape listener; the global layer must stay out of the way
    * entirely while one is open, or a single Escape press would also fire the app's own
    * `escape` nav action and close whatever's stacked behind the modal (e.g. the task peek

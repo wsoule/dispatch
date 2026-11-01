@@ -84,9 +84,12 @@ function TaskDrawerLoaded({
   const { project } = host;
   const upload = useAttachmentUpload(project.client, taskId);
 
-  // ⌘/Ctrl+Enter grows the quick look into the full page, as the old peek did.
+  // ⌘/Ctrl+Enter grows the quick look into the full page, as the old peek did, unless
+  // something nearer already took the key (a composer over the drawer creating its task, a
+  // picker's own ⌘⏎).
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
+      if (event.defaultPrevented) return;
       if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
         event.preventDefault();
         openPage();

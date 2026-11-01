@@ -20,7 +20,7 @@ import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
 
 export interface ThreadsViewProps {
-  /** Two views: the page leads with "‹ tasks" back to the list. */
+  /** Two views: the page leads with the back chip to the Tasks list. */
   onBack?: () => void;
   data: DispatchProjectData;
   projectName: string | null;

@@ -40,7 +40,7 @@ import styles from './ProjectsView.module.css';
 // lane, the end cell its graph and its page, the group's Graph button the
 // initiative's graph; DispatchShell's link provider resolves them to routes.
 // A page under Tasks (the Projects section's "All", the palette's Open
-// Projects), led by "‹ tasks" when hosted and carrying New project.
+// Projects), led by the Tasks back chip when hosted and carrying New project.
 
 const ICON = { size: 14, strokeWidth: 1.8 } as const;
 
@@ -64,7 +64,7 @@ const HEADER = [
 
 export interface ProjectsViewProps {
   data: DispatchProjectData;
-  /** Hosted under Tasks: the page leads with "‹ tasks" back to the list. */
+  /** Hosted under Tasks: the page leads with the back chip to the Tasks list. */
   onBack?: () => void;
 }
 

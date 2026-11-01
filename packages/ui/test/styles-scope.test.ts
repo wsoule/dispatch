@@ -144,6 +144,9 @@ describe('the issue list modules are scoped', () => {
     'shell/dialog.module.css',
     'shell/tooltip.module.css',
     'shell/spinner.module.css',
+    // The drawer, modal or not, and the disclosure a host nests anywhere.
+    'shell/slide-over.module.css',
+    'tasks/disclosure.module.css',
   ];
   const keyframeStop = /^(from|to|\d+(\.\d+)?%)$/;
   for (const file of modules) {

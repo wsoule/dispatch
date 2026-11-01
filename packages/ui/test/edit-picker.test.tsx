@@ -12,6 +12,8 @@ import path from 'node:path';
 import { useState } from 'react';
 
 import {
+  type LabelChoice,
+  LabelPicker,
   PickerMarkView,
   type PickerOption,
   PickerPopover,
@@ -1369,6 +1371,283 @@ describe('PickerPopover steps (PickerOption.keepOpen)', () => {
     fireEvent.click(trigger());
     expect(screen.getByRole('dialog').getAttribute('data-slot')).toBe(
       'assignee-menu'
+    );
+  });
+});
+
+// onCreate: a new name typed into the search box becomes a trailing
+// "Create" option. The host makes the option (here: appends it, and picks
+// it); the picker runs the save contract around that.
+describe('PickerPopover create row (onCreate)', () => {
+  const START: PickerOption[] = [
+    { value: 'bug', label: 'Bug' },
+    { value: 'ux', label: 'UX' },
+  ];
+
+  function createRow(): HTMLElement | null {
+    return screen.queryByRole('option', { name: /^Create/ });
+  }
+
+  /** A multiple picker whose host appends the created label and picks it
+      once `make` settles. */
+  function MultiCreate({
+    make,
+  }: {
+    make: (name: string) => Promise<void> | void;
+  }) {
+    const [options, setOptions] = useState<PickerOption[]>(START);
+    const [value, setValue] = useState<string[]>([]);
+    return (
+      <PickerPopover
+        multiple
+        label="Labels"
+        placeholder="Add label"
+        options={options}
+        value={value}
+        onChange={setValue}
+        onCreate={async (name) => {
+          await make(name);
+          const id = name.toLowerCase();
+          setOptions((list) => [...list, { value: id, label: name }]);
+          setValue((list) => [...list, id]);
+        }}
+      />
+    );
+  }
+
+  /** The single counterpart: the created option becomes the value. */
+  function SingleCreate({
+    make,
+  }: {
+    make: (name: string) => Promise<void> | void;
+  }) {
+    const [options, setOptions] = useState<PickerOption[]>(START);
+    const [value, setValue] = useState<string | null>(null);
+    return (
+      <PickerPopover
+        label="Project"
+        placeholder="No project"
+        options={options}
+        value={value}
+        onChange={setValue}
+        onCreate={async (name) => {
+          await make(name);
+          const id = name.toLowerCase();
+          setOptions((list) => [...list, { value: id, label: name }]);
+          setValue(id);
+        }}
+      />
+    );
+  }
+
+  test('offered only for a new name: not for an empty search or an exact label', () => {
+    render(<MultiCreate make={() => undefined} />);
+    fireEvent.click(trigger(/^Labels/));
+    expect(createRow()).toBeNull();
+    fireEvent.change(combobox(), { target: { value: '   ' } });
+    expect(createRow()).toBeNull();
+    // An exact label, case and outer spaces aside: no second "Bug".
+    fireEvent.change(combobox(), { target: { value: ' bUG ' } });
+    expect(createRow()).toBeNull();
+    // A prefix of a label is still a new name.
+    fireEvent.change(combobox(), { target: { value: 'Bu' } });
+    expect(createRow()?.textContent).toBe('Create "Bu"');
+    expect(optionNames()).toEqual(['Bug', 'Create "Bu"']);
+  });
+
+  test('the trailing row is an option the arrow keys reach; alone, it is the active one', () => {
+    render(<MultiCreate make={() => undefined} />);
+    fireEvent.click(trigger(/^Labels/));
+    fireEvent.change(combobox(), { target: { value: 'u' } });
+    // "Bug" and "UX" match; the create row comes last.
+    expect(optionNames()).toEqual(['Bug', 'UX', 'Create "u"']);
+    expect(activeOption()?.textContent).toBe('Bug');
+    fireEvent.keyDown(combobox(), { key: 'ArrowUp' });
+    expect(activeOption()).toBe(createRow());
+    fireEvent.keyDown(combobox(), { key: 'ArrowDown' });
+    expect(activeOption()?.textContent).toBe('Bug');
+    // Nothing else matches: Enter would create.
+    fireEvent.change(combobox(), { target: { value: 'Perf' } });
+    expect(activeOption()).toBe(createRow());
+    expect(createRow()?.getAttribute('aria-selected')).toBe('false');
+    expect(screen.queryByText('No match')).toBeNull();
+    expect(
+      screen.getAllByRole('status', { hidden: true }).at(-1)?.textContent
+    ).toBe('Create "Perf"');
+  });
+
+  test('Enter in a single picker creates the trimmed name and closes once it is saved', async () => {
+    const made = deferred();
+    const make = mock((_name: string) => made.promise);
+    render(<SingleCreate make={make} />);
+    fireEvent.click(trigger(/^Project/));
+    fireEvent.change(combobox(), { target: { value: '  Atlas  ' } });
+    fireEvent.keyDown(combobox(), { key: 'Enter' });
+    expect(make).toHaveBeenCalledWith('Atlas');
+    // Open while it saves, with the pending note; the row waits.
+    const dialog = screen.getByRole('dialog', { name: 'Project' });
+    expect(within(dialog).getByText('Saving')).toBeTruthy();
+    expect(trigger(/^Project/).getAttribute('data-pending')).toBe('true');
+    expect(createRow()?.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.keyDown(combobox(), { key: 'Enter' });
+    expect(make).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      made.resolve();
+      await made.promise;
+    });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(trigger(/^Project/));
+    expect(trigger(/^Project/).getAttribute('aria-label')).toBe(
+      'Project: Atlas'
+    );
+    expect(trigger(/^Project/).getAttribute('data-pending')).toBeNull();
+  });
+
+  test('a click in a multiple picker creates, clears the search and stays open', async () => {
+    const make = mock((_name: string) => undefined);
+    render(<MultiCreate make={make} />);
+    fireEvent.click(trigger(/^Labels/));
+    fireEvent.change(combobox(), { target: { value: 'Perf' } });
+    const row = createRow();
+    if (row === null) throw new Error('no create row');
+    await act(async () => {
+      fireEvent.click(row);
+      await Promise.resolve();
+    });
+    expect(make).toHaveBeenCalledWith('Perf');
+    expect(screen.getByRole('dialog', { name: 'Labels' })).toBeTruthy();
+    expect(combobox().value).toBe('');
+    expect(document.activeElement).toBe(combobox());
+    expect(createRow()).toBeNull();
+    expect(
+      screen.getByRole('option', { name: 'Perf' }).getAttribute('aria-selected')
+    ).toBe('true');
+    expect(trigger(/^Labels/).getAttribute('aria-label')).toBe('Labels: Perf');
+  });
+
+  test('a rejection puts the name back in the search box and prints the error', async () => {
+    const made = deferred();
+    render(<MultiCreate make={() => made.promise} />);
+    fireEvent.click(trigger(/^Labels/));
+    fireEvent.change(combobox(), { target: { value: 'Perf' } });
+    fireEvent.keyDown(combobox(), { key: 'Enter' });
+    // Cleared at once, so the next name can be typed while this one saves.
+    expect(combobox().value).toBe('');
+    expect(within(screen.getByRole('dialog')).getByText('Saving')).toBeTruthy();
+    await act(async () => {
+      made.reject(new Error('Linear refused the label.'));
+      await made.promise.catch(() => undefined);
+    });
+    const dialog = screen.getByRole('dialog', { name: 'Labels' });
+    expect(combobox().value).toBe('Perf');
+    expect(createRow()).not.toBeNull();
+    expect(createRow()?.getAttribute('aria-disabled')).toBeNull();
+    const alert = within(dialog).getByRole('alert');
+    expect(alert.textContent).toContain('Not saved');
+    expect(alert.textContent).toContain('Linear refused the label.');
+    expect(within(dialog).queryByText('Saving')).toBeNull();
+    expect(screen.queryByRole('option', { name: 'Perf' })).toBeNull();
+    expect(trigger(/^Labels/).getAttribute('aria-label')).toBe(
+      'Labels: Add label'
+    );
+    // The next pick clears the error.
+    await act(async () => {
+      fireEvent.change(combobox(), { target: { value: '' } });
+      fireEvent.click(screen.getByRole('option', { name: 'Bug' }));
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  test('a single picker stays open with its text on a rejection; closed, the error goes under the trigger', async () => {
+    render(<SingleCreate make={() => Promise.reject(new Error('No room.'))} />);
+    fireEvent.click(trigger(/^Project/));
+    fireEvent.change(combobox(), { target: { value: 'Atlas' } });
+    await act(async () => {
+      fireEvent.keyDown(combobox(), { key: 'Enter' });
+      await Promise.resolve();
+    });
+    expect(combobox().value).toBe('Atlas');
+    expect(
+      within(screen.getByRole('dialog')).getByRole('alert').textContent
+    ).toContain('No room.');
+    fireEvent.keyDown(combobox(), { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain('No room.');
+    expect(trigger(/^Project/).getAttribute('aria-describedby')).toBe(alert.id);
+    expect(trigger(/^Project/).getAttribute('aria-label')).toBe(
+      'Project: No project'
+    );
+  });
+
+  test('createLabel words the row, and an action menu offers none', () => {
+    render(
+      <>
+        <PickerPopover
+          label="Folder"
+          options={START}
+          value={null}
+          onChange={() => undefined}
+          onCreate={() => undefined}
+          createLabel={(name) => `New folder "${name}"`}
+        />
+        <PickerPopover
+          label="Link task"
+          options={START}
+          value={null}
+          action
+          onChange={() => undefined}
+          onCreate={() => undefined}
+        />
+      </>
+    );
+    fireEvent.click(trigger(/^Folder/));
+    fireEvent.change(combobox(), { target: { value: 'notes' } });
+    expect(
+      screen.getByRole('option', { name: 'New folder "notes"' })
+    ).toBeTruthy();
+    fireEvent.keyDown(combobox(), { key: 'Escape' });
+    fireEvent.click(trigger(/^Link task/));
+    fireEvent.change(combobox(), { target: { value: 'notes' } });
+    expect(screen.queryByRole('option', { name: /notes/ })).toBeNull();
+    expect(document.querySelector('[data-picker-empty]')?.textContent).toBe(
+      'No match'
+    );
+  });
+
+  test('LabelPicker forwards onCreate: a new label is made and added', async () => {
+    function Labels() {
+      const [choices, setChoices] = useState<LabelChoice[]>([
+        { id: 'bug', name: 'Bug', color: '#eb5757' },
+      ]);
+      const [value, setValue] = useState<string[]>(['bug']);
+      return (
+        <LabelPicker
+          labelOptions={choices}
+          value={value}
+          onChange={setValue}
+          onCreate={(name) => {
+            const id = `new-${name}`;
+            setChoices((list) => [...list, { id, name }]);
+            setValue((list) => [...list, id]);
+          }}
+        />
+      );
+    }
+    render(<Labels />);
+    fireEvent.click(trigger(/^Labels/));
+    fireEvent.change(combobox(), { target: { value: 'bug' } });
+    expect(createRow()).toBeNull();
+    fireEvent.change(combobox(), { target: { value: 'Regression' } });
+    await act(async () => {
+      fireEvent.keyDown(combobox(), { key: 'Enter' });
+      await Promise.resolve();
+    });
+    expect(screen.getByRole('dialog', { name: 'Labels' })).toBeTruthy();
+    expect(combobox().value).toBe('');
+    expect(trigger(/^Labels/).getAttribute('aria-label')).toBe(
+      'Labels: Bug, Regression'
     );
   });
 });

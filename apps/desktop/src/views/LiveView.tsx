@@ -115,7 +115,7 @@ export interface LiveViewProps {
   onOpenTask: (taskId: string, tab?: TaskTab, runId?: string) => void;
   /** The quick-look slide-over (a card click, Enter, Space). */
   onPeekTask: (taskId: string) => void;
-  /** Two views: the page leads with "‹ tasks" back to the list. */
+  /** Two views: the page leads with the back chip to the Tasks list. */
   onBack?: () => void;
 }
 

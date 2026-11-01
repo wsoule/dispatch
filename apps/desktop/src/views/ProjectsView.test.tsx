@@ -393,7 +393,7 @@ describe('ProjectsView', () => {
     expect(creates).toEqual([{ kind: 'project' }]);
   });
 
-  test('hosted under Tasks, the header leads with "‹ tasks" and offers New project', () => {
+  test('hosted under Tasks, the header leads with the Tasks back chip and offers New project', () => {
     const backs: string[] = [];
     const { creates } = mount({ onBack: () => backs.push('back') });
     fireEvent.click(screen.getByTestId('tasks-back'));

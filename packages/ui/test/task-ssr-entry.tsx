@@ -2,6 +2,7 @@ import { renderToString } from 'react-dom/server';
 
 import {
   BulkBar,
+  Disclosure,
   FilterChips,
   PickerPopover,
   TaskDetail,
@@ -186,6 +187,38 @@ const windowedList = (
   />
 );
 
+// Folds: closed (the panel there, hidden and empty), open from the first
+// render, kept mounted while closed, and a host's own trigger.
+const disclosures = (
+  <>
+    <Disclosure id="fold-closed" summary="Details">
+      <pre>never on the server</pre>
+    </Disclosure>
+    <Disclosure
+      id="fold-open"
+      defaultOpen
+      variant="bar"
+      summary={({ open }) => (open ? 'Hide steps' : 'Show steps')}
+      data-testid="setup-fold"
+    >
+      <p>Install the CLI</p>
+    </Disclosure>
+    <Disclosure id="fold-kept" keepMounted summary="Reason">
+      <p>Kept while closed</p>
+    </Disclosure>
+    <Disclosure
+      id="fold-chip"
+      trigger={({ props }) => (
+        <button {...props} className="chip">
+          +3 more
+        </button>
+      )}
+    >
+      <p>Three more</p>
+    </Disclosure>
+  </>
+);
+
 console.log(
   JSON.stringify({
     hasWindow: typeof window !== 'undefined',
@@ -196,5 +229,6 @@ console.log(
     ),
     issueList: renderToString(issueList),
     windowedList: renderToString(windowedList),
+    disclosures: renderToString(disclosures),
   })
 );

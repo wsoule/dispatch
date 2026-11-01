@@ -158,6 +158,23 @@ const overlays = renderToString(
   </>
 );
 
+// A modal form drawer (the task composer) open on the server: the scrim,
+// aria-modal and the footer row are markup; the layer stack, the scroll
+// lock and focus wait for the client.
+const modalDrawer = renderToString(
+  <SlideOver
+    open
+    modal
+    size="wide"
+    onClose={() => undefined}
+    title="New task"
+    data-testid="task-composer"
+    footer={<button type="button">Create task</button>}
+  >
+    <input aria-label="Task title" />
+  </SlideOver>
+);
+
 console.log(
   JSON.stringify({
     hasWindow: typeof window !== 'undefined',
@@ -166,5 +183,6 @@ console.log(
     switcher,
     signedOut,
     overlays,
+    modalDrawer,
   })
 );

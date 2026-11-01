@@ -37,7 +37,7 @@ export function DocsView({
   tasksPage,
 }: {
   data: DispatchProjectData;
-  /** Two views: "‹ tasks" leads the header and "All docs" walks back to the list. */
+  /** Two views: the Tasks back chip leads the header and "All docs" walks back to the list. */
   tasksPage?: { onBack: () => void; onOpenAllDocs: () => void };
   /** The open doc's discussion, under it (Two views). */
   discussion?: (docId: string) => ReactNode;

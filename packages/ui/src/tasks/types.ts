@@ -265,6 +265,50 @@ export interface EmptyStateProps {
   icon?: ReactNode;
 }
 
+/**
+ * A summary that shows or hides a panel under it (Gr8r's fold): "Details"
+ * under an error, a tool call's arguments, "+3 more". Controlled through
+ * `open` and `onOpenChange`, or uncontrolled from `defaultOpen`.
+ */
+export interface DisclosureProps extends DataAttributes {
+  /** Controlled open state. */
+  open?: boolean;
+  /** Uncontrolled: open on the first render. Default false. */
+  defaultOpen?: boolean;
+  /** Called with the new state when the trigger is pressed. */
+  onOpenChange?: (open: boolean) => void;
+  /** The default trigger's words, or a function of the state ("Show
+      details" / "Hide details"). */
+  summary?: ReactNode | ((state: { open: boolean }) => ReactNode);
+  /**
+   * Replaces the default trigger: draw any button (a chip, a quiet
+   * Button, a full-width bar) and spread `props` on it, which wires
+   * aria-expanded, aria-controls, the toggling click and type="button".
+   */
+  trigger?: (state: {
+    open: boolean;
+    props: {
+      'aria-expanded': boolean;
+      'aria-controls': string;
+      onClick: () => void;
+      type: 'button';
+    };
+  }) => ReactNode;
+  /** inline (default): a quiet text button in the secondary ink; bar: a
+      full-width row on --surface-2; plain: no chrome of its own. */
+  variant?: 'inline' | 'bar' | 'plain';
+  /** The leading chevron, turned down while open. Default true. */
+  chevron?: boolean;
+  /** Keep the panel's content mounted (hidden) while closed: a form's
+      state, a scroll position, a running log. Default false: the content
+      unmounts. */
+  keepMounted?: boolean;
+  /** The panel's id (aria-controls points at it). Default: a generated
+      one. */
+  id?: string;
+  children: ReactNode;
+}
+
 export interface ChecklistItem {
   id?: string;
   label: string;

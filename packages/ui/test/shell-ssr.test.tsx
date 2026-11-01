@@ -12,6 +12,7 @@ interface SsrResult {
   switcher: string;
   signedOut: string;
   overlays: string;
+  modalDrawer: string;
 }
 
 function serverRender(): SsrResult {
@@ -80,5 +81,25 @@ describe('shell family server render', () => {
     expect(overlays).toContain('Visible to the team');
     expect(overlays).not.toContain('Never shown on the server');
     expect(overlays).toContain('aria-label="Starting the daemon"');
+  });
+
+  test('a modal slide-over renders its scrim, aria-modal and footer', () => {
+    const { modalDrawer, shell } = serverRender();
+    expect(modalDrawer).toContain('aria-modal="true"');
+    expect(modalDrawer).toContain('data-modal="true"');
+    expect(modalDrawer).toContain('data-size="wide"');
+    expect(modalDrawer).toContain('data-testid="task-composer"');
+    // The scrim, before the panel.
+    expect(modalDrawer).toMatch(
+      /^<div data-state="open" aria-hidden="true"><\/div><div [^>]*role="dialog"/
+    );
+    // The footer comes after the body, which holds the title.
+    const title = modalDrawer.indexOf('New task');
+    const create = modalDrawer.indexOf('Create task');
+    expect(title).toBeGreaterThanOrEqual(0);
+    expect(create).toBeGreaterThan(title);
+    // The default drawer stays non-modal on the server (media queries
+    // answer false there).
+    expect(shell).not.toContain('data-modal="true"');
   });
 });

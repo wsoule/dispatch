@@ -388,10 +388,11 @@ the types for the rest.
 |          | `DeadlineList`, `StatsStrip`, `ProgressRule`                                                                           | `groups`; `cells`; `done`/`total`                                   |
 |          | `Register`, `RegisterRow`, `RegisterCell`                                                                              | `columns`, `label`, `children`                                      |
 |          | `Notice`, `EmptyState` (a centred icon, optional `label` title, the sentence, an action), `NavTabs`, `Checklist`       | see `tasks/types.ts`                                                |
+|          | `Disclosure` (a fold: a trigger and the panel it shows or hides; below)                                                | `children`                                                          |
 | shell    | `AppShell` (sidebar, topbar, phone tab bar; `workspaceSwitcher` makes the brand row a workspace menu, below)           | `appName`, `brandHref`, `nav`                                       |
 |          | `CommandPaletteProvider` + `CommandPalette`                                                                            | none; pass `navigate` (the default is `window.location.assign`)     |
 |          | `ToastProvider` + `useToast()` (`useOptionalToast()`: null without a provider)                                         | none                                                                |
-|          | `SlideOver` (`contentKey` names what it shows: a new key while open moves focus to the panel)                          | `open`, `onClose`, `title`                                          |
+|          | `SlideOver` (`contentKey`: a swap in place moves focus; `modal`, `size`, `footer` for a form surface)                  | `open`, `onClose`, `title`                                          |
 |          | `Dialog` (a centred modal: sm / md / lg), `ConfirmDialog` (an alertdialog before a destructive write)                  | `open`, `onClose`, `title`; `confirmLabel`, `onConfirm`, `onCancel` |
 |          | `Tooltip` (hover and keyboard focus, no provider), `Spinner` (in-flight agent or network work only)                    | `content`, `children`; none                                         |
 |          | `SignedOutFrame`, `PropertyList`, `AlertStrip`                                                                         | see `shell/types.ts`                                                |
@@ -426,13 +427,38 @@ helper.
 **Host data attributes.** `DataAttributes`
 (``{ [key: `data-${string}`]: string | number | boolean | undefined }``) types a
 host's `data-testid` and `data-slot` hooks. `Button` (as a button and as a
-link), `Popover`, `Dialog`, `ConfirmDialog` and `PickerPopover` take them and
-spread them, untouched, on their root element: the `<button>` or the link, the
-popover's and the picker's `role="dialog"` layer (not the trigger), the dialog's
-panel (the `role="dialog"` or `role="alertdialog"` element). The component's own
-`data-*` attributes (`data-variant`, `data-picker-popup`, `data-popover`) win
-over a host's of the same name. A host's link component receives them in
-`UiLinkProps` and spreads them onto its anchor.
+link), `Popover`, `Dialog`, `ConfirmDialog`, `PickerPopover`, `SlideOver` and
+`Disclosure` take them and spread them, untouched, on their root element: the
+`<button>` or the link, the popover's and the picker's `role="dialog"` layer
+(not the trigger), the dialog's and the slide-over's panel (the `role="dialog"`
+or `role="alertdialog"` element), the disclosure's wrapper. The component's own
+`data-*` attributes (`data-variant`, `data-picker-popup`, `data-popover`,
+`data-state`, `data-open`) win over a host's of the same name. A host's link
+component receives them in `UiLinkProps` and spreads them onto its anchor.
+
+### Disclosure
+
+`Disclosure` is Gr8r's fold: a trigger that shows or hides the panel under it
+("Details" under an error, a tool call's arguments, "+3 more", a setup step).
+The default trigger is a `<button type="button">` holding a 14px lucide chevron
+(turned down while open, `chevron={false}` drops it) and `summary`, which may be
+a function of `{ open }` ("Show log" / "Hide log"). `variant` draws it: `inline`
+(the default, a quiet `--fs-xs` text button in `--text-2`), `bar` (a full-width
+row on `--surface-2`) or `plain` (no chrome of its own). A `trigger` render prop
+replaces the face with any button (a chip, a quiet `Button`, a host's bar): it
+receives `{ open, props }` and must spread `props` (`aria-expanded`,
+`aria-controls`, the toggling `onClick`, `type="button"`) on that button.
+
+The panel is always in the DOM with the id `aria-controls` names (`id`, or a
+generated one); closed, it is `hidden` (display: none) and its content
+unmounted, or mounted and hidden with `keepMounted` (a form's state, a running
+log). The wrapper carries `data-open` while open and the host's `data-*` hooks.
+It works controlled (`open`, `onOpenChange`) or uncontrolled (`defaultOpen`,
+with `onOpenChange` reporting each press). After a press the chevron turns and
+the panel fades in (growing from nothing where the browser animates to height
+auto), only under `prefers-reduced-motion: no-preference`; a fold open from the
+first render does not move, and closing is instant. Forced colours keep the
+chevron (`currentColor`) and the face's button edge.
 
 ### Button
 
@@ -1023,6 +1049,29 @@ or middle click still opens the link.
   check, a drafting run, a live tool row, a clone. Never for a page load (use
   `Skeleton*`) and never for a save (the new value shows at once, and a `Button`
   says `busy` in words).
+- `SlideOver` `modal` makes the drawer a form surface (a task composer, a
+  session's detail) on every viewport, as it already is on a phone: it is
+  `aria-modal="true"` while open (and not while it slides out, so a host's
+  `[aria-modal="true"]` check mutes its page shortcuts exactly then), the
+  `--overlay` scrim covers the page (a press on it closes the panel; with a
+  picker or popover open in the panel, that press closes only the picker), Tab
+  stays inside and `<html>` does not scroll. Focus never rests behind it: when a
+  focused control unmounts or turns disabled (a busy submit, a removed chip) and
+  focus falls to `<body>`, the panel takes it back a tick later unless the host
+  moved it first, and a Tab pressed from `<body>` moves into the panel. It is a
+  modal layer of the overlay stack: Escape from inside the panel closes it with
+  `preventDefault()` and `stopPropagation()`, so a non-modal `SlideOver`
+  underneath (a task drawer whose document listener came first) and the host's
+  shortcuts never see it; with focus fallen to `<body>` the stack closes it
+  before any page listener; a picker, popover, tooltip or `Dialog` opened in it
+  takes Escape first, one layer per press, and focus returns to each opener in
+  turn. A modal panel stacks over a non-modal one. Presses outside the scrim (a
+  toast over it) never close it. The defaults are unchanged: without `modal` a
+  desktop drawer stays a peek beside a usable page. `size="wide"` is
+  `min(960px, 90vw)` instead of the default 620px (`SLIDE_OVER_WIDTH`); both
+  cover a phone. `footer` is an action row (Cancel, Create) under a `--divider`
+  rule, outside the scrolling body, so it stays in view while the body scrolls.
+  A host's `data-*` hooks go on the panel.
 
 ### Task detail slots for a desktop host
 
@@ -1182,6 +1231,21 @@ and `label` for the next step. A host's `data-*` hooks on a picker
 (`data-slot="filter-menu"`) land on the open popover's `role="dialog"` layer,
 not on the trigger.
 
+`onCreate(text)` makes a new option from the search text (a label typed into
+`LabelPicker`, which forwards it like every preset prop). While the trimmed text
+is not blank and is no option's label exactly (case aside; `noneLabel` counts
+too), a trailing `role="option"` row reads `Create "<text>"` (`createLabel`
+words it, or `labels.create`), with a plus where the marks go. The arrow keys
+reach it like any option, and it is the active row when nothing else matches, so
+Enter creates; Home and End stay the search box's caret keys while it holds
+text. Enter or a click calls `onCreate` with the trimmed text under the save
+contract: a promise shows the "Saving" note until it settles. A single picker
+stays open meanwhile and closes once it resolves; a multiple picker clears its
+search at once and stays open for the next name. A rejection prints the error
+like a failed save and puts the text back in an empty search box; one create
+runs at a time. The host adds the new option to `options` (and usually to
+`value`). It is not offered in action mode (`action`) or without a search box.
+
 `Popover` is a non-modal panel for a host's own controls (a display panel, a
 save-view form): `open`, `onOpenChange`, `label` (names the `role="dialog"`;
 never `aria-modal`), `trigger` (cloned with `aria-haspopup="dialog"`,
@@ -1232,9 +1296,13 @@ touches none of it.
   resize on `window` and for scroll and resize on `window.visualViewport`, and
   reads the rects of `[data-ui-edge-bar]` elements (which `AppShell` puts on its
   top bar and phone tab bar) to keep the lock's strip on screen.
-- `SlideOver` closes on Esc and traps focus; `TaskGroupTable` can persist folded
-  groups in `localStorage` or `sessionStorage` (`storage="session"` suits a
-  desktop app). Storage failures are tolerated everywhere.
+- `SlideOver` closes on Esc and traps focus (a modal one, or any on a phone, is
+  also a modal layer of the overlay stack below, locks `<html>` scrolling, and
+  reads `pointerdown` on `window` in the capture phase while open, to tell a
+  press on its scrim from one that only closes a picker over it);
+  `TaskGroupTable` can persist folded groups in `localStorage` or
+  `sessionStorage` (`storage="session"` suits a desktop app). Storage failures
+  are tolerated everywhere.
 - **Overlays render in place and stack.** `PickerPopover`, `Popover`, `Tooltip`
   and `Dialog` render where the host renders them, never portalled to `<body>`,
   and show in the browser's top layer (`popover="manual"`; a `position: fixed`
@@ -1258,7 +1326,7 @@ touches none of it.
   trigger, and never stand between a press or a key and the layer under them. A
   host's document-level Escape listener should return early on
   `event.defaultPrevented` (as `SlideOver` does). Only `Dialog`,
-  `ConfirmDialog`, a phone `SlideOver` and the command palette set
+  `ConfirmDialog`, a modal or phone `SlideOver` and the command palette set
   `aria-modal="true"`, and only while open, so a host's "is a modal open?" check
   (`[aria-modal="true"]`) mutes its shortcuts exactly then. `Dialog` locks
   `<html>` scrolling while open.

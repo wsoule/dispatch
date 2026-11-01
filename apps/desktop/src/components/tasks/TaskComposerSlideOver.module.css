@@ -1,0 +1,135 @@
+/* The task composer (TaskComposerSlideOver.tsx) inside the library's modal
+   SlideOver: the crumb in the header bar, the Mode control over the shown
+   mode's fields, Quick add's property row of pickers, the draft-parent and
+   pending-attachment chips, the inline error and key hint, and the footer's
+   lead (Attach) and actions. Colours and type come from the Gr8r tokens; the
+   library controls draw themselves. */
+
+.crumb {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+
+.crumbProject {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding-top: var(--s-2);
+}
+
+.form > [role='radiogroup'] {
+  align-self: flex-start;
+}
+
+.prompt,
+.description {
+  width: 100%;
+  min-height: 96px;
+  padding: var(--s-2) 10px;
+  line-height: var(--lh-long);
+  resize: vertical;
+}
+
+.prompt {
+  min-height: 120px;
+}
+
+.title {
+  width: 100%;
+  min-height: var(--h-lg);
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-medium);
+}
+
+/* The mono picker triggers draw their pill 6px outside each side (4px above and below), so
+   the row is inset by that much to line the pills up with the fields' edges, and the gaps
+   leave room for two frames side by side. */
+.properties {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3) var(--s-4);
+  padding: var(--s-1) 6px;
+}
+
+.draftParent,
+.attachment {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+.draftParent {
+  align-self: flex-start;
+}
+
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.chipBody {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+.chipText {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.error {
+  margin: 0;
+  color: var(--tone-ink);
+  font-size: var(--fs-sm);
+}
+
+.hint {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+
+.footerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  width: 100%;
+}
+
+.footerLead {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.footerActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  margin-left: auto;
+}

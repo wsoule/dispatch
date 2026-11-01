@@ -1,7 +1,8 @@
 /* Gr8r's slide-over drawer: a white right-hand panel lifted off the page
    by a soft leftward shadow and a 1px --border left edge (no scrim on a
-   desktop), a 46px header bar like the topbar, and a title that scrolls
-   with the body. It eases in from 48px with a fade. */
+   desktop unless it is modal), a 46px header bar like the topbar, a title
+   that scrolls with the body, and an optional footer row that stays put
+   under it. It eases in from 48px with a fade. */
 
 .panel {
   position: fixed;
@@ -26,6 +27,18 @@
 
 .panel:focus {
   outline: none;
+}
+
+/* A modal panel (a form, or any panel on a phone) and its scrim sit over
+   a non-modal one that is still open beside the page. */
+.panel[data-modal='true'] {
+  z-index: 52;
+}
+
+/* size="wide": room for a form's two columns or a wide reading view,
+   still leaving a strip of the page. */
+.wide {
+  width: min(960px, 90vw);
 }
 
 .panel[data-state='closing'] {
@@ -126,10 +139,24 @@
   padding: 20px 24px 32px;
 }
 
+/* The footer: the panel's actions (Cancel, Create) on a row outside the
+   scrolling body, so they stay in view; a --divider rule above them. */
+.footer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 24px;
+  border-top: 1px solid var(--divider);
+  background: var(--surface);
+}
+
 .scrim {
   position: fixed;
   inset: 0;
-  z-index: 49;
+  z-index: 51;
   background: var(--overlay);
   animation: fade-in 0.18s ease both;
 }
@@ -162,11 +189,18 @@
   .body {
     padding: 16px 16px calc(32px + env(safe-area-inset-bottom, 0px));
   }
+  .footer {
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+  }
 }
 
 @media (width <= 640px) {
   .panel {
     border-left: 0;
+  }
+
+  .wide {
+    width: 100vw;
   }
 
   /* A header action with an icon and words ("Open in Linear ↗", "Copy

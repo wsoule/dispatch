@@ -47,8 +47,8 @@ button {
    every `:focus-visible` element in page mode, and a second declaration would only fight it. */
 
 /* Text selection tinted with the accent instead of the OS default, so highlighting a passage
-   for the Selection Actions menu (ui/ai/selection-actions.tsx) reads as part of the system
-   rather than a generic browser selection. */
+   for a draft's prompt menu (views/DraftView.tsx) reads as part of the system rather than a
+   generic browser selection. */
 ::selection {
   background: var(--accent-soft);
 }

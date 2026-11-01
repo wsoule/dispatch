@@ -160,7 +160,7 @@ describe('LiveView', () => {
     expect(node('l-1')?.getAttribute('data-state')).toBe('running');
   });
 
-  test('hosted under Tasks, the header leads with "‹ tasks" back to the list, bands intact', () => {
+  test('hosted under Tasks, the header leads with the back chip to the Tasks list, bands intact', () => {
     const backs: string[] = [];
     mount(dataWith(), undefined, () => backs.push('back'));
     expect(document.querySelector('[data-slot=page-header]')).toBeTruthy();
