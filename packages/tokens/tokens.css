@@ -149,6 +149,12 @@
   --surface-message: color-mix(in srgb, #e4e4e7 55%, #f4f4f5);
   --composer-outline: rgba(0, 0, 0, 0.08);
 
+  /* Sidebar rows (T3 Code): a faint hover, and the active row lifts to a white pill with a
+     hairline ring in light; dark uses white alpha fills and no ring. */
+  --sidebar-row-hover: rgb(0 0 0 / 0.04);
+  --sidebar-row-active: #ffffff;
+  --sidebar-row-ring: color-mix(in srgb, var(--border-default) 70%, transparent);
+
   /* Thin overlay-style scrollbar thumb. */
   --scrollbar-thumb: #d9d9d9;
   --scrollbar-thumb-hover: #bfbfbf;
@@ -390,6 +396,9 @@
     --glass-saturation: 1.08;
     --surface-message: color-mix(in srgb, #0a0a0a 92%, white);
     --composer-outline: rgba(255, 255, 255, 0.05);
+    --sidebar-row-hover: rgb(255 255 255 / 0.08);
+    --sidebar-row-active: rgb(255 255 255 / 0.11);
+    --sidebar-row-ring: transparent;
     --scrollbar-thumb: rgb(255 255 255 / 0.08);
     --scrollbar-thumb-hover: rgb(255 255 255 / 0.12);
 

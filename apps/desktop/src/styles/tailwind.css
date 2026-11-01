@@ -175,6 +175,9 @@
   --color-text-secondary: var(--text-secondary);
   --color-accent-tint: var(--accent-tint);
   --color-message: var(--surface-message);
+  --color-sidebar-row-hover: var(--sidebar-row-hover);
+  --color-sidebar-row-active: var(--sidebar-row-active);
+  --color-sidebar-row-ring: var(--sidebar-row-ring);
   --color-focus-ring: var(--focus-ring);
   --color-tooltip-bg: var(--tooltip-bg);
   --color-tooltip-fg: var(--tooltip-fg);

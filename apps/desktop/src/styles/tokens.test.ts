@@ -120,6 +120,9 @@ const perTheme = [
   '--surface-message',
   '--composer-outline',
   '--scrollbar-thumb',
+  '--sidebar-row-hover',
+  '--sidebar-row-active',
+  '--sidebar-row-ring',
   '--scrollbar-thumb-hover',
 ];
 test('per-theme tokens exist in light and dark blocks', () => {

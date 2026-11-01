@@ -85,7 +85,7 @@ export function RunStatePill({
         data-run-state={state}
         className={cn('inline-flex shrink-0 items-center', className)}
       >
-        <StateMark state={tone} />
+        <StateMark state={tone} variant="dot" pulse />
       </span>
     );
   }
@@ -97,7 +97,7 @@ export function RunStatePill({
       className={cn('inline-flex items-center gap-1', className)}
     >
       <Pill>
-        <StateMark state={tone} />
+        <StateMark state={tone} pulse />
         {label}
       </Pill>
       {badge !== null && <Pill className="text-muted-foreground">{badge}</Pill>}

@@ -45,14 +45,15 @@ export type SidebarNavProps = {
 };
 
 export const SIDEBAR_ROW_CLASS =
-  'flex h-7 w-full items-center gap-2 rounded-control pr-[9px] pl-2 text-left text-[13px] font-medium transition-colors duration-100 outline-none disabled:pointer-events-none disabled:opacity-50 [&>svg]:size-3.5';
+  'flex h-7 w-full items-center gap-2 rounded-md pr-[9px] pl-2 text-left text-[13px] font-medium transition-colors duration-100 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:pointer-events-none disabled:opacity-50 [&>svg]:size-4';
 export const SIDEBAR_ROW_INACTIVE_CLASS =
-  'text-muted-foreground hover:bg-surface-hover';
+  'text-foreground/80 hover:bg-sidebar-row-hover hover:text-foreground [&>svg]:text-muted-foreground';
 export const SIDEBAR_ROW_ACTIVE_CLASS =
-  'bg-surface-selected text-(--text-secondary) [&>svg]:text-foreground';
+  'bg-sidebar-row-active text-foreground ring-1 ring-sidebar-row-ring ring-inset [&>svg]:text-foreground';
 
-/** Linear's rail grammar: 28px rows, 14px icons, 13px/500 labels, muted at rest and lifted
- * onto the selected surface when active (neutral, never the accent). Headings are 12px
+/** T3 Code's rail grammar: 28px rows, 16px icons, 13px/500 labels in a softened foreground
+ * at rest; the active row lifts to a white pill with a hairline ring in light, a white alpha
+ * fill in dark (neutral, never the accent). Headings are 12px
  * sentence case with a chevron when the section collapses. Counts are plain 11px text;
  * `state: 'attention'` adds the 6px indigo dot. The rail never has an icon-only mode —
  * the shell hides it entirely instead. */
@@ -125,8 +126,10 @@ export function SidebarNav({
                             <span
                               aria-hidden
                               className={cn(
-                                'shrink-0 [&>svg]:size-3.5',
-                                isActive && '[&>svg]:text-foreground'
+                                'shrink-0 [&>svg]:size-4',
+                                isActive
+                                  ? '[&>svg]:text-foreground'
+                                  : '[&>svg]:text-muted-foreground'
                               )}
                             >
                               {item.icon}
