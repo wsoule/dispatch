@@ -96,7 +96,7 @@ const STATIC_COMPONENTS = {
     <MarkdownLink href={href}>{children}</MarkdownLink>
   ),
   code: ({ children }) => (
-    <code className="bg-surface-quaternary rounded-[4px] px-1 py-0.5 font-mono text-[0.85em]">
+    <code className="rounded-[4px] bg-[color-mix(in_srgb,var(--foreground)_10%,transparent)] px-[0.35em] py-[0.1em] font-mono text-[0.85em]">
       {children}
     </code>
   ),
@@ -107,7 +107,7 @@ const STATIC_COMPONENTS = {
     const codeElement = preCodeChild(node);
     const code = hastText(codeElement ?? node).replace(/\n$/, '');
     return (
-      <div className="my-2">
+      <div className="my-[0.65em]">
         <CodeBlock
           code={code}
           language={resolveLanguage(hastClassName(codeElement))}
@@ -142,8 +142,11 @@ export const Markdown = memo(function Markdown({
   variant = 'inline',
   urlTransform,
   img,
+  streaming = false,
 }: {
   content: string;
+  /** The reply is still arriving: new blocks fade in (see `.dispatch-md[data-streaming]`). */
+  streaming?: boolean;
   className?: string;
   variant?: 'inline' | 'prose';
   /** Replaces react-markdown's URL filter (the docs preview keeps `asset:`). */
@@ -165,6 +168,7 @@ export const Markdown = memo(function Markdown({
     <div
       data-slot="markdown"
       data-variant={variant}
+      data-streaming={streaming || undefined}
       className={cn(
         'dispatch-md',
         variant === 'prose' && 'dispatch-md-prose',

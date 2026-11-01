@@ -26,11 +26,14 @@ import {
 import { kindLabel } from '../../lib/threadSources';
 import { askAgentToFix, FailureNotice } from '../failure/FailureNotice';
 import { ApprovalCard } from './ApprovalCard';
+import { ChangedFilesCard } from './ChangedFilesCard';
 import { Markdown } from './Markdown';
 import { QuestionCard } from './QuestionCard';
 import { ScopeRequestCard } from './ScopeRequestCard';
 import { SubagentTree } from './SubagentTree';
 import { TranscriptRow } from './TranscriptRow';
+import { WorkFold } from './WorkFold';
+import { changedFilesFromLog } from '@/lib/changedFiles';
 import { cn } from '@/lib/utils';
 import { LoadingState } from '@/ui/ai/loading-state';
 import { Pill } from '@/ui/ai/pill';
@@ -283,6 +286,7 @@ export function RunLogView({
   // The sub-agents this run fanned out into, folded from the same entries the
   // transcript renders — so the tree ticks with each `run.log` event.
   const subagents = useMemo(() => foldSubagents(entries), [entries]);
+  const changedFiles = useMemo(() => changedFilesFromLog(entries), [entries]);
   const terminal = isTerminalRunState(meta.state);
   const canSend = SENDABLE_STATES.has(meta.state);
   // The transcript's genuinely live entries, only ever while the run is actually producing
@@ -400,17 +404,21 @@ export function RunLogView({
               </div>
             ))}
           {/* Three levels of emphasis. What the agent SAID is the transcript's spine and gets
-              full weight. What it DID is subordinate — a run of tool calls is a tight stack of
-              quiet one-line rows, so twelve file reads read as one event rather than twelve.
+              full weight. What it DID is subordinate — a run of tool calls folds behind one
+              "Worked for 12s" line, so twelve file reads read as one event rather than twelve.
               What YOU said is a bubble, because finding your own interjections is a different
               job from reading along. */}
           {groups.map((group, i) =>
             group.kind === 'tools' ? (
-              <div key={i} className="flex flex-col">
+              <WorkFold
+                key={i}
+                entries={group.entries}
+                live={group.entries.some(isLive)}
+              >
                 {group.entries.map((entry, j) => (
                   <TranscriptRow key={j} entry={entry} live={isLive(entry)} />
                 ))}
-              </div>
+              </WorkFold>
             ) : group.entries[0].kind === 'message' ? (
               <ChatMessageBubble
                 key={i}
@@ -438,6 +446,9 @@ export function RunLogView({
               live
             />
           ))}
+
+          {/* What the run edited, once it has settled: T3 Code's end-of-turn card. */}
+          {terminal && <ChangedFilesCard files={changedFiles} />}
 
           {/* Why the run stopped, in the run itself — without this a force-failed run (a
               daemon restart, not the agent's doing) reads as "failed, $0" with zero

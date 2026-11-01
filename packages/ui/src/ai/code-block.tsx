@@ -2,6 +2,7 @@ import { CheckIcon, CopyIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { useStreamedText } from '../ai/use-streamed-text';
+import { IconButton } from './icon-button';
 
 export type CodeBlockLanguage = 'ts' | 'tsx' | 'css' | 'json';
 
@@ -268,34 +269,37 @@ export function CodeBlock({
     : undefined;
 
   return (
-    <div className="bg-surface-inset rounded-card shadow-hairline w-full overflow-hidden">
-      <div className="border-border flex items-center justify-between gap-2 border-b px-3 py-2">
+    // T3 Code's code block: a soft secondary card (borderless in dark), a header that is
+    // just a mono language label and an icon-only copy button, then the source.
+    <div
+      data-slot="code-block"
+      className="border-border/70 bg-secondary dark:bg-input/32 w-full overflow-hidden rounded-lg border leading-snug dark:border-transparent"
+    >
+      <div className="flex items-center justify-between gap-2 pt-1.5 pr-1.5 pl-3">
         <span className="flex min-w-0 items-baseline gap-2">
           {filename !== undefined && (
-            <span className="text-foreground truncate font-mono text-[12px] font-medium">
+            <span className="text-foreground truncate font-mono text-[11px] font-medium">
               {filename}
             </span>
           )}
-          <span className="text-muted-foreground shrink-0 text-[11.5px]">
-            {LANGUAGE_LABEL[language]}
+          <span className="text-foreground/72 shrink-0 font-mono text-[11px]">
+            {LANGUAGE_LABEL[language].toLowerCase()}
           </span>
         </span>
-        <button
-          type="button"
-          aria-label={copied ? 'Copied' : 'Copy code'}
+        <IconButton
+          label={copied ? 'Copied' : 'Copy code'}
           onClick={handleCopy}
-          className="text-muted-foreground hover:bg-surface-hover-strong hover:text-foreground ease-out-expo flex h-6 shrink-0 items-center gap-1 rounded-[6px] px-1.5 text-[11.5px] font-medium transition-colors duration-100"
+          className="size-6"
         >
           {copied ? (
-            <CheckIcon aria-hidden className="text-green size-3" />
+            <CheckIcon aria-hidden className="text-green size-3.5" />
           ) : (
-            <CopyIcon aria-hidden className="size-3" />
+            <CopyIcon aria-hidden className="size-3.5" />
           )}
-          {copied ? 'Copied' : 'Copy'}
-        </button>
+        </IconButton>
       </div>
-      <pre className="overflow-x-auto px-3 py-2.5">
-        <code className="text-foreground block font-mono text-sm whitespace-pre">
+      <pre className="overflow-x-auto px-3 pt-1 pb-3">
+        <code className="text-foreground block font-mono text-[12px] whitespace-pre">
           {lines.map((line, index) => (
             <div key={index} className={lineClassName}>
               {line === ''

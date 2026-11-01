@@ -1,5 +1,5 @@
 import type { NormalizedEntry } from '@dispatch/client';
-import { Bot, Brain } from 'lucide-react';
+import { Bot, Brain, Check, Copy } from 'lucide-react';
 import { useState } from 'react';
 
 import { cardRaw } from '../../lib/cardContent';
@@ -9,6 +9,7 @@ import { toolView } from './ToolCard';
 import type { GutterTone } from '@/lib/transcriptGutter';
 import { gutterTone } from '@/lib/transcriptGutter';
 import { cn } from '@/lib/utils';
+import { IconButton } from '@/ui/ai/icon-button';
 import { StreamingText } from '@/ui/ai/streaming-text';
 import type { ToolChipState } from '@/ui/ai/tool-chips';
 import { ToolChip } from '@/ui/ai/tool-chips';
@@ -94,7 +95,7 @@ function TranscriptRowContent({
         <StreamingText
           text={entry.text ?? ''}
           streaming
-          render={(text) => <AssistantProse text={text} />}
+          render={(text) => <AssistantProse text={text} streaming />}
         />
       </div>
     );
@@ -105,9 +106,12 @@ function TranscriptRowContent({
   const isProse = entry.kind === 'assistant';
 
   return (
-    <div className="min-w-0 px-1 py-0.5">
+    <div className="group/assistant min-w-0 px-1 py-0.5">
       {isProse ? (
-        <AssistantProse text={entry.text ?? ''} />
+        <>
+          <AssistantProse text={entry.text ?? ''} />
+          <AssistantFooter text={entry.text ?? ''} ts={entry.ts} />
+        </>
       ) : (
         <span
           className={cn('text-[12px] leading-relaxed font-book', TONE[tone])}
@@ -119,12 +123,59 @@ function TranscriptRowContent({
   );
 }
 
+// Clock time for a reply's footer ("14:05"), or nothing for a missing/unparseable stamp.
+function clockTime(ts: string): string | undefined {
+  const at = Date.parse(ts);
+  if (!Number.isFinite(at)) return undefined;
+  return new Date(at).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+// T3 Code's reply footer: copy and the time, hidden until the reply is hovered or the copy
+// button takes focus, so a settled transcript stays quiet.
+function AssistantFooter({ text, ts }: { text: string; ts: string }) {
+  const [copied, setCopied] = useState(false);
+  const time = clockTime(ts);
+  return (
+    <div
+      data-slot="assistant-footer"
+      className="text-muted-foreground mt-1 flex h-6 items-center gap-1 opacity-0 transition-opacity duration-200 group-hover/assistant:opacity-100 focus-within:opacity-100"
+    >
+      <IconButton
+        label={copied ? 'Copied' : 'Copy reply'}
+        className="size-6"
+        onClick={() => {
+          void navigator.clipboard?.writeText(text).then(() => setCopied(true));
+        }}
+      >
+        {copied ? (
+          <Check aria-hidden className="text-green size-3.5" />
+        ) : (
+          <Copy aria-hidden className="size-3.5" />
+        )}
+      </IconButton>
+      {time !== undefined && (
+        <span className="font-book text-[12px] tabular-nums">{time}</span>
+      )}
+    </div>
+  );
+}
+
 // The agent's own prose: unboxed, slightly softened foreground, relaxed leading. The chat
 // lane (RunLogView) gives it its measure.
-function AssistantProse({ text }: { text: string }) {
+function AssistantProse({
+  text,
+  streaming = false,
+}: {
+  text: string;
+  streaming?: boolean;
+}) {
   return (
     <Markdown
       content={text}
+      streaming={streaming}
       className="font-book text-foreground/90 text-[13px] leading-relaxed"
     />
   );

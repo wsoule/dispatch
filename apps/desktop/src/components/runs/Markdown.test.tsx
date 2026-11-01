@@ -17,7 +17,7 @@ describe('Markdown', () => {
     );
     const mounted = () => ({
       link: container.querySelector('a'),
-      block: container.querySelector('[data-slot="markdown"] .my-2'),
+      block: container.querySelector('[data-slot="code-block"]'),
     });
     const before = mounted();
     expect(before.link).not.toBeNull();
@@ -69,7 +69,7 @@ describe('Markdown', () => {
     expect(container.textContent).toContain('const x = 1;');
     expect(container.textContent).not.toContain('[object Object]');
     // Rendered through the CodeBlock primitive, which labels the language in its header.
-    expect(container.textContent).toContain('TypeScript');
+    expect(container.textContent).toContain('typescript');
   });
 
   test('a multi-line fenced block keeps every line', () => {

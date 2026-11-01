@@ -16,14 +16,16 @@
   margin-bottom: 0;
 }
 
-.dispatch-md p {
-  margin: 0.4em 0;
+.dispatch-md p,
+.dispatch-md blockquote,
+.dispatch-md table {
+  margin: 0.65em 0;
 }
 
 .dispatch-md ul,
 .dispatch-md ol {
-  margin: 0.4em 0;
-  padding-left: 1.3em;
+  margin: 0.65em 0;
+  padding-left: 1.25em;
 }
 
 .dispatch-md ul {
@@ -40,6 +42,10 @@
 
 .dispatch-md li::marker {
   color: var(--muted-foreground);
+}
+
+.dispatch-md ol > li::marker {
+  font-variant-numeric: tabular-nums;
 }
 
 /* GFM task lists (`- [ ] …`): the bullet gives way to a 14px checkbox on the chip ring, the
@@ -75,37 +81,53 @@
 .dispatch-md h2,
 .dispatch-md h3,
 .dispatch-md h4 {
-  margin: 0.7em 0 0.3em;
+  margin: 1.25em 0 0.5em;
   font-weight: 600;
   line-height: 1.3;
+  color: var(--foreground);
 }
 
 .dispatch-md h1 {
-  font-size: 1.2em;
+  font-size: 1.35em;
 }
 
 .dispatch-md h2 {
-  font-size: 1.12em;
+  font-size: 1.2em;
 }
 
 .dispatch-md h3 {
-  font-size: 1.04em;
+  font-size: 1.08em;
 }
 
 .dispatch-md h4 {
   font-size: 1em;
 }
 
+/* Links (T3 Code): coloured, no underline at rest, a dotted underline on hover drawn as a
+   repeating dot so it sits lighter than a solid rule. */
 .dispatch-md a {
-  color: var(--accent);
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  color: var(--blue);
+  text-decoration: none;
+  background-image: radial-gradient(
+    circle,
+    currentColor 0.75px,
+    transparent 1px
+  );
+  background-position: 0 100%;
+  background-repeat: repeat-x;
+  background-size: 4px 2px;
+  background-color: transparent;
+  padding-bottom: 1px;
+  transition: background-size 0.1s;
+}
+
+.dispatch-md a:not(:hover) {
+  background-size: 4px 0;
 }
 
 .dispatch-md blockquote {
-  margin: 0.4em 0;
   padding-left: 0.8em;
-  border-left: 2px solid var(--border-chip);
+  border-left: 2px solid color-mix(in srgb, currentColor 35%, transparent);
   color: var(--muted-foreground);
 }
 
@@ -115,22 +137,45 @@
   border-top: 0.5px solid var(--border);
 }
 
+/* Tables (T3 Code): row separators only, outer cells flush with the prose, cells top-aligned
+   and wrapping at word boundaries. */
 .dispatch-md table {
-  margin: 0.5em 0;
+  width: 100%;
   border-collapse: collapse;
   font-size: 0.95em;
+  overflow-wrap: normal;
 }
 
 .dispatch-md th,
 .dispatch-md td {
-  padding: 0.25em 0.55em;
-  border: 0.5px solid var(--border);
+  padding: 0.45em 0.75em;
+  border-bottom: 0.5px solid var(--border);
   text-align: left;
+  vertical-align: top;
+}
+
+.dispatch-md :is(th, td):first-child {
+  padding-left: 0;
+}
+
+.dispatch-md :is(th, td):last-child {
+  padding-right: 0;
 }
 
 .dispatch-md th {
-  background: var(--surface-quaternary);
-  font-weight: 500;
+  font-weight: 600;
+}
+
+/* While a reply streams, each new block fades in once instead of popping. Gated on
+   `data-streaming` so a settled transcript never replays it. */
+@media (prefers-reduced-motion: no-preference) {
+  .dispatch-md[data-streaming] > * {
+    transition: opacity 600ms ease-out;
+
+    @starting-style {
+      opacity: 0;
+    }
+  }
 }
 
 /* The task page's long-form measure (Linear's description/comment body): 15px/450 on a
