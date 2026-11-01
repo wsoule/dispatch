@@ -33,14 +33,14 @@ test('LabelPill leads with an 8px dot in the given colour', () => {
 });
 
 // PillButton is the 28px secondary button: control surface, hover to active.
-test('PillButton is a 28px control-surface pill that clicks', () => {
+test('PillButton is a 28px outlined control that clicks', () => {
   let clicks = 0;
   render(<PillButton onClick={() => clicks++}>Filter</PillButton>);
   const button = screen.getByRole('button', { name: 'Filter' });
   const classes = classesOf(button);
   expect(classes).toContain('h-7');
-  expect(classes).toContain('bg-surface-control');
-  expect(classes).toContain('hover:bg-surface-active');
+  expect(classes).toContain('border-input');
+  expect(classes).toContain('hover:bg-surface-hover');
   fireEvent.click(button);
   expect(clicks).toBe(1);
 });

@@ -239,7 +239,7 @@ function OverseerMessageBubble({
         {text.trim() !== '' && (
           <p
             title={when}
-            className="bg-surface-secondary shadow-hairline rounded-card font-book max-w-[85%] self-end px-3 py-1.5 text-[13px] whitespace-pre-wrap"
+            className="bg-message rounded-bubble font-book max-w-[80%] self-end p-3 text-[13px] leading-relaxed whitespace-pre-wrap"
           >
             {text}
           </p>
@@ -259,10 +259,12 @@ function OverseerMessageBubble({
     <div
       data-testid={live}
       className={cn(
-        'rounded-card flex max-w-[85%] flex-col gap-1 px-3 py-2',
+        // T3 Code: your turns are rounded-2xl bubbles on the right; the assistant's
+        // reply sits unboxed in the lane.
+        'flex flex-col gap-1',
         fromUser
-          ? 'bg-surface-secondary shadow-hairline self-end'
-          : 'bg-surface-quaternary shadow-card self-start'
+          ? 'bg-message rounded-bubble max-w-[80%] self-end p-3'
+          : 'w-full self-start px-1 py-0.5'
       )}
     >
       <div className="text-muted-foreground flex items-baseline gap-1.5 text-[12px] font-medium">
@@ -552,7 +554,7 @@ function OverseerQueuedBubble({
   return (
     <div
       data-testid="overseer-queued"
-      className="rounded-control bg-surface-quaternary/60 text-muted-foreground font-book flex max-w-[85%] flex-col gap-1 self-end border-[0.5px] border-dashed px-3 py-1.5 text-[13px]"
+      className="rounded-bubble text-muted-foreground font-book flex max-w-[80%] flex-col gap-1 self-end border border-dashed p-3 text-[13px]"
     >
       {editing === null ? (
         <span className="whitespace-pre-wrap">{text}</span>

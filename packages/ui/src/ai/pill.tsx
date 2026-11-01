@@ -46,7 +46,7 @@ export function LabelPill({
 /** The 28px pill-button recipe, shared with `SelectTrigger` so a select and a
  * `SelectPill` are literally the same control. */
 export const PILL_BUTTON_CLASS =
-  "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-pill border-[0.5px] border-border-chip bg-surface-control px-2.5 text-[12px] font-medium whitespace-nowrap text-(--text-secondary) transition-colors duration-100 outline-none hover:bg-surface-active disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-3.5 [&_svg]:shrink-0";
+  "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-control border border-input bg-popover px-2.5 text-[13px] font-medium whitespace-nowrap text-foreground shadow-xs/5 transition-[background-color,scale] duration-100 outline-none hover:bg-surface-hover [&:active:not([aria-haspopup])]:scale-[0.97] disabled:pointer-events-none disabled:opacity-64 dark:bg-input/32 dark:hover:bg-input/48 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0 [&_svg:not([class*='text-'])]:text-muted-foreground";
 
 /** The 28px secondary button: a pill on the control surface. A real `<button>` unless
  * `render` names another element. */

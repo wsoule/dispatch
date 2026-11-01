@@ -322,9 +322,12 @@ test('renders the sub-agent tree and the spawn/finish rows from agent entries', 
   expect(
     screen.getByRole('treeitem', { name: 'Map the server, done' })
   ).toBeDefined();
-  expect(screen.getByText('Spawned')).toBeDefined();
-  expect(screen.getByText('Agent finished')).toBeDefined();
-  expect(screen.getAllByText('agent')).toHaveLength(2);
+  // Both lifecycle lines are timeline rows, not loose text.
+  for (const verb of ['Spawned', 'Agent finished']) {
+    expect(
+      screen.getByText(verb).closest('[data-slot="tool-chip"]')
+    ).not.toBeNull();
+  }
 });
 
 function renderEntries(
@@ -676,12 +679,12 @@ test('a resumable failed run can ask its agent to fix the failure', async () => 
   expect(sent).toEqual([askAgentToFix(error)]);
 });
 
-// A tool chip's state as ToolChip draws it: a failed chip washes red, a running one
-// shimmers its label.
+// A tool chip's state as ToolChip draws it: failed is stamped on the chip, a running
+// one shimmers its label.
 function chipState(target: string): 'running' | 'done' | 'failed' {
-  const chip = screen.getByText(target).closest('[class*="rounded-chip"]');
+  const chip = screen.getByText(target).closest('[data-slot="tool-chip"]');
   if (chip === null) throw new Error(`no chip shows ${target}`);
-  if (chip.className.includes('text-red')) return 'failed';
+  if (chip.getAttribute('data-state') === 'failed') return 'failed';
   return chip.querySelector('[class*="shimmer-text"]') === null
     ? 'done'
     : 'running';

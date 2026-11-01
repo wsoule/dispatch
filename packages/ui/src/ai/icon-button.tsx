@@ -11,8 +11,8 @@ export type IconButtonProps = ButtonPrimitive.Props & {
   active?: boolean;
 };
 
-/** The 28px round icon button every header and rail uses: transparent at rest, a control
- * fill on hover, a 14px icon. A real `<button>` unless `render` names another element. */
+/** The 28px icon button every header and rail uses (T3 Code's ghost icon button): a
+ * rounded square, transparent at rest, the neutral accent fill on hover, a 16px icon. A real `<button>` unless `render` names another element. */
 export function IconButton({
   label,
   filled = false,
@@ -27,9 +27,9 @@ export function IconButton({
       data-filled={filled || undefined}
       data-active={active || undefined}
       className={cn(
-        "inline-flex size-7 shrink-0 items-center justify-center rounded-pill text-muted-foreground transition-colors duration-100 outline-none hover:bg-surface-control hover:text-(--text-secondary) disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-3.5 [&_svg]:shrink-0",
+        "inline-flex size-7 shrink-0 items-center justify-center rounded-control text-muted-foreground transition-[background-color,color,scale] duration-100 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset active:scale-[0.97] disabled:pointer-events-none disabled:opacity-64 aria-pressed:bg-accent [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0",
         filled &&
-          'bg-surface-control text-(--text-secondary) hover:bg-surface-active',
+          'bg-secondary text-(--text-secondary) hover:bg-surface-active',
         active && 'text-foreground',
         className
       )}

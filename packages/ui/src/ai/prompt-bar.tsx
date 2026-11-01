@@ -109,10 +109,16 @@ function filesIn(dt: DataTransfer | null): File[] {
   return files.length > 0 ? files : Array.from(dt.files ?? []);
 }
 
-const MIN_ROWS = 1;
-const MAX_ROWS = 8;
-const LINE_HEIGHT_PX = 18;
+// Two lines at rest, like T3 Code's composer; `leading-5` and `pt-1.5 pb-1` below.
+const MIN_ROWS = 2;
+const MAX_ROWS = 10;
+const LINE_HEIGHT_PX = 20;
 const VERTICAL_PADDING_PX = 10;
+
+// The composer's toolbar controls are ghost buttons (T3 Code's ComposerControl), not
+// outlined pills.
+const COMPOSER_CONTROL =
+  'border-transparent bg-transparent shadow-none text-foreground/80 hover:bg-accent dark:bg-transparent dark:hover:bg-accent';
 
 // `/re` only matches commands whose label starts with "re" (case-insensitive); a
 // bare `/` matches everything, and anything not starting with `/` matches nothing —
@@ -144,7 +150,8 @@ function autosize(el: HTMLTextAreaElement) {
  * footer with a model picker, a dictation affordance, and an indigo submit button.
  * Typing `/` opens a filtered command popover; Enter submits, Shift+Enter inserts a
  * newline. Fully controlled — `value`/`onChange` live with the caller. The frame is
- * Linear's comment composer: a quaternary card with a half-pixel border. */
+ * T3 Code's composer: a frosted rounded-2xl card with ghost toolbar controls and a round
+ * send button. */
 export function PromptBar({
   value,
   onChange,
@@ -226,8 +233,9 @@ export function PromptBar({
       onDragLeave={() => setDragging(false)}
       onDrop={handleDrop}
       className={cn(
-        'bg-surface-quaternary rounded-card ease-out-expo flex flex-col gap-1.5 border-[0.5px] border-border-strong p-1.5 transition-[box-shadow] duration-100',
-        'focus-within:ring-1 focus-within:ring-ring',
+        // T3 Code's composer: a frosted rounded-2xl card with a faint outline and a soft drop.
+        'rounded-bubble shadow-composer ease-out-expo flex flex-col gap-1.5 border border-(--composer-outline) bg-[color-mix(in_srgb,var(--surface-quaternary)_80%,transparent)] p-2 backdrop-blur-(--glass-blur) transition-[box-shadow,border-color] duration-100',
+        'focus-within:border-ring/40',
         dragging && 'ring-ring ring-2'
       )}
     >
@@ -304,7 +312,7 @@ export function PromptBar({
         aria-autocomplete={completion === undefined ? undefined : 'list'}
         aria-controls={completion?.listId}
         aria-activedescendant={completion?.activeOptionId}
-        className="text-foreground placeholder:text-muted-foreground min-h-7 w-full resize-none bg-transparent px-1 py-[5px] text-[13px] leading-[18px] [overflow-wrap:anywhere] outline-none"
+        className="text-foreground placeholder:text-muted-foreground w-full resize-none bg-transparent px-2 pt-1.5 pb-1 text-[13px] leading-5 [overflow-wrap:anywhere] outline-none"
       />
       {/* Anchored to the textarea rather than opened by a trigger of its own,
           and never taking focus: the human keeps typing while the command
@@ -357,7 +365,10 @@ export function PromptBar({
         <div className="flex items-center gap-1">
           {models.length > 0 && (
             <Select value={modelId} onValueChange={onModelChange}>
-              <SelectTrigger aria-label="Choose model">
+              <SelectTrigger
+                aria-label="Choose model"
+                className={COMPOSER_CONTROL}
+              >
                 <SelectValue placeholder="Model" />
               </SelectTrigger>
               <SelectContent>
@@ -371,7 +382,10 @@ export function PromptBar({
           )}
           {efforts.length > 0 && (
             <Select value={effortId} onValueChange={onEffortChange}>
-              <SelectTrigger aria-label="Choose effort">
+              <SelectTrigger
+                aria-label="Choose effort"
+                className={COMPOSER_CONTROL}
+              >
                 <SelectValue placeholder="Effort" />
               </SelectTrigger>
               <SelectContent>
@@ -427,9 +441,13 @@ export function PromptBar({
             filled
             disabled={!canSubmit}
             onClick={onSubmit}
+            // T3 Code's round send button: indigo with an inner highlight, a small lift on
+            // hover, a muted disc while there is nothing to send.
             className={cn(
-              canSubmit &&
-                'bg-primary text-primary-foreground hover:bg-[var(--accent-hover)] hover:text-primary-foreground'
+              'size-8 rounded-full disabled:opacity-100',
+              canSubmit
+                ? 'bg-primary text-primary-foreground inset-shadow-control-highlight hover:text-primary-foreground shadow-xs hover:scale-105 hover:bg-[var(--accent-hover)] active:inset-shadow-control-pressed'
+                : 'bg-foreground/12 text-muted-foreground'
             )}
           >
             <ArrowUpIcon aria-hidden />

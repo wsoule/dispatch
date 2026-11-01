@@ -162,10 +162,8 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
   return (
     <div
       className={cn(
-        'flex max-w-[90%] flex-col gap-0.5 rounded-card px-3 py-2',
-        own
-          ? 'bg-surface-quaternary self-end border-[0.5px] border-border-strong'
-          : 'bg-state-waiting-surface self-start'
+        'flex max-w-[80%] flex-col gap-0.5 rounded-bubble p-3',
+        own ? 'bg-message self-end' : 'bg-state-waiting-surface self-start'
       )}
     >
       <div
@@ -367,12 +365,19 @@ export function RunLogView({
         aria-label="Run log"
         className="min-h-0 flex-1 overflow-y-auto px-1"
       >
-        <div ref={contentRef} className="flex min-h-full flex-col gap-3">
+        <div
+          ref={contentRef}
+          className="mx-auto flex min-h-full w-full max-w-(--chat-lane-w) flex-col gap-3"
+        >
           {meta.resumedFrom !== undefined && (
-            <div className="text-muted-foreground font-book flex items-center justify-center gap-1.5 py-1 text-center text-[12px]">
-              <Info className="size-3 shrink-0" />
-              Resumed from run {meta.resumedFrom} — earlier conversation lives
-              there.
+            <div className="flex items-center gap-3 py-1">
+              <span className="bg-border/70 h-px flex-1" />
+              <span className="border-border/70 bg-background text-muted-foreground font-book flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px]">
+                <Info className="size-3 shrink-0" />
+                Resumed from run {meta.resumedFrom} — earlier conversation lives
+                there.
+              </span>
+              <span className="bg-border/70 h-px flex-1" />
             </div>
           )}
           {groups.length === 0 &&
@@ -394,17 +399,14 @@ export function RunLogView({
                 <p className="font-book text-[13px]">No log entries yet.</p>
               </div>
             ))}
-          {/* Three levels of emphasis, which is what the flat version was missing. What the
-              agent SAID is the transcript's spine and gets full weight. What it DID is
-              subordinate — a run of tool calls collapses into one quiet block behind a rule, so
-              twelve file reads read as one event rather than twelve. What YOU said is a bubble,
-              because finding your own interjections is a different job from reading along. */}
+          {/* Three levels of emphasis. What the agent SAID is the transcript's spine and gets
+              full weight. What it DID is subordinate — a run of tool calls is a tight stack of
+              quiet one-line rows, so twelve file reads read as one event rather than twelve.
+              What YOU said is a bubble, because finding your own interjections is a different
+              job from reading along. */}
           {groups.map((group, i) =>
             group.kind === 'tools' ? (
-              <div
-                key={i}
-                className="border-border my-0.5 flex flex-col border-l-[0.5px] pl-2"
-              >
+              <div key={i} className="flex flex-col">
                 {group.entries.map((entry, j) => (
                   <TranscriptRow key={j} entry={entry} live={isLive(entry)} />
                 ))}

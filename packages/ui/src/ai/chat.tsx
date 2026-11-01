@@ -94,7 +94,7 @@ export function ChatMessage({ role, children, avatar }: ChatMessageProps) {
   if (role === 'user') {
     return (
       <div className="flex justify-end pl-10">
-        <div className="bg-surface-inset rounded-card text-foreground px-3 py-1.5 text-[13px] leading-[1.4]">
+        <div className="bg-message rounded-bubble text-foreground max-w-[80%] p-3 text-[13px] leading-relaxed">
           {children}
         </div>
       </div>
@@ -104,7 +104,7 @@ export function ChatMessage({ role, children, avatar }: ChatMessageProps) {
   return (
     <div className="flex w-full items-start gap-2">
       {avatar !== undefined && <div className="mt-0.5 shrink-0">{avatar}</div>}
-      <div className="text-foreground min-w-0 flex-1 text-[13px] leading-normal">
+      <div className="text-foreground/90 min-w-0 flex-1 px-1 text-[13px] leading-relaxed">
         {children}
       </div>
     </div>

@@ -337,11 +337,11 @@ test('the milestone header carries the milestone dispatch and flight plan contro
   );
   expect(concurrency.tagName).toBe('BUTTON');
   expect(concurrency.textContent).toBe('3×');
-  expect(concurrency.className).toContain('rounded-pill');
+  expect(concurrency.className).toContain('rounded-control');
   // The "No milestone" lane has nothing to dispatch, so it gets none of them.
   const work = screen.getAllByRole('button', { name: 'Send agents…' });
   expect(work).toHaveLength(2);
-  expect(work[0]?.className).toContain('rounded-pill');
+  expect(work[0]?.className).toContain('rounded-control');
 });
 
 test('the milestone dispatch button routes through the confirmation preview', () => {

@@ -155,7 +155,7 @@ describe('PromptBar', () => {
   // The frame is the comment composer (quaternary card, half-pixel border), the
   // reference chips are `Pill`s, and send is an icon button that goes indigo only
   // once there is something to send.
-  test('the composer, chips and send button carry the Linear treatment', () => {
+  test('the composer, chips and send button carry the T3 Code treatment', () => {
     const { container, rerender } = render(
       <PromptBar
         value=""
@@ -165,14 +165,15 @@ describe('PromptBar', () => {
       />
     );
     const frame = container.firstElementChild as HTMLElement;
-    expect(frame.className).toContain('bg-surface-quaternary');
-    expect(frame.className).toContain('border-[0.5px]');
+    expect(frame.className).toContain('rounded-bubble');
+    expect(frame.className).toContain('shadow-composer');
     expect(
       container.querySelector('[data-slot="pill"]')?.textContent
     ).toContain('boot.rs');
     const send = screen.getByRole('button', { name: 'Send' });
     expect(send.getAttribute('data-slot')).toBe('icon-button');
     expect(send.className).not.toContain('bg-primary');
+    expect(send.className).toContain('rounded-full');
 
     rerender(
       <PromptBar value="ship it" onChange={() => {}} onSubmit={() => {}} />

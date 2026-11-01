@@ -100,7 +100,7 @@ test('adjudicates with Park and Block pill buttons once a ruling is typed', asyn
   const block = screen.getByRole('button', { name: 'Block' });
   for (const button of [park, block]) {
     expect(classesOf(button)).toContain('h-7');
-    expect(classesOf(button)).toContain('rounded-pill');
+    expect(classesOf(button)).toContain('rounded-control');
     expect(button.hasAttribute('disabled')).toBe(true);
   }
   expect(classesOf(block)).toContain('text-red');
