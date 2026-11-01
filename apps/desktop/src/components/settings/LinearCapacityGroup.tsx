@@ -1,4 +1,5 @@
 import { LINEAR_USAGE_LIMIT_MESSAGE } from '@dispatch/client';
+import { Button, Checkbox, ConfirmDialog, ProgressRule } from '@dispatch/ui';
 import { RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 
@@ -16,22 +17,8 @@ import {
   progressFor,
 } from '../../lib/linearSettings';
 import { useSettingsAccess } from './access';
+import styles from './LinearSettingsGroups.module.css';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
-import { cn } from '@/lib/utils';
-import { IconButton } from '@/ui/ai/icon-button';
-import { PillButton } from '@/ui/ai/pill';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/ui/alert-dialog';
-import { Checkbox } from '@/ui/checkbox';
-import { Progress } from '@/ui/progress';
 
 /** Settings → Linear → Capacity: active issues against the plan's cap, and
  *  archiving the linked teams' closed issues to make room. */
@@ -125,29 +112,34 @@ export function LinearCapacityGroup({
           summary ?? (capacity === null ? 'Not checked yet.' : 'Not measured.')
         }
         control={
-          <IconButton
-            label="Check again"
+          <Button
+            variant="quiet"
+            size="sm"
+            aria-label="Check again"
+            title="Check again"
             disabled={checking || !configured}
             onClick={() => void check()}
-          >
-            <RefreshCw
-              className={cn(
-                checking && 'animate-spin motion-reduce:animate-none'
-              )}
-            />
-          </IconButton>
+            icon={
+              <RefreshCw
+                size={14}
+                strokeWidth={1.8}
+                className={checking ? styles.spin : undefined}
+              />
+            }
+          />
         }
       >
         {share !== null && (
-          <Progress
+          <ProgressRule
             aria-label="Active issues against the limit"
-            value={Math.min(100, Math.round(share * 100))}
-            className="h-1.5"
+            done={Math.min(100, Math.round(share * 100))}
+            total={100}
+            label={null}
           />
         )}
         {pausedUntil !== null && (
           <>
-            <span className="text-state-failed text-[12px]">
+            <span className={styles.error}>
               {paused?.message ?? LINEAR_USAGE_LIMIT_MESSAGE}
             </span>
             <SettingsHint>
@@ -161,12 +153,12 @@ export function LinearCapacityGroup({
           </SettingsHint>
         )}
         {capacityError !== null && (
-          <span className="text-state-failed text-[12px]">
+          <span className={styles.error}>
             {describeFetchFailure(capacityError)}
           </span>
         )}
         {checkError !== null && (
-          <span className="text-state-failed text-[12px]">{checkError}</span>
+          <span className={styles.error}>{checkError}</span>
         )}
       </SettingsRow>
 
@@ -181,27 +173,27 @@ export function LinearCapacityGroup({
         locked={canDecide ? false : decideReason}
         control={
           <>
-            <span className="flex items-center gap-2">
-              <Checkbox
-                aria-label="Include canceled"
-                checked={includeCanceled}
-                disabled={!canDecide}
-                onCheckedChange={(checked) => setIncludeCanceled(checked)}
-              />
-              <span className="text-muted-foreground text-[12px]">
-                {canceled === null
+            <Checkbox
+              aria-label="Include canceled"
+              label={
+                canceled === null
                   ? 'Include canceled'
-                  : `Include canceled (${canceled.toLocaleString('en-US')}${plus})`}
-              </span>
-            </span>
-            <PillButton
+                  : `Include canceled (${canceled.toLocaleString('en-US')}${plus})`
+              }
+              checked={includeCanceled}
+              disabled={!canDecide}
+              onChange={(checked) => setIncludeCanceled(checked)}
+            />
+            <Button
+              variant="secondary"
+              size="sm"
               disabled={archiveDisabled}
               onClick={() => setConfirming(true)}
             >
               {archivable === null
                 ? 'Archive…'
                 : `Archive ${archivable.toLocaleString('en-US')}${plus}…`}
-            </PillButton>
+            </Button>
           </>
         }
       >
@@ -218,53 +210,36 @@ export function LinearCapacityGroup({
         )}
         {outcome !== null && <SettingsHint>{outcome}</SettingsHint>}
         {status.lastArchive?.errors.map((message) => (
-          <span key={message} className="text-state-failed text-[12px]">
+          <span key={message} className={styles.error}>
             {message}
           </span>
         ))}
         {archiveError !== null && (
-          <span className="text-state-failed text-[12px]">{archiveError}</span>
+          <span className={styles.error}>{archiveError}</span>
         )}
       </SettingsRow>
 
-      {confirming && (
-        <AlertDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setConfirming(false);
-          }}
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>
-                {archivable === null
-                  ? 'Archive closed issues in Linear?'
-                  : `Archive ${archivable.toLocaleString('en-US')}${plus} issues in Linear?`}
-              </AlertDialogTitle>
-              <AlertDialogDescription>
-                {`Completed${includeCanceled ? ' and canceled' : ''} issues${
-                  teamKeys === '' ? ' in the linked teams' : ` in ${teamKeys}`
-                } are archived in Linear${
-                  pushOnly
-                    ? '. The tasks here linked to them stay as they are, since this link only sends changes to Linear.'
-                    : ', and the tasks here linked to them are archived too.'
-                } You can restore issues from Linear’s archive.`}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel variant="ghost">Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => {
-                  setConfirming(false);
-                  void archive();
-                }}
-              >
-                Archive
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      )}
+      <ConfirmDialog
+        open={confirming}
+        onCancel={() => setConfirming(false)}
+        onConfirm={() => {
+          setConfirming(false);
+          void archive();
+        }}
+        title={
+          archivable === null
+            ? 'Archive closed issues in Linear?'
+            : `Archive ${archivable.toLocaleString('en-US')}${plus} issues in Linear?`
+        }
+        description={`Completed${includeCanceled ? ' and canceled' : ''} issues${
+          teamKeys === '' ? ' in the linked teams' : ` in ${teamKeys}`
+        } are archived in Linear${
+          pushOnly
+            ? '. The tasks here linked to them stay as they are, since this link only sends changes to Linear.'
+            : ', and the tasks here linked to them are archived too.'
+        } You can restore issues from Linear’s archive.`}
+        confirmLabel="Archive"
+      />
     </SettingsGroup>
   );
 }

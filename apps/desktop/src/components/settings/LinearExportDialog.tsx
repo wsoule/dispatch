@@ -4,22 +4,12 @@ import type {
   LinearExportPreview,
   LinearExportScope,
 } from '@dispatch/client';
-import { useEffect, useId, useState } from 'react';
+import { Button, Dialog, RadioGroup } from '@dispatch/ui';
+import { useEffect, useState } from 'react';
 
 import { describeError } from '../../lib/actionFeedback';
 import { exportActiveCount, exportScopeCount } from '../../lib/linearSettings';
-import { Button } from '@/ui/button';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/ui/dialog';
-import { Label } from '@/ui/label';
-import { RadioGroup, RadioGroupItem } from '@/ui/radio-group';
+import styles from './LinearExportDialog.module.css';
 
 function n(value: number): string {
   return value.toLocaleString('en-US');
@@ -93,7 +83,6 @@ export function LinearExportDialog({
   capacity: LinearCapacity | null;
   onExport: (scope: LinearExportScope) => Promise<LinearBulkStart>;
 }) {
-  const id = useId();
   const [scope, setScope] = useState<LinearExportScope>('open');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -119,65 +108,18 @@ export function LinearExportDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Export to Linear</DialogTitle>
-          <DialogDescription>
-            Creates a Linear record for each task here that has none. Linking
-            only mirrors changes made after it.
-          </DialogDescription>
-        </DialogHeader>
-        <DialogBody>
-          <RadioGroup
-            aria-label="What to export"
-            value={scope}
-            onValueChange={(value) => setScope(value as LinearExportScope)}
-            className="flex flex-col gap-3"
-          >
-            {SCOPES.map((option) => (
-              <div key={option.value} className="flex flex-col gap-0.5">
-                <Label className="font-normal">
-                  <RadioGroupItem
-                    value={option.value}
-                    aria-describedby={`${id}-${option.value}`}
-                  />
-                  <span className="text-[13px]">{option.label}</span>
-                  {preview !== null && (
-                    <span className="text-muted-foreground text-[13px] tabular-nums">
-                      {n(exportScopeCount(preview, option.value))} tasks
-                    </span>
-                  )}
-                </Label>
-                <span
-                  id={`${id}-${option.value}`}
-                  className="text-muted-foreground pl-5.5 text-[12px]"
-                >
-                  {preview !== null
-                    ? option.hint(preview)
-                    : previewError === null
-                      ? 'Counting…'
-                      : `Couldn’t count: ${describeError(previewError)}`}
-                </span>
-              </div>
-            ))}
-          </RadioGroup>
-          {preview !== null && fitLine(capacity, preview, scope) !== null && (
-            <p className="text-muted-foreground font-book text-[12px]">
-              {fitLine(capacity, preview, scope)}
-            </p>
-          )}
-          {error !== null && (
-            <p role="alert" className="text-state-failed text-[12px]">
-              {error}
-            </p>
-          )}
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+    <Dialog
+      open={open}
+      onClose={() => onOpenChange(false)}
+      title="Export to Linear"
+      description="Creates a Linear record for each task here that has none. Linking only mirrors changes made after it."
+      footer={
+        <>
+          <Button variant="quiet" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
           <Button
+            variant="primary"
             disabled={sending || total === null || total === 0}
             onClick={() => void start()}
           >
@@ -185,8 +127,47 @@ export function LinearExportDialog({
               ? 'Export'
               : `Export ${n(total)} task${total === 1 ? '' : 's'}`}
           </Button>
-        </DialogFooter>
-      </DialogContent>
+        </>
+      }
+    >
+      <div className={styles.body}>
+        <RadioGroup
+          label="What to export"
+          value={scope}
+          onChange={(value) => {
+            const picked = SCOPES.find((option) => option.value === value);
+            if (picked !== undefined) setScope(picked.value);
+          }}
+          options={SCOPES.map((option) => ({
+            value: option.value,
+            label: (
+              <>
+                {option.label}
+                {preview !== null && (
+                  <span className={styles.count}>
+                    {' '}
+                    {n(exportScopeCount(preview, option.value))} tasks
+                  </span>
+                )}
+              </>
+            ),
+            hint:
+              preview !== null
+                ? option.hint(preview)
+                : previewError === null
+                  ? 'Counting…'
+                  : `Couldn’t count: ${describeError(previewError)}`,
+          }))}
+        />
+        {preview !== null && fitLine(capacity, preview, scope) !== null && (
+          <p className={styles.note}>{fitLine(capacity, preview, scope)}</p>
+        )}
+        {error !== null && (
+          <p role="alert" className={styles.error}>
+            {error}
+          </p>
+        )}
+      </div>
     </Dialog>
   );
 }

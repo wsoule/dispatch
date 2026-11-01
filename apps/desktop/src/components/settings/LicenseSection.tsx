@@ -1,12 +1,12 @@
 import type { LicenseStatus, TeamKeys } from '@dispatch/client';
+import { Button, TextField } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { KeyRound } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
+import styles from './LicenseSection.module.css';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
 
 interface LicenseSectionProps {
   data: DispatchProjectData;
@@ -107,14 +107,14 @@ export function LicenseSection({ data }: LicenseSectionProps) {
           subtitle={`${status.used} of ${status.seats} seats used: you and everyone with an active invite.`}
         >
           {status.kind === 'expired' && (
-            <SettingsHint className="text-(--state-waiting-fg)">
+            <SettingsHint className={styles.waiting}>
               The license for {status.org} expired on{' '}
               {status.expiresAt?.slice(0, 10)}. The free plan applies until you
               add a new key; the people invited first keep their seats.
             </SettingsHint>
           )}
           {status.kind === 'invalid' && status.reason !== null && (
-            <SettingsHint className="text-(--state-waiting-fg)">
+            <SettingsHint className={styles.waiting}>
               The installed key was not accepted: {status.reason}.
             </SettingsHint>
           )}
@@ -136,32 +136,36 @@ export function LicenseSection({ data }: LicenseSectionProps) {
         {canInstall ? (
           <SettingsRow title="Paste a key" htmlFor="license-key" stacked>
             <form
-              className="flex flex-wrap items-center gap-2"
+              className={styles.form}
               onSubmit={(e) => {
                 e.preventDefault();
                 void install();
               }}
             >
-              <Input
+              <TextField
                 id="license-key"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 placeholder="dispatch1.…"
                 spellCheck={false}
                 autoComplete="off"
-                className="min-w-[260px] flex-1 font-mono"
+                className={styles.key}
               />
-              <Button type="submit" disabled={draft.trim() === '' || pending}>
-                <KeyRound />
+              <Button
+                type="submit"
+                variant="primary"
+                icon={<KeyRound size={14} strokeWidth={1.8} />}
+                disabled={draft.trim() === '' || pending}
+              >
                 {pending ? 'Checking…' : 'Install'}
               </Button>
             </form>
-            <SettingsHint className="mt-1.5">
+            <SettingsHint className={styles.spaced}>
               Checked on this machine; nothing is sent anywhere. An invalid key
               is refused and the current one stays.
             </SettingsHint>
             {error !== null && (
-              <p role="alert" className="text-state-failed mt-1.5 text-[13px]">
+              <p role="alert" className={styles.error}>
                 {error}
               </p>
             )}
@@ -215,7 +219,7 @@ function TeamLicenseGroup({
             canShare ? (
               <Button
                 size="sm"
-                variant="outline"
+                variant="secondary"
                 disabled={sharing}
                 onClick={onShare}
               >
@@ -225,7 +229,7 @@ function TeamLicenseGroup({
           }
         >
           {error !== null && (
-            <p role="alert" className="text-state-failed mt-1.5 text-[13px]">
+            <p role="alert" className={styles.error}>
               {error}
             </p>
           )}

@@ -14,7 +14,7 @@ import {
   syncPlacePatch,
 } from './DaemonConfigGroups';
 import { OPERATOR_ONLY } from './fields';
-import { testConfig as config } from './fixtures.test-helper';
+import { testConfig as config, visibleText } from './fixtures.test-helper';
 import { PreviewsSection } from './PreviewsSection';
 import { moved, StatusesGroup, VerifyStepsList } from './ProjectGroups';
 import { QueueWeightsGroup } from './QueueWeightsGroup';
@@ -78,7 +78,7 @@ test('previews: below the operator tier the commands are read-only', () => {
   expect(screen.queryByRole('textbox', { name: 'Start command' })).toBeNull();
   // The reason is the lock's accessible name, not a printed sentence.
   expect(screen.getAllByLabelText(OPERATOR_ONLY).length).toBeGreaterThan(0);
-  expect(screen.queryByText(OPERATOR_ONLY)).toBeNull();
+  expect(visibleText(OPERATOR_ONLY)).toEqual([]);
 });
 
 test('remotes: a filled form adds one, and only a real port is accepted', () => {
@@ -232,9 +232,9 @@ test('daemon: keeping the receipt log and its branch are the owner’s', () => {
     />
   );
   expect(
-    screen
-      .getByRole('switch', { name: 'Keep a receipt log' })
-      .hasAttribute('data-disabled')
+    screen.getByRole<HTMLButtonElement>('switch', {
+      name: 'Keep a receipt log',
+    }).disabled
   ).toBe(true);
   expect(screen.queryByRole('textbox', { name: 'Branch' })).toBeNull();
 });
@@ -261,9 +261,9 @@ test('board sync: turning sharing on and its branch are the owner’s', () => {
     />
   );
   expect(
-    screen
-      .getByRole('switch', { name: 'Share this board with teammates' })
-      .hasAttribute('data-disabled')
+    screen.getByRole<HTMLButtonElement>('switch', {
+      name: 'Share this board with teammates',
+    }).disabled
   ).toBe(true);
   expect(screen.queryByRole('textbox', { name: 'Branch' })).toBeNull();
 });
@@ -392,7 +392,7 @@ test('task files: committing to the main branch is the owner’s', () => {
   const toggle = screen.getByRole('switch', {
     name: 'Commit task files to the main branch',
   });
-  expect(toggle.hasAttribute('data-disabled')).toBe(true);
+  expect((toggle as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(screen.getByText('Commit task files to the main branch'));
   expect(r.saved).toEqual([]);
 });

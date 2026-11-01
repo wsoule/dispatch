@@ -1,0 +1,8 @@
+/* The sync status row's warning lines (BoardSyncGroup.tsx). */
+.failed {
+  color: var(--red);
+}
+
+.waiting {
+  color: var(--amber);
+}

@@ -1,11 +1,12 @@
 import type { BoardSyncOffReason, BoardSyncStatus } from '@dispatch/client';
+import { Button } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
+import styles from './BoardSyncGroup.module.css';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
-import { Button } from '@/ui/button';
 
 interface BoardSyncGroupProps {
   data: DispatchProjectData;
@@ -107,36 +108,36 @@ export function BoardSyncGroup({ data }: BoardSyncGroupProps) {
       <SettingsRow
         title={syncedWhen(status)}
         keywords="sync now last synced"
-        subtitle={<span className="font-mono">{syncedVia(status)}</span>}
+        subtitle={<span className="mono">{syncedVia(status)}</span>}
         control={
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
+            icon={<RefreshCw size={14} strokeWidth={1.8} />}
             disabled={client === null || syncing}
             onClick={() => void syncNow()}
           >
-            <RefreshCw />
             {syncing ? 'Syncing…' : 'Sync now'}
           </Button>
         }
       >
         {syncError !== null && (
-          <SettingsHint className="text-state-failed">
+          <SettingsHint className={styles.failed}>
             Couldn&rsquo;t sync: {syncError}
           </SettingsHint>
         )}
         {status.restartRequired !== undefined && (
-          <SettingsHint className="text-(--state-waiting-fg)">
+          <SettingsHint className={styles.waiting}>
             {status.restartRequired}
           </SettingsHint>
         )}
         {status.paused !== null && (
-          <SettingsHint className="text-(--state-waiting-fg)">
+          <SettingsHint className={styles.waiting}>
             {status.paused}
           </SettingsHint>
         )}
         {status.lastError !== null && (
-          <SettingsHint className="text-(--state-waiting-fg)">
+          <SettingsHint className={styles.waiting}>
             Couldn&rsquo;t reach the remote: {status.lastError}. Your changes
             are safe here and go out on the next successful sync.
           </SettingsHint>

@@ -1,5 +1,5 @@
 import type { LinearUnlinkedTask } from '@dispatch/client';
-import { ChevronRight } from 'lucide-react';
+import { Button, Chip, Disclosure, ProgressRule } from '@dispatch/ui';
 import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
@@ -15,18 +15,8 @@ import {
   retryableTaskIds,
   UNLINKED_REASON_LABEL,
 } from '../../lib/linearSettings';
+import styles from './LinearSettingsGroups.module.css';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
-import { PillButton } from '@/ui/ai/pill';
-import { Badge } from '@/ui/badge';
-import { Button } from '@/ui/button';
-import { PanelRow } from '@/ui/chrome';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/ui/collapsible';
-import { Progress } from '@/ui/progress';
-import { ScrollArea } from '@/ui/scroll-area';
 
 // The attempts and timing of a create that failed or waits to be retried.
 function attemptLine(task: LinearUnlinkedTask): string | null {
@@ -74,27 +64,20 @@ function UnlinkedRow({
   }
   const attempts = attemptLine(task);
   return (
-    <PanelRow
-      data-testid="linear-unlinked-row"
-      className="flex-nowrap items-start gap-3 py-2"
-    >
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="text-foreground min-w-0 truncate text-[13px]">
-            {task.title}
-          </span>
-          <Badge
-            variant={
-              retryable && task.lastError !== null ? 'destructive' : 'secondary'
-            }
-          >
-            {UNLINKED_REASON_LABEL[task.reason]}
-          </Badge>
+    <div data-testid="linear-unlinked-row" className={styles.unlinkedRow}>
+      <div className={styles.unlinkedText}>
+        <div className={styles.unlinkedHead}>
+          <span className={styles.unlinkedTitle}>{task.title}</span>
+          {retryable && task.lastError !== null ? (
+            <Chip tone="danger" filled>
+              {UNLINKED_REASON_LABEL[task.reason]}
+            </Chip>
+          ) : (
+            <Chip>{UNLINKED_REASON_LABEL[task.reason]}</Chip>
+          )}
         </div>
         {task.lastError !== null && (
-          <span className="text-state-failed text-[12px]">
-            {task.lastError}
-          </span>
+          <span className={styles.error}>{task.lastError}</span>
         )}
         {attempts !== null && <SettingsHint>{attempts}</SettingsHint>}
         {task.reason === 'moved-out' && (
@@ -102,31 +85,33 @@ function UnlinkedRow({
             Its issue moved to another team; link that team to follow it.
           </SettingsHint>
         )}
-        {error !== null && (
-          <span className="text-state-failed text-[12px]">{error}</span>
-        )}
+        {error !== null && <span className={styles.error}>{error}</span>}
       </div>
       {sendable && (
-        <div className="flex shrink-0 items-center gap-2">
+        <div className={styles.unlinkedActions}>
           {retryable && (
-            <PillButton
+            <Button
+              variant="secondary"
+              size="sm"
               aria-label={`Stop retrying ${task.title}`}
               disabled={pending}
               onClick={() => void act(onForget)}
             >
               Stop retrying
-            </PillButton>
+            </Button>
           )}
-          <PillButton
+          <Button
+            variant="secondary"
+            size="sm"
             aria-label={`${retryable ? 'Retry' : 'Send'} ${task.title}`}
             disabled={!canSend || pending}
             onClick={() => void act(onSend)}
           >
             {retryable ? 'Retry' : 'Send'}
-          </PillButton>
+          </Button>
         </div>
       )}
-    </PanelRow>
+    </div>
   );
 }
 
@@ -192,10 +177,11 @@ export function LinearCoverageGroup({
         }
       >
         {total !== null && linked !== null && total > 0 && (
-          <Progress
+          <ProgressRule
             aria-label="Tasks in Linear"
-            value={Math.round((linked / total) * 100)}
-            className="h-1.5"
+            done={linked}
+            total={total}
+            label={null}
           />
         )}
       </SettingsRow>
@@ -206,12 +192,14 @@ export function LinearCoverageGroup({
           subtitle={describeUnlinkedCounts(coverage.counts)}
           control={
             retryIds.length > 0 ? (
-              <PillButton
+              <Button
+                variant="secondary"
+                size="sm"
                 disabled={!canSend || retrying}
                 onClick={() => void retryAll()}
               >
                 {`Retry now (${String(retryIds.length)})`}
-              </PillButton>
+              </Button>
             ) : undefined
           }
         >
@@ -220,39 +208,29 @@ export function LinearCoverageGroup({
           )}
           {outcome !== null && <SettingsHint>{outcome}</SettingsHint>}
           {retryError !== null && (
-            <span className="text-state-failed text-[12px]">{retryError}</span>
+            <span className={styles.error}>{retryError}</span>
           )}
           {coverage.unlinked.length > 0 && (
-            <Collapsible>
-              <CollapsibleTrigger
-                render={
-                  <Button variant="ghost" size="xs" className="group -ml-2" />
-                }
-              >
-                <ChevronRight
-                  aria-hidden
-                  className="transition-transform duration-100 group-data-panel-open:rotate-90"
-                />
-                {`Show ${coverage.unlinked.length.toLocaleString('en-US')} tasks`}
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <ScrollArea className="max-h-72">
-                  {coverage.unlinked.map((task) => (
-                    <UnlinkedRow
-                      key={task.id}
-                      task={task}
-                      canSend={canSend}
-                      onSend={async (id) => {
-                        await data.handleRetryLinear([id]);
-                      }}
-                      onForget={async (id) => {
-                        await data.handleForgetLinear([id]);
-                      }}
-                    />
-                  ))}
-                </ScrollArea>
-              </CollapsibleContent>
-            </Collapsible>
+            <Disclosure
+              variant="button"
+              summary={`Show ${coverage.unlinked.length.toLocaleString('en-US')} tasks`}
+            >
+              <div className={styles.unlinkedList}>
+                {coverage.unlinked.map((task) => (
+                  <UnlinkedRow
+                    key={task.id}
+                    task={task}
+                    canSend={canSend}
+                    onSend={async (id) => {
+                      await data.handleRetryLinear([id]);
+                    }}
+                    onForget={async (id) => {
+                      await data.handleForgetLinear([id]);
+                    }}
+                  />
+                ))}
+              </div>
+            </Disclosure>
           )}
         </SettingsRow>
       )}
