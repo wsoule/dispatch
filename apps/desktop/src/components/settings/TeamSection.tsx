@@ -3,6 +3,7 @@ import type {
   IssuedTeamToken,
   TeamTokenHolder,
 } from '@dispatch/client';
+import { Button, Chip, Select, TextField } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Copy, UserMinus, UserPlus } from 'lucide-react';
 import { useState } from 'react';
@@ -12,18 +13,8 @@ import { NEEDS_DECIDE, useSettingsAccess } from './access';
 import { MachinesGroup } from './MachinesGroup';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import { TeamEncryptionGroup } from './TeamEncryptionGroup';
+import styles from './TeamSection.module.css';
 import { TeamSetupGroup } from './TeamSetupGroup';
-import { cn } from '@/lib/utils';
-import { Pill } from '@/ui/ai/pill';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/ui/select';
 
 interface TeamSectionProps {
   data: DispatchProjectData;
@@ -88,9 +79,15 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
   return (
     <Button
-      variant="outline"
       size="sm"
       aria-label={`Copy ${label}`}
+      icon={
+        state === 'copied' ? (
+          <Check size={14} strokeWidth={1.8} />
+        ) : (
+          <Copy size={14} strokeWidth={1.8} />
+        )
+      }
       onClick={() => {
         navigator.clipboard
           .writeText(value)
@@ -98,7 +95,6 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
           .catch(() => setState('failed'));
       }}
     >
-      {state === 'copied' ? <Check /> : <Copy />}
       {state === 'copied'
         ? 'Copied'
         : state === 'failed'
@@ -213,27 +209,21 @@ export function TeamSection({ data }: TeamSectionProps) {
     <>
       <TeamSetupGroup data={data} />
       <TeamEncryptionGroup data={data} />
-      <details
-        data-testid="team-machines"
-        className="group flex flex-col gap-4"
-      >
-        <summary className="text-muted-foreground cursor-pointer px-0.5 text-[13px] select-none">
+      <details data-testid="team-machines" className={styles.fold}>
+        <summary className={styles.summary}>
           Machines: keys, fingerprints and admitting by hand
         </summary>
-        <div className="mt-3 flex flex-col gap-6">
+        <div className={styles.foldBody}>
           <MachinesGroup data={data} />
         </div>
       </details>
       {/* Not a team invite: a token for using this machine's Dispatch from a
           browser, with nothing installed on the other end. */}
-      <details
-        data-testid="team-browser-access"
-        className="group flex flex-col gap-4"
-      >
-        <summary className="text-muted-foreground cursor-pointer px-0.5 text-[13px] select-none">
+      <details data-testid="team-browser-access" className={styles.fold}>
+        <summary className={styles.summary}>
           Browser access: let someone use this machine&rsquo;s Dispatch
         </summary>
-        <div className="mt-3 flex flex-col gap-6">
+        <div className={styles.foldBody}>
           <SettingsGroup
             title="Give someone browser access"
             requires="none"
@@ -246,62 +236,51 @@ export function TeamSection({ data }: TeamSectionProps) {
               stacked
             >
               <form
-                className="flex flex-wrap items-center gap-2"
+                className={styles.inviteForm}
                 onSubmit={(e) => {
                   e.preventDefault();
                   void invite();
                 }}
               >
-                <Input
+                <TextField
                   id="team-invite-who"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="ada@example.com"
-                  className="min-w-[200px] flex-1"
+                  className={styles.who}
                 />
                 <Select
+                  label="Tier"
                   value={tier}
-                  onValueChange={(v) => setTier(v as AuthTier)}
+                  options={grantable.map((t) => ({
+                    value: t,
+                    label: TIER_INFO[t].label,
+                  }))}
+                  className={styles.tier}
+                  onChange={(v) => {
+                    const picked = grantable.find((t) => t === v);
+                    if (picked !== undefined) setTier(picked);
+                  }}
+                />
+                <Select
+                  label="Expires after"
+                  value={expiry}
+                  options={EXPIRY_CHOICES}
+                  className={styles.expiry}
+                  onChange={setExpiry}
+                />
+                <Button
+                  type="submit"
+                  variant="primary"
+                  icon={<UserPlus size={14} strokeWidth={1.8} />}
+                  disabled={email.trim() === '' || pending}
                 >
-                  <SelectTrigger aria-label="Tier" className="w-[120px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {grantable.map((t) => (
-                      <SelectItem key={t} value={t}>
-                        {TIER_INFO[t].label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select value={expiry} onValueChange={setExpiry}>
-                  <SelectTrigger
-                    aria-label="Expires after"
-                    className="w-[110px]"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {EXPIRY_CHOICES.map((c) => (
-                      <SelectItem key={c.value} value={c.value}>
-                        {c.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button type="submit" disabled={email.trim() === '' || pending}>
-                  <UserPlus />
                   Create token
                 </Button>
               </form>
-              <SettingsHint className="mt-1.5">
-                {TIER_INFO[tier].adds}.
-              </SettingsHint>
+              <SettingsHint>{TIER_INFO[tier].adds}.</SettingsHint>
               {error !== null && (
-                <p
-                  role="alert"
-                  className="text-state-failed mt-1.5 text-[13px]"
-                >
+                <p role="alert" className={styles.error}>
                   {error}
                 </p>
               )}
@@ -313,13 +292,11 @@ export function TeamSection({ data }: TeamSectionProps) {
                 subtitle="They open the address in a browser and paste the token on the sign-in screen. The token is only shown once. If it's lost, create a new one to replace it."
                 stacked
               >
-                <div className="flex flex-col gap-2">
+                <div className={styles.stack}>
                   {origins.length > 0 ? (
                     origins.map((origin) => (
-                      <div key={origin} className="flex items-center gap-2">
-                        <code className="bg-surface-quaternary rounded-control min-w-0 flex-1 truncate px-2 py-1 font-mono text-[12px]">
-                          {origin}
-                        </code>
+                      <div key={origin} className={styles.copyLine}>
+                        <code className={styles.code}>{origin}</code>
                         <CopyButton value={origin} label="address" />
                       </div>
                     ))
@@ -327,17 +304,14 @@ export function TeamSection({ data }: TeamSectionProps) {
                     <SettingsHint>
                       Dispatch only accepts connections from this machine right
                       now. To let them connect, restart it with{' '}
-                      <code className="font-mono">
+                      <code className="mono">
                         dispatch serve --host 0.0.0.0
                       </code>
                       .
                     </SettingsHint>
                   )}
-                  <div className="flex items-center gap-2">
-                    <code
-                      data-testid="issued-token"
-                      className="bg-surface-quaternary rounded-control min-w-0 flex-1 truncate px-2 py-1 font-mono text-[12px]"
-                    >
+                  <div className={styles.copyLine}>
+                    <code data-testid="issued-token" className={styles.code}>
                       {issued.token}
                     </code>
                     <CopyButton value={issued.token} label="token" />
@@ -364,19 +338,17 @@ export function TeamSection({ data }: TeamSectionProps) {
                 <SettingsRow
                   key={holder.handle}
                   title={
-                    <span className="flex items-center gap-2">
+                    <span className={styles.holder}>
                       <span
                         aria-hidden
-                        className={cn(
-                          'size-1.5 shrink-0 rounded-full',
-                          online.has(holder.handle)
-                            ? 'bg-state-review'
-                            : 'bg-muted-foreground/40'
-                        )}
+                        className={styles.dot}
+                        data-tone={
+                          online.has(holder.handle) ? 'success' : 'muted'
+                        }
                       />
                       {holder.handle}
-                      <Pill>{TIER_INFO[holder.tier].label}</Pill>
-                      <span className="sr-only">
+                      <Chip>{TIER_INFO[holder.tier].label}</Chip>
+                      <span className="srOnly">
                         {online.has(holder.handle) ? 'online' : 'offline'}
                       </span>
                     </span>
@@ -384,8 +356,9 @@ export function TeamSection({ data }: TeamSectionProps) {
                   subtitle={holderDates(holder)}
                   control={
                     <Button
-                      variant="ghost"
+                      variant="quiet"
                       size="sm"
+                      icon={<UserMinus size={14} strokeWidth={1.8} />}
                       disabled={above}
                       title={
                         above
@@ -395,7 +368,6 @@ export function TeamSection({ data }: TeamSectionProps) {
                       aria-label={`Remove ${holder.handle}`}
                       onClick={() => void revoke(holder.handle)}
                     >
-                      <UserMinus />
                       Remove
                     </Button>
                   }

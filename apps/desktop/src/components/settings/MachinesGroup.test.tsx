@@ -10,8 +10,8 @@ import {
 } from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
 
-import { accessFor, SettingsAccessProvider } from './access';
-import { dataWith } from './fixtures.test-helper';
+import { accessFor, NEEDS_DECIDE, SettingsAccessProvider } from './access';
+import { dataWith, visibleText } from './fixtures.test-helper';
 import { MachinesGroup } from './MachinesGroup';
 
 const base: TeamKeys = {
@@ -372,9 +372,8 @@ test('explains the tier instead of showing a refused request', async () => {
     'auth_insufficient_tier'
   );
   mount(() => Promise.reject(refused));
-  expect(
-    await screen.findByText(/Changing settings needs Can approve access/)
-  ).toBeTruthy();
+  // The lock's tooltip holds the same words, hidden until hovered.
+  await waitFor(() => expect(visibleText(NEEDS_DECIDE)).toHaveLength(1));
 });
 
 // Minor (1): an operator on a member's machine sees no admin control.

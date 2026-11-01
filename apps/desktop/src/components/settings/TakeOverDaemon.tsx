@@ -1,8 +1,9 @@
+import { Button } from '@dispatch/ui';
 import { RotateCw } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DaemonTakeover } from '../../lib/daemonAuth';
-import { Button } from '@/ui/button';
+import styles from './TakeOverDaemon.module.css';
 
 /** Items the attached window cannot list, and what a takeover does for them. */
 export function takeoverWaitingNotice(waiting: number): string {
@@ -55,9 +56,9 @@ export function TakeOverDaemon({
   }
 
   return (
-    <div className="flex flex-col items-start gap-1.5">
+    <div className={styles.takeover}>
       {takeover.waiting > 0 && (
-        <span className="text-foreground">
+        <span className={styles.strong}>
           {takeoverWaitingNotice(takeover.waiting)}
         </span>
       )}
@@ -65,21 +66,19 @@ export function TakeOverDaemon({
         <span>{takeoverBusyReason(takeover.busy ?? [])}</span>
       ) : confirming ? (
         <>
-          <span className="text-foreground">
+          <span className={styles.strong}>
             {takeoverParkedConfirm(takeover.parked)}
           </span>
-          <div className="flex items-center gap-2">
+          <div className={styles.actions}>
+            {/* Gr8r's Button takes no data-*, so the test hook wraps it. */}
+            <span data-testid="daemon-takeover-confirm" className={styles.hook}>
+              <Button size="sm" onClick={() => void restart()}>
+                Restart anyway
+              </Button>
+            </span>
             <Button
               size="sm"
-              variant="outline"
-              data-testid="daemon-takeover-confirm"
-              onClick={() => void restart()}
-            >
-              Restart anyway
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
+              variant="quiet"
               onClick={() => setConfirming(false)}
             >
               Cancel
@@ -87,21 +86,21 @@ export function TakeOverDaemon({
           </div>
         </>
       ) : (
-        <Button
-          size="sm"
-          variant="outline"
-          data-testid="daemon-takeover"
-          disabled={restarting}
-          onClick={() =>
-            takeover.parked > 0 ? setConfirming(true) : void restart()
-          }
-        >
-          <RotateCw aria-hidden className="size-3" />
-          {restarting ? 'Restarting…' : 'Restart Dispatch from this app'}
-        </Button>
+        <span data-testid="daemon-takeover" className={styles.hook}>
+          <Button
+            size="sm"
+            icon={<RotateCw size={12} strokeWidth={1.8} />}
+            disabled={restarting}
+            onClick={() =>
+              takeover.parked > 0 ? setConfirming(true) : void restart()
+            }
+          >
+            {restarting ? 'Restarting…' : 'Restart Dispatch from this app'}
+          </Button>
+        </span>
       )}
       {error !== null && (
-        <span role="alert" className="text-state-failed">
+        <span role="alert" className={styles.error}>
           {error}
         </span>
       )}

@@ -1,0 +1,23 @@
+/* "Start a team" (StartTeamRow.tsx): where the board is kept, then the repo URL. */
+
+/* Carries a data-testid for a Button, which takes none itself. */
+.hook {
+  display: inline-flex;
+}
+
+.place {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.choose {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.url {
+  width: 320px;
+  max-width: 100%;
+  font-family: var(--font-mono);
+}

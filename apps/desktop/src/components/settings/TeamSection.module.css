@@ -1,0 +1,93 @@
+/* Settings → Members (TeamSection.tsx): the folded extras, the browser-access invite
+   form and the copyable values it hands back. */
+
+/* A folded extra under the team groups. */
+.fold {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.summary {
+  padding: 0 2px;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  user-select: none;
+}
+
+.foldBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-6);
+  margin-top: var(--s-3);
+}
+
+.inviteForm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* Two classes, so the width wins over the field's own 100%. */
+.inviteForm .who {
+  flex: 1 1 200px;
+  width: auto;
+  min-width: 200px;
+}
+
+.tier {
+  width: 140px;
+}
+
+.expiry {
+  width: 120px;
+}
+
+.error {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--red);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+/* A value to copy and its Copy button. */
+.copyLine {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.code {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--s-1) var(--s-2);
+  overflow: hidden;
+  border-radius: var(--r-sm);
+  background: var(--sunken);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.holder {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* Online (success) or offline (muted), from the data-tone hook. */
+.dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--tone);
+}

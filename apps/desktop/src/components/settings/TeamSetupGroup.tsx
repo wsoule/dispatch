@@ -1,5 +1,6 @@
 import type { TeamInvite, TeamStatus } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
+import { Button, TextField } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
@@ -9,8 +10,7 @@ import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import { StartTeamRow } from './StartTeamRow';
 import { TakeOverDaemon } from './TakeOverDaemon';
 import { CopyButton } from './TeamSection';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
+import styles from './TeamSetupGroup.module.css';
 
 interface TeamSetupGroupProps {
   data: DispatchProjectData;
@@ -141,11 +141,13 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
       {s.problems.map((p) => (
         <SettingsRow
           key={p.message}
-          title={<span className="text-(--state-waiting-fg)">{p.message}</span>}
+          title={
+            <span data-tone="warning" className={styles.warning}>
+              {p.message}
+            </span>
+          }
           subtitle={
-            p.fix === null ? undefined : (
-              <span className="font-mono">{p.fix}</span>
-            )
+            p.fix === null ? undefined : <span className="mono">{p.fix}</span>
           }
         />
       ))}
@@ -184,16 +186,13 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
           subtitle="Store this where you keep other recovery codes; it is the only way back in if every admin machine is lost. It is shown once."
           stacked
           control={
-            <div className="flex items-center gap-2">
-              <code
-                data-testid="team-recovery-code"
-                className="font-mono text-[12px] break-all"
-              >
+            <div className={styles.line}>
+              <code data-testid="team-recovery-code" className={styles.secret}>
                 {recovery}
               </code>
               <Button
                 size="sm"
-                variant="ghost"
+                variant="quiet"
                 onClick={() => setRecovery(null)}
               >
                 Done
@@ -202,7 +201,9 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
           }
         />
       )}
-      {notice !== null && <SettingsHint>{notice}</SettingsHint>}
+      {notice !== null && (
+        <SettingsHint className={styles.note}>{notice}</SettingsHint>
+      )}
 
       {canInvite && (
         <SettingsRow
@@ -211,7 +212,7 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
           htmlFor="team-invite-link-for"
           control={
             <form
-              className="flex items-center gap-2"
+              className={styles.line}
               onSubmit={(e) => {
                 e.preventDefault();
                 const who = inviteFor.trim();
@@ -222,23 +223,25 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
                 });
               }}
             >
-              <Input
+              <TextField
                 id="team-invite-link-for"
+                size="sm"
                 aria-label="Email or handle to invite"
                 placeholder="email or handle"
-                className="h-7 w-48 text-[12px]"
+                className={styles.inviteInput}
                 value={inviteFor}
                 onChange={(e) => setInviteFor(e.target.value)}
               />
-              <Button
-                type="submit"
-                size="sm"
-                variant="outline"
-                data-testid="team-invite"
-                disabled={busy || inviteFor.trim() === ''}
-              >
-                Invite teammate
-              </Button>
+              {/* Gr8r's Button takes no data-*, so the test hook wraps it. */}
+              <span data-testid="team-invite" className={styles.hook}>
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={busy || inviteFor.trim() === ''}
+                >
+                  Invite teammate
+                </Button>
+              </span>
             </form>
           }
         />
@@ -249,11 +252,8 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
           subtitle={JOIN_STEPS}
           stacked
         >
-          <div className="flex items-center gap-2">
-            <code
-              data-testid="team-invite-link"
-              className="bg-surface-quaternary rounded-control min-w-0 flex-1 truncate px-2 py-1 font-mono text-[12px]"
-            >
+          <div className={styles.line}>
+            <code data-testid="team-invite-link" className={styles.code}>
               {invite.link ?? invite.code}
             </code>
             <CopyButton
@@ -271,7 +271,7 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
           htmlFor="team-join-link"
           control={
             <form
-              className="flex items-center gap-2"
+              className={styles.line}
               onSubmit={(e) => {
                 e.preventDefault();
                 const pasted = link.trim();
@@ -279,25 +279,26 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
                 join(pasted);
               }}
             >
-              <Input
+              <TextField
                 id="team-join-link"
+                size="sm"
                 type="password"
                 autoComplete="off"
                 aria-label="Invite link"
                 placeholder="dispatch-team:…"
-                className="h-7 w-56 text-[12px]"
+                className={styles.joinInput}
                 value={link}
                 onChange={(e) => setLink(e.target.value)}
               />
-              <Button
-                type="submit"
-                size="sm"
-                variant="outline"
-                data-testid="team-join"
-                disabled={busy || link.trim() === ''}
-              >
-                Join
-              </Button>
+              <span data-testid="team-join" className={styles.hook}>
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={busy || link.trim() === ''}
+                >
+                  Join
+                </Button>
+              </span>
             </form>
           }
         />
@@ -311,37 +312,40 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
             </span>
           }
           control={
-            <div className="flex items-center gap-2">
+            <div className={styles.line}>
               <Button
                 size="sm"
-                variant="ghost"
+                variant="quiet"
                 disabled={busy}
                 onClick={() => setRepoWarning(null)}
               >
                 Cancel
               </Button>
-              <Button
-                size="sm"
-                variant="outline"
+              <span
                 data-testid="team-join-confirm-repo"
-                disabled={busy}
-                onClick={() => join(repoWarning.code, true)}
+                className={styles.hook}
               >
-                Join anyway
-              </Button>
+                <Button
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => join(repoWarning.code, true)}
+                >
+                  Join anyway
+                </Button>
+              </span>
             </div>
           }
         />
       )}
       {check !== null && s.state !== 'member' && (
-        <SettingsHint>
+        <SettingsHint className={styles.note}>
           <span data-testid="team-join-check">
             Joined. Optional check: read “{check}” with whoever invited you.
           </span>
         </SettingsHint>
       )}
       {isAdmin && s.problems.length === 0 && s.seats !== null && (
-        <SettingsHint>
+        <SettingsHint className={styles.note}>
           You are an admin: you can admit and remove machines under Machines
           below.
         </SettingsHint>
@@ -350,7 +354,7 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
         <SettingsRow
           title="That didn’t go through"
           subtitle={
-            <span role="alert" className="text-state-failed">
+            <span role="alert" className={styles.error}>
               {error}
             </span>
           }
