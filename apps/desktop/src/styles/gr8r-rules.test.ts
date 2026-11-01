@@ -86,6 +86,7 @@ const GR8R_SCOPE: readonly string[] = [
   'lib/feedState.ts',
   'lib/feedState.test.ts',
   'components/gr8r',
+  'App.module.css',
   'components/shell/AddProjectDialog.tsx',
   'components/shell/AddProjectDialog.module.css',
   'components/shell/CardErrorBoundary.tsx',

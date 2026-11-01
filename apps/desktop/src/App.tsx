@@ -6,7 +6,10 @@ import {
 } from '@dispatch-foo/core/browser';
 import type { DraftRecord } from '@dispatch/client';
 import {
+  BlockBar,
+  EmptyState,
   ShortcutSheet,
+  Spinner,
   toggleShellCollapsed,
   useModKeyLabel,
 } from '@dispatch/ui';
@@ -24,6 +27,7 @@ import {
 
 import { PALETTE_DOCS_LIMIT } from './adapters/palette';
 import { buildProjectsSection, planningProjectMark } from './adapters/shell';
+import styles from './App.module.css';
 import { AwayDigest, useNarratorSince } from './components/chat/AwayDigest';
 import { CapturedNotes } from './components/chat/CapturedNotes';
 import { ForYouPosts } from './components/chat/ForYouPosts';
@@ -221,9 +225,7 @@ import { TerminalsView } from './views/TerminalsView';
 import { ThreadsView } from './views/ThreadsView';
 import { TimelineView } from './views/TimelineView';
 import { type OverseerFocus, TwoViewOverseer } from './views/TwoViewOverseer';
-import { PageHeaderShellContext } from '@/ui/ai/page-header';
-import { EmptyState, SectionLabel } from '@/ui/chrome';
-import { Spinner } from '@/ui/spinner';
+// The legacy views' tooltips share its zero delay until they move onto Gr8r's Tooltip.
 import { TooltipProvider } from '@/ui/tooltip';
 
 // The hosts a task page and a Flight Plan draw from, provided together so the shell's
@@ -251,14 +253,6 @@ function SurfaceHosts({
     </TaskPageHostContext.Provider>
   );
 }
-
-// The shell owns the sidebar and the window's drag region; page headers draw neither.
-const TWO_VIEWS_PAGE_HEADER = {
-  sidebarHidden: false,
-  onToggleSidebar: () => {},
-  trafficLightInset: false,
-  dragRegion: false,
-};
 
 function App() {
   const queryClient = useQueryClient();
@@ -1367,9 +1361,18 @@ function App() {
   // Resolution, first-project and get-started screens take precedence over any view.
   const gateScreen: ReactNode =
     resolutionError !== null ? (
-      <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-        <TriangleAlert className="text-destructive size-5" />
-        <EmptyState message={resolutionError} className="p-0" />
+      <div className={styles.centred}>
+        <EmptyState
+          icon={
+            <TriangleAlert
+              className={styles.alert}
+              size={20}
+              strokeWidth={1.8}
+            />
+          }
+        >
+          {resolutionError}
+        </EmptyState>
       </div>
     ) : noProjectYet || showGetStarted ? (
       <SetupView
@@ -1383,9 +1386,10 @@ function App() {
         }}
       />
     ) : stillResolving ? (
-      <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-        <Spinner className="text-muted-foreground size-5" />
-        <EmptyState message="Loading project…" className="p-0" />
+      <div className={styles.centred}>
+        <EmptyState icon={<Spinner size="lg" label={null} />}>
+          Loading project…
+        </EmptyState>
       </div>
     ) : null;
 
@@ -1716,11 +1720,11 @@ function App() {
           <div className="px-4 pt-2">
             <TasksBackButton onBack={closeTwoViewsPage} />
           </div>
-          <EmptyState
-            className="flex-1"
-            heading="Only the operator can open this"
-            description="Terminals act on the host machine as the person running Dispatch."
-          />
+          <div className={styles.centred}>
+            <EmptyState label="Only the operator can open this">
+              Terminals act on the host machine as the person running Dispatch.
+            </EmptyState>
+          </div>
         </div>
       );
     }
@@ -1835,7 +1839,7 @@ function App() {
                 composerTo={null}
                 composerLabel=""
                 onOpenRef={openRef}
-                header={<SectionLabel>Discussion</SectionLabel>}
+                header={<BlockBar title="Discussion" />}
                 emptyText="No discussion yet. Messages that reference this doc show here."
               />
             )}
@@ -1855,10 +1859,9 @@ function App() {
       case 'draft': {
         const draft = data.drafts.find((d) => d.id === page.draftId);
         return draft === undefined || data.config === null ? (
-          <EmptyState
-            className="h-full"
-            message="That draft is no longer available."
-          />
+          <div className={styles.centred}>
+            <EmptyState>That draft is no longer available.</EmptyState>
+          </div>
         ) : (
           <DraftView
             projectName={activeProject?.name}
@@ -2471,79 +2474,75 @@ function App() {
       <ShellActionsProvider value={shellActions}>
         <DeepLinkProvider value={deepLinkActions}>
           <SavedViewsProvider value={savedViews}>
-            <PageHeaderShellContext.Provider value={TWO_VIEWS_PAGE_HEADER}>
-              <PeopleProvider people={data.people} me={data.me}>
-                <SurfaceHosts
-                  taskPage={taskPageHost}
-                  flightPlan={flightPlanHost}
-                  planning={planning}
-                >
-                  <div className="bg-frame relative flex h-screen flex-col overflow-hidden">
-                    {twoViewsFrame}
+            <PeopleProvider people={data.people} me={data.me}>
+              <SurfaceHosts
+                taskPage={taskPageHost}
+                flightPlan={flightPlanHost}
+                planning={planning}
+              >
+                <div className="bg-frame relative flex h-screen flex-col overflow-hidden">
+                  {twoViewsFrame}
 
-                    <QuickCaptureDialog
-                      open={quickCaptureOpen}
-                      onOpenChange={setQuickCaptureOpen}
-                      onCapture={rawData.handleCaptureInbox}
+                  <QuickCaptureDialog
+                    open={quickCaptureOpen}
+                    onOpenChange={setQuickCaptureOpen}
+                    onCapture={rawData.handleCaptureInbox}
+                  />
+
+                  {showCreate && data.config !== null && (
+                    <CreateTaskModal
+                      projectName={activeProject?.name}
+                      statuses={data.config.statuses}
+                      milestones={data.milestones}
+                      initialStatus={createPreset?.status}
+                      labels={labelCatalogue}
+                      onCreate={(input) => data.handleCreate(input)}
+                      onUploadAttachments={data.handleUploadAttachments}
+                      onClose={() => setShowCreate(false)}
                     />
+                  )}
 
-                    {showCreate && data.config !== null && (
-                      <CreateTaskModal
-                        projectName={activeProject?.name}
-                        statuses={data.config.statuses}
-                        milestones={data.milestones}
-                        initialStatus={createPreset?.status}
-                        labels={labelCatalogue}
-                        onCreate={(input) => data.handleCreate(input)}
-                        onUploadAttachments={data.handleUploadAttachments}
-                        onClose={() => setShowCreate(false)}
-                      />
-                    )}
-
-                    {navState.composerOpen && (
-                      <AiTaskComposer
-                        projectName={activeProject?.name}
-                        data={data}
-                        onStartDraft={startDraftAndOpen}
-                        onQuickAdd={(preset) => {
-                          dispatchNav({ type: 'closeNewTask' });
-                          openQuickAddTask(preset);
-                        }}
-                        onClose={() => dispatchNav({ type: 'closeNewTask' })}
-                      />
-                    )}
-
-                    {addProjectOpen && (
-                      <AddProjectDialog
-                        onAdd={async (path) => {
-                          await handleAddProject(path);
-                        }}
-                        onClose={() => setAddProjectOpen(false)}
-                      />
-                    )}
-
-                    <CommandPalette
-                      isOpen={navState.paletteOpen}
-                      entries={paletteEntries}
-                      timeline={
-                        activeProject === null ? null : planning.timeline
-                      }
-                      onNavigate={navigate}
-                      searchDocs={searchDocs}
+                  {navState.composerOpen && (
+                    <AiTaskComposer
+                      projectName={activeProject?.name}
+                      data={data}
+                      onStartDraft={startDraftAndOpen}
+                      onQuickAdd={(preset) => {
+                        dispatchNav({ type: 'closeNewTask' });
+                        openQuickAddTask(preset);
+                      }}
+                      onClose={() => dispatchNav({ type: 'closeNewTask' })}
                     />
+                  )}
 
-                    {/* After the palette in the tree, so the sheet the
+                  {addProjectOpen && (
+                    <AddProjectDialog
+                      onAdd={async (path) => {
+                        await handleAddProject(path);
+                      }}
+                      onClose={() => setAddProjectOpen(false)}
+                    />
+                  )}
+
+                  <CommandPalette
+                    isOpen={navState.paletteOpen}
+                    entries={paletteEntries}
+                    timeline={activeProject === null ? null : planning.timeline}
+                    onNavigate={navigate}
+                    searchDocs={searchDocs}
+                  />
+
+                  {/* After the palette in the tree, so the sheet the
                         reducer stacks over it draws on top. */}
-                    {navState.shortcutsOpen && (
-                      <ShortcutSheet
-                        groups={shortcutGroups}
-                        onClose={() => dispatchNav({ type: 'closeShortcuts' })}
-                      />
-                    )}
-                  </div>
-                </SurfaceHosts>
-              </PeopleProvider>
-            </PageHeaderShellContext.Provider>
+                  {navState.shortcutsOpen && (
+                    <ShortcutSheet
+                      groups={shortcutGroups}
+                      onClose={() => dispatchNav({ type: 'closeShortcuts' })}
+                    />
+                  )}
+                </div>
+              </SurfaceHosts>
+            </PeopleProvider>
           </SavedViewsProvider>
         </DeepLinkProvider>
       </ShellActionsProvider>
