@@ -44,7 +44,9 @@ export function ChangedFilesCard({ files }: { files: readonly ChangedFile[] }) {
   );
 }
 
+// Nothing to count (an edit logged without its strings) draws nothing, never "+0 −0".
 function DiffStat({ added, removed }: { added: number; removed: number }) {
+  if (added === 0 && removed === 0) return null;
   return (
     <span className="ms-auto flex shrink-0 gap-1.5 font-mono text-[11px] tabular-nums">
       <span className="text-green">+{added}</span>

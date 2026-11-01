@@ -141,11 +141,11 @@ function AssistantFooter({ text, ts }: { text: string; ts: string }) {
   return (
     <div
       data-slot="assistant-footer"
-      className="text-muted-foreground mt-1 flex h-6 items-center gap-1 opacity-0 transition-opacity duration-200 group-hover/assistant:opacity-100 focus-within:opacity-100"
+      className="text-muted-foreground -mb-1 flex h-5 items-center gap-1 opacity-0 transition-opacity duration-200 group-hover/assistant:opacity-100 focus-within:opacity-100"
     >
       <IconButton
         label={copied ? 'Copied' : 'Copy reply'}
-        className="size-6"
+        className="size-5"
         onClick={() => {
           void navigator.clipboard?.writeText(text).then(() => setCopied(true));
         }}
