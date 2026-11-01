@@ -1,5 +1,5 @@
 // Wraps an async function so overlapping calls share exactly one in-flight
-// invocation instead of racing multiple concurrent ones — used by the epic
+// invocation instead of racing multiple concurrent ones — used by the milestone
 // `--watch` surface to collapse "several WS events landed while
 // one refetch was already in progress" into a single HTTP round-trip
 // instead of firing one per event. A fresh call starts a new invocation

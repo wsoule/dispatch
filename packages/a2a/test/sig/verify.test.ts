@@ -118,6 +118,46 @@ describe('signed requests', () => {
     );
   });
 
+  // DIS-122: a host reads every POST's body, so a body-less POST such as
+  // `:subscribe` reaches the verifier as zero bytes, not null.
+  it('verifies a body-less POST received with an empty body, and still refuses one given a body', () => {
+    const headers = new Headers({ 'a2a-version': '1.0' });
+    const out = signRequest({
+      method: 'POST',
+      targetUri: 'https://agent.example/a2a/v1/tasks/t-1:subscribe',
+      headers,
+      body: null,
+      keyid: alice.keyid,
+      privateKey: alice.privateKey,
+      now: NOW,
+    });
+    expect(out['content-digest']).toBeUndefined();
+    for (const [k, v] of Object.entries(out)) headers.set(k, v);
+    const req = {
+      method: 'POST',
+      path: '/a2a/v1/tasks/t-1:subscribe',
+      query: '',
+      headers,
+      body: new Uint8Array(0),
+    };
+    expect(verifyRequest(req, facts())).toEqual({
+      ok: true,
+      keyid: alice.keyid,
+    });
+    // A body added in transit is not covered by any digest.
+    expect(verifyRequest({ ...req, body }, facts())).toEqual({
+      ok: false,
+      reason: 'sig_malformed',
+    });
+  });
+
+  it('refuses a signed body stripped in transit', () => {
+    const req = signed();
+    expect(verifyRequest({ ...req, body: new Uint8Array(0) }, facts())).toEqual(
+      { ok: false, reason: 'sig_digest' }
+    );
+  });
+
   it('refuses a request signed for another origin even though Host names this one', () => {
     const req = signed({
       targetUri: 'https://evil.example/a2a/v1/message:send',

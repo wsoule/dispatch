@@ -13,7 +13,7 @@ describe('timelineKind', () => {
     ['run r-1 opened PR: https://github.com/o/r/pull/4', 'pr'],
     ['requested changes (run r-1): tighten the tests', 'changes'],
     ['[run r-1] cancelled', 'stopped'],
-    ['[epic] landed on main', 'merged'],
+    ['[milestone] landed on main', 'merged'],
     ['moved to review', 'note'],
   ] as const)('%s', (text, kind) => {
     expect(timelineKind(text)).toBe(kind);

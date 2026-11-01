@@ -33,7 +33,7 @@ function draftRecord(over: Partial<DraftRecord> = {}): DraftRecord {
 }
 
 // A container the draft may be filed under (only the fields the rail reads).
-function epic(id: string, title: string, kind: string): TaskListItem {
+function container(id: string, title: string, kind: string): TaskListItem {
   return {
     meta: { id, title, kind, icon: null, color: null },
   } as unknown as TaskListItem;
@@ -45,7 +45,7 @@ function mount({
   onCreate = () => Promise.resolve(),
   onRetry,
   send,
-  epics = [],
+  milestones = [],
   dismiss = () => Promise.resolve(),
 }: {
   draft?: DraftRecord;
@@ -53,7 +53,7 @@ function mount({
   onCreate?: (input: CreateInput) => Promise<void>;
   onRetry?: () => Promise<void>;
   send?: ComponentProps<typeof DraftView>['send'];
-  epics?: TaskListItem[];
+  milestones?: TaskListItem[];
   dismiss?: () => Promise<void>;
 } = {}) {
   const dismissed: string[] = [];
@@ -61,7 +61,7 @@ function mount({
   let done = 0;
   const data = {
     config: { statuses: ['draft', 'ready', 'working', 'landed'] },
-    epics,
+    milestones,
     handleDismissDraft: (id: string) => {
       dismissed.push(id);
       return dismiss();
@@ -181,12 +181,12 @@ test('criteria can be removed and added', () => {
 
 test('the rail pickers edit the draft that Create task saves', async () => {
   const { created } = mount({
-    epics: [
-      epic('m-1', 'Search speed', 'milestone'),
+    milestones: [
+      container('m-1', 'Search speed', 'milestone'),
       {
-        ...epic('m-2', 'Old milestone', 'milestone'),
+        ...container('m-2', 'Old milestone', 'milestone'),
         meta: {
-          ...epic('m-2', 'Old milestone', 'milestone').meta,
+          ...container('m-2', 'Old milestone', 'milestone').meta,
           archivedAt: '2026-09-01T00:00:00.000Z',
         },
       } as TaskListItem,

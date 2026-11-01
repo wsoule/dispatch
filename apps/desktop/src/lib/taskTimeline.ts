@@ -33,11 +33,11 @@ export function timelineKind(text: string): TimelineKind {
   return 'note';
 }
 
-/** An Activity line as a timeline row reads it: no `[run r-…]`/`[epic]` routing tag, and
+/** An Activity line as a timeline row reads it: no `[run r-…]`/`[milestone]` routing tag, and
  * a run's `finished: finished — …` said once. */
 function timelineText(text: string): string {
   return text
-    .replace(/^\[(?:run [^\]]+|epic|plan)\]\s*/, '')
+    .replace(/^\[(?:run [^\]]+|milestone|plan)\]\s*/, '')
     .replace(/^finished: (\S+)/, (_, state: string) =>
       state === 'finished' ? 'finished' : state
     );

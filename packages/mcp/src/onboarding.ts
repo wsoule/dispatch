@@ -10,7 +10,7 @@ safely — you never need to edit them directly, though you can if you want to
 
 ## Ids
 
-Task ids look like \`t-1a2b3c\` (tasks) or \`e-1a2b3c\` (epics) — a one-letter
+Task ids look like \`t-1a2b3c\` (tasks) or \`e-1a2b3c\` (milestones) — a one-letter
 kind prefix, a hyphen, six hex characters. Ids are assigned on creation and
 never change.
 
@@ -27,23 +27,31 @@ never change.
 4. Call \`task_save\` with the task's \`id\` and \`status\` to move it forward:
    a started status while you are on it, the review status once the change is
    up for review. When dispatchd runs the task, it writes those statuses
-   itself as the run and merge queue advance.
+   itself as the run and merge queue advance. On a board whose review status
+   is also its working one (a Linear team with no review state), the status
+   cannot say "up for review": leave it and say so with \`task_comment\`.
 
 ## Statuses are config-driven
 
 A repo's \`.dispatch/config.yml\` names its statuses, and that file is always
 the source of truth: \`task_list\` and \`task_save\` validate \`status\`
-against it. A board imported from Linear keeps Linear's names (Backlog, Todo,
-In Progress, In Review, Done, …). Each status has a workflow type — triage,
-backlog, unstarted, started, completed or canceled — and Dispatch keys off the
-type, never the name: unstarted is the ready queue, completed and canceled are
-done. \`statusRoles\` in the config names which status the machinery writes
-when a run is dispatched, goes to review, lands or is dropped.
+against it, ignoring case. A board imported from Linear keeps Linear's names
+(Backlog, Todo, In Progress, In Review, Done, …). Each status has a workflow
+type — triage, backlog, unstarted, started, completed or canceled — and
+Dispatch keys off the type, never the name: unstarted is the ready queue,
+completed and canceled are done. \`statusRoles\` in the config names which
+status the machinery writes when a run is dispatched, goes to review, lands or
+is dropped.
 
 With no statuses configured, the built-ins apply: \`draft\` (backlog),
 \`ready\` (unstarted), \`working\`, \`review\`, \`landing\` (started),
 \`landed\` (completed) and \`dropped\` (canceled); the old names backlog,
-todo, in-progress, in-review, done and cancelled are accepted as aliases.
+todo, in-progress, in-review, done and cancelled are accepted as aliases. On a
+board with its own names those built-in words still work: each is mapped
+through \`statusRoles\` (\`landed\` to the landed role, \`working\` to the
+dispatched one, \`draft\` to the first backlog or else triage status), and a
+word with nothing to map to, such as \`landing\` when the board leaves its role
+unset, is refused.
 
 ## Creating and updating tasks
 

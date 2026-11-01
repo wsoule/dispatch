@@ -130,6 +130,18 @@ export function markRead(state: InboxState, id: string): InboxState {
   };
 }
 
+/** Drops one entry — a notification row's dismiss. Returns `state` unchanged when the id is
+ * unknown. */
+export function removeEntry(state: InboxState, id: string): InboxState {
+  if (!state.entries.some((e) => e.id === id)) return state;
+  return { entries: state.entries.filter((e) => e.id !== id) };
+}
+
+/** Drops every entry — the notification list's "Clear all". */
+export function clearEntries(state: InboxState): InboxState {
+  return state.entries.length === 0 ? state : EMPTY_INBOX;
+}
+
 /** Count of unread entries — the sidebar bell's badge. */
 export function unreadCount(state: InboxState): number {
   return state.entries.reduce((count, e) => (e.read ? count : count + 1), 0);

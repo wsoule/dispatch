@@ -242,7 +242,7 @@ test('a search that names a group shows the whole group', () => {
   search('limits');
   for (const label of [
     'Runs at once',
-    'Runs at once per epic',
+    'Runs at once per milestone',
     'Turns per run',
     'Spend per run',
     'Expected cost per run',
@@ -574,13 +574,16 @@ const CONFIG_PAGES: PageLocks[] = [
   {
     page: 'integrations',
     locked: ['Sync settings', 'Teams', 'Status roles'],
-    open: ['Connection', 'Sync'],
+    open: ['Connection', 'Sync', 'Coverage', 'Capacity'],
     controls: () => [
       screen.getByRole('switch', { name: 'Sync this project with Linear' }),
       screen.getByRole('combobox', { name: 'Direction' }),
       screen.getByLabelText('Poll interval'),
       screen.getByRole('switch', {
         name: 'Send Acceptance Criteria to Linear',
+      }),
+      screen.getByRole('switch', {
+        name: 'Archive finished tasks in Linear too',
       }),
       screen.getByRole('checkbox', { name: 'Link Unknown team' }),
       screen.getByRole('combobox', { name: 'Run finishes status' }),
@@ -760,15 +763,24 @@ describe('below the decide tier, what has its own route stays usable', () => {
     );
   });
 
-  test('Linear, connected: Import and Sync now, but not Disconnect', () => {
+  test('Linear, connected: Import, Export and Sync now, but not Disconnect or archiving', () => {
     renderAt(tierData({ myTier: 'request' }), 'integrations');
-    for (const name of ['Import from Linear', 'Sync now']) {
+    for (const name of [
+      'Import from Linear',
+      'Export to Linear…',
+      'Sync now',
+    ]) {
       expect({
         name,
         disabled: isDisabled(screen.getByRole('button', { name })),
       }).toEqual({ name, disabled: false });
     }
     expect(isDisabled(screen.getByRole('button', { name: 'Disconnect' }))).toBe(
+      true
+    );
+    // Archiving closed issues acts on teammates' records, so it needs decide.
+    expect(rowLock('Archive closed issues in Linear')).toBe(NEEDS_DECIDE);
+    expect(isDisabled(screen.getByRole('button', { name: 'Archive…' }))).toBe(
       true
     );
   });

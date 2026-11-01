@@ -164,7 +164,7 @@ export class DaemonMemoryHost implements MemoryHost {
       title: task.meta.title,
       body: task.body,
       writes: task.meta.writes,
-      epic: task.meta.parent,
+      milestone: task.meta.parent,
       risk: task.meta.risk,
       a2a: this.deps.orchestrator.isA2ATask(taskId),
     };
@@ -245,7 +245,7 @@ export class DaemonMemoryHost implements MemoryHost {
       title,
       detail: `proposal ${p.id} from ${p.author} — ${authorization}`,
       authoredBy: this.deps.ownerRef,
-      epicId: task?.meta.parent ?? null,
+      milestoneId: task?.meta.parent ?? null,
       sourceTaskId: p.taskId,
     });
     this.deps.events.broadcast({ type: 'ledger.changed' });

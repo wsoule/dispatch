@@ -88,7 +88,8 @@ export class LegacyWindow {
 
   /** TaskOpSigner's v1Copy: an older build reads the change while open. */
   v1Copy(op: FederatedOp, piece: TaskChange): void {
-    if (!this.open()) return;
+    // E2e content is never copied in the clear; its switch needs the window closed.
+    if (!this.open() || this.deps.roster.view()?.contentE2e != null) return;
     this.deps.ledger.enqueueV1({
       v: 1,
       replica: this.me,

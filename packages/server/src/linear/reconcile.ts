@@ -2,13 +2,14 @@
 // field, new records created on either side, and every write recorded (merge
 // base, echo, chip link) so the next pass sees exactly what changed since.
 import {
-  canonicalKind,
   containerCreate,
+  fieldHash,
   getSection,
   INITIATIVE_FIELDS,
   initiativePatch,
   initiativePush,
   initiativeValues,
+  isDoneStatus,
   isOutstanding,
   ISSUE_FIELDS,
   ISSUE_FOLLOW_UP_FIELDS,
@@ -16,6 +17,7 @@ import {
   issuePush,
   issueTaskCreate,
   issueValues,
+  labelCollision,
   linearExternal,
   mergeFields,
   MILESTONE_FIELDS,
@@ -49,18 +51,29 @@ import type {
   LinearInitiative,
   LinearIssue,
   LinearLabel,
+  LinearLabelMatch,
   LinearProject,
   LinearProjectMilestone,
   TaskDoc,
-  TaskKind,
   TaskStorePort,
   UpdatePatch,
 } from '@dispatch-foo/core';
 
 import type { TaskChangeBatch } from './batch.js';
-import type { LinearClient, LinearFailure, LinearResult } from './client.js';
+import type {
+  LinearClient,
+  LinearErrorKind,
+  LinearFailure,
+  LinearResult,
+} from './client.js';
+import { LINEAR_USAGE_LIMIT_MESSAGE } from './client.js';
 import type { ConflictRecord, LinearSyncState } from './state.js';
-import { readBase, recordConflicts, writeBase } from './state.js';
+import {
+  CAPACITY_RETRY_MS,
+  readBase,
+  recordConflicts,
+  writeBase,
+} from './state.js';
 import type { PassContext } from './workspace.js';
 import { linkedIssueTeam, track, trackLabel } from './workspace.js';
 
@@ -74,6 +87,16 @@ export interface LinearSyncSummary {
   conflicts: number;
   errors: string[];
   rateLimited: boolean;
+  /** Linear refused a create over the plan's issue limit; later creates were skipped. */
+  usageLimited: boolean;
+  /** Named creates still waiting to land after the pass. */
+  queued: number;
+  /** Tasks whose create failed this pass. */
+  failedTaskIds: string[];
+  /** Tasks whose status moved onto a regenerated workflow state. */
+  migrated: number;
+  /** Closed issues archived in Linear. */
+  archivedIssues: number;
 }
 
 export function emptySummary(at: string): LinearSyncSummary {
@@ -86,6 +109,11 @@ export function emptySummary(at: string): LinearSyncSummary {
     conflicts: 0,
     errors: [],
     rateLimited: false,
+    usageLimited: false,
+    queued: 0,
+    failedTaskIds: [],
+    migrated: 0,
+    archivedIssues: 0,
   };
 }
 
@@ -257,6 +285,19 @@ export interface PassDeps {
   note: (failure: LinearFailure) => string;
   /** Hears every label the pass creates or recolors, to keep caches current. */
   onLabel: (label: LinearLabel) => void;
+  /** Labels Linear holds in a form no team here can apply (a group, a
+   *  retired label), by team and lowercased name: the reason, and until when
+   *  it is not looked up again. Kept across passes by the engine. */
+  blockedLabels?: Map<string, { reason: string; until: number }>;
+}
+
+// How long a label found blocked is not looked up again.
+const BLOCKED_LABEL_MS = 30 * 60_000;
+
+// The Halted a throw carries; anything else is rethrown.
+function haltOf(err: unknown): Halted {
+  if (err instanceof Halted) return err;
+  throw err;
 }
 
 function later(a: string, b: string): string {
@@ -269,7 +310,7 @@ function entityForNewTask(doc: TaskDoc, ctx: PassContext): LinearEntity {
   if (kind === 'initiative' || kind === 'project') return kind;
   if (kind === 'milestone') {
     // A milestone under a linked project is a project milestone; a legacy
-    // epic with no project is a parent issue its tasks hang under.
+    // milestone with no project is a parent issue its tasks hang under.
     return projectAbove(doc, ctx) === null ? 'issue' : 'milestone';
   }
   return 'issue';
@@ -288,6 +329,23 @@ function projectAbove(doc: TaskDoc, ctx: PassContext): string | null {
   return null;
 }
 
+// A label with only LinearLabel's fields, so a lookup's flags stay out of the
+// pass's indexes and the session's label cache.
+function plainLabel(label: LinearLabel): LinearLabel {
+  return {
+    id: label.id,
+    name: label.name,
+    ...(label.color === undefined ? {} : { color: label.color }),
+    group: label.group ?? null,
+    teamId: label.teamId ?? null,
+  };
+}
+
+/** A create's outcome; `capped` means the usage limit stopped it. */
+export type CreateRemoteResult =
+  | { created: true }
+  | { created: false; error: string; capped: boolean };
+
 // How deep a task sits, so parents are created before their children.
 function depth(doc: TaskDoc, ctx: PassContext): number {
   const rank = { initiative: 0, project: 1, milestone: 2, task: 3 };
@@ -305,15 +363,28 @@ function depth(doc: TaskDoc, ctx: PassContext): number {
 /** The writes of one pass, over one snapshot of the task store. */
 export class LinearPass {
   private halted = false;
+  // Set by the first usage-limit refusal: later creates are skipped.
+  private capped = false;
   /** Pairs whose push waited on a newer Linear copy the pass could not take. */
   withheld = 0;
+  /** The failure most recently recorded; createRemote clears it per create. */
+  lastFailure: string | null = null;
+  /** The client's kind for `lastFailure`; null for an engine-side reason. */
+  lastFailureKind: LinearErrorKind | null = null;
   // Tasks this pass created from Linear, already counted as pulled.
   private readonly createdHere = new Set<string>();
+  // Labels this pass failed to create, keyed by team and lowercased name.
+  private readonly refusedLabels = new Set<string>();
 
   constructor(private readonly d: PassDeps) {}
 
   get stopped(): boolean {
     return this.halted;
+  }
+
+  /** Linear refused a create over the plan's issue limit this pass. */
+  get atCapacity(): boolean {
+    return this.capped;
   }
 
   get summary(): LinearSyncSummary {
@@ -325,16 +396,50 @@ export class LinearPass {
     return this.check(result);
   }
 
-  // Unwraps a client result, recording the failure; a throttle halts the pass.
+  /** Adds a failure to the summary and remembers it as `lastFailure`. */
+  recordFailure(message: string, kind: LinearErrorKind | null = null): void {
+    this.d.summary.errors.push(message);
+    this.lastFailure = message;
+    this.lastFailureKind = kind;
+  }
+
+  // Unwraps a client result, recording the failure. A throttle halts the
+  // pass; the usage limit is recorded once and stops creates only.
   private check<T>(result: LinearResult<T>): T | null {
     if (result.ok) return result.data;
-    this.d.summary.errors.push(this.d.note(result));
+    if (result.kind === 'usage-limit') {
+      if (!this.capped) {
+        const message = this.d.note(result);
+        this.recordFailure(message, result.kind);
+        this.pause(message);
+      }
+      this.capped = true;
+      this.d.summary.usageLimited = true;
+      return null;
+    }
+    this.recordFailure(this.d.note(result), result.kind);
     if (result.kind === 'rate-limit') {
       this.d.summary.rateLimited = true;
       this.halted = true;
       throw new Halted();
     }
     return null;
+  }
+
+  // Persists the usage-limit pause, keeping the counts last measured.
+  private pause(message: string): void {
+    const now = Date.now();
+    const prior = this.d.state.capacity;
+    this.d.state.capacity = {
+      limitedAt: new Date(now).toISOString(),
+      retryAt: new Date(now + CAPACITY_RETRY_MS).toISOString(),
+      message,
+      active: prior?.active ?? null,
+      limit: prior?.limit ?? null,
+      limitSource: prior?.limitSource ?? null,
+      plan: prior?.plan ?? 'unknown',
+      checkedAt: prior?.checkedAt ?? null,
+    };
   }
 
   /** Runs a write batch, turning a throttle into a quiet stop. */
@@ -457,10 +562,11 @@ export class LinearPass {
     const id = doc.meta.id;
     const base = readBase(state, id, ops.entity);
     const unknown = ops.unknown(remote);
+    const remoteValues = ops.remote(remote, ctx);
     const decisions = mergeFields({
       fields: ops.fields,
       local: ops.local(doc, ctx),
-      remote: ops.remote(remote, ctx),
+      remote: remoteValues,
       base,
       localUpdated: doc.meta.updated,
       remoteUpdated: remote.updatedAt,
@@ -491,6 +597,19 @@ export class LinearPass {
           heldBack = true;
         }
       }
+    }
+    // A finished task's archive (linear.archiveFinished) is not sent in the
+    // pass that pulls its issue reopened: the field is rebased instead.
+    const reopened = remoteValues.state;
+    if (
+      ops.entity === 'issue' &&
+      pulls.includes('state') &&
+      pushes.includes('archived') &&
+      typeof reopened === 'string' &&
+      isDoneStatus(doc.meta.status, ctx.model) &&
+      !isDoneStatus(reopened, ctx.model)
+    ) {
+      pushes.splice(pushes.indexOf('archived'), 1);
     }
     // An unrecorded link Linear holds a newer copy of, in a pass that may not
     // take it: the push waits, and the summary says why.
@@ -575,26 +694,73 @@ export class LinearPass {
   // Pushes
 
   // Creates the labels a task carries that `teamId` lacks, in the registry's
-  // color when it has one.
+  // color when it has one. A name Linear refused is not sent again this pass.
   private async ensureLabels(doc: TaskDoc, teamId: string): Promise<boolean> {
     const { ctx, client } = this.d;
     let ok = true;
     for (const name of missingLabels(doc, ctx, teamId)) {
+      const key = `${teamId}\n${name.toLowerCase()}`;
+      if (this.refusedLabels.has(key)) {
+        ok = false;
+        continue;
+      }
+      const blocked = this.d.blockedLabels?.get(key);
+      if (blocked !== undefined && blocked.until > Date.now()) {
+        this.recordFailure(blocked.reason);
+        this.refusedLabels.add(key);
+        ok = false;
+        continue;
+      }
       const color = ctx.labelColors.get(name.toLowerCase());
-      const label = this.check(
-        await client.createLabel({
-          name,
-          teamId,
-          ...(color === undefined ? {} : { color }),
-        })
-      );
-      if (label === null) ok = false;
-      else {
+      const created = await client.createLabel({
+        name,
+        teamId,
+        ...(color === undefined ? {} : { color }),
+      });
+      const label: LinearLabel | null = created.ok
+        ? created.data
+        : created.code === 'duplicate'
+          ? await this.existingLabel(name, teamId, created)
+          : this.check<LinearLabel>(created);
+      if (label === null) {
+        this.refusedLabels.add(key);
+        ok = false;
+      } else {
         trackLabel(ctx, label);
         this.d.onLabel(label);
       }
     }
     return ok;
+  }
+
+  // The label Linear holds under a name it refused as taken, when this team
+  // can apply it; else null with the reason recorded. Group/Name also tries the leaf.
+  private async existingLabel(
+    name: string,
+    teamId: string,
+    refused: LinearFailure
+  ): Promise<LinearLabel | null> {
+    const leaf = name.slice(name.lastIndexOf('/') + 1);
+    const matches: LinearLabelMatch[] = [];
+    for (const spelling of leaf === name ? [name] : [leaf, name]) {
+      const found = this.check(await this.d.client.labelsNamed(spelling));
+      if (found === null) return null;
+      matches.push(...found);
+    }
+    const hit = labelCollision(name, teamId, matches);
+    if (hit === null) {
+      this.recordFailure(this.d.note(refused), refused.kind);
+      return null;
+    }
+    if ('blocked' in hit) {
+      this.recordFailure(hit.blocked);
+      this.d.blockedLabels?.set(`${teamId}\n${name.toLowerCase()}`, {
+        reason: hit.blocked,
+        until: Date.now() + BLOCKED_LABEL_MS,
+      });
+      return null;
+    }
+    return plainLabel(hit.reuse);
   }
 
   /** Writes local label colors to Linear; answers the ids whose write failed. */
@@ -643,7 +809,10 @@ export class LinearPass {
       }
     }
     const assumed = await this.followUps(doc, remote, plan, failed);
-    if (plan.archive !== null) {
+    // An unarchive takes a slot under the plan's cap, so it waits out a usage
+    // limit with its base kept.
+    if (plan.archive === false && this.capped) failed.add('archived');
+    else if (plan.archive !== null) {
       const archived = this.check(
         plan.archive
           ? await client.archiveIssue(remote.id)
@@ -808,7 +977,7 @@ export class LinearPass {
     const ops = OPS_BY_ENTITY[entity];
     const blank = newTaskDoc(
       't-new',
-      canonicalKind(base.kind ?? 'task') as TaskKind,
+      base.kind ?? 'task',
       base,
       remote.createdAt
     );
@@ -830,15 +999,36 @@ export class LinearPass {
     return doc;
   }
 
-  /** Sorts unlinked tasks so containers and parents are created first. */
+  /** Sorts unlinked tasks so containers and parents are created first, and
+   *  open work before finished, so an issue limit cuts finished work first. */
   creationOrder(docs: TaskDoc[]): TaskDoc[] {
-    return [...docs].sort(
-      (a, b) => depth(a, this.d.ctx) - depth(b, this.d.ctx)
+    const { ctx } = this.d;
+    const keyed = docs.map((doc) => ({
+      doc,
+      depth: depth(doc, ctx),
+      finished: isDoneStatus(doc.meta.status, ctx.model) ? 1 : 0,
+    }));
+    keyed.sort((a, b) =>
+      a.depth === b.depth ? a.finished - b.finished : a.depth - b.depth
     );
+    return keyed.map((k) => k.doc);
   }
 
-  /** Creates the Linear record a local task should mirror, and links it. */
-  async createRemote(doc: TaskDoc): Promise<void> {
+  /** Creates and links the Linear record a local task should mirror; `archive`
+   *  archives a new issue as it lands. Sends nothing once the pass is capped. */
+  async createRemote(
+    doc: TaskDoc,
+    opts?: { archive?: boolean }
+  ): Promise<CreateRemoteResult> {
+    if (this.capped) {
+      return {
+        created: false,
+        error: this.d.state.capacity?.message ?? LINEAR_USAGE_LIMIT_MESSAGE,
+        capped: true,
+      };
+    }
+    this.lastFailure = null;
+    this.lastFailureKind = null;
     const { ctx, client, teamId, summary } = this.d;
     const entity = entityForNewTask(doc, ctx);
     const version = doc.meta.updated;
@@ -846,6 +1036,9 @@ export class LinearPass {
     let ops: EntityOps<RemoteRecord>;
     let assumed: FieldValues = {};
     const failed = new Set<string>();
+    // A throttle after the record exists: it is linked first, so a retry
+    // never creates it twice, and the pass stops once that is written.
+    let halt: Halted | null = null;
     if (entity === 'initiative') {
       ops = INITIATIVE_OPS as unknown as EntityOps<RemoteRecord>;
       const input = initiativePush(doc, INITIATIVE_FIELDS, ctx);
@@ -866,14 +1059,19 @@ export class LinearPass {
       if (created !== null) {
         const members = projectPush(doc, ['initiatives'], created, ctx);
         let ok = true;
-        for (const initiativeId of members.link) {
-          if (
-            this.check(
-              await client.linkProjectInitiative(created.id, initiativeId)
-            ) === null
-          ) {
-            ok = false;
+        try {
+          for (const initiativeId of members.link) {
+            if (
+              this.check(
+                await client.linkProjectInitiative(created.id, initiativeId)
+              ) === null
+            ) {
+              ok = false;
+            }
           }
+        } catch (err) {
+          halt = haltOf(err);
+          ok = false;
         }
         if (ok)
           assumed = { initiatives: taskProjectValues(doc, ctx).initiatives };
@@ -908,15 +1106,33 @@ export class LinearPass {
       remote = created;
       if (created !== null) {
         const follow = issuePush(doc, ISSUE_FOLLOW_UP_FIELDS, created, ctx);
-        assumed = await this.followUps(doc, created, follow, failed);
-        if (follow.archive === true) {
-          const archived = this.check(await client.archiveIssue(created.id));
-          if (archived === null) failed.add('archived');
-          else remote = archived;
+        // An archive the task's own fields do not ask for (a finished task's,
+        // see taskIssueValues) is never resent from the base.
+        const arrival = opts?.archive === true && follow.archive !== true;
+        try {
+          assumed = await this.followUps(doc, created, follow, failed);
+          if (follow.archive === true || arrival) {
+            const archived = this.check(await client.archiveIssue(created.id));
+            if (archived === null) failed.add('archived');
+            else remote = archived;
+          }
+        } catch (err) {
+          halt = haltOf(err);
+          assumed = {};
+          for (const field of ISSUE_FOLLOW_UP_FIELDS) failed.add(field);
+        }
+        if (arrival && failed.has('archived')) {
+          (this.d.state.pendingArchives ??= {})[doc.meta.id] = created.id;
         }
       }
     }
-    if (remote === null) return;
+    if (remote === null) {
+      return {
+        created: false,
+        error: this.lastFailure ?? 'Linear did not create the record',
+        capped: this.capped,
+      };
+    }
     // Recording the link is bookkeeping, not an edit, so `updated` is kept.
     const current = this.d.store.get(doc.meta.id) ?? doc;
     // A milestone made unordered takes the order Linear gave it, unless one
@@ -939,26 +1155,41 @@ export class LinearPass {
       order === undefined
         ? doc
         : { ...doc, meta: { ...doc.meta, sortOrder: order } };
-    writeBase(
-      this.d.state,
-      linked.meta.id,
-      entity,
+    // The local side is what was sent, so an edit made mid-round-trip reads as
+    // a change; a failed field is based on Linear's value, so it is resent.
+    const base = nextBase(
       ops.fields,
-      // The local side of the base is what was sent: an edit that landed
-      // during the round-trip still reads as a change next pass.
-      nextBase(
-        ops.fields,
-        ops.local(sent, ctx),
-        { ...ops.remote(remote, ctx), ...assumed },
-        null,
-        failed
-      )
+      ops.local(sent, ctx),
+      { ...ops.remote(remote, ctx), ...assumed },
+      null
     );
+    for (const field of failed) {
+      const hash = base.remote[field];
+      if (hash !== undefined) base.local[field] = hash;
+    }
+    writeBase(this.d.state, linked.meta.id, entity, ops.fields, base);
     if (failed.size === 0) this.d.state.pushed[doc.meta.id] = version;
     this.recordEcho(remote.id, remote.updatedAt);
     this.recordChip(remote);
     summary.createdIssues++;
     summary.pushed++;
+    if (halt !== null) throw halt;
+    return { created: true };
+  }
+
+  /** Archives an issue an export created to arrive archived, whose archive
+   *  did not land then; answers whether it landed now. */
+  async archiveOnArrival(taskId: string, issueId: string): Promise<boolean> {
+    const archived = this.check(await this.d.client.archiveIssue(issueId));
+    if (archived === null) return false;
+    // Recorded as Linear's side only, as the create would have.
+    const base = readBase(this.d.state, taskId, 'issue');
+    if (base !== null) {
+      base.remote.archived = fieldHash(true);
+      writeBase(this.d.state, taskId, 'issue', ISSUE_FIELDS, base);
+    }
+    this.recordEcho(archived.id, archived.updatedAt);
+    return true;
   }
 
   // A new issue joins its parent issue's team when that is a linked one (a

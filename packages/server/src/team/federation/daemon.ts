@@ -23,6 +23,7 @@ import type { Team } from '../index.js';
 import { syncSeats } from '../index.js';
 import { AgentSync } from './agents.js';
 import { ChannelSync } from './channels.js';
+import { contentKeyring } from './content.js';
 import { DocOpHandler } from './docs.js';
 import { GitFederationTransport, signedEntry } from './git.js';
 import { Homes } from './homes.js';
@@ -239,7 +240,8 @@ export function buildFederation(deps: FederationDeps): Federation {
   const fed = new FedStore(
     ledger,
     loadOrCreateKeys(deps.syncDir, ledger.replica),
-    now
+    now,
+    contentKeyring(deps.syncDir)
   );
   const legacyRef: { current: LegacyWindow | null } = { current: null };
   const signerRef: { current: TaskOpSigner | null } = { current: null };

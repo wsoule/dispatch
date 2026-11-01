@@ -100,7 +100,7 @@ export function buildStorefrontRunScript(): FakeExecutorScript {
 // plausible feature (gift cards) with a real dependency arrow between tasks,
 // mirroring bin.ts's DEFAULT_FAKE_PROPOSAL shape field-for-field.
 export const STOREFRONT_PLAN_PROPOSAL: PlanProposal = {
-  epic: {
+  milestone: {
     title: 'Gift cards at checkout',
     description:
       'Sell and redeem gift cards: purchase flow, balance check, redemption at checkout.',

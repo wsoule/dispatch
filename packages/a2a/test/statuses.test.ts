@@ -90,6 +90,27 @@ describe('handoffStatuses', () => {
     ]);
   });
 
+  it('reads a review status shared with dispatched as working', () => {
+    // A team with no review state: status alone cannot say the run finished.
+    const shared = handoffStatuses({
+      definitions: LINEAR.definitions.filter((d) => d.name !== 'In Review'),
+      roles: {
+        ...LINEAR.roles,
+        dispatched: 'In Progress',
+        review: 'In Progress',
+      },
+    });
+    expect(shared.phase('In Progress')).toBe('working');
+    expect(shared.phase('Merging')).toBe('landing');
+    // A distinct review role still reads as review with dispatched given.
+    const distinct = handoffStatuses({
+      ...LINEAR,
+      roles: { ...LINEAR.roles, dispatched: 'In Progress' },
+    });
+    expect(distinct.phase('In Progress')).toBe('working');
+    expect(distinct.phase('In Review')).toBe('review');
+  });
+
   it('cannot hand off without a draft, ready, landed and dropped status', () => {
     expect(
       handoffSupported(

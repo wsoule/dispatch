@@ -165,7 +165,7 @@ describe('POST /api/tasks/:id/enrich', () => {
     expect(planner.prompts).toHaveLength(1);
     expect(planner.prompts[0]).toContain('inbox writes are not crash-safe');
     expect(planner.prompts[0]).toContain('we rewrite the file in place');
-    // Deepening one existing task, never fanning it out into an epic.
+    // Deepening one existing task, never fanning it out into a milestone.
     expect(planner.prompts[0]).toContain('exactly ONE task');
     expect(planner.prompts[0]).toContain('PRESERVE');
   });

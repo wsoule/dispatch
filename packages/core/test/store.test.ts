@@ -73,9 +73,9 @@ describe('create/get', () => {
     expect(got.body.trimEnd().endsWith('## Activity')).toBe(true);
     expect(store.get('t-nope00')).toBeNull();
   });
-  it('creates epics with e- ids', () => {
+  it('creates milestones with e- ids', () => {
     const store = TaskStore.init(root);
-    expect(store.create({ title: 'Auth', kind: 'epic' }).meta.id).toMatch(
+    expect(store.create({ title: 'Auth', kind: 'milestone' }).meta.id).toMatch(
       /^e-/
     );
   });
@@ -170,19 +170,26 @@ describe('list', () => {
 
   it('filters by status, kind, parent and sorts by created', () => {
     const store = TaskStore.init(root);
-    const epic = store.create(
-      { title: 'Epic', kind: 'epic' },
+    const milestone = store.create(
+      { title: 'Milestone', kind: 'milestone' },
       '2026-07-13T01:00:00Z'
     );
-    store.create({ title: 'A', parent: epic.meta.id }, '2026-07-13T02:00:00Z');
+    store.create(
+      { title: 'A', parent: milestone.meta.id },
+      '2026-07-13T02:00:00Z'
+    );
     const b = store.create(
       { title: 'B', status: 'draft' },
       '2026-07-13T03:00:00Z'
     );
-    expect(store.list().map((t) => t.meta.title)).toEqual(['Epic', 'A', 'B']);
+    expect(store.list().map((t) => t.meta.title)).toEqual([
+      'Milestone',
+      'A',
+      'B',
+    ]);
     expect(store.list({ status: 'draft' })[0].meta.id).toBe(b.meta.id);
-    expect(store.list({ kind: 'epic' })).toHaveLength(1);
-    expect(store.list({ parent: epic.meta.id })[0].meta.title).toBe('A');
+    expect(store.list({ kind: 'milestone' })).toHaveLength(1);
+    expect(store.list({ parent: milestone.meta.id })[0].meta.title).toBe('A');
   });
 });
 
@@ -203,22 +210,25 @@ describe('listSafe', () => {
 
   it('applies the same status/kind/parent filter and sort as list()', () => {
     const store = TaskStore.init(root);
-    const epic = store.create(
-      { title: 'Epic', kind: 'epic' },
+    const milestone = store.create(
+      { title: 'Milestone', kind: 'milestone' },
       '2026-07-13T01:00:00Z'
     );
-    store.create({ title: 'A', parent: epic.meta.id }, '2026-07-13T02:00:00Z');
+    store.create(
+      { title: 'A', parent: milestone.meta.id },
+      '2026-07-13T02:00:00Z'
+    );
     store.create({ title: 'B', status: 'draft' }, '2026-07-13T03:00:00Z');
 
     expect(store.listSafe().docs.map((t) => t.meta.title)).toEqual([
-      'Epic',
+      'Milestone',
       'A',
       'B',
     ]);
     expect(
       store.listSafe({ status: 'draft' }).docs.map((t) => t.meta.title)
     ).toEqual(['B']);
-    expect(store.listSafe({ kind: 'epic' }).docs).toHaveLength(1);
+    expect(store.listSafe({ kind: 'milestone' }).docs).toHaveLength(1);
   });
 
   it('returns an empty result for an uninitialized store', () => {
@@ -268,6 +278,25 @@ describe('update', () => {
 
     expect(store.remove(doc.meta.id)).toBe(true);
     expect(existsSync(dir)).toBe(false);
+  });
+
+  it('drops a label repeated on create or update', () => {
+    const store = TaskStore.init(root);
+    const doc = store.create({
+      title: 'Cut spend',
+      labels: ['cost', 'cost', 'web'],
+    });
+    expect(doc.meta.labels).toEqual(['cost', 'web']);
+    expect(store.get(doc.meta.id)?.meta.labels).toEqual(['cost', 'web']);
+    const out = store.update(doc.meta.id, {
+      labels: ['web', 'perf', 'web', 'cost'],
+    });
+    expect(out.meta.labels).toEqual(['web', 'perf', 'cost']);
+    expect(store.get(doc.meta.id)?.meta.labels).toEqual([
+      'web',
+      'perf',
+      'cost',
+    ]);
   });
 
   it('normalizes an emptied attachments list to an absent key', () => {

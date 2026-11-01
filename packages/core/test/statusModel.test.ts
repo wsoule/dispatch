@@ -6,15 +6,21 @@ import { join } from 'node:path';
 import { ConfigError, loadConfig, updateConfig } from '../src/config.js';
 import { readyTasks } from '../src/graph.js';
 import {
+  CANONICAL_STATUSES,
   DEFAULT_STATUS_MODEL,
+  draftStatus,
+  hasDistinctReviewRole,
   hasStatusRole,
   isDoneStatus,
+  isReviewStatus,
   isSatisfiedForDispatchStatus,
   isUnstartedStatus,
+  resolveStatusName,
   statusColor,
   statusModelOf,
   statusType,
 } from '../src/status.js';
+import type { StatusModel } from '../src/status.js';
 import type { TaskDoc } from '../src/types.js';
 
 function writeConfig(contents: string): string {
@@ -153,5 +159,146 @@ describe('status model', () => {
       model
     ).map((t) => t.meta.id);
     expect(ids).toEqual(['t-000001']);
+  });
+});
+
+// A Linear team with no review state: review falls back to dispatched.
+const SHARED: StatusModel = {
+  definitions: [
+    { name: 'Backlog', type: 'backlog', color: null },
+    { name: 'Todo', type: 'unstarted', color: null },
+    { name: 'In Progress', type: 'started', color: null },
+    { name: 'Done', type: 'completed', color: null },
+    { name: 'Canceled', type: 'canceled', color: null },
+    { name: 'Duplicate', type: 'canceled', color: null },
+  ],
+  roles: {
+    ready: 'Todo',
+    dispatched: 'In Progress',
+    review: 'In Progress',
+    landing: null,
+    landed: 'Done',
+    dropped: 'Canceled',
+  },
+};
+const SHARED_NAMES = SHARED.definitions.map((d) => d.name);
+
+describe('a review role shared with dispatched', () => {
+  const linear = statusModelOf(loadConfig(writeConfig(LINEAR_CONFIG)));
+
+  it('says whether the review role has a status of its own', () => {
+    expect(hasDistinctReviewRole()).toBe(true);
+    expect(hasDistinctReviewRole(linear)).toBe(true);
+    expect(hasDistinctReviewRole(SHARED)).toBe(false);
+  });
+
+  it('reads review by status alone when the role is distinct', () => {
+    expect(isReviewStatus('review')).toBe(true);
+    expect(isReviewStatus('review', DEFAULT_STATUS_MODEL, true)).toBe(true);
+    expect(isReviewStatus('working', DEFAULT_STATUS_MODEL, true)).toBe(false);
+    expect(isReviewStatus('In Review', linear)).toBe(true);
+    expect(isReviewStatus('In Progress', linear, true)).toBe(false);
+  });
+
+  it('needs a finished run when review shares the dispatched status', () => {
+    expect(isReviewStatus('In Progress', SHARED)).toBe(false);
+    expect(isReviewStatus('In Progress', SHARED, true)).toBe(true);
+    expect(isSatisfiedForDispatchStatus('In Progress', SHARED)).toBe(false);
+    expect(isSatisfiedForDispatchStatus('In Progress', SHARED, true)).toBe(
+      true
+    );
+    expect(isSatisfiedForDispatchStatus('Todo', SHARED, true)).toBe(false);
+    expect(isSatisfiedForDispatchStatus('Done', SHARED)).toBe(true);
+    expect(isSatisfiedForDispatchStatus('Duplicate', SHARED)).toBe(true);
+  });
+});
+
+describe('draftStatus', () => {
+  it('is the first backlog status, else triage, else none', () => {
+    expect(draftStatus()).toBe('draft');
+    expect(draftStatus(SHARED)).toBe('Backlog');
+    // LINEAR_CONFIG has Triage and no backlog status.
+    expect(
+      draftStatus(statusModelOf(loadConfig(writeConfig(LINEAR_CONFIG))))
+    ).toBe('Triage');
+    // Never the ready status, which would queue the draft for dispatch.
+    expect(
+      draftStatus({
+        definitions: SHARED.definitions.filter((d) => d.type !== 'backlog'),
+        roles: SHARED.roles,
+      })
+    ).toBeNull();
+  });
+
+  it('refuses draft on a board with no backlog or triage status', () => {
+    const model = statusModelOf(
+      loadConfig(
+        writeConfig('statuses: [ready, working, review, landed, dropped]\n')
+      )
+    );
+    const names = model.definitions.map((d) => d.name);
+    expect(resolveStatusName('draft', names, model)).toBeNull();
+    expect(resolveStatusName('ready', names, model)).toBe('ready');
+  });
+});
+
+describe('resolveStatusName', () => {
+  it('takes an exact name first', () => {
+    expect(resolveStatusName('Done', SHARED_NAMES, SHARED)).toBe('Done');
+    // A board that defines a built-in word keeps it over the role it names.
+    expect(
+      resolveStatusName('review', ['review', 'In Review'], {
+        ...SHARED,
+        roles: { ...SHARED.roles, review: 'In Review' },
+      })
+    ).toBe('review');
+  });
+
+  it('then a unique case-insensitive match, ahead of the legacy aliases', () => {
+    expect(resolveStatusName('done', SHARED_NAMES, SHARED)).toBe('Done');
+    expect(resolveStatusName('in progress', SHARED_NAMES, SHARED)).toBe(
+      'In Progress'
+    );
+    expect(resolveStatusName('TODO', SHARED_NAMES, SHARED)).toBe('Todo');
+    // Two names folding alike: neither is guessed.
+    expect(
+      resolveStatusName('qa', ['QA', 'Qa'], DEFAULT_STATUS_MODEL)
+    ).toBeNull();
+  });
+
+  it('then a legacy alias', () => {
+    const names = [...CANONICAL_STATUSES];
+    expect(resolveStatusName('done', names)).toBe('landed');
+    expect(resolveStatusName('todo', names)).toBe('ready');
+    expect(resolveStatusName('in-progress', names)).toBe('working');
+    expect(resolveStatusName('landed', names)).toBe('landed');
+  });
+
+  it('then a built-in word read through its role', () => {
+    expect(resolveStatusName('landed', SHARED_NAMES, SHARED)).toBe('Done');
+    expect(resolveStatusName('Landed', SHARED_NAMES, SHARED)).toBe('Done');
+    expect(resolveStatusName('working', SHARED_NAMES, SHARED)).toBe(
+      'In Progress'
+    );
+    expect(resolveStatusName('review', SHARED_NAMES, SHARED)).toBe(
+      'In Progress'
+    );
+    expect(resolveStatusName('ready', SHARED_NAMES, SHARED)).toBe('Todo');
+    expect(resolveStatusName('draft', SHARED_NAMES, SHARED)).toBe('Backlog');
+    expect(resolveStatusName('dropped', SHARED_NAMES, SHARED)).toBe('Canceled');
+    expect(resolveStatusName('cancelled', SHARED_NAMES, SHARED)).toBe(
+      'Canceled'
+    );
+    // No landing role on this board, so the word means nothing here.
+    expect(resolveStatusName('landing', SHARED_NAMES, SHARED)).toBeNull();
+  });
+
+  it('refuses what fits nothing, but accepts an untyped custom name', () => {
+    expect(resolveStatusName('shipped', SHARED_NAMES, SHARED)).toBeNull();
+    // A role whose status the caller's names lack does not count.
+    expect(
+      resolveStatusName('landed', ['Todo', 'In Progress'], SHARED)
+    ).toBeNull();
+    expect(resolveStatusName('qa', ['draft', 'ready', 'qa'])).toBe('qa');
   });
 });

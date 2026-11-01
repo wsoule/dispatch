@@ -250,32 +250,35 @@ describe('a daemon on the sqlite backend', () => {
     expect(existsSync(join(root, DISPATCH_DIR, 'ledger.jsonl'))).toBe(false);
   });
 
-  // Regression: landEpicLocally writes the epic through the store but does
+  // Regression: landMilestoneLocally writes the milestone through the store but does
   // not rebuild the cache itself. On the file backend the tasks watcher
   // covered that; a database-backed daemon has no watcher, so without the
-  // rebuild in the landEpic handler this endpoint would report success while
-  // every subsequent read still called the epic unfinished.
-  it('reflects a landed epic immediately, with no watcher to cover it', async () => {
-    const epic = await json(
+  // rebuild in the landMilestone handler this endpoint would report success while
+  // every subsequent read still called the milestone unfinished.
+  it('reflects a landed milestone immediately, with no watcher to cover it', async () => {
+    const milestone = await json(
       await fetch(`${baseUrl}/api/tasks`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title: 'ship it', kind: 'epic' }),
+        body: JSON.stringify({ title: 'ship it', kind: 'milestone' }),
       })
     );
-    // An epic can only land once its integration branch exists.
-    runGitSync(root, ['branch', `epic/${epic.meta.id}`]);
+    // A milestone can only land once its integration branch exists.
+    runGitSync(root, ['branch', `milestone/${milestone.meta.id}`]);
 
-    const landed = await fetch(`${baseUrl}/api/epics/${epic.meta.id}/land`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({}),
-    });
+    const landed = await fetch(
+      `${baseUrl}/api/milestones/${milestone.meta.id}/land`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      }
+    );
     expect(landed.status).toBe(200);
     expect((await json(landed)).mode).toBe('merge');
 
     const after = await json(
-      await fetch(`${baseUrl}/api/tasks/${epic.meta.id}`)
+      await fetch(`${baseUrl}/api/tasks/${milestone.meta.id}`)
     );
     expect(after.meta.status).toBe('landed');
   });

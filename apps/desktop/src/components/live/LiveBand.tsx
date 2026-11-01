@@ -1,6 +1,6 @@
 import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
 import { isCompletedStatus, isDoneStatus } from '@dispatch-foo/core/browser';
-import type { EpicProgress } from '@dispatch/client';
+import type { MilestoneProgress } from '@dispatch/client';
 import { ChevronRight, Shapes, Waypoints } from 'lucide-react';
 import {
   memo,
@@ -95,7 +95,7 @@ export interface LiveBandContext {
 /** The band's verbs, held stable by the view so a cursor move never re-renders a band. */
 export interface LiveBandActions {
   model: StatusModel;
-  progressOf: (containerId: string) => EpicProgress | undefined;
+  progressOf: (containerId: string) => MilestoneProgress | undefined;
   onSendAgents: (containerId: string) => void;
   onRaiseCeiling: (containerId: string) => void;
   onPause: (containerId: string) => Promise<void>;
@@ -145,7 +145,7 @@ function BandControls({
     !isCompletedStatus(container.meta.status, actions.model);
   return (
     <FanoutControls
-      epic={container}
+      milestone={container}
       model={actions.model}
       progress={progress}
       landable={landable}
@@ -158,7 +158,7 @@ function BandControls({
       onRaiseCeiling={actions.onRaiseCeiling}
       onStop={actions.onStop}
       onLand={actions.onLand}
-      onOpenEpic={actions.onOpenPlan}
+      onOpenMilestone={actions.onOpenPlan}
     />
   );
 }

@@ -121,7 +121,7 @@ export interface SaveInput {
   title: string;
   body: string;
   refs?: Ref[];
-  epic?: string | null;
+  milestone?: string | null;
   appliesTo?: string[];
   supersedes?: string | null;
   projectOnly?: boolean;
@@ -295,7 +295,7 @@ const toProposalContent = (valid: ValidMemoryInput): ProposalContent => ({
   title: valid.title,
   body: valid.body,
   refs: valid.refs,
-  epic: valid.epic,
+  milestone: valid.milestone,
   appliesTo: valid.appliesTo,
 });
 
@@ -414,7 +414,7 @@ export class MemoryEngine {
       kinds: q.kind === undefined ? undefined : [q.kind],
     };
     const terms = queryTerms(query);
-    const ctx: RankContext = { taskId: null, epic: null };
+    const ctx: RankContext = { taskId: null, milestone: null };
     let hits: Hit[];
     if (terms.length === 0) {
       const located = this.visible(viewer, filter, q.scope);
@@ -499,7 +499,7 @@ export class MemoryEngine {
   }
 
   // An `index` recall per included entry; it counts as use for decay only
-  // when the entry matched the relevance query or is narrowed to the task or its epic.
+  // when the entry matched the relevance query or is narrowed to the task or its milestone.
   recordIndexRecalls(
     principal: Principal,
     runId: string,
@@ -556,12 +556,12 @@ export class MemoryEngine {
       input.scope === 'personal' && input.projectOnly === true
         ? this.deps.host.projectKey()
         : null;
-    // A run's shared save that names no epic reaches its task's parent epic.
-    const epic =
-      input.epic === undefined && input.scope !== 'personal'
-        ? this.rankContext(this.deps.host.taskOfPrincipal(principal)).epic
-        : input.epic;
-    const valid = validateMemoryInput({ ...input, epic, projectKey });
+    // A run's shared save that names no milestone reaches its task's parent milestone.
+    const milestone =
+      input.milestone === undefined && input.scope !== 'personal'
+        ? this.rankContext(this.deps.host.taskOfPrincipal(principal)).milestone
+        : input.milestone;
+    const valid = validateMemoryInput({ ...input, milestone, projectKey });
     if (valid.scope === 'personal')
       return this.savePersonal(viewer, valid, input);
     const scope = valid.scope;
@@ -602,7 +602,7 @@ export class MemoryEngine {
       title: input.title ?? entry.title,
       body: input.body ?? entry.body,
       refs: input.refs ?? entry.refs,
-      epic: entry.epic,
+      milestone: entry.milestone,
       appliesTo: entry.appliesTo,
       projectKey: entry.projectKey,
     });
@@ -1783,8 +1783,11 @@ export class MemoryEngine {
   }
 
   private rankContext(taskId: string | null): RankContext {
-    if (taskId === null) return { taskId: null, epic: null };
-    return { taskId, epic: this.deps.host.taskContext(taskId)?.epic ?? null };
+    if (taskId === null) return { taskId: null, milestone: null };
+    return {
+      taskId,
+      milestone: this.deps.host.taskContext(taskId)?.milestone ?? null,
+    };
   }
 
   // The stores a viewer reads, each with its scope filter; a personal store

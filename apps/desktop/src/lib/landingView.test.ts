@@ -527,13 +527,13 @@ describe('landedFromTasks', () => {
     meta: { id, title: id, status, kind, updated },
   });
 
-  test('landed tasks only, newest first, epics excluded, capped', () => {
+  test('landed tasks only, newest first, milestones excluded, capped', () => {
     const rows = landedFromTasks(
       [
         task('t-old', 'landed', '2026-08-01T00:00:00.000Z'),
         task('t-new', 'landed', '2026-08-03T00:00:00.000Z'),
         task('t-open', 'ready', '2026-08-04T00:00:00.000Z'),
-        task('e-1', 'landed', '2026-08-05T00:00:00.000Z', 'epic'),
+        task('e-1', 'landed', '2026-08-05T00:00:00.000Z', 'milestone'),
       ],
       DEFAULT_STATUS_MODEL,
       1

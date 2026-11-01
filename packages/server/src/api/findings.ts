@@ -153,12 +153,14 @@ export async function updateFinding(
   }
 }
 
-// GET /api/ledger?epicId=&class= — epicId (empty: project-wide) narrows to one
-// epic; class=audit keeps only receipts, since the lessons live in memory.
+// GET /api/ledger?milestoneId=&class= — milestoneId (empty: project-wide) narrows to one
+// milestone; class=audit keeps only receipts, since the lessons live in memory.
 export function listLedger(ctx: ApiContext, url: URL): Response {
-  const epicId = url.searchParams.get('epicId');
+  const milestoneId = url.searchParams.get('milestoneId');
   const entries = ctx.ledgerStore.list(
-    epicId === null ? {} : { epicId: epicId === '' ? null : epicId }
+    milestoneId === null
+      ? {}
+      : { milestoneId: milestoneId === '' ? null : milestoneId }
   );
   const audit = url.searchParams.get('class') === 'audit';
   return jsonResponse(

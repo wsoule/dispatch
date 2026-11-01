@@ -12,9 +12,8 @@ import { FilterPicker, type FilterPickerProps } from './FilterPicker';
 
 const context: FilterPickerProps['context'] = {
   statuses: ['draft', 'ready', 'working', 'review', 'landed'],
-  epics: [],
-  labels: ['ui'],
   milestones: [],
+  labels: ['ui'],
 };
 
 // Every open, click and keystroke settles inside an async `act`, so the assertions see the
@@ -136,7 +135,6 @@ const FACETS = [
   'Priority',
   'Assignee',
   'Labels',
-  'Epic',
   'Milestone',
   'Run state',
   'Created',

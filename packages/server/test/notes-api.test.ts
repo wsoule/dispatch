@@ -167,7 +167,7 @@ describe('POST /api/notes/:id/enrich', () => {
     expect(planner.prompts[0]).toContain(
       'it renders the composer, the rows, and the draft'
     );
-    // The draft is meant to replace one note with one task, not open an epic.
+    // The draft is meant to replace one note with one task, not open a milestone.
     expect(planner.prompts[0]).toContain('exactly ONE task');
   });
 

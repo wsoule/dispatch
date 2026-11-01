@@ -45,7 +45,7 @@ const COLUMNS = [
   'title',
   'body',
   'refs',
-  'epic',
+  'milestone',
   'applies_to',
   'project_key',
   'author',
@@ -76,7 +76,7 @@ interface EntryRow {
   title: string;
   body: string;
   refs: string;
-  epic: string | null;
+  milestone: string | null;
   applies_to: string;
   project_key: string | null;
   author: string;
@@ -109,7 +109,7 @@ function entryParams(e: MemoryEntry): SqlValue[] {
     e.title,
     e.body,
     JSON.stringify(e.refs),
-    e.epic,
+    e.milestone,
     JSON.stringify(e.appliesTo),
     e.projectKey,
     e.author,
@@ -142,7 +142,7 @@ function entryFromRow(r: EntryRow): MemoryEntry {
     title: r.title,
     body: r.body,
     refs: JSON.parse(r.refs) as MemoryEntry['refs'],
-    epic: r.epic,
+    milestone: r.milestone,
     appliesTo: JSON.parse(r.applies_to) as string[],
     projectKey: r.project_key,
     author: r.author,

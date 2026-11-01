@@ -102,6 +102,9 @@ describe('setup', () => {
       other: { command: 'x' },
       dispatch: l,
     });
+    expect(
+      json('.config/Claude/claude_desktop_config.json').mcpServers
+    ).toEqual({ 'dispatch-foo': l });
     expect(readFileSync(join(home, '.codex', 'config.toml'), 'utf8')).toBe(
       `model = "gpt-5"\n\n[mcp_servers.dispatch]\ncommand = "${l.command}"\nargs = ["${l.args[0]}"]\n`
     );
@@ -187,6 +190,38 @@ describe('setup', () => {
     expect(results.map((r) => r.status)).toEqual(['skipped', 'skipped']);
     expect(json('.cursor/mcp.json').mcpServers).toEqual({
       dispatch: { command: 'my-own' },
+    });
+  });
+
+  it('moves its old Claude Desktop entry off the name Claude reserves', () => {
+    dir('.config/Claude');
+    const path = '.config/Claude/claude_desktop_config.json';
+    const l = launch();
+    writeFileSync(
+      join(home, path),
+      JSON.stringify({
+        mcpServers: { other: { command: 'x' }, dispatch: l },
+      })
+    );
+    expect(connectClients(env([]), l).map((r) => r.status)).toEqual([
+      'updated',
+    ]);
+    expect(json(path).mcpServers).toEqual({
+      other: { command: 'x' },
+      'dispatch-foo': l,
+    });
+    expect(connectClients(env([]), l).map((r) => r.status)).toEqual([
+      'present',
+    ]);
+
+    writeFileSync(
+      join(home, path),
+      JSON.stringify({ mcpServers: { dispatch: { command: 'my-own' } } })
+    );
+    connectClients(env([]), l);
+    expect(json(path).mcpServers).toEqual({
+      dispatch: { command: 'my-own' },
+      'dispatch-foo': l,
     });
   });
 

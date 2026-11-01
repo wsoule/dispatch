@@ -19,7 +19,11 @@ It runs on Node 22.13 or later, and on Bun. Its entry points:
   conformance kit against this engine, also installed as the
   `dmp-reference-adapter` bin;
 - `@dispatch-foo/protocol/federation`: the federation wire types of DMP's
-  Appendix F.
+  Appendix F: signed ops, sealing for mail and state, and the content envelope
+  (`encryptContent`, `decryptContent`) a team uses once it turns on end-to-end
+  encrypted content. With it on, the transport can read op headers (publisher,
+  time, type, size, a sealed op's recipients), presence's kind and an opaque run
+  tag, and the roster, but not the board, team memory, docs or messages.
 
 The specification, its registries and its conformance kit are in
 `@dispatch-foo/protocol-spec`.

@@ -1214,13 +1214,13 @@ describe('channel tools', () => {
 
     const result = (await client.callTool({
       name: 'channel_join',
-      arguments: { name: 'epic/t-abc123' },
+      arguments: { name: 'milestone/t-abc123' },
     })) as ToolCallResult;
     expect(result.isError).toBeUndefined();
-    // An epic channel's name holds a '/', so the whole name is encoded as one
+    // A milestone channel's name holds a '/', so the whole name is encoded as one
     // path segment, as the client package's joinChannel does.
     expect(daemon.joinCalls).toEqual([
-      { name: encodeURIComponent('epic/t-abc123'), body: {} },
+      { name: encodeURIComponent('milestone/t-abc123'), body: {} },
     ]);
   });
 
@@ -1271,10 +1271,14 @@ describe('channel tools', () => {
     daemon = new FakeDaemon();
     const general = { name: 'general', auto: false, members: ['human:wyat'] };
     const quiet = { name: 'quiet', auto: false, members: [] };
-    const busyEpic = { name: 'epic/e-1', auto: true, members: ['task:t-1'] };
-    const emptyEpic = { name: 'epic/e-2', auto: true, members: [] };
+    const busyMilestone = {
+      name: 'milestone/e-1',
+      auto: true,
+      members: ['task:t-1'],
+    };
+    const emptyMilestone = { name: 'milestone/e-2', auto: true, members: [] };
     daemon.channelsBody = {
-      channels: [busyEpic, emptyEpic, general, quiet],
+      channels: [busyMilestone, emptyMilestone, general, quiet],
     };
     writeFakeDaemonFile(daemon.start());
     const client = await connectClient(root);
@@ -1284,7 +1288,7 @@ describe('channel tools', () => {
       arguments: {},
     })) as ToolCallResult;
     expect(result.structuredContent).toEqual({
-      channels: [busyEpic, general, quiet],
+      channels: [busyMilestone, general, quiet],
       total: 3,
       nextOffset: null,
       hiddenEmpty: 1,
@@ -1295,7 +1299,7 @@ describe('channel tools', () => {
       arguments: { includeEmpty: true, limit: 2, offset: 1 },
     })) as ToolCallResult;
     expect(all.structuredContent).toEqual({
-      channels: [emptyEpic, general],
+      channels: [emptyMilestone, general],
       total: 4,
       nextOffset: 3,
       hiddenEmpty: 0,

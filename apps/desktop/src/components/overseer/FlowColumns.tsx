@@ -1,11 +1,15 @@
-import type { EpicProgress, MergeQueueEntry, RunMeta } from '@dispatch/client';
+import type {
+  MergeQueueEntry,
+  MilestoneProgress,
+  RunMeta,
+} from '@dispatch/client';
 import { createContext, type ReactNode, useContext, useState } from 'react';
 
 import { useRunStep } from '../../hooks/useRunStep';
-import { formatUsd, spendPillLabel } from '../../lib/epicSession';
 import { type FlowRow, useFlowRows } from '../../lib/flowList';
 import type { GlossaryKey } from '../../lib/glossary';
 import { type LiveCeilings, liveCeilingsLabel } from '../../lib/liveSpend';
+import { formatUsd, spendPillLabel } from '../../lib/milestoneSession';
 import { isTerminalRunState } from '../../lib/runState';
 import { GlossaryTerm } from '../guide/GlossaryTerm';
 import { cn } from '@/lib/utils';
@@ -225,7 +229,7 @@ function SessionRow({
   title,
   onOpen,
 }: {
-  progress: EpicProgress;
+  progress: MilestoneProgress;
   title: string;
   onOpen: () => void;
 }) {
@@ -248,9 +252,9 @@ function SessionRow({
 /** What Going out shows beyond runs and merges, handed through from App. */
 export interface OutflowExtras {
   /** Milestones with an active or paused fan-out session. */
-  sessions?: readonly EpicProgress[];
+  sessions?: readonly MilestoneProgress[];
   /** A milestone's title by id. */
-  epicTitle?: (epicId: string) => string;
+  milestoneTitle?: (milestoneId: string) => string;
   /** Finished runs "Merge all ready" would queue. */
   mergeReady?: number;
   onMergeAll?: () => Promise<void>;
@@ -279,7 +283,7 @@ export function OutflowColumn({
   setAside,
   onOpenTask,
   sessions = [],
-  epicTitle = (id) => id,
+  milestoneTitle = (id) => id,
   mergeReady = 0,
   onMergeAll,
   spendToday = null,
@@ -292,7 +296,7 @@ export function OutflowColumn({
   const landing = merges.filter((m) => LANDING.has(m.state));
   const liveRows = useFlowRows(live, (r) => r.id);
   const landingRows = useFlowRows(landing, (m) => m.runId);
-  const sessionRows = useFlowRows(sessions, (p) => p.epicId);
+  const sessionRows = useFlowRows(sessions, (p) => p.milestoneId);
   const count =
     sessions.length + live.length + landing.length + setAside.length;
   const canMergeAll = onMergeAll !== undefined && mergeReady > 0;
@@ -336,8 +340,8 @@ export function OutflowColumn({
               render={(progress) => (
                 <SessionRow
                   progress={progress}
-                  title={epicTitle(progress.epicId)}
-                  onOpen={() => onOpenTask(progress.epicId)}
+                  title={milestoneTitle(progress.milestoneId)}
+                  onOpen={() => onOpenTask(progress.milestoneId)}
                 />
               )}
             />

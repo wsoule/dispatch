@@ -149,7 +149,7 @@ describe('the memory receipts step', () => {
             title,
             body: title,
             refs: [],
-            epic: null,
+            milestone: null,
             appliesTo: [],
             projectKey: null,
           },

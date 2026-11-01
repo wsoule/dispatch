@@ -61,10 +61,10 @@ describe('parseDigestLine', () => {
   it('reads a channel digest and a direct one', () => {
     expect(
       parseDigestLine(
-        '📬 #epic/e-c25f9c · notice from run:r-9f2c01: api shape changed (m-01K)'
+        '📬 #milestone/e-c25f9c · notice from run:r-9f2c01: api shape changed (m-01K)'
       )
     ).toEqual({
-      channel: 'epic/e-c25f9c',
+      channel: 'milestone/e-c25f9c',
       kind: 'notice',
       from: 'run:r-9f2c01',
       summary: 'api shape changed',

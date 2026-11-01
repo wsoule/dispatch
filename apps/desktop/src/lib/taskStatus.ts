@@ -6,6 +6,7 @@ import {
   isCompletedStatus,
   isContainerKind,
   isDoneStatus,
+  isReviewStatus,
   isStartedStatus,
 } from '@dispatch-foo/core/browser';
 import type { MergeQueueSnapshot, RunMeta } from '@dispatch/client';
@@ -67,7 +68,9 @@ export function itemBucket(
   if (ctx.queued.has(id) || hasStatusRole(status, 'landing', model)) {
     return 'landing';
   }
-  if (attention === 'review' || hasStatusRole(status, 'review', model)) {
+  // A review status shared with dispatched reads as review only once a run ended.
+  const finishedRun = run !== undefined && isTerminalRunState(run.state);
+  if (attention === 'review' || isReviewStatus(status, model, finishedRun)) {
     return 'review';
   }
   if (isStartedStatus(status, model)) return 'working';

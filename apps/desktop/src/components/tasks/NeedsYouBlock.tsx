@@ -16,13 +16,18 @@ import {
   type NeedsYou,
 } from '../../lib/needsYou';
 import type { RefAction } from '../../lib/threadSources';
-import { rowControl } from '../../lib/threadSources';
+import {
+  answersWithText,
+  participantLabel,
+  rowControl,
+} from '../../lib/threadSources';
 import {
   GateCard,
   type GateReply,
   RegistrationCard,
   WakeCard,
 } from '../gates/GateCard';
+import { QuestionAnswerForm } from '../gates/QuestionAnswerForm';
 import { cn } from '@/lib/utils';
 import { GroupHeader } from '@/ui/ai/group-header';
 import { Badge } from '@/ui/badge';
@@ -225,6 +230,15 @@ export function NeedsYouBlock({
           canDecide={access.canDecide}
         />
       );
+    }
+    // A free-text question has no card to draw, so the row answers it here.
+    if (answersWithText(gate, me)) {
+      return access.canMessage ? (
+        <QuestionAnswerForm
+          asker={participantLabel(gate.from, pane.lookups)}
+          onAnswer={(body) => decide(item, gate, { body })}
+        />
+      ) : null;
     }
     return (
       <GateCard

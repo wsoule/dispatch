@@ -149,22 +149,22 @@ function draftStateChoices(
 /** Where a new task may be filed: containers broad enough to hold a task
  * (core's `isValidParentKind`), archived ones left out, each with its own
  * glyph and its kind as the hint. */
-function parentOptions(epics: readonly TaskListItem[]): PickerOption[] {
+function parentOptions(milestones: readonly TaskListItem[]): PickerOption[] {
   const options: PickerOption[] = [];
-  for (const epic of epics) {
-    if (epic.meta.archivedAt !== undefined) continue;
-    if (!isValidParentKind('task', epic.meta.kind)) continue;
+  for (const milestone of milestones) {
+    if (milestone.meta.archivedAt !== undefined) continue;
+    if (!isValidParentKind('task', milestone.meta.kind)) continue;
     options.push({
-      value: epic.meta.id,
-      label: epic.meta.title,
-      hint: kindLabel(epic.meta.kind),
+      value: milestone.meta.id,
+      label: milestone.meta.title,
+      hint: kindLabel(milestone.meta.kind),
       mark: {
         kind: 'node',
         node: (
           <ContainerIcon
-            kind={epic.meta.kind}
-            icon={epic.meta.icon}
-            color={epic.meta.color}
+            kind={milestone.meta.kind}
+            icon={milestone.meta.icon}
+            color={milestone.meta.color}
             className={styles.containerMark}
           />
         ),
@@ -312,7 +312,10 @@ export function DraftView({
   }, [hydrated, task, defaultStatus, draft.parent]);
 
   const states = draftStateChoices(statusModel, statuses, editable.status);
-  const parents = useMemo(() => parentOptions(data.epics), [data.epics]);
+  const parents = useMemo(
+    () => parentOptions(data.milestones),
+    [data.milestones]
+  );
 
   function editDraft(patch: Partial<EditableTaskDraft>) {
     setEditable((prev) => ({ ...prev, ...patch }));

@@ -21,6 +21,7 @@ import type { Database } from 'bun:sqlite';
 import type { SyncLedger } from '../boardSync/ledger.js';
 import type { AuditKind } from './audit.js';
 import { AUDIT_KINDS } from './audit.js';
+import { ContentKeyring } from './content.js';
 import {
   FED_MIGRATE_KEYS,
   FED_MIGRATE_MAIL_SEEN,
@@ -48,6 +49,24 @@ export interface AppendInput {
   alsoV1?: (op: FederatedOp) => void;
 }
 
+/** Seals content op bodies at the publish choke point (content.ts). */
+export interface ContentSealer {
+  /** The body as it goes out: sealed under the current epoch once the team
+   *  is on e2e; throws ContentKeyMissingError when that key is not here. */
+  seal(op: {
+    replica: string;
+    seq: number;
+    type: string;
+    body: JsonValue;
+  }): JsonValue;
+  /** The epoch new content goes under, or null while the team is off. */
+  current(): string | null;
+  /** The current epoch while this machine lacks its key, else null. */
+  missing(): string | null;
+  /** The epochs this machine's replica presence asks the team for. */
+  wants(): string[];
+}
+
 export type FedMetaKey =
   | 'team_id'
   | 'founder'
@@ -69,7 +88,8 @@ export type FedMetaKey =
   | 'audit_exported'
   | 'device'
   | 'agents_republished'
-  | 'memory_rev';
+  | 'memory_rev'
+  | 'content_minted';
 
 interface KeyRow {
   replica: string;
@@ -96,11 +116,14 @@ interface CursorRow {
 // pinned keys, read cursors, current problems and the append-only audit log.
 export class FedStore {
   readonly replica: string;
+  private sealer: ContentSealer | null = null;
 
   constructor(
     private readonly ledger: SyncLedger,
     readonly keys: ReplicaKeys,
-    private readonly now: () => Date = () => new Date()
+    private readonly now: () => Date = () => new Date(),
+    /** Team content keys; memory only unless a daemon passes keys/content.json. */
+    readonly keyring: ContentKeyring = new ContentKeyring(null)
   ) {
     this.replica = ledger.replica;
     const db = ledger.database;
@@ -135,6 +158,21 @@ export class FedStore {
           put.run(r.replica, r.seq, Buffer.from(r.hash, 'hex'));
         db.exec('DROP TABLE fed_mail_seen_v0');
       })();
+  }
+
+  /** Installs the seal every content op passes through (FederationService). */
+  setContentSealer(sealer: ContentSealer): void {
+    this.sealer = sealer;
+  }
+
+  /** The content seal, or null before a service installs one. */
+  get content(): ContentSealer | null {
+    return this.sealer;
+  }
+
+  /** The epochs this machine asks the team for; [] while nothing is missing. */
+  contentWants(): string[] {
+    return this.sealer?.wants() ?? [];
   }
 
   /** Remembers a verified op's hash, so a reread of it can be checked. */
@@ -229,6 +267,16 @@ export class FedStore {
       if (input.type === 'key') this.dropMintedBefore(stamp.seq);
       input.onStamp?.(stamp);
       const sealedPart = input.seal?.(stamp);
+      // Content bodies go out sealed once the team is on e2e (content.ts).
+      const body =
+        input.body === undefined || this.sealer === null
+          ? input.body
+          : this.sealer.seal({
+              replica: this.replica,
+              seq: stamp.seq,
+              type: input.type,
+              body: input.body,
+            });
       const op = buildOp(
         {
           replica: this.replica,
@@ -236,7 +284,7 @@ export class FedStore {
           prev: head?.hash ?? ZERO_HASH,
           hlc: stamp.hlc,
           type: input.type,
-          ...(input.body === undefined ? {} : { body: input.body }),
+          ...(body === undefined ? {} : { body }),
           ...(sealedPart === undefined
             ? {}
             : { to: sealedPart.to, sealed: sealedPart.sealed }),

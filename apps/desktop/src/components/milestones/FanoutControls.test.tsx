@@ -1,11 +1,11 @@
 import type { TaskDoc } from '@dispatch-foo/core/browser';
 import { DEFAULT_STATUS_MODEL } from '@dispatch-foo/core/browser';
 import type {
-  EpicChildPhase,
-  EpicProgress,
-  EpicProgressChild,
-  EpicSession,
-  EpicWave,
+  MilestoneChildPhase,
+  MilestoneProgress,
+  MilestoneProgressChild,
+  MilestoneSession,
+  MilestoneWave,
 } from '@dispatch/client';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
@@ -13,15 +13,15 @@ import { expect, test } from 'bun:test';
 import { FanoutControls } from './FanoutControls';
 
 const payments = {
-  meta: { id: 'e-1', title: 'Payments', status: 'working', kind: 'epic' },
+  meta: { id: 'e-1', title: 'Payments', status: 'working', kind: 'milestone' },
   body: '',
 } as unknown as TaskDoc;
 
 function child(
   id: string,
-  phase: EpicChildPhase,
-  overrides: Partial<EpicProgressChild> = {}
-): EpicProgressChild {
+  phase: MilestoneChildPhase,
+  overrides: Partial<MilestoneProgressChild> = {}
+): MilestoneProgressChild {
   return {
     id,
     title: id,
@@ -34,11 +34,11 @@ function child(
 }
 
 function sessionWith(
-  state: EpicSession['state'],
-  overrides: Partial<EpicSession> = {}
-): EpicSession {
+  state: MilestoneSession['state'],
+  overrides: Partial<MilestoneSession> = {}
+): MilestoneSession {
   return {
-    epicId: 'e-1',
+    milestoneId: 'e-1',
     concurrency: 3,
     executor: 'claude',
     state,
@@ -54,11 +54,11 @@ function sessionWith(
 }
 
 function progressWith(
-  children: EpicProgressChild[],
-  overrides: Partial<EpicProgress> = {}
-): EpicProgress {
+  children: MilestoneProgressChild[],
+  overrides: Partial<MilestoneProgress> = {}
+): MilestoneProgress {
   return {
-    epicId: 'e-1',
+    milestoneId: 'e-1',
     active: overrides.session?.state === 'active',
     session: null,
     // $71.20 committed of $100 — under the 80 % mark, so the pill reads as working.
@@ -78,7 +78,7 @@ function progressWith(
 }
 
 function mount(
-  progress: EpicProgress | undefined,
+  progress: MilestoneProgress | undefined,
   overrides: Partial<React.ComponentProps<typeof FanoutControls>> = {}
 ) {
   const calls: string[] = [];
@@ -91,7 +91,7 @@ function mount(
   const children = progress?.children ?? [];
   const { unmount } = render(
     <FanoutControls
-      epic={payments}
+      milestone={payments}
       model={DEFAULT_STATUS_MODEL}
       progress={progress}
       count={
@@ -113,7 +113,7 @@ function mount(
       }}
       onStop={record('stop')}
       onLand={record('land')}
-      onOpenEpic={(id) => {
+      onOpenMilestone={(id) => {
         calls.push(`open:${id}`);
       }}
       {...overrides}
@@ -158,7 +158,7 @@ test('the concurrency picker only shows before a session exists', () => {
   const picker = <button type="button">3×</button>;
   const { unmount } = render(
     <FanoutControls
-      epic={payments}
+      milestone={payments}
       model={DEFAULT_STATUS_MODEL}
       progress={noSession}
       count={{ done: 1, total: 2 }}
@@ -166,14 +166,14 @@ test('the concurrency picker only shows before a session exists', () => {
       concurrencyPicker={picker}
       onSendAgents={() => {}}
       onStop={() => Promise.resolve()}
-      onOpenEpic={() => {}}
+      onOpenMilestone={() => {}}
     />
   );
   expect(screen.getByText('3×')).not.toBeNull();
   unmount();
   render(
     <FanoutControls
-      epic={payments}
+      milestone={payments}
       model={DEFAULT_STATUS_MODEL}
       progress={progressWith([child('t-1', 'working')], {
         session: sessionWith('active'),
@@ -183,7 +183,7 @@ test('the concurrency picker only shows before a session exists', () => {
       concurrencyPicker={picker}
       onSendAgents={() => {}}
       onStop={() => Promise.resolve()}
-      onOpenEpic={() => {}}
+      onOpenMilestone={() => {}}
     />
   );
   expect(screen.queryByText('3×')).toBeNull();
@@ -302,7 +302,7 @@ test('active with nothing live and a capped loop: Waiting on N rulings', () => {
 });
 
 test('a multi-wave session shows a wave strip; a single wave does not', () => {
-  const waves: EpicWave[] = [
+  const waves: MilestoneWave[] = [
     { index: 1, total: 2, byPhase: { landed: 2 } },
     { index: 2, total: 1, byPhase: { working: 1 } },
     { index: 3, total: 1, byPhase: { queued: 1 } },
@@ -419,9 +419,9 @@ test('an empty milestone reads ◔ 0/0 and has nothing to send', () => {
   expect(buttonNames()).toEqual(['']);
 });
 
-test('a landed epic offers no verb at all', () => {
+test('a landed milestone offers no verb at all', () => {
   mount(noSession, {
-    epic: {
+    milestone: {
       ...payments,
       meta: { ...payments.meta, status: 'landed' },
     } as TaskDoc,

@@ -21,7 +21,6 @@ export type FilterFacet =
   | 'priority'
   | 'assignee'
   | 'labels'
-  | 'epic'
   | 'milestone'
   | 'run'
   | 'created'
@@ -49,7 +48,7 @@ export const EMPTY_TASK_FILTER_SET: TaskFilterSet = {
   join: 'and',
 };
 
-/** The value a scalar facet uses for "nothing set" — no epic, no milestone, no live run. */
+/** The value a scalar facet uses for "nothing set" — no milestone, no live run. */
 export const FILTER_NONE = 'none';
 
 export const FILTER_FACETS: readonly FilterFacet[] = [
@@ -57,7 +56,6 @@ export const FILTER_FACETS: readonly FilterFacet[] = [
   'priority',
   'assignee',
   'labels',
-  'epic',
   'milestone',
   'run',
   'created',
@@ -69,7 +67,6 @@ const FACET_LABEL: Record<FilterFacet, string> = {
   priority: 'Priority',
   assignee: 'Assignee',
   labels: 'Labels',
-  epic: 'Epic',
   milestone: 'Milestone',
   run: 'Run state',
   created: 'Created',
@@ -109,24 +106,36 @@ function isOp(value: unknown): value is FilterOp {
   );
 }
 
+/**
+ * A facet as stored. Filter sets written before the epic -> milestone rename
+ * say `epic` for what the `milestone` facet now matches (a task's parent
+ * container, by id), so an `epic` clause reads as a `milestone` one, the way
+ * `tasksDisplayFromValue` (lib/tasksPrefs.ts) migrates the display store.
+ */
+function storedFacet(raw: unknown): unknown {
+  return raw === 'epic' ? 'milestone' : raw;
+}
+
 function parseClause(value: unknown): FilterClause | null {
   if (typeof value !== 'object' || value === null) return null;
   const record = value as Record<string, unknown>;
-  if (!isFacet(record.facet)) return null;
+  const facet = storedFacet(record.facet);
+  if (!isFacet(facet)) return null;
   const values = Array.isArray(record.values)
     ? record.values.filter((v): v is string => typeof v === 'string')
     : [];
   if (values.length === 0) return null;
   return {
-    facet: record.facet,
-    op: isOp(record.op) ? record.op : defaultOpFor(record.facet),
+    facet,
+    op: isOp(record.op) ? record.op : defaultOpFor(facet),
     values,
   };
 }
 
 /** The object walk behind `parseTaskFilterSet`, exposed so a filter set nested inside another
- * payload (a saved view) parses the same way: unknown facets and empty clauses drop, a bad
- * `join` reads as `and`. `null` for anything that is not a plain object. */
+ * payload (a saved view) parses the same way: a stored `epic` facet reads as `milestone`,
+ * unknown facets and empty clauses drop, a bad `join` reads as `and`. `null` for anything
+ * that is not a plain object. */
 export function taskFilterSetFromValue(value: unknown): TaskFilterSet | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return null;
@@ -272,8 +281,8 @@ export function toggleClauseNegation(
 export interface FilterContext {
   /** Live (non-terminal) run state per task id, for the `Run state` facet. */
   liveRunStateByTaskId?: ReadonlyMap<string, RunState>;
-  /** Epic titles by id, for the chip label only. */
-  epicTitleById?: ReadonlyMap<string, string>;
+  /** Milestone titles by id, for the chip label only. */
+  milestoneTitleById?: ReadonlyMap<string, string>;
 }
 
 // A scalar facet's value on one task, as the string the clause's values are compared with.
@@ -289,10 +298,8 @@ function scalarValue(
       return doc.meta.priority;
     case 'assignee':
       return doc.meta.assignee;
-    case 'epic':
-      return doc.meta.parent ?? FILTER_NONE;
     case 'milestone':
-      return doc.meta.milestone ?? FILTER_NONE;
+      return doc.meta.parent ?? FILTER_NONE;
     case 'run':
       return ctx.liveRunStateByTaskId?.get(doc.meta.id) ?? FILTER_NONE;
   }
@@ -360,7 +367,7 @@ const RUN_STATE_LABEL: Record<RunState, string> = {
   'interrupted-dirty': 'Interrupted',
 };
 
-/** A clause value as a person reads it: `In progress`, `Urgent`, an epic's title. */
+/** A clause value as a person reads it: `In progress`, `Urgent`, a milestone's title. */
 export function filterValueLabel(
   facet: FilterFacet,
   value: string,
@@ -373,12 +380,10 @@ export function filterValueLabel(
       return priorityLabel(value as TaskListItem['meta']['priority']);
     case 'assignee':
       return assigneeLabel(value);
-    case 'epic':
-      return value === FILTER_NONE
-        ? 'No epic'
-        : (ctx.epicTitleById?.get(value) ?? value);
     case 'milestone':
-      return value === FILTER_NONE ? 'No milestone' : value;
+      return value === FILTER_NONE
+        ? 'No milestone'
+        : (ctx.milestoneTitleById?.get(value) ?? value);
     case 'run':
       return value === FILTER_NONE
         ? 'No live run'
@@ -417,11 +422,10 @@ export function clauseParts(
 export interface FilterPickerContext {
   /** The project's statuses in config order. */
   statuses: readonly string[];
-  epics: readonly TaskListItem[];
+  /** Every container a task can sit under (a milestone, project, parent issue…). */
+  milestones: readonly TaskListItem[];
   /** Every label in use, sorted. */
   labels: readonly string[];
-  /** Every milestone name in use, sorted. */
-  milestones: readonly string[];
 }
 
 const PRIORITIES: readonly Priority[] = [
@@ -511,15 +515,13 @@ export function optionsFor(
       });
     case 'labels':
       return ctx.labels.map((l) => ({ value: l, label: l }));
-    case 'epic':
-      return [
-        { value: FILTER_NONE, label: 'No epic' },
-        ...ctx.epics.map((e) => ({ value: e.meta.id, label: e.meta.title })),
-      ];
     case 'milestone':
       return [
         { value: FILTER_NONE, label: 'No milestone' },
-        ...ctx.milestones.map((m) => ({ value: m, label: m })),
+        ...ctx.milestones.map((m) => ({
+          value: m.meta.id,
+          label: m.meta.title,
+        })),
       ];
     case 'run':
       return RUN_STATES.map((s) => ({

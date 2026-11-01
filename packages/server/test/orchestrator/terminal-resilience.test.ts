@@ -12,8 +12,8 @@ import { join } from 'node:path';
 
 import { TaskCache } from '../../src/cache.js';
 import { EventBus } from '../../src/events.js';
-import { EpicEngine } from '../../src/orchestrator/epic.js';
 import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
+import { MilestoneEngine } from '../../src/orchestrator/milestone.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
 import { runsDir, transcriptPath } from '../../src/orchestrator/paths.js';
 import type { RunMeta } from '../../src/orchestrator/types.js';
@@ -22,7 +22,7 @@ import { initGitRepo, withBrokenRepo } from './helpers.js';
 let fakeHome: string;
 let repo: string;
 // Shut down in afterEach: an engine's retry timers outlive its test otherwise.
-const engines: EpicEngine[] = [];
+const engines: MilestoneEngine[] = [];
 const originalDispatchHome = process.env.DISPATCH_HOME;
 
 beforeEach(() => {
@@ -50,7 +50,7 @@ async function waitFor(check: () => boolean, timeoutMs = 3000): Promise<void> {
 
 interface Harness {
   orchestrator: Orchestrator;
-  epics: EpicEngine;
+  milestones: MilestoneEngine;
   store: TaskStore;
   cache: TaskCache;
   events: EventBus;
@@ -79,7 +79,7 @@ function makeHarness(fillRetryDelayMs?: number, session?: string): Harness {
       finish: { state: 'finished', costUsd: 0, turns: 1 },
     })
   );
-  const epics = new EpicEngine({
+  const milestones = new MilestoneEngine({
     rootDir: repo,
     store,
     cache,
@@ -87,10 +87,10 @@ function makeHarness(fillRetryDelayMs?: number, session?: string): Harness {
     orchestrator,
     fillRetryDelayMs,
   });
-  engines.push(epics);
+  engines.push(milestones);
   const terminal: RunMeta[] = [];
   orchestrator.onRunTerminal((meta) => terminal.push(meta));
-  return { orchestrator, epics, store, cache, events, terminal };
+  return { orchestrator, milestones, store, cache, events, terminal };
 }
 
 // Replaces a task's file with merge-conflict markers — the shape a bad
@@ -122,22 +122,25 @@ describe('terminal bookkeeping never swallows the terminal hooks', () => {
     expect(orchestrator.getRun(run.id)?.meta.state).toBe('finished');
   });
 
-  it('keeps dispatching an epic when a finished child task file is unparseable', async () => {
-    const { orchestrator, epics, store, cache } = makeHarness();
-    const epic = store.create({ title: 'epic', kind: 'epic' });
+  it('keeps dispatching a milestone when a finished child task file is unparseable', async () => {
+    const { orchestrator, milestones, store, cache } = makeHarness();
+    const milestone = store.create({ title: 'milestone', kind: 'milestone' });
     const a = store.create({
       title: 'child a',
-      parent: epic.meta.id,
+      parent: milestone.meta.id,
       writes: ['shared.ts'],
     });
     const b = store.create({
       title: 'child b',
-      parent: epic.meta.id,
+      parent: milestone.meta.id,
       writes: ['shared.ts'],
     });
     cache.rebuild(store);
 
-    await epics.start(epic.meta.id, { concurrency: 1, executor: 'fake' });
+    await milestones.start(milestone.meta.id, {
+      concurrency: 1,
+      executor: 'fake',
+    });
     await waitFor(() => orchestrator.list().length === 1);
     const first = orchestrator.list()[0];
     const secondId = first.taskId === a.meta.id ? b.meta.id : a.meta.id;
@@ -152,13 +155,16 @@ describe('terminal bookkeeping never swallows the terminal hooks', () => {
   });
 
   it('retries a hook-driven fill that failed to dispatch anything', async () => {
-    const { orchestrator, epics, store, cache } = makeHarness(50);
-    const epic = store.create({ title: 'epic', kind: 'epic' });
-    const a = store.create({ title: 'child a', parent: epic.meta.id });
-    const b = store.create({ title: 'child b', parent: epic.meta.id });
+    const { orchestrator, milestones, store, cache } = makeHarness(50);
+    const milestone = store.create({ title: 'milestone', kind: 'milestone' });
+    const a = store.create({ title: 'child a', parent: milestone.meta.id });
+    const b = store.create({ title: 'child b', parent: milestone.meta.id });
     cache.rebuild(store);
 
-    await epics.start(epic.meta.id, { concurrency: 1, executor: 'fake' });
+    await milestones.start(milestone.meta.id, {
+      concurrency: 1,
+      executor: 'fake',
+    });
     await waitFor(() => orchestrator.list().length === 1);
     const first = orchestrator.list()[0];
     const secondId = first.taskId === a.meta.id ? b.meta.id : a.meta.id;
@@ -168,14 +174,14 @@ describe('terminal bookkeeping never swallows the terminal hooks', () => {
     await withBrokenRepo(repo, async () => {
       orchestrator.approve(first.id, 'go', { allow: true });
       await waitFor(() =>
-        (store.get(epic.meta.id)?.body ?? '').includes(
+        (store.get(milestone.meta.id)?.body ?? '').includes(
           '[hook error] auto-dispatch failed'
         )
       );
     });
 
     await waitFor(() => orchestrator.list().some((r) => r.taskId === secondId));
-    epics.stop(epic.meta.id);
+    milestones.stop(milestone.meta.id);
   });
 
   it('fires terminal hooks when a cancelled run task file is unparseable', async () => {

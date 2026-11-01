@@ -247,7 +247,7 @@ directory is enough to rebuild it.
 
 ## Layout
 
-    .dispatch/tasks/<id>-<slug>.md   one file per task and epic
+    .dispatch/tasks/<id>-<slug>.md   one file per task and milestone
     .dispatch/findings.jsonl         review findings, one JSON object per line
     .dispatch/ledger.jsonl           decisions and hazards
     .dispatch/evidence/<runId>.jsonl commands run and guards mutation-tested

@@ -12,7 +12,7 @@ import { navLink, openDestination, waitForShell } from './shell';
 
 const APP = { authorization: `Bearer ${APP_TOKEN}` };
 
-// The storefront fixture's milestones (its two epics) have no project and no
+// The storefront fixture's milestones (its two milestones) have no project and no
 // date, so this spec gives one of them both, on its own daemon so the shared
 // fixture views.spec.ts screenshots stays as it was.
 let daemon: IsolatedDaemon | null = null;

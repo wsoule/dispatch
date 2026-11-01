@@ -27,13 +27,25 @@ export function generateCommentId(): string {
 
 const MINT_ATTEMPTS = 32;
 
+// A new comment's time, a millisecond past the thread's latest when the
+// clock has not moved on, so creation order is the order comments were added.
+function nextCreated(now: string, latest: string | null): string {
+  if (latest === null || now > latest) return now;
+  // A stored time that is not a date (hand-edited, synced in) never blocks a new comment.
+  const next = Date.parse(latest) + 1;
+  return Number.isFinite(next) && next <= 8.64e15
+    ? new Date(next).toISOString()
+    : now;
+}
+
 // The record a new comment starts as; shared so both backends agree.
 function newComment(
   id: string,
   input: AddCommentInput,
-  now: string
+  now: string,
+  latest: string | null
 ): TaskComment {
-  const created = input.created ?? now;
+  const created = input.created ?? nextCreated(now, latest);
   return {
     id,
     taskId: input.taskId,
@@ -141,10 +153,11 @@ export class FileCommentStore implements CommentStorePort {
   ): TaskComment {
     const existing = this.list(input.taskId);
     const taken = new Set(existing.map((c) => c.id));
+    const latest = existing.at(-1)?.created ?? null;
     for (let attempt = 0; attempt < MINT_ATTEMPTS; attempt += 1) {
       const id = generateCommentId();
       if (taken.has(id)) continue;
-      const comment = newComment(id, input, now);
+      const comment = newComment(id, input, now, latest);
       this.write(input.taskId, [...existing, comment]);
       return comment;
     }
@@ -231,8 +244,14 @@ export class SqliteCommentStore implements CommentStorePort {
     input: AddCommentInput,
     now: string = new Date().toISOString()
   ): TaskComment {
+    const latest =
+      queryOne<{ latest: string | null }>(
+        this.db,
+        'SELECT MAX(created) AS latest FROM comments WHERE task_id = ?',
+        [input.taskId]
+      )?.latest ?? null;
     for (let attempt = 0; attempt < MINT_ATTEMPTS; attempt += 1) {
-      const comment = newComment(generateCommentId(), input, now);
+      const comment = newComment(generateCommentId(), input, now, latest);
       const written = this.db
         .prepare(INSERT_COMMENT)
         .run(

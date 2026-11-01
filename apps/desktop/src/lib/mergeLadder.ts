@@ -9,7 +9,7 @@ import type { RunMeta } from '@dispatch/client';
  *   must never be mistaken for: it reads "Merged locally — not on GitHub yet"
  *   and offers a retry, never plain "landed".
  * - `local-only`: merged into a base that has no remote to reach (a project
- *   without one, or an epic integration branch). Landed, honestly, locally.
+ *   without one, or a milestone integration branch). Landed, honestly, locally.
  * - `on-origin`: the merge commit is reachable from origin's base branch (see
  *   `pushedToOrigin` / `landsOn` in packages/server/src/orchestrator/types.ts).
  */
@@ -70,7 +70,7 @@ export function mergeLadderPillLabel(state: MergeLadderState): string {
   return MERGE_LADDER_PILL_LABEL[state];
 }
 
-const EPIC_BRANCH = /^epic\//;
+const MILESTONE_BRANCH = /^milestone\//;
 
 /**
  * Where a run's work went, in the words every surface uses: "Landed on
@@ -85,8 +85,8 @@ export function mergeLadderLabel(meta: RunMeta | undefined): string {
     case 'merged-local':
       return 'Merged locally — not on GitHub yet';
     case 'local-only':
-      return meta !== undefined && EPIC_BRANCH.test(meta.baseBranch)
-        ? `Landed on ${meta.baseBranch} (local epic branch)`
+      return meta !== undefined && MILESTONE_BRANCH.test(meta.baseBranch)
+        ? `Landed on ${meta.baseBranch} (local milestone branch)`
         : 'Landed locally (no remote)';
     case 'on-origin': {
       // A PR-merged run never gets a local mergeCommit (see mergeLadderState

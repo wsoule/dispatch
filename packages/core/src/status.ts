@@ -267,19 +267,109 @@ export function hasStatusRole(
   return name !== null && canonicalStatus(status) === name;
 }
 
+/** Whether the review role names a status of its own; a workflow with no
+ *  review state shares the dispatched one. */
+export function hasDistinctReviewRole(
+  model: StatusModel = DEFAULT_STATUS_MODEL
+): boolean {
+  return model.roles.review !== model.roles.dispatched;
+}
+
+// A role reached by status, except that a status shared with the dispatched
+// role only counts once the task's run has finished.
+function reachedRole(
+  status: string,
+  role: 'review' | 'landing',
+  model: StatusModel,
+  finishedRun: boolean
+): boolean {
+  return (
+    hasStatusRole(status, role, model) &&
+    (finishedRun || !hasStatusRole(status, 'dispatched', model))
+  );
+}
+
+/** In review: the review role, and when that status is shared with
+ *  dispatched, only once the task's run has finished. */
+export function isReviewStatus(
+  status: string,
+  model: StatusModel = DEFAULT_STATUS_MODEL,
+  finishedRun = false
+): boolean {
+  return reachedRole(status, 'review', model, finishedRun);
+}
+
 /**
  * Whether a blocker no longer holds up *dispatching* its dependents. Looser
  * than done: a dependent can start as soon as the blocker's code exists on a
  * branch, which is the review role — and certainly once it is queued (the
- * landing role).
+ * landing role). `finishedRun` says the blocker's latest run has ended, which
+ * a board whose review status is its dispatched one cannot tell from status.
  */
 export function isSatisfiedForDispatchStatus(
   status: string,
-  model: StatusModel = DEFAULT_STATUS_MODEL
+  model: StatusModel = DEFAULT_STATUS_MODEL,
+  finishedRun = false
 ): boolean {
   return (
     isDoneStatus(status, model) ||
-    hasStatusRole(status, 'review', model) ||
-    hasStatusRole(status, 'landing', model)
+    isReviewStatus(status, model, finishedRun) ||
+    reachedRole(status, 'landing', model, finishedRun)
   );
+}
+
+/** Where a captured-but-unspecified task goes: the first backlog status,
+ *  else triage. Null on a board with neither: the ready status would queue
+ *  it for dispatch, which a draft must never be. */
+export function draftStatus(
+  model: StatusModel = DEFAULT_STATUS_MODEL
+): string | null {
+  return (
+    statusesOfType('backlog', model)[0] ??
+    statusesOfType('triage', model)[0] ??
+    null
+  );
+}
+
+// The status a built-in word stands for on a board, read through its role.
+function builtInRoleStatus(word: string, model: StatusModel): string | null {
+  switch (word as TaskStatus) {
+    case 'draft':
+      return draftStatus(model);
+    case 'ready':
+      return model.roles.ready;
+    case 'working':
+      return model.roles.dispatched;
+    case 'review':
+      return model.roles.review;
+    case 'landing':
+      return model.roles.landing;
+    case 'landed':
+      return model.roles.landed;
+    case 'dropped':
+      return model.roles.dropped;
+    default:
+      return null;
+  }
+}
+
+/**
+ * A caller's status as one of `names`: exact, then a unique case-insensitive
+ * match, then a legacy alias, then a built-in word read as its role (landed ->
+ * roles.landed, working -> roles.dispatched, draft -> draftStatus). Null when
+ * none fits, `draft` included on a board with no backlog or triage status.
+ */
+export function resolveStatusName(
+  raw: string,
+  names: readonly string[],
+  model: StatusModel = DEFAULT_STATUS_MODEL
+): string | null {
+  if (names.includes(raw)) return raw;
+  const folded = raw.toLowerCase();
+  const insensitive = names.filter((name) => name.toLowerCase() === folded);
+  if (insensitive.length === 1) return insensitive[0];
+  const canonical = canonicalStatus(folded);
+  if (names.includes(canonical)) return canonical;
+  const byRole = builtInRoleStatus(canonical, model);
+  return byRole !== null && names.includes(byRole) ? byRole : null;
 }

@@ -142,7 +142,7 @@ function TaskDrawerLoaded({
               model={state.statusModel}
               latestRunByTaskId={project.latestRunByTaskId}
               onOpenTask={peek}
-              createPreset={canEdit ? { epic: taskId } : undefined}
+              createPreset={canEdit ? { milestone: taskId } : undefined}
             />
           </div>
         ) : (

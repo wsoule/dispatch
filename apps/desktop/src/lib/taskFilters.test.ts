@@ -12,6 +12,7 @@ import {
   DAY_MS,
   defaultOpFor,
   EMPTY_TASK_FILTER_SET,
+  FILTER_NONE,
   type FilterPickerContext,
   hasActiveTaskFilters,
   isDateFacet,
@@ -105,11 +106,11 @@ describe('clauses', () => {
     ]);
   });
 
-  test('epic, milestone and run state read `none` as unset', () => {
+  test('milestone and run state read `none` as unset', () => {
     expect(
       applyTaskFilters(
         TASKS,
-        set([{ facet: 'epic', op: 'is', values: ['none'] }])
+        set([{ facet: 'milestone', op: 'is', values: ['none'] }])
       ).map((t) => t.meta.id)
     ).toEqual(['t-1', 't-3']);
     expect(
@@ -294,6 +295,28 @@ describe('storage', () => {
     });
   });
 
+  test('a stored epic clause reads back as a milestone clause', () => {
+    // Filter sets written before the epic -> milestone rename name the
+    // parent container facet `epic`; the `milestone` facet now matches the
+    // same parent ids, so the clause survives instead of dropping.
+    const stored = JSON.stringify({
+      clauses: [
+        { facet: 'epic', op: 'is', values: ['e-1'] },
+        { facet: 'epic', op: 'is not', values: [FILTER_NONE] },
+        { facet: 'epic', values: ['e-2'] },
+      ],
+      join: 'or',
+    });
+    expect(parseTaskFilterSet(stored)).toEqual({
+      clauses: [
+        { facet: 'milestone', op: 'is', values: ['e-1'] },
+        { facet: 'milestone', op: 'is not', values: [FILTER_NONE] },
+        { facet: 'milestone', op: 'is', values: ['e-2'] },
+      ],
+      join: 'or',
+    });
+  });
+
   test('serializeTaskFilterSet writes a fixed field order', () => {
     const shuffled = {
       join: 'and',
@@ -323,25 +346,24 @@ describe('labels', () => {
     expect(
       sentence(
         clauseParts(
-          { facet: 'epic', op: 'is', values: ['e-1'] },
+          { facet: 'milestone', op: 'is', values: ['e-1'] },
           {
-            epicTitleById: new Map([['e-1', 'Payments']]),
+            milestoneTitleById: new Map([['e-1', 'Payments']]),
           }
         )
       )
-    ).toBe('Epic is Payments');
+    ).toBe('Milestone is Payments');
     expect(
-      sentence(clauseParts({ facet: 'epic', op: 'is', values: ['none'] }))
-    ).toBe('Epic is No epic');
+      sentence(clauseParts({ facet: 'milestone', op: 'is', values: ['none'] }))
+    ).toBe('Milestone is No milestone');
   });
 });
 
 describe('Filter picker vocabulary', () => {
   const PICKER_CONTEXT: FilterPickerContext = {
     statuses: ['draft', 'working'],
-    epics: [task('e-1', { title: 'Payments' })],
+    milestones: [task('e-1', { title: 'Payments' })],
     labels: ['api', 'ui'],
-    milestones: ['M1'],
   };
   const NOW = Date.parse('2026-10-26T12:00:00.000Z');
 
@@ -389,13 +411,10 @@ describe('Filter picker vocabulary', () => {
       { value: 'api', label: 'api' },
       { value: 'ui', label: 'ui' },
     ]);
-    expect(optionsFor('epic', PICKER_CONTEXT)).toEqual([
-      { value: 'none', label: 'No epic' },
-      { value: 'e-1', label: 'Payments' },
-    ]);
+    // A milestone is filtered on by id and read by its title.
     expect(optionsFor('milestone', PICKER_CONTEXT)).toEqual([
       { value: 'none', label: 'No milestone' },
-      { value: 'M1', label: 'M1' },
+      { value: 'e-1', label: 'Payments' },
     ]);
     expect(optionsFor('run', PICKER_CONTEXT).map((o) => o.label)).toEqual([
       'Working',
@@ -421,14 +440,13 @@ describe('Filter picker vocabulary', () => {
   test('an empty vocabulary leaves only the "none" rows', () => {
     const empty: FilterPickerContext = {
       statuses: [],
-      epics: [],
-      labels: [],
       milestones: [],
+      labels: [],
     };
     expect(optionsFor('status', empty)).toEqual([]);
     expect(optionsFor('labels', empty)).toEqual([]);
-    expect(optionsFor('epic', empty)).toEqual([
-      { value: 'none', label: 'No epic' },
+    expect(optionsFor('milestone', empty)).toEqual([
+      { value: 'none', label: 'No milestone' },
     ]);
   });
 
@@ -436,7 +454,7 @@ describe('Filter picker vocabulary', () => {
     expect(matches('  STAT ', 'Status')).toBe(true);
     expect(matches('run st', 'Run state')).toBe(true);
     expect(matches('', 'Anything')).toBe(true);
-    expect(matches('epic', 'Milestone')).toBe(false);
+    expect(matches('parent', 'Milestone')).toBe(false);
   });
 
   test('isDateFacet names the two date facets', () => {

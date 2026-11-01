@@ -90,8 +90,8 @@ export function conflict(taskId: string): void {
   console.log(`teammate: moved ${taskId} to in-progress`);
 }
 
-// The task the teammate files mid-demo, parented under the checkout epic so
-// it shows up alongside the rest of that epic's work on the board.
+// The task the teammate files mid-demo, parented under the checkout milestone so
+// it shows up alongside the rest of that milestone's work on the board.
 const NEW_TASK_TITLE = 'Add a loyalty points badge to checkout';
 const NEW_TASK_PARENT = 'e-4a19c2';
 

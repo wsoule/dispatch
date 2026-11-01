@@ -32,7 +32,7 @@ export function checklistLabel(
 }
 
 /** The hint fragments under an inbox row: a re-type suggestion when the
- *  judged kind disagrees with the captured one, the suggested epic, and the
+ *  judged kind disagrees with the captured one, the suggested milestone, and the
  *  strongest possible duplicate. Empty for an item the triage agrees with. */
 export function triageHints(
   item: Pick<InboxItem, 'kind'>,
@@ -41,8 +41,8 @@ export function triageHints(
   if (triage === undefined) return [];
   const hints: string[] = [];
   if (triage.kind !== item.kind) hints.push(`looks like: ${triage.kind}`);
-  if (triage.epicId !== null) {
-    hints.push(`→ ${triage.epicTitle ?? triage.epicId}`);
+  if (triage.milestoneId !== null) {
+    hints.push(`→ ${triage.milestoneTitle ?? triage.milestoneId}`);
   }
   const duplicate = triage.duplicates[0];
   if (duplicate !== undefined) hints.push(`≈ ${duplicate.id}`);

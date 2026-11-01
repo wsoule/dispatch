@@ -1167,8 +1167,8 @@ describe('Orchestrator.review discard', () => {
 // A failed run resumed into a successor shares that successor's branch, so
 // the successor's merge is where the predecessor's work landed too. Merging
 // the successor must close out every unreviewed predecessor in the
-// `resumedFrom` chain — otherwise epicLandStatus keeps refusing to land the
-// epic over "unreviewed" runs whose work is already in, and the only way past
+// `resumedFrom` chain — otherwise milestoneLandStatus keeps refusing to land the
+// milestone over "unreviewed" runs whose work is already in, and the only way past
 // it (discard) used to un-land the task.
 describe('Orchestrator.review merge closes superseded predecessors', () => {
   // An executor whose first `failCount` starts fail with a resumable session
@@ -2375,18 +2375,18 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
     expect(executor.lastOpts?.permissionMode).toBe('auto');
   });
 
-  it('builds a prompt that includes the parent epic when the task has one', async () => {
+  it('builds a prompt that includes the parent milestone when the task has one', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     const executor = new CapturingExecutor();
     orchestrator.registerExecutor('fake', executor);
-    const epic = store.create({
+    const milestone = store.create({
       title: 'Harden auth',
-      kind: 'epic',
+      kind: 'milestone',
       description: 'Make the auth system resistant to abuse.',
     });
     const task = store.create({
       title: 'Add login rate limiting',
-      parent: epic.meta.id,
+      parent: milestone.meta.id,
     });
 
     const meta = await orchestrator.dispatch(task.meta.id, 'fake');

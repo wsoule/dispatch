@@ -1,5 +1,9 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
-import { DEFAULT_STATUS_MODEL, fanoutScope } from '@dispatch-foo/core/browser';
+import {
+  DEFAULT_STATUS_MODEL,
+  fanoutScope,
+  statusModelOf,
+} from '@dispatch-foo/core/browser';
 import type { RunMeta } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
@@ -368,4 +372,56 @@ test('the plan draws exactly the tasks the server’s fan-out covers', () => {
   expect(
     new Set(flightScope(tree[1], children).nodes.map((t) => t.meta.id))
   ).toEqual(new Set(['t-1', 't-2', 't-4', 't-5']));
+});
+
+// A Linear team with no review state: review shares In Progress with dispatched.
+describe('buildFlightPlan where review shares the dispatched status', () => {
+  const model = statusModelOf({
+    statuses: ['Backlog', 'Todo', 'In Progress', 'Done', 'Canceled'],
+    statusDefinitions: [
+      { name: 'Backlog', type: 'backlog', color: null },
+      { name: 'Todo', type: 'unstarted', color: null },
+      { name: 'In Progress', type: 'started', color: null },
+      { name: 'Done', type: 'completed', color: null },
+      { name: 'Canceled', type: 'canceled', color: null },
+    ],
+    statusRoles: {
+      ready: 'Todo',
+      dispatched: 'In Progress',
+      review: 'In Progress',
+      landing: null,
+      landed: 'Done',
+      dropped: 'Canceled',
+    },
+  });
+  const children = [
+    child('t-a', { status: 'In Progress' }),
+    child('t-b', { status: 'Todo', blockedBy: ['t-a'] }),
+  ];
+
+  test('an In Progress child with no finished run is not in review', () => {
+    const plan = buildFlightPlan(children, { ...opts(), model });
+    expect(plan.nodes.map((n) => n.state)).toEqual(['blocked', 'blocked']);
+    expect(plan.nodes[1]?.waitingOn).toEqual(['t-a']);
+  });
+
+  test('a finished run puts it in review and releases its dependent', () => {
+    const plan = buildFlightPlan(children, {
+      ...opts(),
+      model,
+      withRunBranch: new Set(['t-a']),
+      withFinishedRun: new Set(['t-a']),
+    });
+    expect(plan.nodes.map((n) => n.state)).toEqual(['review', 'queued']);
+  });
+
+  test('an older branch does not release it while a re-dispatch is live', () => {
+    const plan = buildFlightPlan(children, {
+      ...opts(),
+      model,
+      withRunBranch: new Set(['t-a']),
+      withFinishedRun: new Set(),
+    });
+    expect(plan.nodes[1]?.waitingOn).toEqual(['t-a']);
+  });
 });

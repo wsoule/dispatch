@@ -311,7 +311,7 @@ export function addressEntries(input: {
     }));
   // Milestone rooms open from their milestone, not by name.
   const rooms = input.rooms
-    .filter((name) => !name.startsWith('epic/'))
+    .filter((name) => !name.startsWith('milestone/'))
     .map((name) => ({
       id: `room-${name}`,
       label: `Open #${name}`,

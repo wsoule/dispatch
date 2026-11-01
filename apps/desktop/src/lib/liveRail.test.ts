@@ -1,6 +1,6 @@
 import type {
-  EpicProgress,
-  EpicProgressChild,
+  MilestoneProgress,
+  MilestoneProgressChild,
   RunMeta,
 } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
@@ -23,7 +23,7 @@ function run(over: Partial<RunMeta> = {}): RunMeta {
   } as RunMeta;
 }
 
-function child(id: string): EpicProgressChild {
+function child(id: string): MilestoneProgressChild {
   return {
     id,
     title: id,
@@ -34,13 +34,13 @@ function child(id: string): EpicProgressChild {
   };
 }
 
-function session(epicId: string, childIds: string[]): EpicProgress {
+function session(milestoneId: string, childIds: string[]): MilestoneProgress {
   return {
-    epicId,
+    milestoneId,
     active: true,
     concurrency: 2,
     session: {
-      epicId,
+      milestoneId,
       concurrency: 2,
       executor: 'claude',
       state: 'active',
@@ -139,7 +139,7 @@ describe('buildLiveRail', () => {
       ],
       [session('e-a', ['t-a']), session('e-b', ['t-b'])]
     );
-    expect(groups.map((group) => group.progress.epicId)).toEqual([
+    expect(groups.map((group) => group.progress.milestoneId)).toEqual([
       'e-a',
       'e-b',
     ]);

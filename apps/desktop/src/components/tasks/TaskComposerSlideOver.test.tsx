@@ -3,6 +3,7 @@ import type {
   LabelDefinition,
   TaskDoc,
 } from '@dispatch-foo/core/browser';
+import { statusModelOf } from '@dispatch-foo/core/browser';
 import type { DraftRecord } from '@dispatch/client';
 import {
   act,
@@ -12,12 +13,13 @@ import {
   waitFor,
   within,
 } from '@testing-library/react';
-import { beforeEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { useState } from 'react';
 
 import { useGlobalKeyboard } from '../../hooks/useGlobalKeyboard';
 import { BRAIN_DUMP_DRAFT_KEY } from '../../hooks/usePersistedDraft';
 import type { GlobalKeyCommand } from '../../lib/keyboard';
+import { setActiveStatusModel } from '../../lib/statusModel';
 import {
   type CreateTaskPreset,
   type ShellActions,
@@ -41,18 +43,23 @@ beforeEach(() => {
   window.localStorage.removeItem(BRAIN_DUMP_DRAFT_KEY);
 });
 
-function epic(id: string, title: string, kind = 'milestone'): TaskDoc {
+// Reset inside act: the composer may still be mounted and subscribed to the model.
+afterEach(() => {
+  act(() => setActiveStatusModel(null));
+});
+
+function milestone(id: string, title: string, kind = 'milestone'): TaskDoc {
   return {
     meta: { id, title, kind, icon: null, color: null, labels: [] },
     body: '',
   } as unknown as TaskDoc;
 }
 
-const EPICS = [
-  epic('e-1', 'Search index'),
-  epic('p-1', 'Platform', 'project'),
-  epic('t-9', 'Parent issue', 'task'),
-  epic('m-2', 'Payments › Beta'),
+const MILESTONES = [
+  milestone('e-1', 'Search index'),
+  milestone('p-1', 'Platform', 'project'),
+  milestone('t-9', 'Parent issue', 'task'),
+  milestone('m-2', 'Payments › Beta'),
 ];
 
 // What a successful `handleCreate` resolves with: enough of a doc for the composer to
@@ -139,7 +146,7 @@ function Harness({
         mode={mode}
         onModeChange={setMode}
         statuses={STATUSES}
-        epics={EPICS}
+        milestones={MILESTONES}
         labels={options.labels ?? []}
         labelDefinitions={options.labelDefinitions}
         projectName={options.projectName}
@@ -303,7 +310,7 @@ test('a modal dialog named New task with the crumb, fields and property pickers'
 });
 
 test('reads the status and the parent container from the shell createPreset', async () => {
-  const { created } = mount({ preset: { status: 'review', epic: 'e-1' } });
+  const { created } = mount({ preset: { status: 'review', milestone: 'e-1' } });
   expect(trigger('Status: Review')).toBeTruthy();
   expect(trigger('Parent: Search index')).toBeTruthy();
   // The free-text milestone is gone: a task's container is its parent.
@@ -323,7 +330,7 @@ test('reads the status and the parent container from the shell createPreset', as
 });
 
 test('the Parent picker lists where this kind can live, and clears to no parent', async () => {
-  const { created } = mount({ preset: { epic: 'e-1' } });
+  const { created } = mount({ preset: { milestone: 'e-1' } });
   fireEvent.click(trigger('Parent: Search index'));
   expect(optionTexts()).toEqual([
     'No parent',
@@ -357,7 +364,7 @@ test('a kind preset starts the Kind picker there and creates that kind', async (
 });
 
 test('switching to a broader kind drops a parent that cannot hold it', () => {
-  mount({ preset: { epic: 'e-1' } });
+  mount({ preset: { milestone: 'e-1' } });
   fireEvent.click(trigger('Kind: Task'));
   fireEvent.click(screen.getByRole('option', { name: /Project/ }));
   expect(trigger('Kind: Project')).toBeTruthy();
@@ -497,6 +504,62 @@ test('Save as draft appears once a title exists and files the task as draft', as
   await settle();
 
   expect(created[0]?.status).toBe('draft');
+});
+
+// A board linked to Linear has no `draft`; the daemon would refuse it.
+test('Save as draft files the task under a Linear board’s backlog status', async () => {
+  setActiveStatusModel(
+    statusModelOf({
+      statuses: ['Backlog', 'Todo', 'In Progress', 'Done', 'Canceled'],
+      statusDefinitions: [
+        { name: 'Backlog', type: 'backlog', color: null },
+        { name: 'Todo', type: 'unstarted', color: null },
+        { name: 'In Progress', type: 'started', color: null },
+        { name: 'Done', type: 'completed', color: null },
+        { name: 'Canceled', type: 'canceled', color: null },
+      ],
+      statusRoles: {
+        ready: 'Todo',
+        dispatched: 'In Progress',
+        review: 'In Progress',
+        landing: null,
+        landed: 'Done',
+        dropped: 'Canceled',
+      },
+    })
+  );
+  const { created } = mount({ preset: { status: 'Todo' } });
+  fireEvent.change(titleField(), { target: { value: 'Later' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save as draft' }));
+  await settle();
+
+  expect(created[0]?.status).toBe('Backlog');
+});
+
+test('Save as draft is not offered on a board with no backlog or triage status', () => {
+  setActiveStatusModel(
+    statusModelOf({
+      statuses: ['Todo', 'In Progress', 'Done', 'Canceled'],
+      statusDefinitions: [
+        { name: 'Todo', type: 'unstarted', color: null },
+        { name: 'In Progress', type: 'started', color: null },
+        { name: 'Done', type: 'completed', color: null },
+        { name: 'Canceled', type: 'canceled', color: null },
+      ],
+      statusRoles: {
+        ready: 'Todo',
+        dispatched: 'In Progress',
+        review: 'In Progress',
+        landing: null,
+        landed: 'Done',
+        dropped: 'Canceled',
+      },
+    })
+  );
+  mount({ preset: { status: 'Todo' } });
+  fireEvent.change(titleField(), { target: { value: 'Later' } });
+
+  expect(screen.queryByRole('button', { name: 'Save as draft' })).toBeNull();
 });
 
 test('a failed create keeps the panel open with the title intact and says why', async () => {
@@ -708,7 +771,7 @@ async function draft(text: string) {
 test("a container's + drafts the task inside it", async () => {
   const { drafts, closed } = mount({
     mode: 'describe',
-    preset: { epic: 'm-2' },
+    preset: { milestone: 'm-2' },
   });
   expect(document.querySelector('[data-slot=draft-parent]')?.textContent).toBe(
     'In Payments › Beta'
@@ -719,7 +782,7 @@ test("a container's + drafts the task inside it", async () => {
 });
 
 test('the parent chip can be dropped before drafting', async () => {
-  const { drafts } = mount({ mode: 'describe', preset: { epic: 'm-2' } });
+  const { drafts } = mount({ mode: 'describe', preset: { milestone: 'm-2' } });
   const notIn = screen.getByRole('button', { name: 'Not in Payments › Beta' });
   act(() => notIn.focus());
   fireEvent.click(notIn);
@@ -742,14 +805,14 @@ test('without a preset nothing is pinned', async () => {
 });
 
 test('Quick add carries the parent the composer still holds', () => {
-  mount({ mode: 'describe', preset: { status: 'ready', epic: 'm-2' } });
+  mount({ mode: 'describe', preset: { status: 'ready', milestone: 'm-2' } });
   fireEvent.click(screen.getByRole('radio', { name: 'Quick add' }));
   expect(trigger('Parent: Payments › Beta')).toBeTruthy();
   expect(trigger('Status: Ready')).toBeTruthy();
 });
 
 test('a dropped parent chip stays dropped in Quick add', () => {
-  mount({ mode: 'describe', preset: { status: 'ready', epic: 'm-2' } });
+  mount({ mode: 'describe', preset: { status: 'ready', milestone: 'm-2' } });
   fireEvent.click(
     screen.getByRole('button', { name: 'Not in Payments › Beta' })
   );
@@ -858,7 +921,7 @@ test('without a capture handler the third mode is not offered', () => {
 });
 
 test('a reopened composer starts from the new session, keeping only the persisted drafts', () => {
-  mount({ mode: 'quick', preset: { epic: 'e-1' } });
+  mount({ mode: 'quick', preset: { milestone: 'e-1' } });
   fireEvent.change(titleField(), { target: { value: 'Persisted' } });
   fireEvent.click(trigger('Kind: Task'));
   fireEvent.click(screen.getByRole('option', { name: /Milestone/ }));

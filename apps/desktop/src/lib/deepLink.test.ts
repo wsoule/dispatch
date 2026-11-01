@@ -39,7 +39,7 @@ describe('parseTaskLink', () => {
     expect(parseTaskLink(formatTaskLink(LINK, 'app'))).toEqual(LINK);
   });
 
-  test('round-trips an epic id and a root with spaces', () => {
+  test('round-trips a milestone id and a root with spaces', () => {
     const link = { taskId: 'e-abc123', project: '/Users/me/My Repo' };
     expect(parseTaskLink(formatTaskLink(link, 'app'))).toEqual(link);
   });

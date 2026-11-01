@@ -47,7 +47,7 @@ export class ChannelSync implements Collector, OpHandler {
       roster: RosterService;
       messages: MessageStore;
       engine: DeliveryEngine;
-      /** A channel's implicit members (an epic's tasks); never removed. */
+      /** A channel's implicit members (a milestone's tasks); never removed. */
       implicit: (channel: string) => Address[];
     }
   ) {

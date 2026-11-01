@@ -27,7 +27,7 @@ export type TaskPageProject = Pick<
   | 'linearStatus'
   | 'presence'
   | 'mergeQueue'
-  | 'epicProgressById'
+  | 'milestoneProgressById'
   | 'pendingApprovals'
   | 'openQuestions'
   | 'pendingScopeRequests'

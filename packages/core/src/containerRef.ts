@@ -1,7 +1,7 @@
 // Resolving the legacy free-form `milestone` value to a real container. Tasks
 // no longer carry that string (their container is `parent`), but old clients,
 // scripts and `--milestone` flags still name a milestone by title. Browser-safe.
-import { canonicalKind, isValidParentKind } from './kinds.js';
+import { isValidParentKind } from './kinds.js';
 
 // The migration turned each old value into a project; Linear's own
 // milestones are milestones. Either may be what a caller means.
@@ -45,7 +45,7 @@ export function resolveMilestoneRef(
   const exact: ContainerCandidate[] = [];
   const folded: ContainerCandidate[] = [];
   for (const task of tasks) {
-    if (!NAMEABLE_KINDS.has(canonicalKind(task.meta.kind))) continue;
+    if (!NAMEABLE_KINDS.has(task.meta.kind)) continue;
     if (task.meta.id === wanted) {
       byId = task;
       break;
@@ -64,7 +64,7 @@ export function resolveMilestoneRef(
   }
   if (matches.length > 1) {
     const names = matches
-      .map((m) => `${m.meta.id} (${canonicalKind(m.meta.kind)})`)
+      .map((m) => `${m.meta.id} (${m.meta.kind})`)
       .join(', ');
     return {
       ok: false,
@@ -72,11 +72,11 @@ export function resolveMilestoneRef(
     };
   }
   const container = matches[0];
-  const kind = canonicalKind(container.meta.kind);
+  const kind = container.meta.kind;
   if (!isValidParentKind(childKind, kind)) {
     return {
       ok: false,
-      error: `invalid milestone: a ${canonicalKind(childKind)} cannot sit under ${kind} ${container.meta.id}`,
+      error: `invalid milestone: a ${childKind} cannot sit under ${kind} ${container.meta.id}`,
     };
   }
   if (parent !== null && parent !== container.meta.id) {

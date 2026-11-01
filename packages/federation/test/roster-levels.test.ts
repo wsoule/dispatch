@@ -413,6 +413,7 @@ describe('the level table', () => {
       'recovery-key@1',
       'dismiss@1',
       'transport@1',
+      'content-e2e@1',
     ]);
   });
 

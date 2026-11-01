@@ -4,11 +4,15 @@ import type {
   TaskListItem,
 } from '@dispatch-foo/core/browser';
 import {
-  canonicalKind,
   canonicalStatus,
   statusType,
+  storedKind,
 } from '@dispatch-foo/core/browser';
-import type { EpicProgress, LinearIssueLink, RunMeta } from '@dispatch/client';
+import type {
+  LinearIssueLink,
+  MilestoneProgress,
+  RunMeta,
+} from '@dispatch/client';
 import type {
   BlockingRelation,
   EvalContext,
@@ -113,7 +117,10 @@ export interface WorkspaceDataInput {
   /** Each task's latest run: its start is the issue's startedAt. */
   latestRunByTaskId?: ReadonlyMap<string, Pick<RunMeta, 'createdAt'>>;
   /** Fan-out progress per container: a paused session pauses the project. */
-  epicProgressById?: ReadonlyMap<string, Pick<EpicProgress, 'session'>>;
+  milestoneProgressById?: ReadonlyMap<
+    string,
+    Pick<MilestoneProgress, 'session'>
+  >;
   /** Where a task opens (`taskHref`): the issue's and project's `url`. */
   hrefFor: (taskId: string) => string;
 }
@@ -135,7 +142,7 @@ const NO_CONTAINERS: Containers = {
 // takes its slot (the nearest wins, since the walk folds from the top down),
 // a task passes its parents' containers through to its sub-tasks.
 function withContainer(above: Containers, node: TaskListItem): Containers {
-  switch (canonicalKind(node.meta.kind)) {
+  switch (storedKind(node.meta.kind)) {
     case 'initiative':
       return { ...above, initiativeId: node.meta.id };
     case 'project':
@@ -304,7 +311,7 @@ export function buildWorkspaceData(input: WorkspaceDataInput): WorkspaceData {
   const issueDocs: TaskListItem[] = [];
   for (const doc of input.tasks) {
     const { meta } = doc;
-    switch (canonicalKind(meta.kind)) {
+    switch (storedKind(meta.kind)) {
       case 'initiative':
         initiatives.push({
           id: meta.id,
@@ -317,7 +324,7 @@ export function buildWorkspaceData(input: WorkspaceDataInput): WorkspaceData {
       case 'project': {
         const type = statusType(meta.status, model);
         const base = PROJECT_STATUS[type];
-        const session = input.epicProgressById?.get(meta.id)?.session;
+        const session = input.milestoneProgressById?.get(meta.id)?.session;
         // A paused fan-out pauses an open project; finished stays finished.
         const paused =
           session?.state === 'paused' &&

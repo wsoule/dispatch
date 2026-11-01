@@ -73,9 +73,15 @@ export function readHead(path: string, bytes: number): string | null {
   }
 }
 
-/** A real directory's entries, or [] for anything else. */
+/**
+ * A real directory's entries in name order, or [] for anything else. Sorted
+ * because readdir's order is the filesystem's: name order on macOS (APFS), a
+ * hash order on Linux (ext4). Without it a pass read replica directories in a
+ * different order per platform, and which ids a bounded pass reached first
+ * depended on where it ran.
+ */
 export function listDir(path: string): string[] {
-  return realDir(path) ? readdirSync(path) : [];
+  return realDir(path) ? readdirSync(path).sort() : [];
 }
 
 // Makes root/rel a path this replica may write: every directory on the way a

@@ -316,7 +316,7 @@ describe('task_save', () => {
 
     const updated = (await client.callTool({
       name: 'task_save',
-      arguments: { id, kind: 'epic', description: 'second' },
+      arguments: { id, kind: 'milestone', description: 'second' },
     })) as ToolCallResult;
     const meta = updated.structuredContent?.meta as { kind: string };
     const body = updated.structuredContent?.body as string;
@@ -342,7 +342,11 @@ describe('task_save', () => {
 
     const result = (await client.callTool({
       name: 'task_save',
-      arguments: { id: created.meta.id, kind: 'epic', description: 'second' },
+      arguments: {
+        id: created.meta.id,
+        kind: 'milestone',
+        description: 'second',
+      },
     })) as ToolCallResult;
     expect(result.isError).toBeUndefined();
     const meta = result.structuredContent?.meta as {
@@ -429,7 +433,7 @@ describe('task_list', () => {
   it('returns TaskSummary shape without body or external', async () => {
     const store = new TaskStore(root);
     store.create({ title: 'A', kind: 'task' });
-    store.create({ title: 'B', kind: 'epic' });
+    store.create({ title: 'B', kind: 'milestone' });
 
     const result = (await client.callTool({
       name: 'task_list',
@@ -447,11 +451,11 @@ describe('task_list', () => {
   it('filters by kind', async () => {
     const store = new TaskStore(root);
     store.create({ title: 'A', kind: 'task' });
-    store.create({ title: 'B', kind: 'epic' });
+    store.create({ title: 'B', kind: 'milestone' });
 
     const result = (await client.callTool({
       name: 'task_list',
-      arguments: { kind: 'epic' },
+      arguments: { kind: 'milestone' },
     })) as ToolCallResult;
     const tasks = result.structuredContent?.tasks as { title: string }[];
     expect(tasks.map((t) => t.title)).toEqual(['B']);
@@ -464,7 +468,7 @@ describe('task_list', () => {
     })) as ToolCallResult;
     expect(result.isError).toBe(true);
     expect(callToolText(result)).toBe(
-      'invalid kind: story (expected task|initiative|project|milestone|epic)'
+      'invalid kind: story (expected task|milestone|project|initiative)'
     );
   });
 

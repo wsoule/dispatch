@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline';
 
 import type {
   ApiClient,
+  ContentE2eStatus,
   JoinedTeam,
   RosterAnswer,
   TeamInvite,
@@ -15,6 +16,7 @@ import { createApiClient } from '../apiClient.js';
 import type { CliContext } from '../context.js';
 import { CliError } from '../context.js';
 import { formatTable } from '../output.js';
+import { confirmNo } from '../prompt.js';
 import {
   appTokenClient,
   attachToRunningDaemon,
@@ -95,7 +97,47 @@ Machine keys, admits and the rest: dispatch team advanced --help`
 }
 
 const DISCLOSURE_FALLBACK =
-  'The relay can read everything that is not sealed: the board, team memory and team docs, the roster, presence, and who messaged whom and when. It cannot read message contents.';
+  'The relay can read everything that is not sealed: the board, team memory and team docs, the roster, presence, and who messaged whom and when. It cannot read message contents. An admin can turn on end-to-end encryption for team content with dispatch team encrypt.';
+
+// Read before turning e2e content on; the desktop's confirm dialog says the same.
+const ENCRYPT_LIMITS = [
+  'Turning this on cannot be undone. What it does not do:',
+  '  - Anything the team published before stays readable on the relay. Board history is never pruned; starting a new team is the only way to purge it.',
+  '  - A removed teammate keeps what they already received.',
+  '  - One key covers everything until the next removal, so there is no forward secrecy within it.',
+  '  - The relay still sees who published each change, when, its type and size, and the roster with the license.',
+];
+
+/** `dispatch team encrypt` as lines: on or off, this machine's keys, and
+ *  what still stands in the way of turning it on. */
+function describeContentE2e(s: ContentE2eStatus): string[] {
+  if (s.on) {
+    const held = s.epochs.filter((e) => e.held).length;
+    const lines = [
+      `End-to-end encryption: on${s.sinceAt === null ? '' : ` since ${s.sinceAt.slice(0, 10)}`}.`,
+      `Keys: this machine holds ${held} of ${s.epochs.length}.`,
+    ];
+    if (s.missing.length > 0)
+      lines.push(
+        `Waiting for ${s.missing.length === 1 ? 'a key' : `${s.missing.length} keys`} from a teammate: this machine asks for them, and a teammate's machine sends them on its next sync.`
+      );
+    return lines;
+  }
+  const lines = ['End-to-end encryption: off.'];
+  lines.push(
+    s.legacyClosed
+      ? 'Older Dispatch builds: no longer sync (legacy window closed).'
+      : 'Older Dispatch builds: still sync. Close the window first: dispatch team advanced close-legacy'
+  );
+  lines.push(
+    s.lacking.length === 0
+      ? "Teammates' builds: all can read encrypted content."
+      : `Still need to update Dispatch: ${s.lacking.map((l) => l.handle).join(', ')}`
+  );
+  if (s.legacyClosed && s.lacking.length === 0)
+    lines.push('Ready. An admin turns it on with: dispatch team encrypt --on');
+  return lines;
+}
 
 // The relay's host as a person reads it.
 function hostOf(url: string): string {
@@ -156,21 +198,6 @@ async function joinConfirmingRepo(
         'Not joined. Ask whoever invited you where the board is kept, or run this again with --accept-repo.'
       );
     return await api.joinTeam(code, { confirmRepo: true });
-  }
-}
-
-// Like defaultConfirm, but no is the default: this guards a risk.
-async function confirmNo(question: string): Promise<boolean> {
-  if (process.stdin.isTTY !== true) return false;
-  process.stderr.write(`${question} [y/N] `);
-  const rl = createInterface({ input: process.stdin, terminal: false });
-  try {
-    const answer = await new Promise<string>((resolve) =>
-      rl.once('line', resolve)
-    );
-    return /^y/i.test(answer.trim());
-  } finally {
-    rl.close();
   }
 }
 
@@ -480,6 +507,52 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
       if (opts.json === true) ctx.log(JSON.stringify(status, null, 2));
       else for (const line of describeTeamStatus(status)) ctx.log(line);
     });
+
+  team
+    .command('encrypt')
+    .description(
+      "End-to-end encryption of the team's content: its status, or --on to turn it on for good (an admin)"
+    )
+    .option('--on', 'turn it on, after reading what it does not cover')
+    .option('--yes', 'turn it on without asking, having read the limits')
+    .option(tokenOption, tokenHelp)
+    .option('--json')
+    .action(
+      async (opts: {
+        on?: boolean;
+        yes?: boolean;
+        token?: string;
+        json?: boolean;
+      }) => {
+        const api = await client(opts, 'dispatch team encrypt');
+        const status = await api.getContentE2e();
+        const print = (s: ContentE2eStatus) => {
+          if (opts.json === true) ctx.log(JSON.stringify(s, null, 2));
+          else for (const line of describeContentE2e(s)) ctx.log(line);
+        };
+        if (opts.on !== true || status.on) {
+          print(status);
+          return;
+        }
+        if (!status.legacyClosed || status.lacking.length > 0) {
+          for (const line of describeContentE2e(status)) ctx.log(line);
+          throw new CliError('Not ready to turn on end-to-end encryption yet.');
+        }
+        if (opts.yes !== true) {
+          for (const line of ENCRYPT_LIMITS) ctx.log(line);
+          const sure = await (ctx.confirm ?? confirmNo)(
+            "Encrypt the team's content end to end?"
+          );
+          if (!sure)
+            throw new CliError(
+              'Not turned on. Run it again with --yes once you have read the limits.'
+            );
+        }
+        const answer = await api.enableContentE2e();
+        print(answer);
+        if (opts.json !== true) logAnswer(ctx, answer);
+      }
+    );
 
   team
     .command('agents')

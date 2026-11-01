@@ -6,7 +6,7 @@ import { taskLedgerEntries } from './ledgerScope';
 function entry(overrides: Partial<LedgerEntry>): LedgerEntry {
   return {
     id: 'l-000001',
-    epicId: null,
+    milestoneId: null,
     sourceTaskId: 't-1',
     kind: 'decision',
     title: 'Scope extended for run r-ca9858',
@@ -36,9 +36,11 @@ describe('taskLedgerEntries', () => {
     );
   });
 
-  test('leaves epic-scoped entries to the epic ledger', () => {
-    // The epic's own view already renders these; repeating them on the task
+  test('leaves milestone-scoped entries to the milestone ledger', () => {
+    // The milestone's own view already renders these; repeating them on the task
     // would show the same entry twice for a task that has a parent.
-    expect(taskLedgerEntries([entry({ epicId: 'e-1' })], 't-1')).toEqual([]);
+    expect(taskLedgerEntries([entry({ milestoneId: 'e-1' })], 't-1')).toEqual(
+      []
+    );
   });
 });

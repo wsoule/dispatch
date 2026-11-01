@@ -32,11 +32,14 @@ test('a throwing child shows the fallback with the label and the message behind 
     </ErrorBoundary>
   );
   const alert = screen.getByRole('alert');
+  expect(alert.textContent).toContain("Dispatch couldn't display the diff.");
   expect(alert.textContent).toContain(
-    'Something went wrong rendering the diff'
+    'Your runs and tasks are unaffected. Try again, or reload the app if it keeps happening.'
   );
   expect(alert.querySelector('[data-tone="danger"] svg')).not.toBeNull();
-  expect(screen.queryByRole('button', { name: 'Reload app' })).toBeNull();
+  // Reload app is offered for any crash; the stale-module hint only for a stale chunk.
+  expect(screen.getByRole('button', { name: 'Reload app' })).toBeTruthy();
+  expect(screen.queryByText(/A stale module was requested/)).toBeNull();
   expect(console.error).toHaveBeenCalled();
 
   const details = screen.getByRole('button', { name: 'Details' });
@@ -56,8 +59,39 @@ test('the label defaults to "this view"', () => {
     </ErrorBoundary>
   );
   expect(screen.getByRole('alert').textContent).toContain(
-    'Something went wrong rendering this view'
+    "Dispatch couldn't display this view."
   );
+});
+
+test('Copy error details puts the name, message and stack on the clipboard', () => {
+  const { Child } = makeChild('boom');
+  const written: string[] = [];
+  const original = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: {
+      writeText: (text: string) => {
+        written.push(text);
+        return Promise.resolve();
+      },
+    },
+  });
+  try {
+    render(
+      <ErrorBoundary>
+        <Child />
+      </ErrorBoundary>
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Copy error details' }));
+    expect(written).toHaveLength(1);
+    expect(written[0]).toContain('Error: boom');
+  } finally {
+    if (original === undefined) {
+      Reflect.deleteProperty(navigator, 'clipboard');
+    } else {
+      Object.defineProperty(navigator, 'clipboard', original);
+    }
+  }
 });
 
 test('Try again remounts the children', () => {

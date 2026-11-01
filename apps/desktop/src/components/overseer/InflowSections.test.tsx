@@ -94,6 +94,8 @@ test('Notifications marks unread rows, opens one and marks all read', () => {
       unreadCount={2}
       onMarkAllRead={() => markedAll++}
       onOpen={(e) => opened.push(e.id)}
+      onDismiss={() => {}}
+      onClearAll={() => {}}
     />
   );
   const rows = screen.getAllByTestId('overseer-notification-row');
@@ -117,11 +119,84 @@ test('Notifications hides Mark all read once everything is read', () => {
       unreadCount={0}
       onMarkAllRead={() => {}}
       onOpen={() => {}}
+      onDismiss={() => {}}
+      onClearAll={() => {}}
     />
   );
   expect(screen.queryByTestId('overseer-notifications-read-all')).toBeNull();
-  // The subject leads the row; the generic kind is its tooltip.
+  // The subject leads the row; the generic kind and body are its tooltip.
   expect(screen.getByText('Ship task a').getAttribute('title')).toBe(
-    'Run a finished'
+    'Run a finished\nShip task a'
   );
+});
+
+test('Notifications dismisses one row without opening it, and clears all', () => {
+  const opened: string[] = [];
+  const dismissed: string[] = [];
+  let cleared = 0;
+  render(
+    <NotificationsSection
+      entries={[entry('a', true), entry('b', false)]}
+      unreadCount={1}
+      onMarkAllRead={() => {}}
+      onOpen={(e) => opened.push(e.id)}
+      onDismiss={(id) => dismissed.push(id)}
+      onClearAll={() => cleared++}
+    />
+  );
+  fireEvent.click(screen.getAllByTestId('overseer-notification-dismiss')[1]);
+  expect(dismissed).toEqual(['b']);
+  expect(opened).toEqual([]);
+  fireEvent.click(screen.getByTestId('overseer-notifications-clear-all'));
+  expect(cleared).toBe(1);
+});
+
+test('Notifications shows only the first line of a multi-line body', () => {
+  render(
+    <NotificationsSection
+      entries={[
+        {
+          ...entry('a', false),
+          body: 'Ship task a · git rebase failed: Rebasing (1/2)\nerror: could not apply 0ca7e80c',
+        },
+      ]}
+      unreadCount={1}
+      onMarkAllRead={() => {}}
+      onOpen={() => {}}
+      onDismiss={() => {}}
+      onClearAll={() => {}}
+    />
+  );
+  expect(
+    screen.getByText('Ship task a · git rebase failed: Rebasing (1/2)')
+  ).toBeDefined();
+  expect(screen.queryByText(/could not apply/)).toBeNull();
+});
+
+test('Notifications offers Hide only when the caller can hide it', () => {
+  let hidden = 0;
+  const { rerender } = render(
+    <NotificationsSection
+      entries={[entry('a', true)]}
+      unreadCount={0}
+      onMarkAllRead={() => {}}
+      onOpen={() => {}}
+      onDismiss={() => {}}
+      onClearAll={() => {}}
+    />
+  );
+  expect(screen.queryByTestId('overseer-notifications-hide')).toBeNull();
+  rerender(
+    <NotificationsSection
+      entries={[entry('a', true)]}
+      unreadCount={0}
+      onMarkAllRead={() => {}}
+      onOpen={() => {}}
+      onDismiss={() => {}}
+      onClearAll={() => {}}
+      onHide={() => hidden++}
+    />
+  );
+  fireEvent.click(screen.getByTestId('overseer-notifications-hide'));
+  expect(hidden).toBe(1);
 });

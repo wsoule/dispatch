@@ -1,5 +1,5 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
-import type { EpicProgress, RunMeta } from '@dispatch/client';
+import type { MilestoneProgress, RunMeta } from '@dispatch/client';
 import {
   cleanup,
   fireEvent,
@@ -152,21 +152,21 @@ function run(id: string): RunMeta {
 }
 
 /** Fan-out progress for one container with these runs live under it. */
-function progress(epicId: string, runIds: string[]): EpicProgress {
+function progress(milestoneId: string, runIds: string[]): MilestoneProgress {
   return {
-    epicId,
+    milestoneId,
     active: true,
     session: null,
     spend: { usd: 0, runs: 0 },
     children: [],
     waves: [],
     liveRuns: runIds.map(run),
-  } as unknown as EpicProgress;
+  } as unknown as MilestoneProgress;
 }
 
 function planningInput(
   tasks: TaskListItem[],
-  epicProgressById: Map<string, EpicProgress>
+  milestoneProgressById: Map<string, MilestoneProgress>
 ): PlanningInput {
   return {
     tasks,
@@ -179,21 +179,21 @@ function planningInput(
     me: 'human:ana',
     linearLinks: {},
     latestRunByTaskId: new Map<string, RunMeta>(),
-    epicProgressById,
+    milestoneProgressById,
   };
 }
 
 interface MountOptions {
   tasks?: TaskListItem[];
-  epicProgressById?: Map<string, EpicProgress>;
+  milestoneProgressById?: Map<string, MilestoneProgress>;
   onBack?: () => void;
   daemon?: 'ready' | 'starting';
 }
 
 function mount(options: MountOptions = {}) {
   const tasks = options.tasks ?? fixture();
-  const epicProgressById =
-    options.epicProgressById ?? new Map<string, EpicProgress>();
+  const milestoneProgressById =
+    options.milestoneProgressById ?? new Map<string, MilestoneProgress>();
   const creates: (CreateTaskPreset | undefined)[] = [];
   const starting = options.daemon === 'starting';
   const data = {
@@ -202,13 +202,13 @@ function mount(options: MountOptions = {}) {
     portError: false,
     portErrorDetail: null,
     retryEnsureDispatchd: () => {},
-    epicProgressById,
+    milestoneProgressById,
   } as unknown as DispatchProjectData;
   const utils = render(
     <ShellActionsProvider
       value={{ ...SHELL, openCreateTask: (preset) => creates.push(preset) }}
     >
-      <PlanningProvider data={planningInput(tasks, epicProgressById)}>
+      <PlanningProvider data={planningInput(tasks, milestoneProgressById)}>
         <ProjectsView data={data} onBack={options.onBack} />
       </PlanningProvider>
     </ShellActionsProvider>
@@ -332,7 +332,7 @@ describe('ProjectsView', () => {
 
   test('agents working under a project or its milestones fill the allocation cell', () => {
     mount({
-      epicProgressById: new Map([
+      milestoneProgressById: new Map([
         ['p-store', progress('p-store', ['r-1'])],
         ['ms-beta', progress('ms-beta', ['r-1', 'r-2'])],
       ]),

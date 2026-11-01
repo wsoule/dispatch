@@ -26,12 +26,12 @@ export interface TaskFilters {
 type TasksLayout = TasksViewMode;
 export type TasksGrouping =
   | 'status'
-  | 'epic'
+  | 'parent'
   | 'milestone'
   | 'assignee'
   | 'priority'
   | 'none';
-export type TasksSubGrouping = 'none' | 'epic' | 'assignee' | 'priority';
+export type TasksSubGrouping = 'none' | 'parent' | 'assignee' | 'priority';
 export type TasksOrdering =
   | 'priority'
   | 'updated'
@@ -45,7 +45,6 @@ export type TaskProperty =
   | 'status'
   | 'assignee'
   | 'priority'
-  | 'epic'
   | 'milestone'
   | 'labels'
   | 'links'
@@ -67,7 +66,7 @@ export interface TasksDisplayPrefs {
   showSubtasks: boolean;
   /** Sub-tasks indent under their parent's row when both land in the same group. */
   nestedSubtasks: boolean;
-  /** Render a status/priority/epic group even when nothing is in it. */
+  /** Render a status/priority/parent group even when nothing is in it. */
   showEmptyGroups: boolean;
   properties: ReadonlySet<TaskProperty>;
   /** Which date the row's far-right `Sep 13` shows. */
@@ -84,7 +83,7 @@ export const EMPTY_TASK_FILTERS: TaskFilters = { statuses: [], priorities: [] };
 const LAYOUTS: readonly TasksLayout[] = TASKS_VIEW_TABS.map((t) => t.id);
 const GROUPINGS: readonly TasksGrouping[] = [
   'status',
-  'epic',
+  'parent',
   'milestone',
   'assignee',
   'priority',
@@ -92,7 +91,7 @@ const GROUPINGS: readonly TasksGrouping[] = [
 ];
 const SUB_GROUPINGS: readonly TasksSubGrouping[] = [
   'none',
-  'epic',
+  'parent',
   'assignee',
   'priority',
 ];
@@ -110,7 +109,6 @@ export const TASK_PROPERTIES: readonly TaskProperty[] = [
   'status',
   'assignee',
   'priority',
-  'epic',
   'milestone',
   'labels',
   'links',
@@ -134,7 +132,7 @@ export const DEFAULT_TASKS_DISPLAY: TasksDisplayPrefs = {
     'status',
     'assignee',
     'priority',
-    'epic',
+    'milestone',
     'labels',
     'run',
     'updated',
@@ -196,11 +194,14 @@ export function tasksDisplayFromValue(
   }
   const record = value as Record<string, unknown>;
   const d = DEFAULT_TASKS_DISPLAY;
+  // Stored before epics became milestones: the parent chip was `epic`.
   const properties = Array.isArray(record.properties)
     ? new Set(
-        record.properties.filter((p): p is TaskProperty =>
-          (TASK_PROPERTIES as readonly unknown[]).includes(p)
-        )
+        record.properties
+          .map((p: unknown) => (p === 'epic' ? 'milestone' : p))
+          .filter((p): p is TaskProperty =>
+            (TASK_PROPERTIES as readonly unknown[]).includes(p)
+          )
       )
     : d.properties;
   // The retired milestone layouts (Branches, Milestones, Graph) read as the
@@ -210,10 +211,16 @@ export function tasksDisplayFromValue(
     LAYOUTS,
     d.layout
   );
-  const grouping = oneOf(record.grouping, GROUPINGS, d.grouping);
-  let subGrouping = oneOf(record.subGrouping, SUB_GROUPINGS, d.subGrouping);
-  // Board lanes moved from `grouping` to `subGrouping`: a board stored as grouped by epic
-  // with no sub-grouping of its own keeps its epic lanes. `grouping` stays as stored — the
+  // The direct-parent grouping was stored as `epic` before the rename.
+  const fromEpic = (v: unknown) => (v === 'epic' ? 'parent' : v);
+  const grouping = oneOf(fromEpic(record.grouping), GROUPINGS, d.grouping);
+  let subGrouping = oneOf(
+    fromEpic(record.subGrouping),
+    SUB_GROUPINGS,
+    d.subGrouping
+  );
+  // Board lanes moved from `grouping` to `subGrouping`: a board stored as grouped by parent
+  // with no sub-grouping of its own keeps its parent lanes. `grouping` stays as stored — the
   // list still groups by it. Only unstamped payloads migrate; a stamped one wrote
   // `subGrouping: 'none'` deliberately (the board's Ungroup) and must stay that way.
   const stamped =
@@ -222,10 +229,10 @@ export function tasksDisplayFromValue(
   if (
     !stamped &&
     layout === 'board' &&
-    grouping === 'epic' &&
+    grouping === 'parent' &&
     subGrouping === 'none'
   ) {
-    subGrouping = 'epic';
+    subGrouping = 'parent';
   }
   return {
     layout,

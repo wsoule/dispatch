@@ -22,7 +22,7 @@ const valid = (title: string = team.title) => ({
   ...team,
   title,
   refs: [],
-  epic: null,
+  milestone: null,
   appliesTo: [],
   projectKey: null,
 });
@@ -35,7 +35,7 @@ function setup(overrides: Partial<typeof DEFAULT_MEMORY> = {}) {
     title: 'x',
     body: '',
     writes: [],
-    epic: null,
+    milestone: null,
     risk: 'routine',
     a2a: false,
   });

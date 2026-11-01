@@ -9,7 +9,6 @@ import type {
   UpdatePatch,
 } from '@dispatch-foo/core/browser';
 import {
-  canonicalKind,
   findDependencyCycles,
   isContainerKind,
   isDoneStatus,
@@ -17,6 +16,7 @@ import {
   labelRef,
   parseLinearExternal,
   statusType,
+  storedKind,
   UNASSIGNED,
 } from '@dispatch-foo/core/browser';
 import type { LinearIssueLink, RunMeta } from '@dispatch/client';
@@ -754,7 +754,7 @@ export function planChoices(
     ) {
       continue;
     }
-    const kind = canonicalKind(candidate.meta.kind);
+    const kind = storedKind(candidate.meta.kind);
     const choice: PlanChoice = { id, name: candidate.meta.title };
     if (kind === 'milestone') {
       const due = candidate.meta.dueDate;

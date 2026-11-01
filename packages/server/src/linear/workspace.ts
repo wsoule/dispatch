@@ -2,6 +2,7 @@
 // the project's statuses, their users folded into the people registry, and the
 // mapping context every field projection reads.
 import {
+  hasStatusDefinition,
   labelColorIndex,
   labelKey,
   loadConfig,
@@ -35,6 +36,7 @@ import type {
 } from '@dispatch-foo/core';
 
 import { rosterMembers } from '../api/people.js';
+import { readBase } from './state.js';
 import type { LinearSyncState } from './state.js';
 
 /** A mapping context whose indexes the pass keeps current as it writes. */
@@ -101,20 +103,74 @@ export function linkedIssueTeam(
   return teamByKey.get(key) ?? null;
 }
 
+// A review role split off the shared dispatched one (a workflow change, or
+// a role picked in Settings): tasks whose run had finished were waiting for
+// review there, so they move to it as a finish would have moved them. One
+// edited since a pass last found the shared roles (`at`) may have been
+// handled under the split, so it stays. Each keeps `updated`; a linked one is
+// left outstanding so its issue follows unless a newer edit in Linear wins,
+// and is stamped now when its state has no merge base, where Linear's would.
+function moveFinishedToReview(
+  store: TaskStorePort,
+  docs: Map<string, TaskDoc>,
+  state: LinearSyncState,
+  prior: { roles: StatusRoles; at: string | null },
+  roles: StatusRoles,
+  finishedRuns: ReadonlySet<string>,
+  migrated: string[]
+): void {
+  const shared = prior.roles.review === prior.roles.dispatched;
+  if (!shared || roles.review === roles.dispatched) return;
+  const since = prior.at === null ? Infinity : Date.parse(prior.at);
+  for (const doc of docs.values()) {
+    const { id, status, external, updated } = doc.meta;
+    if (!finishedRuns.has(id) || status !== roles.dispatched) continue;
+    if (Date.parse(updated) > since) continue;
+    const linked = parseLinearExternal(external) !== null;
+    const base = readBase(state, id, 'issue');
+    const based =
+      base?.local.state !== undefined && base.remote.state !== undefined;
+    const stamp = linked && !based ? new Date().toISOString() : updated;
+    docs.set(id, store.update(id, { status: roles.review }, stamp));
+    if (linked) delete state.pushed[id];
+    if (!migrated.includes(id)) migrated.push(id);
+  }
+}
+
+// Moves each task whose status `statusFor` changes, keeping `updated` (a
+// migration is bookkeeping), and returns the ids moved.
+function migrateTasks(
+  store: TaskStorePort,
+  docs: Map<string, TaskDoc>,
+  statusFor: (doc: TaskDoc) => string
+): string[] {
+  const migrated: string[] = [];
+  for (const doc of docs.values()) {
+    const status = statusFor(doc);
+    if (status === doc.meta.status) continue;
+    const moved = store.update(doc.meta.id, { status }, doc.meta.updated);
+    docs.set(moved.meta.id, moved);
+    migrated.push(moved.meta.id);
+  }
+  return migrated;
+}
+
 /**
  * Makes the project's statuses the linked teams' workflow states (names,
  * types, colors, order; merged across teams by name and type, see
  * statusesFromTeams) and its roles the generated defaults plus any user
  * override, then moves every task whose status left the vocabulary onto its
- * successor, following its own issue's team's renames. A migration is
- * bookkeeping, so it keeps each task's `updated`.
+ * successor, following its own issue's team's renames. With the config
+ * unchanged it still moves strays (a status outside the vocabulary, such as a
+ * local create's built-in 'ready'), since their state never pushes.
  */
 export function regenerateStatuses(
   rootDir: string,
   store: TaskStorePort,
   docs: Map<string, TaskDoc>,
   state: LinearSyncState,
-  teams: readonly WorkflowTeam[]
+  teams: readonly WorkflowTeam[],
+  finishedRuns: ReadonlySet<string> = new Set()
 ): StatusRegeneration {
   const config = loadConfig(rootDir);
   const states = teams.flatMap((t) => t.states);
@@ -135,16 +191,44 @@ export function regenerateStatuses(
     names,
     renames.shared
   );
+  const prior = {
+    roles: state.appliedRoles ?? statusModelOf(config).roles,
+    at: state.appliedAt ?? null,
+  };
   state.stateNames = generated.names;
   state.generatedRoles = fresh;
+  state.appliedRoles = roles;
+  state.appliedAt = new Date().toISOString();
+  const after = { definitions: generated.definitions, roles };
   if (
     sameDefinitions(config.statusDefinitions, generated.definitions) &&
     sameRoles(config.statusRoles, roles)
   ) {
-    return { config, configChanged: false, migrated: [] };
+    const sweep = {
+      renames: new Map<string, string>(),
+      before: after,
+      after,
+      legacyMap: config.linear.statusMap,
+      states,
+      names: generated.names,
+    };
+    const migrated = migrateTasks(store, docs, (doc) =>
+      hasStatusDefinition(doc.meta.status, after)
+        ? doc.meta.status
+        : migrateStatus(doc.meta.status, sweep)
+    );
+    moveFinishedToReview(
+      store,
+      docs,
+      state,
+      prior,
+      roles,
+      finishedRuns,
+      migrated
+    );
+    return { config, configChanged: false, migrated };
   }
   const before = statusModelOf(config);
-  const after = { definitions: generated.definitions, roles };
   const next = updateConfig(rootDir, {
     statuses: generated.definitions.map((d) => ({
       name: d.name,
@@ -168,21 +252,25 @@ export function regenerateStatuses(
     }
     return own;
   };
-  const migrated: string[] = [];
-  for (const doc of docs.values()) {
-    const status = migrateStatus(doc.meta.status, {
+  const migrated = migrateTasks(store, docs, (doc) =>
+    migrateStatus(doc.meta.status, {
       renames: renamesOf(doc),
       before,
       after,
       legacyMap: config.linear.statusMap,
       states,
       names: generated.names,
-    });
-    if (status === doc.meta.status) continue;
-    const moved = store.update(doc.meta.id, { status }, doc.meta.updated);
-    docs.set(moved.meta.id, moved);
-    migrated.push(moved.meta.id);
-  }
+    })
+  );
+  moveFinishedToReview(
+    store,
+    docs,
+    state,
+    prior,
+    roles,
+    finishedRuns,
+    migrated
+  );
   return { config: next, configChanged: true, migrated };
 }
 
@@ -304,6 +392,7 @@ export function buildContext(
     labels: labelIndex,
     labelsById,
     includeAcceptanceCriteria: config.linear.includeAcceptanceCriteria,
+    archiveFinished: config.linear.archiveFinished,
     projectStatuses,
     labelColors: labelColorIndex(config.labels ?? []),
   };

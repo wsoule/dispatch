@@ -6,7 +6,7 @@ form the scheme defines. Addresses are compared as strings.
 ```text
 human:wyat                  agent:wyat/claude-code.macbook      actors
 task:t-4a8cce               run:r-9f2c01                        work
-channel:auth-refactor       channel:epic/e-c25f9c               many-to-many
+channel:auth-refactor       channel:milestone/e-c25f9c               many-to-many
 ```
 
 ## 3.1 Grammar
@@ -107,7 +107,7 @@ wrote it, that resolved to that recipient. (pinned rule 2; vectors:
 A host MAY compute some channels' members when a message is sent, instead of
 storing them. Implicit members are added after the explicit ones and
 de-duplicated with them. The Dispatch profile computes the members of
-`channel:epic/<id>` as the work items under that epic
+`channel:milestone/<id>` as the work items under that milestone
 ([Appendix C](appendix-c-dispatch-profile.md#sC)). Vectors that test implicit
 members are `MAY` vectors with the capability `implicit-members`
 ([§12.2](12-conformance.md#s12.2)).

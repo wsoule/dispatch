@@ -176,7 +176,7 @@ export function teamHazard(title: string): ValidMemoryInput {
     title,
     body: 'b',
     refs: [],
-    epic: null,
+    milestone: null,
     appliesTo: [],
     projectKey: null,
   };
@@ -193,7 +193,7 @@ export function storedProposal(
     title: c.title,
     body: c.body,
     refs: c.refs,
-    epic: c.epic,
+    milestone: c.milestone,
     appliesTo: c.appliesTo,
   };
   const p = newProposal(
@@ -241,7 +241,7 @@ export function seedLedger(
   }
   const entry: LedgerEntry = {
     id: generateLedgerId(createdAt),
-    epicId: input.epicId ?? null,
+    milestoneId: input.milestoneId ?? null,
     sourceTaskId: input.sourceTaskId ?? null,
     kind: input.kind,
     title: input.title,

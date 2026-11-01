@@ -1,4 +1,4 @@
-import { canonicalKind, parseLinearExternal } from '@dispatch-foo/core/browser';
+import { parseLinearExternal, storedKind } from '@dispatch-foo/core/browser';
 import type { MilestoneAssessment } from '@dispatch/planning';
 import {
   AssigneePicker,
@@ -836,7 +836,7 @@ export function useTaskDetailProps(
   // outside App (no planning). Handed back as `planning` for the rail slot
   // rather than put among `sections`, which TaskDetail draws after Comments
   // and Activity.
-  const kind = canonicalKind(item.meta.kind);
+  const kind = storedKind(item.meta.kind);
   const milestoneSection = useMemo(() => {
     if (planning === null || kind !== 'milestone') return null;
     const detail = milestoneDetailOf(planning, taskId);

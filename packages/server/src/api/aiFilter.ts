@@ -38,21 +38,18 @@ const MAX_SENTENCE = 500;
 function vocabularyFor(ctx: AiFilterRouteContext): AiFilterVocabulary {
   const docs = ctx.cache.query({ includeArchived: false });
   const labels = new Set<string>();
-  const milestones = new Set<string>();
-  const epics: AiFilterVocabulary['epics'] = [];
+  const milestones: AiFilterVocabulary['milestones'] = [];
   const parentIds = parentIdsOf(docs);
   for (const doc of docs) {
     for (const label of doc.meta.labels) labels.add(label);
-    if (doc.meta.milestone !== null) milestones.add(doc.meta.milestone);
     if (isContainer(doc.meta, parentIds)) {
-      epics.push({ id: doc.meta.id, title: doc.meta.title });
+      milestones.push({ id: doc.meta.id, title: doc.meta.title });
     }
   }
   return {
     statuses: [...loadConfig(ctx.rootDir).statuses],
     labels: [...labels].sort(),
-    milestones: [...milestones].sort(),
-    epics,
+    milestones,
     runStates: [...RUN_STATES],
   };
 }

@@ -159,7 +159,7 @@ interface RunMetaLike {
   reviewedAt?: string;
 }
 
-interface EpicProgressLike {
+interface MilestoneProgressLike {
   active: boolean;
   children: { id: string; status: string }[];
   liveRuns: RunMetaLike[];
@@ -287,17 +287,25 @@ describe('headless dispatcher loop (real daemon, built CLI subprocess)', () => {
     expect(found?.meta.status).toBe('landed');
   }, 20_000);
 
-  it('plan --planner fake --yes -> epic start -> completion', async () => {
+  it('plan --planner fake --yes -> milestone start -> completion', async () => {
     const planOut = JSON.parse(
       cli('plan', 'build something', '--planner', 'fake', '--yes', '--json')
-    ) as { confirm: { epicId?: string; taskIds: string[] } };
-    const epicId = planOut.confirm.epicId;
-    expect(epicId).toBeDefined();
+    ) as { confirm: { milestoneId?: string; taskIds: string[] } };
+    const milestoneId = planOut.confirm.milestoneId;
+    expect(milestoneId).toBeDefined();
     expect(planOut.confirm.taskIds).toHaveLength(2);
 
-    cli('epic', 'start', epicId!, '--executor', 'fake', '--concurrency', '2');
+    cli(
+      'milestone',
+      'start',
+      milestoneId!,
+      '--executor',
+      'fake',
+      '--concurrency',
+      '2'
+    );
 
-    // Drives the epic to completion by approving every awaiting-approval
+    // Drives the milestone to completion by approving every awaiting-approval
     // live run and merging every finished-but-unreviewed one, exactly what
     // a human running these same commands by hand would do — until the
     // dispatch session reports itself inactive (spec: "no children left to
@@ -305,8 +313,8 @@ describe('headless dispatcher loop (real daemon, built CLI subprocess)', () => {
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline) {
       const progress = JSON.parse(
-        cli('epic', 'status', epicId!, '--json')
-      ) as EpicProgressLike;
+        cli('milestone', 'status', milestoneId!, '--json')
+      ) as MilestoneProgressLike;
       if (!progress.active) break;
 
       for (const liveRun of progress.liveRuns) {
@@ -329,8 +337,8 @@ describe('headless dispatcher loop (real daemon, built CLI subprocess)', () => {
     }
 
     const finalProgress = JSON.parse(
-      cli('epic', 'status', epicId!, '--json')
-    ) as EpicProgressLike;
+      cli('milestone', 'status', milestoneId!, '--json')
+    ) as MilestoneProgressLike;
     expect(finalProgress.active).toBe(false);
     expect(finalProgress.children.every((c) => c.status === 'landed')).toBe(
       true
@@ -425,7 +433,7 @@ describe('headless dispatcher loop (real daemon, built CLI subprocess)', () => {
     expect(record.state).toBe('ready');
 
     const shown = cli('plan', 'show', record.id);
-    expect(shown).toContain('Fake planned epic');
+    expect(shown).toContain('Fake planned milestone');
 
     const withTimeout = JSON.parse(
       cli(

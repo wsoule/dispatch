@@ -47,24 +47,24 @@ function receiptsDir(): string {
   return join(root, 'receipts');
 }
 
-// A project with one of everything the log is supposed to carry: an epic and a
+// A project with one of everything the log is supposed to carry: a milestone and a
 // task under it, a finding, a ledger decision, and a run's worth of evidence.
 function seed(stores: ProjectStores): {
-  epicId: string;
+  milestoneId: string;
   taskId: string;
   findingId: string;
   ledgerId: string;
 } {
-  const epic = stores.tasks.create({
-    kind: 'epic',
+  const milestone = stores.tasks.create({
+    kind: 'milestone',
     title: 'Storage spine',
-    description: 'The epic body.',
+    description: 'The milestone body.',
   });
   const task = stores.tasks.create({
     kind: 'task',
     title: 'Receipts exporter',
     description: 'The task body, with a trailing line.',
-    parent: epic.meta.id,
+    parent: milestone.meta.id,
     labels: ['storage', 'audit'],
     priority: 'high',
   });
@@ -81,7 +81,7 @@ function seed(stores: ProjectStores): {
     raisedBy: 'tester',
   });
   const ledger = records.ledger.add({
-    epicId: epic.meta.id,
+    milestoneId: milestone.meta.id,
     sourceTaskId: task.meta.id,
     kind: 'decision',
     title: 'Receipt format is the legacy layout',
@@ -110,7 +110,7 @@ function seed(stores: ProjectStores): {
     at: '2026-08-24T10:02:00.000Z',
   });
   return {
-    epicId: epic.meta.id,
+    milestoneId: milestone.meta.id,
     taskId: task.meta.id,
     findingId: finding.id,
     ledgerId: ledger.id,
@@ -143,7 +143,7 @@ describe('materializeReceipts', () => {
 
     const taskFiles = readdirSync(join(dir, '.dispatch', 'tasks')).sort();
     expect(taskFiles).toEqual([
-      `${ids.epicId}-storage-spine.md`,
+      `${ids.milestoneId}-storage-spine.md`,
       `${ids.taskId}-receipts-exporter.md`,
     ]);
     // The task file is the same document the file backend would have written,
@@ -203,11 +203,11 @@ describe('materializeReceipts', () => {
         join(dir, '.dispatch', 'tasks', `${ids.taskId}-receipts-exporter.md`)
       )
     ).toBe(false);
-    // The epic is untouched — pruning removes what left the database, not
+    // The milestone is untouched — pruning removes what left the database, not
     // everything it did not write this pass.
     expect(
       existsSync(
-        join(dir, '.dispatch', 'tasks', `${ids.epicId}-storage-spine.md`)
+        join(dir, '.dispatch', 'tasks', `${ids.milestoneId}-storage-spine.md`)
       )
     ).toBe(true);
   });
@@ -408,12 +408,12 @@ describe('a scoped pass', () => {
     const ids = seed(stores);
     const dir = receiptsDir();
     materializeReceipts(stores, dir);
-    const epicFile = `.dispatch/tasks/${ids.epicId}-storage-spine.md`;
+    const milestoneFile = `.dispatch/tasks/${ids.milestoneId}-storage-spine.md`;
     const taskFile = `.dispatch/tasks/${ids.taskId}-receipts-exporter.md`;
     const records = stores.records;
     if (records === null) throw new Error('expected a database');
 
-    stores.tasks.update(ids.epicId, { status: 'review' });
+    stores.tasks.update(ids.milestoneId, { status: 'review' });
     stores.tasks.remove(ids.taskId);
     const added = stores.tasks.create({ kind: 'task', title: 'Named later' });
     records.ledger.add({
@@ -428,12 +428,12 @@ describe('a scoped pass', () => {
       records: false,
     });
 
-    // The epic changed too, but was not named.
+    // The milestone changed too, but was not named.
     expect(report.changed).toEqual([
       `.dispatch/tasks/${added.meta.id}-named-later.md`,
     ]);
     expect(report.removed).toEqual([taskFile]);
-    expect(existsSync(join(dir, epicFile))).toBe(true);
+    expect(existsSync(join(dir, milestoneFile))).toBe(true);
     expect(report.records).toBe(false);
     expect(report.tally.tasks).toBe(2);
     expect(
@@ -443,7 +443,7 @@ describe('a scoped pass', () => {
     // A full pass then catches up everything the scoped one left alone.
     const full = materializeReceipts(stores, dir);
     expect(full.changed).toEqual(
-      expect.arrayContaining([epicFile, '.dispatch/ledger.jsonl'])
+      expect.arrayContaining([milestoneFile, '.dispatch/ledger.jsonl'])
     );
   });
 
@@ -531,7 +531,7 @@ describe('round trip', () => {
     expect(rebuiltRecords.evidence.mutationsFor('r-000001')).toEqual(
       originalMutations
     );
-    expect(rebuilt.tasks.get(ids.taskId)?.meta.parent).toBe(ids.epicId);
+    expect(rebuilt.tasks.get(ids.taskId)?.meta.parent).toBe(ids.milestoneId);
   });
 
   it('keeps a synced board’s eight-character ids and their file names through a restore', () => {

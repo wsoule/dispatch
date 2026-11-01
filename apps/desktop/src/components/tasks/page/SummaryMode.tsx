@@ -9,7 +9,7 @@ import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 
 import {
-  useEpicLedger,
+  useMilestoneLedger,
   useProjectLedger,
   useTaskVerification,
 } from '../../../hooks/useOrchestration';
@@ -147,7 +147,7 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
   const done = isDoneStatus(meta.status, page.statusModel);
   const { result: verification, error: verificationError } =
     useTaskVerification(project.client, project.port, meta.id);
-  const { entries: epicLedger } = useEpicLedger(
+  const { entries: milestoneLedger } = useMilestoneLedger(
     project.client,
     project.port,
     page.isContainer ? meta.id : undefined
@@ -158,7 +158,7 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
     !page.isContainer
   );
   const ledger = page.isContainer
-    ? epicLedger
+    ? milestoneLedger
     : taskLedgerEntries(projectLedger, meta.id);
 
   // A single task's ending, as the outcome card says it; containers keep

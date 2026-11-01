@@ -15,6 +15,36 @@ export function isTerminalRunState(state: RunState): boolean {
   return TERMINAL_RUN_STATES.has(state);
 }
 
+// Mirrors the server's BOOT_FORCE_FAIL_ERROR (orchestrator/types.ts): the
+// reason on a run the daemon force-failed at boot.
+const BOOT_FORCE_FAIL_ERROR =
+  'dispatchd restarted while this run was in flight; the agent process may still be running';
+
+/** Tasks whose newest execute run ended the way that moves a task to review (the server's
+ * `tasksWithFinishedRun`): not cancelled, not force-failed at boot. Where the review
+ * status is also the dispatched one, this says the work is up for review. */
+export function tasksWithFinishedRun(
+  runs: readonly Pick<
+    RunMeta,
+    'taskId' | 'kind' | 'state' | 'createdAt' | 'error'
+  >[]
+): Set<string> {
+  const newest = new Map<string, (typeof runs)[number]>();
+  for (const run of runs) {
+    if ((run.kind ?? 'execute') !== 'execute') continue;
+    const seen = newest.get(run.taskId);
+    if (seen === undefined || run.createdAt > seen.createdAt) {
+      newest.set(run.taskId, run);
+    }
+  }
+  const out = new Set<string>();
+  for (const [taskId, run] of newest) {
+    if (!isTerminalRunState(run.state) || run.state === 'cancelled') continue;
+    if (run.error !== BOOT_FORCE_FAIL_ERROR) out.add(taskId);
+  }
+  return out;
+}
+
 /**
  * The live review agent working over an execute run's branch, if any: the aux
  * run whose `baseBranch` is exactly that branch (the same pairing rule as the

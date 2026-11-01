@@ -75,7 +75,7 @@ export const FINDINGS: Finding[] = [
     file: 'src/cart/CartProvider.ts',
     line: 5,
     ruling:
-      'Parked — real scope creep for this task; file a follow-up against the checkout epic instead of blocking t-2e91aa on a schema change.',
+      'Parked — real scope creep for this task; file a follow-up against the checkout milestone instead of blocking t-2e91aa on a schema change.',
     round: 0,
     createdAt: ago(3, 2),
     updatedAt: ago(2, 20),
@@ -159,11 +159,11 @@ export const FINDINGS: Finding[] = [
   },
 ];
 
-// One of each writable ledger kind, scoped a mix of per-epic and project-wide.
+// One of each writable ledger kind, scoped a mix of per-milestone and project-wide.
 const LEDGER: LedgerEntry[] = [
   {
     id: 'l-1a2b3c',
-    epicId: 'e-4a19c2',
+    milestoneId: 'e-4a19c2',
     sourceTaskId: 't-2e91aa',
     kind: 'constraint',
     title: 'Session store is the single source of cart truth',
@@ -179,7 +179,7 @@ const LEDGER: LedgerEntry[] = [
   },
   {
     id: 'l-b2c3d4',
-    epicId: 'e-77b3e1',
+    milestoneId: 'e-77b3e1',
     sourceTaskId: 't-58cc03',
     kind: 'hazard',
     title: 'EXACT_SKU_BOOST is a flat constant, not a real ceiling',
@@ -191,13 +191,13 @@ const LEDGER: LedgerEntry[] = [
   },
   {
     id: 'l-c3d4e5',
-    epicId: null,
+    milestoneId: null,
     sourceTaskId: null,
     kind: 'decision',
     title:
       'Discount codes move fully server-side before the checkout rewrite ships',
     detail:
-      'Decided during the Checkout rewrite epic: client-side discount validation is being retired repo-wide, not just for t-3f8a21 — no new code should re-add a client-trusted discount check.',
+      'Decided during the Checkout rewrite milestone: client-side discount validation is being retired repo-wide, not just for t-3f8a21 — no new code should re-add a client-trusted discount check.',
     appliesTo: [],
     createdAt: ago(4, 0),
     authoredBy: formatActorRef({

@@ -17,13 +17,13 @@ export interface PlannedTask {
   risk?: TaskRisk;
 }
 
-// The shape a Planner produces and a client confirms. `epic` is optional —
-// a plan can propose a flat set of tasks with no wrapping epic. Nothing
+// The shape a Planner produces and a client confirms. `milestone` is optional —
+// a plan can propose a flat set of tasks with no wrapping milestone. Nothing
 // here carries a `status` field on purpose: every task this proposal
-// eventually creates starts `todo` and the epic starts `todo`, full stop —
+// eventually creates starts `todo` and the milestone starts `todo`, full stop —
 // a proposal has no way to ask for anything else (Global Constraints).
 export interface PlanProposal {
-  epic?: { title: string; description: string };
+  milestone?: { title: string; description: string };
   tasks: PlannedTask[];
 }
 
@@ -35,7 +35,7 @@ export interface PlannerQuestion {
   options: string[];
 }
 
-// Which conversation shape a Planner is running: 'plan' (full epic+tasks) or
+// Which conversation shape a Planner is running: 'plan' (full milestone+tasks) or
 // 'draft' (startDraft's single-task creator) — each gets its own prompt scale.
 export type PlannerMode = 'plan' | 'draft';
 
@@ -79,25 +79,25 @@ export function validatePlanProposal(value: unknown): PlanProposal {
   }
   const obj = value as Record<string, unknown>;
 
-  let epic: { title: string; description: string } | undefined;
-  if (obj.epic !== undefined) {
-    if (typeof obj.epic !== 'object' || obj.epic === null) {
+  let milestone: { title: string; description: string } | undefined;
+  if (obj.milestone !== undefined) {
+    if (typeof obj.milestone !== 'object' || obj.milestone === null) {
       throw new OrchestratorClientError(
-        'invalid proposal: epic must be an object'
+        'invalid proposal: milestone must be an object'
       );
     }
-    const e = obj.epic as Record<string, unknown>;
+    const e = obj.milestone as Record<string, unknown>;
     if (typeof e.title !== 'string' || e.title.trim() === '') {
       throw new OrchestratorClientError(
-        'invalid proposal: epic.title must be a non-empty string'
+        'invalid proposal: milestone.title must be a non-empty string'
       );
     }
     if (typeof e.description !== 'string') {
       throw new OrchestratorClientError(
-        'invalid proposal: epic.description must be a string'
+        'invalid proposal: milestone.description must be a string'
       );
     }
-    epic = { title: e.title, description: e.description };
+    milestone = { title: e.title, description: e.description };
   }
 
   if (!Array.isArray(obj.tasks)) {
@@ -110,7 +110,7 @@ export function validatePlanProposal(value: unknown): PlanProposal {
   );
   assertAcyclic(tasks);
 
-  return { epic, tasks };
+  return { milestone, tasks };
 }
 
 // Like validatePlanProposal, but a `null`/`undefined` value means "no working

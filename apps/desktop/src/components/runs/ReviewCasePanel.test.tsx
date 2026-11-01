@@ -213,7 +213,7 @@ test('without onFixFindings there are no checkboxes and no fix button', () => {
 test('a decision the policy engine auto-decided carries the receipt badge', () => {
   const decision = (id: string, detail: string) => ({
     id,
-    epicId: null,
+    milestoneId: null,
     sourceTaskId: 't-aaaaaa',
     kind: 'decision' as const,
     title: `Decision ${id}`,

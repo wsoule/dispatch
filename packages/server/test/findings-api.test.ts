@@ -218,7 +218,7 @@ describe('PATCH /api/findings/:id', () => {
 });
 
 describe('GET /api/ledger', () => {
-  it('filters by epicId, and epicId= (empty) selects project-wide-only entries', async () => {
+  it('filters by milestoneId, and milestoneId= (empty) selects project-wide-only entries', async () => {
     seedLedger(root, {
       kind: 'decision',
       title: 'wide',
@@ -229,7 +229,7 @@ describe('GET /api/ledger', () => {
       kind: 'decision',
       title: 'scoped',
       detail: 'd',
-      epicId: 'e-111111',
+      milestoneId: 'e-111111',
       authoredBy: 'human:test',
     });
 
@@ -237,33 +237,33 @@ describe('GET /api/ledger', () => {
     expect(all).toHaveLength(2);
 
     const scoped = await json<{ title: string }[]>(
-      await fetch(`${baseUrl}/api/ledger?epicId=e-111111`)
+      await fetch(`${baseUrl}/api/ledger?milestoneId=e-111111`)
     );
     expect(scoped.map((e) => e.title)).toEqual(['scoped']);
 
     const wide = await json<{ title: string }[]>(
-      await fetch(`${baseUrl}/api/ledger?epicId=`)
+      await fetch(`${baseUrl}/api/ledger?milestoneId=`)
     );
     expect(wide.map((e) => e.title)).toEqual(['wide']);
   });
 
-  it('narrows one epic to its receipts with class=audit', async () => {
+  it('narrows one milestone to its receipts with class=audit', async () => {
     seedLedger(root, {
       kind: 'decision',
       title: 'Merged r-1',
       detail: 'ok — auto-decided by policy rung 4 (merge gate)',
-      epicId: 'e-111111',
+      milestoneId: 'e-111111',
       authoredBy: 'human:test',
     });
     seedLedger(root, {
       kind: 'hazard',
-      title: 'a lesson in the same epic',
+      title: 'a lesson in the same milestone',
       detail: 'd',
-      epicId: 'e-111111',
+      milestoneId: 'e-111111',
       authoredBy: 'human:test',
     });
     const audit = await json<{ title: string }[]>(
-      await fetch(`${baseUrl}/api/ledger?epicId=e-111111&class=audit`)
+      await fetch(`${baseUrl}/api/ledger?milestoneId=e-111111&class=audit`)
     );
     expect(audit.map((e) => e.title)).toEqual(['Merged r-1']);
   });

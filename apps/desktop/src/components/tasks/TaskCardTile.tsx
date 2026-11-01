@@ -50,9 +50,9 @@ interface TaskCardTileProps {
   liveRunState: RunState | undefined;
   /** This task's latest run, if any — feeds the run-state mark and the merge-ladder pill. */
   run?: RunMeta;
-  /** Title of this task's parent epic, resolved by the caller — the ` › Epic` crumb on row 1.
-   * Omitted on a board grouped by epic, where the lane header already names it. */
-  epicTitle?: string;
+  /** Title of this task's parent milestone, resolved by the caller — the ` › Milestone` crumb on row 1.
+   * Omitted on a board grouped by milestone, where the lane header already names it. */
+  milestoneTitle?: string;
   /** The project's configured status list, for the card's inline status picker. */
   statuses: string[];
   // Callbacks take the task id so a board can hand every card the same stable functions.
@@ -98,7 +98,7 @@ const MAX_VISIBLE_LABELS = 2;
 const ALL_PROPERTIES: ReadonlySet<TaskProperty> = new Set(TASK_PROPERTIES);
 
 /**
- * A Board card on Linear's four-row anatomy (§5): row 1 the id and ` › Epic` crumb with the
+ * A Board card on Linear's four-row anatomy (§5): row 1 the id and ` › Milestone` crumb with the
  * assignee avatar pushed right; row 2 the status glyph and a two-line title; row 3 the
  * priority glyph and the pills (labels, blocked, `Needs you`, `Landing`, live run mark, merge
  * ladder);
@@ -112,7 +112,7 @@ export const TaskCardTile = memo(function TaskCardTile({
   blocked,
   liveRunState,
   run,
-  epicTitle,
+  milestoneTitle,
   statuses,
   onStatusChange,
   onEditTask,
@@ -154,7 +154,7 @@ export const TaskCardTile = memo(function TaskCardTile({
   const hiddenLabelCount = has('labels')
     ? doc.meta.labels.length - visibleLabels.length
     : 0;
-  const showCrumb = has('epic') && epicTitle !== undefined;
+  const showCrumb = has('milestone') && milestoneTitle !== undefined;
 
   return (
     // The card is a container, not a button: its title is the real `<button>` that opens the
@@ -197,9 +197,9 @@ export const TaskCardTile = memo(function TaskCardTile({
             <span
               data-slot="task-card-crumb"
               className="min-w-0 truncate"
-              title={epicTitle}
+              title={milestoneTitle}
             >
-              {epicTitle}
+              {milestoneTitle}
             </span>
           </>
         )}

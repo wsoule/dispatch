@@ -188,13 +188,13 @@ describe('DaemonMessagingHost.decide', () => {
     expect(ruling('run:r-000002')).toBe('deny');
   });
 
-  it('denies waking an epic', () => {
-    const epic = store.create({ title: 'An epic', kind: 'epic' });
+  it('denies waking a milestone', () => {
+    const milestone = store.create({ title: 'A milestone', kind: 'milestone' });
     const { host } = makeHost();
     expect(
       host.decide({
         type: 'wake',
-        target: `task:${epic.meta.id}`,
+        target: `task:${milestone.meta.id}`,
         message: stubMessage(),
       })
     ).toBe('deny');
@@ -326,24 +326,24 @@ describe('DaemonMessagingHost.decide', () => {
 });
 
 describe('DaemonMessagingHost.implicitMembers', () => {
-  it("returns only the epic's own children", () => {
-    const epic = store.create({ title: 'Epic', kind: 'epic' });
-    const other = store.create({ title: 'Other epic', kind: 'epic' });
+  it("returns only the milestone's own children", () => {
+    const milestone = store.create({ title: 'Milestone', kind: 'milestone' });
+    const other = store.create({ title: 'Other milestone', kind: 'milestone' });
     const child1 = store.create({ title: 'Child 1' });
-    store.update(child1.meta.id, { parent: epic.meta.id });
+    store.update(child1.meta.id, { parent: milestone.meta.id });
     const child2 = store.create({ title: 'Child 2' });
-    store.update(child2.meta.id, { parent: epic.meta.id });
+    store.update(child2.meta.id, { parent: milestone.meta.id });
     const stray = store.create({ title: 'Not a child' });
     store.update(stray.meta.id, { parent: other.meta.id });
 
     const { host } = makeHost();
-    const members = host.implicitMembers(`epic/${epic.meta.id}`);
+    const members = host.implicitMembers(`milestone/${milestone.meta.id}`);
     expect(new Set(members)).toEqual(
       new Set([`task:${child1.meta.id}`, `task:${child2.meta.id}`])
     );
   });
 
-  it('returns nothing for a non-epic channel', () => {
+  it('returns nothing for a non-milestone channel', () => {
     const { host } = makeHost();
     expect(host.implicitMembers('general')).toEqual([]);
   });

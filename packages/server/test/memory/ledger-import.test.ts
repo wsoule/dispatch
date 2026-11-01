@@ -29,7 +29,7 @@ function row(over: Partial<LedgerEntry> = {}): LedgerEntry {
   n += 1;
   return {
     id: `l-${n.toString(16).padStart(6, '0')}`,
-    epicId: null,
+    milestoneId: null,
     sourceTaskId: 't-1a2b3c',
     kind: 'hazard',
     title: `lesson ${n}`,
@@ -141,7 +141,7 @@ describe('importLedger', () => {
     const store = fresh();
     const rows = [
       row({
-        epicId: 'e-000001',
+        milestoneId: 'e-000001',
         appliesTo: ['t-ffffff'],
         authoredBy: 'human:wyat',
       }),
@@ -163,7 +163,7 @@ describe('importLedger', () => {
       ['team', 'agent', 'active'],
     ]);
     expect(imported[0]).toMatchObject({
-      epic: 'e-000001',
+      milestone: 'e-000001',
       appliesTo: ['t-ffffff'],
       refs: [{ type: 'task', id: 't-1a2b3c' }],
       author: 'human:wyat',
@@ -289,7 +289,7 @@ describe('importLedger', () => {
   // Core's reader leaves these fields unchecked, so a hand-edited line can
   // carry any JSON there; neither side of the cutover may store or throw on it.
   for (const [field, value] of [
-    ['epicId', ['e-123456']],
+    ['milestoneId', ['e-123456']],
     ['sourceTaskId', ['t-123456']],
     ['authoredBy', 5],
   ] as const) {
@@ -310,7 +310,7 @@ describe('importLedger', () => {
   }
 
   // In the ledger such a row reached no task; imported with an empty list it
-  // would reach its whole epic or project.
+  // would reach its whole milestone or project.
   it('counts a row whose appliesTo names no task id as damaged', () => {
     const store = fresh();
     const report = run(store, [

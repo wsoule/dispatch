@@ -35,7 +35,7 @@ import { randomBytes } from 'node:crypto';
 
 import { seatLimitMessage } from '../license.js';
 import type { AuditKind } from './audit.js';
-import { BUILD_CAPS, recordKeyCaps } from './caps.js';
+import { BUILD_CAPS, CONTENT_E2E_CAP, keyCaps, recordKeyCaps } from './caps.js';
 import { RosterError } from './errors.js';
 import { signedEntry } from './git.js';
 import { decodeTeamLink, encodeTeamLink } from './onboarding.js';
@@ -552,6 +552,15 @@ export class RosterService {
         'a member may admit only a device of their own, as a member'
       );
     if (!observer) this.checkSeats(view, [handle, ...hosts]);
+    // Once content is e2e, a build that cannot read it is never let in.
+    if (
+      view.contentE2e !== null &&
+      !keyCaps(this.fed, replica, pinned.signPub).includes(CONTENT_E2E_CAP)
+    )
+      throw new RosterError(
+        'conflict',
+        `${handle}'s Dispatch build does not speak end-to-end encrypted team content, which this team uses; update Dispatch on that machine, then admit it`
+      );
     this.publish({
       rv: 1,
       action: 'admit',
@@ -656,6 +665,24 @@ export class RosterService {
       kind,
       ...(kind === 'relay' && url !== undefined ? { url } : {}),
     });
+  }
+
+  /** Switches team content to end-to-end encryption: an admin's
+   *  `content-e2e` op, once the legacy window is closed, since an older
+   *  build's v1 copies would carry content in the clear. */
+  switchContentE2e(): void {
+    const view = this.admin('turn on end-to-end encrypted team content');
+    if (view.contentE2e !== null)
+      throw new RosterError(
+        'conflict',
+        'team content is already end-to-end encrypted'
+      );
+    if (view.legacy.closed === null)
+      throw new RosterError(
+        'conflict',
+        'close the legacy window first: older builds copy the board in the clear'
+      );
+    this.publish({ rv: 1, action: 'content-e2e' });
   }
 
   /** FW-R8: takes an op no build reads out of every fold, when this admin may. */

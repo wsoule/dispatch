@@ -95,9 +95,8 @@ async function waitFor(check: () => boolean, timeoutMs = 3000): Promise<void> {
 // Answers exactly the git/gh invocations the merge queue makes, so no test
 // here depends on a real rebase/verify/push. Copied in shape from
 // merge-queue.test.ts's StubRunner, including its `ok: false` default for
-// anything unrecognised: a runner that blanket-succeeds makes the queue think
-// jj is available and take a revision-resolving path that then fails on the
-// empty stdout. The queue's own mechanics are merge-queue.test.ts's subject;
+// anything unrecognised, so a command the queue starts making shows up as a
+// failure here rather than passing silently. The queue's own mechanics are merge-queue.test.ts's subject;
 // these tests only need entries that exist and settle predictably.
 function stubResult(cmd: string[]): CommandResult {
   const ok = { ok: true, stdout: '', stderr: '' };
@@ -127,7 +126,7 @@ interface Harness extends OverseerToolContext {
 function makeHarness(
   opts: {
     docs?: OverseerToolContext['docs'];
-    epics?: OverseerToolContext['epics'];
+    milestones?: OverseerToolContext['milestones'];
   } = {}
 ): Harness {
   const store = TaskStore.init(repo);
@@ -189,7 +188,7 @@ function makeHarness(
     ownerRef: 'human:test',
     overseer: 'agent:test/overseer',
     docs: opts.docs ?? null,
-    ...(opts.epics === undefined ? {} : { epics: opts.epics }),
+    ...(opts.milestones === undefined ? {} : { milestones: opts.milestones }),
     tasks: {
       create: (input) => {
         const doc = store.create(input);
@@ -631,21 +630,21 @@ describe('overseer status tools', () => {
     expect(scoped.questions[0].question).toBe('Second?');
   });
 
-  it('ledger_entries returns only audit receipts, and narrows to one epic on request', () => {
+  it('ledger_entries returns only audit receipts, and narrows to one milestone on request', () => {
     const h = makeHarness();
     h.ledgerStore.add({
       kind: 'decision',
       title: 'Merged r-1',
       detail: 'ok — auto-decided by policy rung 4 (merge gate)',
       authoredBy: 'human:test',
-      epicId: 'e-111111',
+      milestoneId: 'e-111111',
     });
     h.ledgerStore.add({
       kind: 'decision',
       title: 'Scope extended for run r-2',
       detail: 'src/a.ts — needed it',
       authoredBy: 'human:test',
-      epicId: 'e-222222',
+      milestoneId: 'e-222222',
     });
     // A lesson lives in memory now, so the overseer reads it there instead.
     h.ledgerStore.add({
@@ -653,7 +652,7 @@ describe('overseer status tools', () => {
       title: 'Flaky suite',
       detail: 'retries',
       authoredBy: 'human:test',
-      epicId: 'e-111111',
+      milestoneId: 'e-111111',
     });
 
     const all = h.registry.callStatusTool('ledger_entries') as {
@@ -662,7 +661,7 @@ describe('overseer status tools', () => {
     expect(all.total).toBe(2);
 
     const scoped = h.registry.callStatusTool('ledger_entries', {
-      epicId: 'e-111111',
+      milestoneId: 'e-111111',
     }) as { entries: Record<string, unknown>[]; total: number };
     expect(scoped.total).toBe(1);
     expect(scoped.entries[0]).toMatchObject({
@@ -1567,6 +1566,49 @@ describe('the agent reaches into Tasks', () => {
     ]);
   });
 
+  it('milestone_status counts by status type on a board with its own names', () => {
+    const h = makeHarness();
+    writeFileSync(
+      join(repo, '.dispatch', 'config.yml'),
+      `statuses:
+  - { name: Todo, type: unstarted }
+  - { name: In Progress, type: started }
+  - { name: Done, type: completed }
+  - { name: Canceled, type: canceled }
+  - { name: Duplicate, type: canceled }
+statusRoles:
+  ready: Todo
+  dispatched: In Progress
+  review: In Progress
+  landing: null
+  landed: Done
+  dropped: Canceled
+`
+    );
+    const milestone = h.store.create({ title: 'M1', kind: 'milestone' });
+    const statuses = ['Done', 'Done', 'In Progress', 'Canceled', 'Duplicate'];
+    for (const [i, status] of statuses.entries()) {
+      h.store.create({ title: `t${i}`, parent: milestone.meta.id, status });
+    }
+    h.cache.rebuild(h.store);
+    const out = h.registry.callStatusTool('milestone_status', {}) as {
+      milestones: {
+        id: string;
+        landed: number;
+        total: number;
+        byStatus: Record<string, number>;
+      }[];
+    };
+    expect(out.milestones).toEqual([
+      expect.objectContaining({
+        id: milestone.meta.id,
+        landed: 2,
+        total: 3,
+        byStatus: { Done: 2, 'In Progress': 1, Canceled: 1, Duplicate: 1 },
+      }),
+    ]);
+  });
+
   it('read_conversation reads only the owner’s own talk, fenced', async () => {
     const h = makeHarness();
     await withBus(h);
@@ -1681,11 +1723,11 @@ describe('the agent drives everything behind cards', () => {
   });
 
   it('create_plan sends agents on its new milestone once approved, and says so first', async () => {
-    const started: { epicId: string; operator?: string }[] = [];
+    const started: { milestoneId: string; operator?: string }[] = [];
     const h = makeHarness({
-      epics: {
-        start: (epicId, opts) => {
-          started.push({ epicId, operator: opts.operator });
+      milestones: {
+        start: (milestoneId, opts) => {
+          started.push({ milestoneId, operator: opts.operator });
           return Promise.resolve();
         },
       },
@@ -1703,16 +1745,16 @@ describe('the agent drives everything behind cards', () => {
       .query()
       .find((t) => t.meta.title === 'Checkout v2');
     expect(started).toEqual([
-      { epicId: milestone?.meta.id ?? '', operator: 'human:test' },
+      { milestoneId: milestone?.meta.id ?? '', operator: 'human:test' },
     ]);
   });
 
   it('create_plan leaves the agents to the human when asked to, or when nothing can send them', async () => {
     const started: string[] = [];
     const h = makeHarness({
-      epics: {
-        start: (epicId) => {
-          started.push(epicId);
+      milestones: {
+        start: (milestoneId) => {
+          started.push(milestoneId);
           return Promise.resolve();
         },
       },
@@ -1781,6 +1823,49 @@ describe('the agent drives everything behind cards', () => {
     );
     await h.registry.applyAction(action.id, CONFIRMED);
     expect(h.cache.get(task.meta.id)?.meta.priority).toBe('urgent');
+  });
+
+  it('update_task reads a built-in word or any casing through the board roles', async () => {
+    const h = makeHarness();
+    writeFileSync(
+      join(repo, '.dispatch', 'config.yml'),
+      `statuses:
+  - { name: Todo, type: unstarted }
+  - { name: In Progress, type: started }
+  - { name: Done, type: completed }
+  - { name: Canceled, type: canceled }
+statusRoles:
+  ready: Todo
+  dispatched: In Progress
+  review: In Progress
+  landing: null
+  landed: Done
+  dropped: Canceled
+`
+    );
+    const task = h.store.create({ title: 'Polish', status: 'Todo' });
+    h.cache.rebuild(h.store);
+    const action = h.registry.callMutatingTool('update_task', {
+      taskId: task.meta.id,
+      status: 'landed',
+    });
+    expect(action.summary).toBe(
+      `Update ${task.meta.id} ("Polish"): status Todo → Done`
+    );
+    await h.registry.applyAction(action.id, CONFIRMED);
+    expect(h.store.get(task.meta.id)?.meta.status).toBe('Done');
+    const lower = h.registry.callMutatingTool('update_task', {
+      taskId: task.meta.id,
+      status: 'in progress',
+    });
+    expect(lower.summary).toContain('status Done → In Progress');
+    // No landing role here, so the word names no status.
+    expect(() =>
+      h.registry.callMutatingTool('update_task', {
+        taskId: task.meta.id,
+        status: 'landing',
+      })
+    ).toThrow('unknown status "landing"');
   });
 
   it('queue_merge names one run and refuses an unknown one', async () => {

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 
 import {
+  FREE_PLAN_ISSUE_LIMIT,
   HttpLinearClient,
   LINEAR_REQUEST_TIMEOUT_MS,
+  LINEAR_USAGE_LIMIT_MESSAGE,
 } from '../src/linear/client.js';
 
 const KEY = 'lin_api_TESTKEY';
@@ -94,6 +96,62 @@ describe('HttpLinearClient rate limiting', () => {
   });
 });
 
+describe('HttpLinearClient usage limit', () => {
+  const shapes: Array<[string, Record<string, unknown>, string]> = [
+    [
+      'its extension type',
+      {
+        message: 'usage limit exceeded',
+        extensions: {
+          type: 'usage limit exceeded',
+          userPresentableMessage: 'Your plan allows 250 issues.',
+        },
+      },
+      'Your plan allows 250 issues.',
+    ],
+    [
+      'its extension code alone',
+      { message: 'Forbidden', extensions: { code: 'USAGE_LIMIT_EXCEEDED' } },
+      'Forbidden',
+    ],
+    [
+      'its message alone',
+      { message: 'Usage limit exceeded' },
+      'Usage limit exceeded',
+    ],
+  ];
+
+  for (const [how, error, detail] of shapes) {
+    it(`recognises the plan's issue cap by ${how}`, async () => {
+      const client = new HttpLinearClient(KEY, {
+        fetchImpl: stubFetch({ status: 400, body: { errors: [error] } }),
+      });
+      const result = await client.createIssue({ teamId: 't', title: 'x' });
+      expect(result).toEqual({
+        ok: false,
+        kind: 'usage-limit',
+        error: LINEAR_USAGE_LIMIT_MESSAGE,
+        detail,
+      });
+    });
+  }
+
+  it('leaves an unrelated refusal a plain graphql failure', async () => {
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: stubFetch({
+        status: 400,
+        body: { errors: [{ message: 'Argument Validation Error' }] },
+      }),
+    });
+    const result = await client.createIssue({ teamId: 't', title: 'x' });
+    expect(result).toEqual({
+      ok: false,
+      kind: 'graphql',
+      error: 'Argument Validation Error',
+    });
+  });
+});
+
 describe('HttpLinearClient error text', () => {
   it('never lets the API key reach an error message', async () => {
     const client = new HttpLinearClient(KEY, {
@@ -155,6 +213,7 @@ describe('HttpLinearClient teamId variable types', () => {
     ['projects since', (c) => c.projects('team-1', 'now')],
     ['projectMilestones', (c) => c.projectMilestones('team-1', null)],
     ['projectMilestones since', (c) => c.projectMilestones('team-1', 'now')],
+    ['closedIssues', (c) => c.closedIssues('team-1', ['completed'])],
   ];
 
   for (const [name, call] of filtered) {
@@ -529,6 +588,373 @@ describe('HttpLinearClient labels', () => {
       },
       { id: 'l-2', name: 'infra', color: '#0f0', group: null, teamId: null },
     ]);
+  });
+});
+
+describe('HttpLinearClient label create', () => {
+  function refusing(error: Record<string, unknown>): HttpLinearClient {
+    return new HttpLinearClient(KEY, {
+      fetchImpl: stubFetch({ status: 400, body: { errors: [error] } }),
+    });
+  }
+
+  it('marks a label create Linear refuses as a duplicate', async () => {
+    const result = await refusing({
+      message: 'duplicate label name',
+    }).createLabel({ name: 'cost', teamId: 'team-1' });
+    expect(result).toEqual({
+      ok: false,
+      kind: 'graphql',
+      error: 'duplicate label name',
+      code: 'duplicate',
+    });
+  });
+
+  it('reads a duplicate from the message meant for people too', async () => {
+    const result = await refusing({
+      message: 'Argument Validation Error',
+      extensions: {
+        userPresentableMessage: 'A label with this name already exists.',
+      },
+    }).createLabel({ name: 'cost', teamId: 'team-1' });
+    expect(result).toMatchObject({
+      ok: false,
+      kind: 'graphql',
+      code: 'duplicate',
+      detail: 'A label with this name already exists.',
+    });
+  });
+
+  it('leaves other refused label creates unmarked', async () => {
+    const result = await refusing({
+      message: 'Argument Validation Error',
+    }).createLabel({ name: 'cost', teamId: 'team-1' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBeUndefined();
+  });
+});
+
+describe('HttpLinearClient labels by name', () => {
+  it('finds every label spelling a name across teams, archived included', async () => {
+    const seen: { init?: RequestInit } = {};
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: stubFetch(
+        {
+          body: page('issueLabels', [
+            {
+              id: 'l-1',
+              name: 'Bug',
+              color: '#f00',
+              isGroup: false,
+              archivedAt: null,
+              retiredAt: null,
+              team: { id: 'team-1' },
+              parent: null,
+            },
+            {
+              id: 'l-2',
+              name: 'bug',
+              color: '#0f0',
+              isGroup: true,
+              archivedAt: null,
+              retiredAt: null,
+              team: { id: 'team-2' },
+              parent: null,
+            },
+            {
+              id: 'l-3',
+              name: 'BUG',
+              color: null,
+              isGroup: false,
+              archivedAt: '2026-01-01T00:00:00.000Z',
+              retiredAt: '2026-01-02T00:00:00.000Z',
+              team: null,
+              parent: { name: 'Type' },
+            },
+          ]),
+        },
+        seen
+      ),
+    });
+    const result = await client.labelsNamed('bug');
+    if (!result.ok) throw new Error(result.error);
+    expect(result.data).toEqual([
+      {
+        id: 'l-1',
+        name: 'Bug',
+        color: '#f00',
+        group: null,
+        teamId: 'team-1',
+        isGroup: false,
+        archived: false,
+        retired: false,
+      },
+      {
+        id: 'l-2',
+        name: 'bug',
+        color: '#0f0',
+        group: null,
+        teamId: 'team-2',
+        isGroup: true,
+        archived: false,
+        retired: false,
+      },
+      {
+        id: 'l-3',
+        name: 'BUG',
+        group: 'Type',
+        teamId: null,
+        isGroup: false,
+        archived: true,
+        retired: true,
+      },
+    ]);
+    const body = JSON.parse((seen.init?.body ?? '{}') as string) as {
+      query: string;
+      variables: Record<string, unknown>;
+    };
+    expect(body.query).toContain('eqIgnoreCase: $name');
+    expect(body.query).toContain('includeArchived: true');
+    expect(body.variables).toMatchObject({ name: 'bug' });
+  });
+});
+
+// Answers each request by its operation name, recording what was sent.
+interface SentRequest {
+  query: string;
+  variables: Record<string, unknown>;
+}
+
+function byOperation(
+  answers: Record<string, (variables: Record<string, unknown>) => unknown>,
+  sent: SentRequest[] = []
+): typeof fetch {
+  return ((_url: string, init: RequestInit) => {
+    const body = JSON.parse(init.body as string) as SentRequest;
+    sent.push(body);
+    const operation = /^(?:query|mutation)\s+(\w+)/.exec(body.query)?.[1];
+    const answer = answers[operation ?? ''];
+    if (answer === undefined) throw new Error(`unexpected ${operation}`);
+    return Promise.resolve(
+      new Response(JSON.stringify(answer(body.variables)), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+  }) as unknown as typeof fetch;
+}
+
+describe('HttpLinearClient capacity', () => {
+  const teams = {
+    data: {
+      teams: {
+        nodes: [
+          { id: 'team-1', key: 'HYD', name: 'Hydrogen', issueCount: 175 },
+          { id: 'team-2', key: 'OPS', name: 'Ops', issueCount: 40 },
+        ],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      },
+    },
+  };
+  // team-1 holds 3 completed and 1 canceled live issue; team-2 none.
+  const closed = (variables: Record<string, unknown>) => {
+    const counts: Record<string, number> = { completed: 3, canceled: 1 };
+    const type = (variables.types as string[])[0];
+    const n = variables.teamId === 'team-1' ? (counts[type] ?? 0) : 0;
+    return page(
+      'issues',
+      Array.from({ length: n }, (_, i) => ({
+        id: `${type}-${i}`,
+        identifier: `HYD-${i}`,
+        url: 'https://linear.app/x',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      }))
+    );
+  };
+
+  it('counts live issues workspace-wide and on a Free plan caps them at 250', async () => {
+    const sent: SentRequest[] = [];
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: byOperation(
+        {
+          TeamIssueCounts: () => teams,
+          ClosedIssueCount: closed,
+          OrganizationPlan: () => ({
+            data: { organization: { subscription: null } },
+          }),
+        },
+        sent
+      ),
+    });
+    const result = await client.capacity(['team-1']);
+    if (!result.ok) throw new Error(result.error);
+    expect(result.data).toMatchObject({
+      teams: [
+        {
+          id: 'team-1',
+          key: 'HYD',
+          name: 'Hydrogen',
+          active: 175,
+          completed: 3,
+          canceled: 1,
+        },
+      ],
+      active: 215,
+      activeScope: 'workspace',
+      limit: FREE_PLAN_ISSUE_LIMIT,
+      limitSource: 'plan',
+      plan: 'free',
+      limitHitAt: null,
+      truncated: false,
+    });
+    expect(Number.isNaN(Date.parse(result.data.checkedAt))).toBe(false);
+    expect(sent[0].query).toContain('issueCount(includeArchived: false)');
+    // Counted by id alone, Linear's 'duplicate' state type as canceled.
+    const counts = sent.filter((s) => s.query.includes('ClosedIssueCount'));
+    expect(counts.map((s) => s.variables)).toEqual([
+      { teamId: 'team-1', types: ['completed'], after: null },
+      { teamId: 'team-1', types: ['canceled', 'duplicate'], after: null },
+    ]);
+    expect(counts[0].query).toContain('nodes { id }');
+  });
+
+  it('keeps the closed counts it is given instead of walking them again', async () => {
+    const sent: SentRequest[] = [];
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: byOperation(
+        {
+          TeamIssueCounts: () => teams,
+          OrganizationPlan: () => ({
+            data: { organization: { subscription: { type: 'standard' } } },
+          }),
+        },
+        sent
+      ),
+    });
+    const result = await client.capacity(['team-1'], {
+      teams: [
+        {
+          id: 'team-1',
+          key: 'HYD',
+          name: 'Hydrogen',
+          active: 170,
+          completed: 9,
+          canceled: 2,
+        },
+      ],
+      truncated: false,
+    });
+    if (!result.ok) throw new Error(result.error);
+    expect(result.data.teams).toEqual([
+      {
+        id: 'team-1',
+        key: 'HYD',
+        name: 'Hydrogen',
+        active: 175,
+        completed: 9,
+        canceled: 2,
+      },
+    ]);
+    expect(sent.some((s) => s.query.includes('ClosedIssue'))).toBe(false);
+  });
+
+  it('fails the measurement when reading the plan times out, rather than calling it unknown', async () => {
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: byOperation({
+        TeamIssueCounts: () => teams,
+        ClosedIssueCount: closed,
+        OrganizationPlan: () => {
+          throw new Error('socket hang up');
+        },
+      }),
+    });
+    const result = await client.capacity(['team-1']);
+    expect(result.ok).toBe(false);
+  });
+
+  it('reads a subscription as a paid plan with no fixed cap, every team detailed', async () => {
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: byOperation({
+        TeamIssueCounts: () => teams,
+        ClosedIssueCount: closed,
+        OrganizationPlan: () => ({
+          data: { organization: { subscription: { type: 'standard' } } },
+        }),
+      }),
+    });
+    const result = await client.capacity();
+    if (!result.ok) throw new Error(result.error);
+    expect(result.data.plan).toBe('paid');
+    expect(result.data.limit).toBeNull();
+    expect(result.data.limitSource).toBeNull();
+    expect(result.data.teams.map((t) => [t.id, t.active])).toEqual([
+      ['team-1', 175],
+      ['team-2', 40],
+    ]);
+  });
+
+  it('calls the plan unknown when the key cannot read it, and still counts', async () => {
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: byOperation({
+        TeamIssueCounts: () => teams,
+        ClosedIssueCount: closed,
+        OrganizationPlan: () => ({ errors: [{ message: 'Forbidden' }] }),
+      }),
+    });
+    const result = await client.capacity(['team-1']);
+    if (!result.ok) throw new Error(result.error);
+    expect(result.data.plan).toBe('unknown');
+    expect(result.data.limit).toBeNull();
+    expect(result.data.active).toBe(215);
+  });
+});
+
+describe('HttpLinearClient closed issues', () => {
+  it('walks a team’s closed issues of the asked types, page by page', async () => {
+    const sent: SentRequest[] = [];
+    const ref = (id: string) => ({
+      id,
+      identifier: id.toUpperCase(),
+      url: `https://linear.app/x/${id}`,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: byOperation(
+        {
+          ClosedIssues: (variables) => ({
+            data: {
+              issues:
+                variables.after === null
+                  ? {
+                      nodes: [ref('i-1')],
+                      pageInfo: { hasNextPage: true, endCursor: 'c-1' },
+                    }
+                  : {
+                      nodes: [ref('i-2')],
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                    },
+            },
+          }),
+        },
+        sent
+      ),
+    });
+    const result = await client.closedIssues('team-1', [
+      'completed',
+      'canceled',
+    ]);
+    if (!result.ok) throw new Error(result.error);
+    expect(result.data).toEqual({
+      nodes: [ref('i-1'), ref('i-2')],
+      truncated: false,
+    });
+    // Linear's 'duplicate' state type is a canceled one.
+    const types = ['completed', 'canceled', 'duplicate'];
+    expect(sent.map((s) => s.variables)).toEqual([
+      { teamId: 'team-1', types, after: null },
+      { teamId: 'team-1', types, after: 'c-1' },
+    ]);
+    expect(sent[0].query).not.toContain('includeArchived');
   });
 });
 

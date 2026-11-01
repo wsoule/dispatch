@@ -10,12 +10,12 @@ import {
   DEFAULT_RUN_COST_USD,
   type LiveClaim,
 } from '@/lib/dispatchPreview';
-import { concurrencyChoices } from '@/lib/epicConcurrency';
+import { concurrencyChoices } from '@/lib/milestoneConcurrency';
 import {
   defaultMaxRuns,
   defaultSpendCeiling,
-  type WorkEpicOptions,
-} from '@/lib/epicSession';
+  type WorkMilestoneOptions,
+} from '@/lib/milestoneSession';
 import { cn } from '@/lib/utils';
 import { ListRow } from '@/ui/ai/list-row';
 import { Pill, PillButton } from '@/ui/ai/pill';
@@ -69,7 +69,7 @@ interface DispatchDialogProps {
   };
   confirmLabel?: string;
   title: string;
-  onConfirm: (opts: WorkEpicOptions) => Promise<void>;
+  onConfirm: (opts: WorkMilestoneOptions) => Promise<void>;
   onCancel: () => void;
 }
 
@@ -139,7 +139,7 @@ function clampConcurrency(value: number, cap: number): number {
  * cost, and the estimate line prices the plan against them before anything starts.
  *
  * The concurrency is editable here rather than fixed, since it is chosen per dispatch (see
- * handleWorkEpic); changing it updates the preview live, which is the fastest way to understand
+ * handleWorkMilestone); changing it updates the preview live, which is the fastest way to understand
  * what the number actually does.
  */
 export function DispatchDialog({
@@ -177,7 +177,7 @@ export function DispatchDialog({
   const fieldId = useId();
 
   // 1…cap. The default is clamped to the cap first (config already forbids an
-  // `epicConcurrency` above `maxConcurrency`), and the list is keyed on the default rather
+  // `milestoneConcurrency` above `maxConcurrency`), and the list is keyed on the default rather
   // than the current pick so choosing a lower value can't drop options.
   const concurrencyOptions = useMemo(
     () => concurrencyChoices(clampConcurrency(defaultConcurrency, cap), cap),

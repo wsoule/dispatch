@@ -199,6 +199,7 @@ export function ConversationTimeline({
             availability={pane.availability}
             onRestartDaemon={pane.onRestartDaemon}
             onAnswer={actions.answer}
+            inlineAnswer
             onOpen={pane.onOpen}
             loadApprovalInput={pane.loadApprovalInput}
             client={client}

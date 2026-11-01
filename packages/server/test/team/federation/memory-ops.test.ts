@@ -83,7 +83,7 @@ const FULL = (title: string, author: string) => ({
   body: 'b',
   kind: 'fact',
   refs: [],
-  epic: null,
+  milestone: null,
   appliesTo: [],
   pinned: false,
   status: 'active',

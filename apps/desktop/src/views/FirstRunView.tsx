@@ -40,7 +40,7 @@ export interface FirstRunViewProps {
  * is the same planner the AI composer drives, given the whole window while the
  * board has nothing on it.
  *
- * Deliberately narrower than the builder front door (epic e-16ef06), which
+ * Deliberately narrower than the builder front door (milestone e-16ef06), which
  * puts the proposed task graph inline and makes the preview the stage. This is
  * the empty state alone, and it ships without waiting for that.
  */

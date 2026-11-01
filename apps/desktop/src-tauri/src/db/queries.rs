@@ -136,19 +136,18 @@ pub fn upsert_project(
     path: &str,
     timestamp: i64,
 ) -> rusqlite::Result<()> {
-    conn.execute(
+    conn.prepare_cached(
         "INSERT INTO projects (id, name, path, created_at, last_active)
          VALUES (?1, ?2, ?3, ?4, ?4)
          ON CONFLICT(id) DO UPDATE SET
             last_active = MAX(last_active, excluded.last_active)",
-        params![id, name, path, timestamp],
-    )?;
+    )?
+    .execute(params![id, name, path, timestamp])?;
     Ok(())
 }
 
-/// Upserts a session with monotonic accumulation of token deltas — safe to
-/// replay if a log file is ever re-scanned from offset 0. Returns true if a
-/// new session row was created (vs. an existing one updated).
+/// Applies the source's token fold: deltas require exactly-once ingestion, while cumulative
+/// snapshots use per-counter MAX. Returns true when the session row was newly created.
 // Each argument maps onto one column of the row being written; a params
 // struct would only rename them.
 #[allow(clippy::too_many_arguments)]
@@ -171,6 +170,31 @@ pub fn upsert_session(
         .optional()?
         .is_some();
 
+    write_session(
+        conn,
+        session_id,
+        project_id,
+        agent,
+        model,
+        timestamp,
+        raw_log_path,
+        delta,
+    )?;
+    Ok(!existed)
+}
+
+/// Ordered session fold, shared by single-record and bounded ingestion paths.
+#[allow(clippy::too_many_arguments)]
+pub fn write_session(
+    conn: &Connection,
+    session_id: &str,
+    project_id: &str,
+    agent: &str,
+    model: Option<&str>,
+    timestamp: i64,
+    raw_log_path: &str,
+    delta: &TokenDelta,
+) -> rusqlite::Result<()> {
     // A delta source contributes this record's own tokens, so the counters accumulate. A
     // cumulative source re-reports the session total in full on every record, so the counters
     // take the larger value instead — which also makes the write idempotent, so re-tailing a
@@ -191,9 +215,8 @@ pub fn upsert_session(
         }
     };
 
-    conn.execute(
-        &format!(
-            "INSERT INTO sessions (
+    conn.prepare_cached(&format!(
+        "INSERT INTO sessions (
             id, project_id, agent, model, started_at, last_activity_at, status,
             prompt_tokens, completion_tokens, cache_read_tokens, cache_creation_tokens,
             raw_log_path
@@ -205,22 +228,21 @@ pub fn upsert_session(
             last_activity_at = MAX(last_activity_at, excluded.last_activity_at),
             status = 'active',
             {fold}"
-        ),
-        params![
-            session_id,
-            project_id,
-            agent,
-            model,
-            timestamp,
-            delta.prompt_tokens,
-            delta.completion_tokens,
-            delta.cache_read_tokens,
-            delta.cache_creation_tokens,
-            raw_log_path,
-        ],
-    )?;
+    ))?
+    .execute(params![
+        session_id,
+        project_id,
+        agent,
+        model,
+        timestamp,
+        delta.prompt_tokens,
+        delta.completion_tokens,
+        delta.cache_read_tokens,
+        delta.cache_creation_tokens,
+        raw_log_path,
+    ])?;
 
-    Ok(!existed)
+    Ok(())
 }
 
 // Each argument maps onto one column of the row being written; a params

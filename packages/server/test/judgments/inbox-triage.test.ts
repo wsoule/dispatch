@@ -11,9 +11,9 @@ import {
   InboxTriageSnapshotStore,
   interpretTriage,
   triageCandidates,
-  triageEpics,
   triageHash,
   triageInbox,
+  triageMilestones,
   triageQuestions,
   untriagedForClustering,
 } from '../../src/judgments/inboxTriage';
@@ -113,21 +113,21 @@ describe('triageCandidates', () => {
   });
 });
 
-describe('triageEpics', () => {
-  test('lists open epics with a one-line summary', () => {
-    const epics = triageEpics([
+describe('triageMilestones', () => {
+  test('lists open milestones with a one-line summary', () => {
+    const milestones = triageMilestones([
       task('e1', 'Landing', { kind: 'milestone' }, 'First line.\n\nMore.'),
       task('e2', 'Old', { kind: 'milestone', status: 'landed' }),
-      task('t1', 'Not an epic'),
+      task('t1', 'Not a milestone'),
     ]);
-    expect(epics).toEqual([
+    expect(milestones).toEqual([
       { id: 'e1', title: 'Landing', summary: 'First line.' },
     ]);
   });
 });
 
 describe('triageQuestions', () => {
-  test('asks kind, epic with a none option, and one duplicate noul per candidate', () => {
+  test('asks kind, milestone with a none option, and one duplicate noul per candidate', () => {
     const q = triageQuestions(
       [{ id: 'e1', title: 'Landing', summary: 'ship it' }],
       [
@@ -135,7 +135,7 @@ describe('triageQuestions', () => {
         { id: 'i2', title: 'B' },
       ]
     );
-    expect(Object.keys(q)).toEqual(['kind', 'epic', 'dup_t1', 'dup_i2']);
+    expect(Object.keys(q)).toEqual(['kind', 'milestone', 'dup_t1', 'dup_i2']);
     expect(q.kind.type).toBe('choice');
     expect(Object.keys(q.kind.criteria)).toEqual([
       'bug',
@@ -144,12 +144,12 @@ describe('triageQuestions', () => {
       'note',
       'noise',
     ]);
-    expect(q.epic?.type).toBe('choice');
-    expect(Object.keys(q.epic?.criteria ?? {})).toEqual(['e1', 'none']);
+    expect(q.milestone?.type).toBe('choice');
+    expect(Object.keys(q.milestone?.criteria ?? {})).toEqual(['e1', 'none']);
     expect(q.dup_t1.type).toBe('noul');
   });
 
-  test('skips the epic question when there are no epics', () => {
+  test('skips the milestone question when there are no milestones', () => {
     const q = triageQuestions([], []);
     expect(Object.keys(q)).toEqual(['kind']);
   });
@@ -161,17 +161,17 @@ describe('interpretTriage', () => {
     { id: 'i2', title: 'B' },
   ];
 
-  const epics = [{ id: 'e1', title: 'Landing', summary: '' }];
+  const milestones = [{ id: 'e1', title: 'Landing', summary: '' }];
 
-  test('keeps a confident epic and confident duplicates, sorted', () => {
-    const got = interpretTriage('i1', 'h', epics, candidates, {
+  test('keeps a confident milestone and confident duplicates, sorted', () => {
+    const got = interpretTriage('i1', 'h', milestones, candidates, {
       kind: {
         type: 'choice',
         choice: 'task',
         confidence: 0.8,
         probabilities: {},
       },
-      epic: {
+      milestone: {
         type: 'choice',
         choice: 'e1',
         confidence: 0.9,
@@ -185,9 +185,9 @@ describe('interpretTriage', () => {
       hash: 'h',
       kind: 'task',
       kindConfidence: 0.8,
-      epicId: 'e1',
-      epicTitle: 'Landing',
-      epicConfidence: 0.9,
+      milestoneId: 'e1',
+      milestoneTitle: 'Landing',
+      milestoneConfidence: 0.9,
       duplicates: [
         { id: 'i2', probability: 0.95 },
         { id: 't1', probability: 0.72 },
@@ -195,15 +195,15 @@ describe('interpretTriage', () => {
     });
   });
 
-  test('drops an epic below 0.6, a none answer, and weak duplicates', () => {
-    const low = interpretTriage('i1', 'h', epics, candidates, {
+  test('drops a milestone below 0.6, a none answer, and weak duplicates', () => {
+    const low = interpretTriage('i1', 'h', milestones, candidates, {
       kind: {
         type: 'choice',
         choice: 'note',
         confidence: 0.5,
         probabilities: {},
       },
-      epic: {
+      milestone: {
         type: 'choice',
         choice: 'e1',
         confidence: 0.5,
@@ -212,25 +212,25 @@ describe('interpretTriage', () => {
       dup_t1: { type: 'noul', noul: 0.69 },
       dup_i2: { type: 'noul', noul: 0.1 },
     });
-    expect(low.epicId).toBeNull();
-    expect(low.epicTitle).toBeNull();
+    expect(low.milestoneId).toBeNull();
+    expect(low.milestoneTitle).toBeNull();
     expect(low.duplicates).toEqual([]);
 
-    const none = interpretTriage('i1', 'h', epics, [], {
+    const none = interpretTriage('i1', 'h', milestones, [], {
       kind: {
         type: 'choice',
         choice: 'note',
         confidence: 0.5,
         probabilities: {},
       },
-      epic: {
+      milestone: {
         type: 'choice',
         choice: 'none',
         confidence: 0.99,
         probabilities: {},
       },
     });
-    expect(none.epicId).toBeNull();
+    expect(none.milestoneId).toBeNull();
   });
 });
 
@@ -252,9 +252,9 @@ describe('triageInbox', () => {
           hash: triageHash(items[0]),
           kind: 'task' as const,
           kindConfidence: 1,
-          epicId: 'e1',
-          epicTitle: 'E1',
-          epicConfidence: 1,
+          milestoneId: 'e1',
+          milestoneTitle: 'E1',
+          milestoneConfidence: 1,
           duplicates: [],
         },
       },
@@ -271,7 +271,7 @@ describe('triageInbox', () => {
     const snapshot = await triageInbox(client, items, [], previous);
     expect(asked).toHaveLength(1);
     expect(Object.keys(snapshot!.items).sort()).toEqual(['i1', 'i3']);
-    expect(snapshot!.items.i1.epicId).toBe('e1');
+    expect(snapshot!.items.i1.milestoneId).toBe('e1');
     expect(snapshot!.items.i3.kind).toBe('idea');
   });
 
@@ -285,7 +285,7 @@ describe('triageInbox', () => {
 });
 
 describe('untriagedForClustering', () => {
-  test('keeps items with no confident epic', () => {
+  test('keeps items with no confident milestone', () => {
     const items = [item('i1', 'a'), item('i2', 'b'), item('i3', 'c')];
     const snapshot = {
       items: {
@@ -294,9 +294,9 @@ describe('untriagedForClustering', () => {
           hash: 'h',
           kind: 'task' as const,
           kindConfidence: 1,
-          epicId: 'e1',
-          epicTitle: 'E1',
-          epicConfidence: 1,
+          milestoneId: 'e1',
+          milestoneTitle: 'E1',
+          milestoneConfidence: 1,
           duplicates: [],
         },
         i2: {
@@ -304,9 +304,9 @@ describe('untriagedForClustering', () => {
           hash: 'h',
           kind: 'task' as const,
           kindConfidence: 1,
-          epicId: null,
-          epicTitle: null,
-          epicConfidence: 0,
+          milestoneId: null,
+          milestoneTitle: null,
+          milestoneConfidence: 0,
           duplicates: [],
         },
       },

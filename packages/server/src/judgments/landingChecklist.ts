@@ -46,7 +46,7 @@ export interface ChecklistSummary {
 
 const PASS = 0.7;
 const WEAK = 0.5;
-/** More than this and the task is really an epic; the tail would be noise. */
+/** More than this and the task is really a milestone; the tail would be noise. */
 const MAX_REQUIREMENTS = 12;
 /** Diff text sent as state, inside Jev's 32k-token state budget. */
 const PATCH_CAP = 60_000;

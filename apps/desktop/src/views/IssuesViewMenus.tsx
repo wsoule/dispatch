@@ -566,7 +566,8 @@ export function GroupMenu({
 }: {
   group: TaskGroupData;
   verbs: readonly FanoutVerb[];
-  /** The group stands for a container (an epic or a milestone). */
+  /** The group stands for a container task: an initiative, project,
+   * milestone or parent issue. */
   container: boolean;
   onAction: (action: GroupAction, group: TaskGroupData) => void;
 }): ReactNode {

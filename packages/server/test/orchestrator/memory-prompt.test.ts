@@ -328,14 +328,18 @@ describe('dispatch prompt memory', () => {
       finish: { state: 'failed', error: 'boom', sessionId: 's-1' },
     });
     t.orchestrator.registerExecutor('claude', executor);
-    const epic = t.store.create({ title: 'Toolchain' });
-    const task = t.store.create({ title: 'Bump pnpm', parent: epic.meta.id });
+    const milestone = t.store.create({ title: 'Toolchain' });
+    const task = t.store.create({
+      title: 'Bump pnpm',
+      parent: milestone.meta.id,
+    });
     const first = await t.orchestrator.dispatch(task.meta.id, 'claude');
     const stateOf = (id: string) => t.orchestrator.getRun(id)?.meta.state;
     await waitFor(() => stateOf(first.id) === 'failed');
     const get = t.store.get.bind(t.store);
     t.store.get = (id) => {
-      if (id === epic.meta.id) throw new Error('EIO: epic unreadable');
+      if (id === milestone.meta.id)
+        throw new Error('EIO: milestone unreadable');
       return get(id);
     };
     const resumed = t.orchestrator.resumeRun(first.id);

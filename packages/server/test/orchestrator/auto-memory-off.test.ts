@@ -108,7 +108,6 @@ describe('auto memory off by default', () => {
           statuses: [],
           labels: [],
           milestones: [],
-          epics: [],
           runStates: [],
         }),
     ]) {

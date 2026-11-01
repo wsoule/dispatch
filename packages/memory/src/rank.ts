@@ -2,7 +2,7 @@ import type { MemoryEntry, MemoryKind, MemoryTrust } from './types.js';
 
 export interface RankContext {
   taskId: string | null;
-  epic: string | null;
+  milestone: string | null;
 }
 
 export interface Ranked {
@@ -36,19 +36,21 @@ export function reaches(
   if (entry.scope === 'personal')
     return entry.projectKey === null || entry.projectKey === projectKey;
   if (ctx.taskId === null) return true;
-  // An entry narrowed to an epic reaches the epic's own tasks and the epic.
-  const epicOk =
-    entry.epic === null || entry.epic === ctx.epic || entry.epic === ctx.taskId;
+  // An entry narrowed to a milestone reaches the milestone's own tasks and the milestone.
+  const milestoneOk =
+    entry.milestone === null ||
+    entry.milestone === ctx.milestone ||
+    entry.milestone === ctx.taskId;
   const taskOk =
     entry.appliesTo.length === 0 || entry.appliesTo.includes(ctx.taskId);
-  return epicOk && taskOk;
+  return milestoneOk && taskOk;
 }
 
 export function specificity(entry: MemoryEntry, ctx: RankContext): 1 | 2 | 3 {
   if (ctx.taskId !== null && entry.appliesTo.includes(ctx.taskId)) return 3;
   if (
-    entry.epic !== null &&
-    (entry.epic === ctx.epic || entry.epic === ctx.taskId)
+    entry.milestone !== null &&
+    (entry.milestone === ctx.milestone || entry.milestone === ctx.taskId)
   )
     return 2;
   return 1;

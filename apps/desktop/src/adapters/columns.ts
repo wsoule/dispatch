@@ -8,9 +8,9 @@ import {
 } from '../lib/tasksPrefs';
 
 // The Display popover's property set → @dispatch/ui's TaskGroupTable columns.
-// The popover keeps Dispatch's own vocabulary (status, epic, labels, run, the
-// two dates); the table has six meta columns of its own, so this is the one
-// place that says which toggle shows which column. Pure data, unit-tested
+// The popover keeps Dispatch's own vocabulary (status, milestone, labels, run,
+// the two dates); the table has six meta columns of its own, so this is the
+// one place that says which toggle shows which column. Pure data, unit-tested
 // without React.
 
 /**
@@ -38,7 +38,7 @@ const COLUMN_ORDER: readonly TaskColumnId[] = [
 /** A grouping whose header already names the task's container, so the
  * hierarchy columns would repeat it on every row. */
 function groupsByContainer(grouping: TasksGrouping): boolean {
-  return grouping === 'epic' || grouping === 'milestone';
+  return grouping === 'parent' || grouping === 'milestone';
 }
 
 /**
@@ -46,9 +46,8 @@ function groupsByContainer(grouping: TasksGrouping): boolean {
  * grouping:
  *
  * - `project` and `milestone` (the nearest project and milestone containers,
- *   the successors of the old row's ` › epic` chip) when the Epic or the
- *   Milestone property is on — Dispatch's two toggles both mean "show where
- *   the task sits" — unless the grouping is by epic or milestone, whose group
+ *   the successors of the old row's parent chip) when the Milestone property
+ *   is on — unless the grouping is by parent or milestone, whose group
  *   headers already name the container;
  * - `state` for Status, `priority` for Priority and `assignee` for Assignee,
  *   each following its own toggle alone (kept even when grouped by that
@@ -66,8 +65,7 @@ export function columnsForPrefs(
   grouping: TasksGrouping = prefs.grouping
 ): TaskColumnId[] {
   const has = (property: TaskProperty) => prefs.properties.has(property);
-  const hierarchy =
-    !groupsByContainer(grouping) && (has('epic') || has('milestone'));
+  const hierarchy = !groupsByContainer(grouping) && has('milestone');
   const shown: Record<TaskColumnId, boolean> = {
     project: hierarchy,
     milestone: hierarchy,

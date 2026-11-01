@@ -35,7 +35,7 @@ function packet(over: Partial<RunPacket> = {}): RunPacket {
 function entry(id: string, appliesTo: string[]) {
   return {
     id,
-    epicId: null,
+    milestoneId: null,
     sourceTaskId: null,
     kind: 'decision' as const,
     title: id,

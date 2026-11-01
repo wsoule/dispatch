@@ -327,17 +327,17 @@ describe('task CRUD round-trip', () => {
 
 describe('filter + ready queries', () => {
   it('filters by status/kind/parent and computes readyTasks', async () => {
-    const epic = await json(
+    const milestone = await json(
       await fetch(`${baseUrl}/api/tasks`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title: 'Epic', kind: 'epic' }),
+        body: JSON.stringify({ title: 'Milestone', kind: 'milestone' }),
       })
     );
     await fetch(`${baseUrl}/api/tasks`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ title: 'Child', parent: epic.meta.id }),
+      body: JSON.stringify({ title: 'Child', parent: milestone.meta.id }),
     });
     await fetch(`${baseUrl}/api/tasks`, {
       method: 'POST',
@@ -345,11 +345,13 @@ describe('filter + ready queries', () => {
       body: JSON.stringify({ title: 'Backlogged', status: 'draft' }),
     });
 
-    const byKind = await json(await fetch(`${baseUrl}/api/tasks?kind=epic`));
+    const byKind = await json(
+      await fetch(`${baseUrl}/api/tasks?kind=milestone`)
+    );
     expect(byKind).toHaveLength(1);
 
     const byParent = await json(
-      await fetch(`${baseUrl}/api/tasks?parent=${epic.meta.id}`)
+      await fetch(`${baseUrl}/api/tasks?parent=${milestone.meta.id}`)
     );
     expect(byParent).toHaveLength(1);
     expect(byParent[0].meta.title).toBe('Child');
@@ -362,7 +364,7 @@ describe('filter + ready queries', () => {
 
     const ready = await json(await fetch(`${baseUrl}/api/tasks/ready`));
     // "Child" is a task, status=todo, no blockers -> ready. "Backlogged" is
-    // status=backlog -> not ready. Epic is kind=epic -> not ready.
+    // status=backlog -> not ready. Milestone is kind=milestone -> not ready.
     expect(ready.map((t: { meta: { title: string } }) => t.meta.title)).toEqual(
       ['Child']
     );
@@ -514,7 +516,7 @@ describe('error paths', () => {
     });
     expect(res.status).toBe(400);
     expect((await json(res)).error).toBe(
-      'invalid kind: wombat (expected task|initiative|project|milestone|epic)'
+      'invalid kind: wombat (expected task|milestone|project|initiative)'
     );
     expect(taskFileNames(root)).toEqual([]);
   });
@@ -614,7 +616,7 @@ describe('error paths', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         title: 'X',
-        kind: 'epic',
+        kind: 'milestone',
         priority: 'high',
         assignee: 'agent',
         labels: ['a', 'b'],

@@ -359,7 +359,7 @@ export class SqliteFindingStore {
 
 interface LedgerRow {
   id: string;
-  epic_id: string | null;
+  milestone_id: string | null;
   source_task_id: string | null;
   kind: string;
   title: string;
@@ -371,12 +371,12 @@ interface LedgerRow {
 
 // `applies_to` is checked rather than defaulted for the same reason a task's
 // `blocked_by` is: an entry aimed at one task reads as an entry aimed at every
-// task under its epic the moment that column comes back empty.
+// task under its milestone the moment that column comes back empty.
 function ledgerFromRow(row: LedgerRow): LedgerEntry {
   const id = row.id;
   return {
     id,
-    epicId: row.epic_id,
+    milestoneId: row.milestone_id,
     sourceTaskId: row.source_task_id,
     kind: parseEnum<LedgerKind>(
       row.kind,
@@ -400,7 +400,7 @@ function ledgerFromRow(row: LedgerRow): LedgerEntry {
 
 const INSERT_LEDGER_IF_ABSENT = `
 INSERT INTO ledger_entries (
-  id, epic_id, source_task_id, kind, title, detail, applies_to,
+  id, milestone_id, source_task_id, kind, title, detail, applies_to,
   created_at, authored_by
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO NOTHING
@@ -419,7 +419,7 @@ export class SqliteLedgerStore {
     return withMintedId('ledger', this.generateId, now, (id) => {
       const record: LedgerEntry = {
         id,
-        epicId: input.epicId ?? null,
+        milestoneId: input.milestoneId ?? null,
         sourceTaskId: input.sourceTaskId ?? null,
         kind: input.kind,
         title: input.title,
@@ -432,7 +432,7 @@ export class SqliteLedgerStore {
         .prepare(INSERT_LEDGER_IF_ABSENT)
         .run(
           record.id,
-          record.epicId,
+          record.milestoneId,
           record.sourceTaskId,
           record.kind,
           record.title,
@@ -456,7 +456,7 @@ export class SqliteLedgerStore {
       .prepare(INSERT_LEDGER_IF_ABSENT)
       .run(
         record.id,
-        record.epicId,
+        record.milestoneId,
         record.sourceTaskId,
         record.kind,
         record.title,
@@ -477,9 +477,9 @@ export class SqliteLedgerStore {
     return row === undefined ? null : ledgerFromRow(row);
   }
 
-  // `epicId: null` is a real filter (project-wide entries), distinct from an
+  // `milestoneId: null` is a real filter (project-wide entries), distinct from an
   // omitted filter (everything), so the null case becomes `IS NULL` rather
-  // than a parameter — `epic_id = ?` never matches NULL in SQL.
+  // than a parameter — `milestone_id = ?` never matches NULL in SQL.
   list(filter: LedgerListFilter = {}): LedgerEntry[] {
     return this.rows(filter).map(ledgerFromRow);
   }
@@ -503,11 +503,11 @@ export class SqliteLedgerStore {
   private rows(filter: LedgerListFilter): LedgerRow[] {
     const clauses: string[] = [];
     const params: string[] = [];
-    if (filter.epicId === null) {
-      clauses.push('epic_id IS NULL');
-    } else if (filter.epicId !== undefined) {
-      clauses.push('epic_id = ?');
-      params.push(filter.epicId);
+    if (filter.milestoneId === null) {
+      clauses.push('milestone_id IS NULL');
+    } else if (filter.milestoneId !== undefined) {
+      clauses.push('milestone_id = ?');
+      params.push(filter.milestoneId);
     }
     const where = clauses.length === 0 ? '' : ` WHERE ${clauses.join(' AND ')}`;
     return queryAll<LedgerRow>(
@@ -519,16 +519,17 @@ export class SqliteLedgerStore {
 
   /**
    * What a dispatched task should see: entries aimed at it directly, plus
-   * untargeted entries scoped to its epic or project-wide (epicId null).
+   * untargeted entries scoped to its milestone or project-wide (milestoneId null).
    *
    * `appliesTo` is a JSON array column, so the membership half is filtered in
    * TypeScript; the volumes involved are a project's ledger, not a log.
    */
-  entriesFor(taskId: string, epicId: string | null): LedgerEntry[] {
+  entriesFor(taskId: string, milestoneId: string | null): LedgerEntry[] {
     return this.list().filter(
       (e) =>
         e.appliesTo.includes(taskId) ||
-        (e.appliesTo.length === 0 && (e.epicId === null || e.epicId === epicId))
+        (e.appliesTo.length === 0 &&
+          (e.milestoneId === null || e.milestoneId === milestoneId))
     );
   }
 }

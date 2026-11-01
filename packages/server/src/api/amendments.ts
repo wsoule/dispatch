@@ -8,7 +8,7 @@ import { routePrincipal } from './caller.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 // The team constraint an amendment carries forward: it reaches the amended
-// task's dependents, else its epic, else the whole project.
+// task's dependents, else its milestone, else the whole project.
 function amendmentConstraint(
   ctx: ApiContext,
   task: TaskDoc,
@@ -35,7 +35,7 @@ function amendmentConstraint(
       MEMORY_LIMITS.bodyBytes
     ),
     refs: [{ type: 'task', id }],
-    epic: dependents.length === 0 ? task.meta.parent : null,
+    milestone: dependents.length === 0 ? task.meta.parent : null,
     appliesTo: dependents,
     origin: `amendment:${id}@${new Date().toISOString()}`,
   };

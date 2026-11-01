@@ -19,9 +19,9 @@ export interface OrchestratorConfig {
   verifyTimeoutSec: number;
   maxBudgetUsd?: number;
   permissionMode: string;
-  epicConcurrency: number;
-  /** Hard ceiling on concurrent runs any one epic session may hold, capped at
-   *  `MAX_CONCURRENCY_HARD_CAP`. `epicConcurrency` must not exceed it. */
+  milestoneConcurrency: number;
+  /** Hard ceiling on concurrent runs any one milestone session may hold, capped at
+   *  `MAX_CONCURRENCY_HARD_CAP`. `milestoneConcurrency` must not exceed it. */
   maxConcurrency: number;
   /** What the spend gate charges for a run still in flight, before its real
    *  cost is known. */
@@ -621,6 +621,9 @@ export interface LinearConfig {
   direction: 'both' | 'pull' | 'push';
   /** Whether a task's Acceptance Criteria travels in the Linear description. */
   includeAcceptanceCriteria: boolean;
+  /** Whether archiving a completed or canceled task archives its Linear issue
+   *  too. Off: Linear's own auto-archive owns finished issues. */
+  archiveFinished: boolean;
 }
 
 export const LINEAR_DIRECTIONS = ['both', 'pull', 'push'] as const;
@@ -633,6 +636,7 @@ export const DEFAULT_LINEAR: LinearConfig = {
   intervalSec: 30,
   direction: 'both',
   includeAcceptanceCriteria: true,
+  archiveFinished: false,
 };
 
 /** Per-role model ids. Each role is a distinct kind of agent work, so cheap
@@ -804,7 +808,7 @@ export function executorModels(
 export interface ConfigPatch {
   verifyCommand?: string | null;
   autoCommit?: boolean;
-  epicConcurrency?: number;
+  milestoneConcurrency?: number;
   verifyTimeoutSec?: number;
   maxConcurrency?: number;
   runCostEstimateUsd?: number;

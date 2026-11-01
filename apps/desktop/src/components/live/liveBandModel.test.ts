@@ -1,6 +1,6 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
 import { DEFAULT_STATUS_MODEL } from '@dispatch-foo/core/browser';
-import type { EpicProgress } from '@dispatch/client';
+import type { MilestoneProgress } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
 import { childrenByParent, flightScope } from '../flightplan/flightScope';
@@ -39,7 +39,7 @@ function shared(
   tasks: TaskListItem[],
   opts: {
     flying?: string[];
-    sessions?: EpicProgress[];
+    sessions?: MilestoneProgress[];
     landing?: string[];
   } = {}
 ): LiveShared {
@@ -51,15 +51,16 @@ function shared(
     flying: new Set(opts.flying ?? ['t-e']),
     me: 'human:wyat',
     local: 'human:wyat',
-    sessions: new Map((opts.sessions ?? []).map((p) => [p.epicId, p])),
+    sessions: new Map((opts.sessions ?? []).map((p) => [p.milestoneId, p])),
     withRunBranch: new Set(),
+    withFinishedRun: new Set(),
     landing: new Map((opts.landing ?? []).map((id) => [id, 'queued'])),
   };
 }
 
 function specOf(
   tasks: TaskListItem[],
-  session: EpicProgress | null = null
+  session: MilestoneProgress | null = null
 ): LiveBandSpec {
   const container = byId(tasks).get('m');
   if (container === undefined) throw new Error('no container');

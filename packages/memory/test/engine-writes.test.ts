@@ -256,14 +256,14 @@ describe('shared writes', () => {
     expect(t.shared.countEntries()).toBe(0);
   });
 
-  it('a run’s shared save defaults its epic to the task’s parent epic', async () => {
+  it('a run’s shared save defaults its milestone to the task’s parent milestone', async () => {
     const t = setup();
     t.host.tasks.set('t-1a2b3c', {
       taskId: 't-1a2b3c',
       title: 'x',
       body: '',
       writes: [],
-      epic: 'e-000001',
+      milestone: 'e-000001',
       risk: 'routine',
       a2a: false,
     });
@@ -274,11 +274,11 @@ describe('shared writes', () => {
     const named = (await t.engine.save(RUN, {
       ...lesson,
       title: 'b',
-      epic: null,
+      milestone: null,
     })) as { proposal: string };
     expect(
       [unnamed, named].map(
-        (p) => t.shared.getProposal(p.proposal)?.content?.epic
+        (p) => t.shared.getProposal(p.proposal)?.content?.milestone
       )
     ).toEqual(['e-000001', null]);
   });

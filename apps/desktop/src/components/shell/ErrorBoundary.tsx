@@ -3,7 +3,7 @@ import { OctagonAlert } from 'lucide-react';
 import { Component, type ErrorInfo, Fragment, type ReactNode } from 'react';
 
 import styles from './ErrorBoundary.module.css';
-import { isStaleChunkError } from './errorBoundaryUtils';
+import { errorDetails, isStaleChunkError } from './errorBoundaryUtils';
 
 interface ErrorBoundaryProps {
   /** Human-readable name for the crashed view, used in the fallback's message — e.g. "the
@@ -64,10 +64,13 @@ export class ErrorBoundary extends Component<
     }
 
     const staleChunk = isStaleChunkError(error.message);
+    const label = this.props.label ?? 'this view';
 
-    // The fallback: the library EmptyState with a danger-toned OctagonAlert, the sentence,
-    // "Try again" (and "Reload app" for a stale chunk), and the thrown message in a mono
-    // block behind "Details". role="alert" so a crash that replaces a view is announced.
+    // The fallback: the library EmptyState with a danger-toned OctagonAlert, the sentence
+    // naming what failed and the reassurance under it, "Try again", "Reload app" and "Copy
+    // error details" (the name, message and stack for a bug report), the stale-module hint
+    // when a stale chunk threw, and the thrown message in a mono block behind "Details".
+    // role="alert" so a crash that replaces a view is announced.
     return (
       <div className={styles.root} role="alert">
         <EmptyState
@@ -76,21 +79,29 @@ export class ErrorBoundary extends Component<
               <OctagonAlert size={22} strokeWidth={1.8} aria-hidden="true" />
             </span>
           }
+          label={`Dispatch couldn't display ${label}.`}
           action={
             <div className={styles.actions}>
               <div className={styles.buttons}>
                 <Button variant="secondary" size="sm" onClick={this.reset}>
                   Try again
                 </Button>
-                {staleChunk && (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => window.location.reload()}
-                  >
-                    Reload app
-                  </Button>
-                )}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => window.location.reload()}
+                >
+                  Reload app
+                </Button>
+                <Button
+                  variant="quiet"
+                  size="sm"
+                  onClick={() =>
+                    void navigator.clipboard?.writeText(errorDetails(error))
+                  }
+                >
+                  Copy error details
+                </Button>
               </div>
               {staleChunk && (
                 <p className={styles.hint}>
@@ -104,7 +115,8 @@ export class ErrorBoundary extends Component<
             </div>
           }
         >
-          Something went wrong rendering {this.props.label ?? 'this view'}
+          Your runs and tasks are unaffected. Try again, or reload the app if it
+          keeps happening.
         </EmptyState>
       </div>
     );

@@ -607,7 +607,7 @@ interface ChannelSummaryWire {
   members: string[];
 }
 
-// GET /api/channels, paged. An auto-created channel nobody is in (an epic
+// GET /api/channels, paged. An auto-created channel nobody is in (a milestone
 // with no children or joiners) is hidden unless `includeEmpty`.
 async function channelList(
   rootDir: string,
@@ -1100,7 +1100,7 @@ export function registerMessagingTools(
     {
       title: 'List channels',
       description:
-        "List channels, including each epic's implicit `epic/<id>` channel, " +
+        "List channels, including each milestone's implicit `milestone/<id>` channel, " +
         'with their membership, by name. An auto-created channel with no ' +
         'members is hidden (counted in `hiddenEmpty`) unless ' +
         '`includeEmpty: true`. Paged: at most `limit` (default ' +

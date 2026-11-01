@@ -40,7 +40,7 @@ export interface NewEntryInput {
   title: string;
   body: string;
   refs?: Ref[];
-  epic?: string | null;
+  milestone?: string | null;
   appliesTo?: string[];
   projectKey?: string | null;
   author: Address;
@@ -70,7 +70,7 @@ export function newMemoryEntry(
     title: input.title,
     body: input.body,
     refs: input.refs ?? [],
-    epic: input.epic ?? null,
+    milestone: input.milestone ?? null,
     appliesTo: input.appliesTo ?? [],
     projectKey: input.projectKey ?? null,
     author: input.author,

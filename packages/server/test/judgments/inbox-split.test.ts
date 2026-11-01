@@ -123,9 +123,9 @@ describe('judgedKindChanges', () => {
     hash: 'h',
     kind: kind as never,
     kindConfidence,
-    epicId: null,
-    epicTitle: null,
-    epicConfidence: 0,
+    milestoneId: null,
+    milestoneTitle: null,
+    milestoneConfidence: 0,
     duplicates: [],
   });
 

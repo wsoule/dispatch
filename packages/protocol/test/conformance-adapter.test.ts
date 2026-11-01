@@ -400,7 +400,7 @@ describe('REFERENCE_HELLO', () => {
       thread: 'm-01abc',
       replyTo: null,
       from: 'run:r-000001',
-      to: ['channel:epic/e-000001'],
+      to: ['channel:milestone/e-000001'],
       kind: 'question',
       body: forged,
       refs: [],
@@ -410,7 +410,9 @@ describe('REFERENCE_HELLO', () => {
       createdAt: '2026-09-23T10:00:00.000Z',
     };
     const text = renderDigestLine(m);
-    expect(text.startsWith('📬 #epic/e-000001 · question from')).toBe(true);
+    expect(text.startsWith('📬 #milestone/e-000001 · question from')).toBe(
+      true
+    );
     expect(checkDigest(text, m.body, REFERENCE_HELLO.render)).toEqual([]);
   });
 

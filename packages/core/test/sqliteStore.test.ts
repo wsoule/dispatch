@@ -86,11 +86,11 @@ for (const { name, make } of BACKENDS) {
       expect(store.get('t-nope00')).toBeNull();
     });
 
-    it('mints e- ids for epics', () => {
+    it('mints e- ids for milestones', () => {
       const store = make();
-      expect(store.create({ title: 'Auth', kind: 'epic' }).meta.id).toMatch(
-        /^e-/
-      );
+      expect(
+        store.create({ title: 'Auth', kind: 'milestone' }).meta.id
+      ).toMatch(/^e-/);
     });
 
     it('escapes a heading-like line in the initial description', () => {
@@ -111,31 +111,31 @@ for (const { name, make } of BACKENDS) {
 
     it('filters by status, kind and parent and sorts by created then id', () => {
       const store = make();
-      const epic = store.create(
-        { title: 'Epic', kind: 'epic' },
+      const milestone = store.create(
+        { title: 'Milestone', kind: 'milestone' },
         '2026-07-13T00:00:00Z'
       );
       const later = store.create(
-        { title: 'Later', parent: epic.meta.id, status: 'done' },
+        { title: 'Later', parent: milestone.meta.id, status: 'done' },
         '2026-07-15T00:00:00Z'
       );
       const earlier = store.create(
-        { title: 'Earlier', parent: epic.meta.id },
+        { title: 'Earlier', parent: milestone.meta.id },
         '2026-07-14T00:00:00Z'
       );
       expect(store.list().map((d) => d.meta.title)).toEqual([
-        'Epic',
+        'Milestone',
         'Earlier',
         'Later',
       ]);
-      expect(store.list({ kind: 'epic' }).map((d) => d.meta.id)).toEqual([
-        epic.meta.id,
+      expect(store.list({ kind: 'milestone' }).map((d) => d.meta.id)).toEqual([
+        milestone.meta.id,
       ]);
       expect(store.list({ status: 'landed' }).map((d) => d.meta.id)).toEqual([
         later.meta.id,
       ]);
       expect(
-        store.list({ parent: epic.meta.id }).map((d) => d.meta.id)
+        store.list({ parent: milestone.meta.id }).map((d) => d.meta.id)
       ).toEqual([earlier.meta.id, later.meta.id]);
       expect(store.list({ parent: 'e-000000' })).toEqual([]);
     });
@@ -324,15 +324,15 @@ describe('backend equivalence', () => {
   }
 
   function script(store: TaskStorePort): TaskDoc[] {
-    const epic = store.create(
-      { title: 'Storage spine', kind: 'epic' },
+    const milestone = store.create(
+      { title: 'Storage spine', kind: 'milestone' },
       '2026-08-01T00:00:00Z'
     );
     const task = store.create(
       {
         title: 'Back the store with SQLite',
         description: 'A body with a\n\n## Activity\n\nheading-like line.',
-        parent: epic.meta.id,
+        parent: milestone.meta.id,
         milestone: 'Q3',
         blockedBy: ['t-aaaaaa'],
         labels: ['storage', 'core'],
@@ -369,7 +369,7 @@ describe('backend equivalence', () => {
       },
       '2026-08-04T00:00:00Z'
     );
-    return [epic, task, patched, amended];
+    return [milestone, task, patched, amended];
   }
 
   it('produces identical documents and identical markdown from both backends', () => {
@@ -377,7 +377,7 @@ describe('backend equivalence', () => {
     try {
       const fileDocs = script(TaskStore.init(fileRoot));
       const dbDocs = script(sqliteStore());
-      // The script returns [epic, task, patched, amended]; the first two carry
+      // The script returns [milestone, task, patched, amended]; the first two carry
       // the only two ids either backend minted.
       const fileIds = [fileDocs[0].meta.id, fileDocs[1].meta.id];
       const dbIds = [dbDocs[0].meta.id, dbDocs[1].meta.id];
@@ -539,6 +539,41 @@ PRAGMA user_version = 1;
     const store = new SqliteTaskStore(root, db);
     const doc = store.create({ title: 'After the move' });
     expect(store.get(doc.meta.id)).toEqual(doc);
+  });
+
+  // v5: epics became milestones. A v4 file still names the ledger scope
+  // `epic_id` and may hold container rows of kind `epic`.
+  it('migrates a version-4 database off the epic names', () => {
+    const dbPath = dispatchDbPath(root);
+    const current = openDispatchDb(dbPath);
+    const store = new SqliteTaskStore(root, current);
+    const container = store.create({ title: 'Payments', kind: 'milestone' });
+    current.exec(`
+DROP INDEX ledger_milestone_idx;
+ALTER TABLE ledger_entries RENAME COLUMN milestone_id TO epic_id;
+CREATE INDEX ledger_epic_idx ON ledger_entries (epic_id);
+UPDATE tasks SET kind = 'epic';
+PRAGMA user_version = 4;
+`);
+    current.close();
+
+    const db = openDispatchDb(dbPath);
+    openDbs.push(db);
+    const columns = db
+      .prepare('PRAGMA table_info(ledger_entries)')
+      .all()
+      .map((row) => (row as { name: string }).name);
+    expect(columns).toContain('milestone_id');
+    expect(columns).not.toContain('epic_id');
+    expect(dbVersion(db)).toBe(DISPATCH_DB_VERSION);
+    const kinds = db
+      .prepare('SELECT kind FROM tasks')
+      .all()
+      .map((row) => (row as { kind: string }).kind);
+    expect(kinds).toEqual(['milestone']);
+    expect(
+      new SqliteTaskStore(root, db).get(container.meta.id)?.meta.kind
+    ).toBe('milestone');
   });
 
   // A database a newer Dispatch wrote can hold columns this build's DDL has no

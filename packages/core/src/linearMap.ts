@@ -21,6 +21,13 @@ export interface LinearLabel {
   teamId?: string | null;
 }
 
+/** A label found by name, with the states that keep it from being applied. */
+export interface LinearLabelMatch extends LinearLabel {
+  isGroup: boolean;
+  archived: boolean;
+  retired: boolean;
+}
+
 /** A workspace member. `displayName` is Linear's short handle. */
 export interface LinearUser {
   id: string;

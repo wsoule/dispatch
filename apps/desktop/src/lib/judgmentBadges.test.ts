@@ -38,13 +38,13 @@ describe('triageHints', () => {
     hash: 'h',
     kind: 'bug' as const,
     kindConfidence: 0.9,
-    epicId: 'e1',
-    epicTitle: 'Landing',
-    epicConfidence: 0.9,
+    milestoneId: 'e1',
+    milestoneTitle: 'Landing',
+    milestoneConfidence: 0.9,
     duplicates: [{ id: 't-abc123', probability: 0.8 }],
   };
 
-  test('names the re-type, the epic and the top duplicate', () => {
+  test('names the re-type, the milestone and the top duplicate', () => {
     expect(triageHints({ kind: 'note' }, triage)).toEqual([
       'looks like: bug',
       '→ Landing',
@@ -54,16 +54,19 @@ describe('triageHints', () => {
 
   test('says nothing when the triage agrees and found nothing', () => {
     expect(
-      triageHints({ kind: 'bug' }, { ...triage, epicId: null, duplicates: [] })
+      triageHints(
+        { kind: 'bug' },
+        { ...triage, milestoneId: null, duplicates: [] }
+      )
     ).toEqual([]);
     expect(triageHints({ kind: 'bug' }, undefined)).toEqual([]);
   });
 
-  test('falls back to the epic id when its title is unknown', () => {
+  test('falls back to the milestone id when its title is unknown', () => {
     expect(
       triageHints(
         { kind: 'bug' },
-        { ...triage, epicTitle: null, duplicates: [] }
+        { ...triage, milestoneTitle: null, duplicates: [] }
       )
     ).toEqual(['→ e1']);
   });

@@ -42,7 +42,7 @@ afterEach(() => {
 function seedBoard(): void {
   const store = TaskStore.init(root);
   store.create({ title: 'Fix login' });
-  store.create({ title: 'Storage spine', kind: 'epic' });
+  store.create({ title: 'Storage spine', kind: 'milestone' });
 }
 
 function markerBackend(): string | null {
@@ -69,7 +69,7 @@ describe('dispatch migrate --dry-run', () => {
     seedBoard();
     const out = await runMigrate(ctx, true);
     expect(out).toMatch(/tasks\s+1\s+1\s+0\s+0/);
-    expect(out).toMatch(/epics\s+1\s+1\s+0\s+0/);
+    expect(out).toMatch(/milestones\s+1\s+1\s+0\s+0/);
   });
 });
 

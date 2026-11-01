@@ -83,7 +83,7 @@ describe('who a run acts for', () => {
     await settled(owned.orchestrator, meta);
   });
 
-  it('the auto-fill acts for the epic’s starter, or for no one', async () => {
+  it('the auto-fill acts for the milestone’s starter, or for no one', async () => {
     const task = store.create({ title: 'b' });
     const started = await orch.dispatchOrResume(task.meta.id, {
       actor: 'none',

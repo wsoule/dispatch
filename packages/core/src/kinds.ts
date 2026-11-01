@@ -1,35 +1,21 @@
 // Task kinds and the container rule. Browser-safe: no node:* imports.
-import type { TaskKind } from './types.js';
 
 /** Kinds that exist to group other tasks (Linear's hierarchy above an issue). */
 export const CONTAINER_KINDS = ['initiative', 'project', 'milestone'] as const;
 export type ContainerKind = (typeof CONTAINER_KINDS)[number];
 
-/** The pre-hierarchy container kind. Still accepted as input; reads as milestone. */
-export const LEGACY_EPIC_KIND = 'epic';
-
-/** A kind as callers may pass it: canonical, or the legacy `epic` alias. */
-export type TaskKindInput = TaskKind | typeof LEGACY_EPIC_KIND;
-
-/** Every kind string an input may carry, legacy `epic` included. */
-export const ACCEPTED_KINDS: readonly TaskKindInput[] = [
-  'task',
-  ...CONTAINER_KINDS,
-  LEGACY_EPIC_KIND,
-];
-
 /**
- * Canonical form of a kind string: legacy `epic` becomes `milestone` (an
- * epic was always the milestone-level grouping), anything else passes
- * through. Applied at every read and write boundary, like canonicalStatus.
+ * A kind as stored: rows and task files written before the hierarchy say
+ * `epic` for a milestone. Only storage reads call this; every input takes
+ * the canonical kinds alone.
  */
-export function canonicalKind(raw: string): string {
-  return raw === LEGACY_EPIC_KIND ? 'milestone' : raw;
+export function storedKind(raw: string): string {
+  return raw === 'epic' ? 'milestone' : raw;
 }
 
-/** A container by kind alone: initiative, project, milestone (or legacy epic). */
+/** A container by kind alone: initiative, project or milestone. */
 export function isContainerKind(kind: string): boolean {
-  return (CONTAINER_KINDS as readonly string[]).includes(canonicalKind(kind));
+  return (CONTAINER_KINDS as readonly string[]).includes(kind);
 }
 
 /** Ids that some task in `tasks` names as its parent. */
@@ -54,12 +40,11 @@ export function isContainer(
 
 /**
  * Whether children of a parent with this kind stack on its integration
- * branch (`epic/<id>`). Milestones (legacy epics) and parent issues do;
+ * branch (`milestone/<id>`). Milestones and parent issues do;
  * projects and initiatives are too broad to share one branch.
  */
 export function usesIntegrationBranch(parentKind: string): boolean {
-  const kind = canonicalKind(parentKind);
-  return kind === 'milestone' || kind === 'task';
+  return parentKind === 'milestone' || parentKind === 'task';
 }
 
 interface HierarchyNode {
@@ -127,7 +112,7 @@ export function isValidParentKind(
   childKind: string,
   parentKind: string
 ): boolean {
-  const child = KIND_RANK[canonicalKind(childKind)] ?? 0;
-  const parent = KIND_RANK[canonicalKind(parentKind)] ?? 0;
+  const child = KIND_RANK[childKind] ?? 0;
+  const parent = KIND_RANK[parentKind] ?? 0;
   return parent > child || (child === 0 && parent === 0);
 }

@@ -181,7 +181,7 @@ describe('SqliteMemoryStore', () => {
           title: 't',
           body: 'b',
           refs: [],
-          epic: null,
+          milestone: null,
           appliesTo: [],
         },
         author: 'run:r-1',

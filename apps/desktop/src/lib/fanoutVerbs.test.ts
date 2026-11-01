@@ -1,5 +1,8 @@
 import { statusModelOf } from '@dispatch-foo/core/browser';
-import type { EpicProgress, EpicSessionState } from '@dispatch/client';
+import type {
+  MilestoneProgress,
+  MilestoneSessionState,
+} from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
 import { testConfig } from '../components/settings/fixtures.test-helper';
@@ -16,17 +19,17 @@ const landed = taskDoc({
 });
 
 function progress(
-  state: EpicSessionState | null,
+  state: MilestoneSessionState | null,
   children: { id: string; status: string }[]
-): EpicProgress {
+): MilestoneProgress {
   return {
-    epicId: 'e-1',
+    milestoneId: 'e-1',
     active: state === 'active',
     session:
       state === null
         ? null
         : {
-            epicId: 'e-1',
+            milestoneId: 'e-1',
             concurrency: 2,
             executor: 'claude',
             state,
@@ -55,7 +58,7 @@ function progress(
     })),
     waves: [],
     liveRuns: [],
-  } as unknown as EpicProgress;
+  } as unknown as MilestoneProgress;
 }
 
 describe('fanoutVerbs', () => {

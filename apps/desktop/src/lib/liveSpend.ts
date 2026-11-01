@@ -1,6 +1,6 @@
-import type { EpicProgress, RunMeta } from '@dispatch/client';
+import type { MilestoneProgress, RunMeta } from '@dispatch/client';
 
-import { formatUsd } from './epicSession';
+import { formatUsd } from './milestoneSession';
 
 // What the fleet has spent, for the status strip and the Live view's header: settled run
 // cost today, and the live fan-outs' spend against their ceilings.
@@ -29,7 +29,7 @@ export function spendToday(
  * ceilings added up (null when none set one). Null with no live fan-out.
  */
 export function liveCeilingsOf(
-  sessions: readonly EpicProgress[]
+  sessions: readonly MilestoneProgress[]
 ): LiveCeilings | null {
   if (sessions.length === 0) return null;
   let settledUsd = 0;

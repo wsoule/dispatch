@@ -12,7 +12,7 @@ const content: ProposalContent = {
   title: 'pnpm 11 ignores onlyBuiltDependencies',
   body: 'use allowBuilds',
   refs: [],
-  epic: null,
+  milestone: null,
   appliesTo: [],
 };
 

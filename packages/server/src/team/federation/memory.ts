@@ -27,7 +27,7 @@ const MEMORY_FIELDS = [
   'body',
   'kind',
   'refs',
-  'epic',
+  'milestone',
   'appliesTo',
   'pinned',
   'status',
@@ -52,7 +52,7 @@ const CONTENT_FIELDS: readonly MemoryField[] = [
 // FW-R37(1): a change to any of these meets local policy unless backed.
 const GATED_FIELDS: readonly MemoryField[] = [
   ...CONTENT_FIELDS,
-  'epic',
+  'milestone',
   'appliesTo',
   'pinned',
   'status',
@@ -192,7 +192,7 @@ const FIELD_OK: Record<MemoryField, (v: unknown) => boolean> = {
     v.every(
       (r) => isObj(r) && utf8Bytes(JSON.stringify(r)) <= MEMORY_LIMITS.refBytes
     ),
-  epic: (v) => v === null || isText(v, 64),
+  milestone: (v) => v === null || isText(v, 64),
   appliesTo: (v) =>
     Array.isArray(v) &&
     v.length <= MEMORY_LIMITS.appliesTo &&

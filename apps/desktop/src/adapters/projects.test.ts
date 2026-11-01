@@ -133,7 +133,7 @@ function page(
   view: TimelineView,
   options: {
     projects?: [string, string][];
-    epicProgressById?: LiveRunsByContainer;
+    milestoneProgressById?: LiveRunsByContainer;
   } = {}
 ) {
   return buildProjectsPage({
@@ -141,7 +141,7 @@ function page(
     projects: new Map(
       (options.projects ?? []).map(([id, statusName]) => [id, { statusName }])
     ),
-    epicProgressById: options.epicProgressById ?? NO_RUNS,
+    milestoneProgressById: options.milestoneProgressById ?? NO_RUNS,
   });
 }
 
@@ -363,7 +363,7 @@ describe('buildProjectsPage', () => {
       ['proj-1', 'Working'],
       ['proj-4', 'Working'],
     ],
-    epicProgressById: liveRuns([['ms-1', ['r-1', 'r-2']]]),
+    milestoneProgressById: liveRuns([['ms-1', ['r-1', 'r-2']]]),
   });
   const rows = built.groups.flatMap((g) => g.rows);
   const row = (id: string) => {

@@ -1,5 +1,5 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
-import type { EpicProgress, RunMeta } from '@dispatch/client';
+import type { MilestoneProgress, RunMeta } from '@dispatch/client';
 import {
   act,
   cleanup,
@@ -51,7 +51,7 @@ function dataWith(
   opts: {
     tasks?: TaskListItem[];
     runs?: RunMeta[];
-    sessions?: EpicProgress[];
+    sessions?: MilestoneProgress[];
     attention?: [string, TaskAttention][];
     readyIds?: string[];
   } = {},
@@ -81,22 +81,22 @@ function dataWith(
       runs.filter((r) => r.state === 'running').map((r) => [r.taskId, r.state])
     ),
     attentionByTaskId: new Map(opts.attention ?? [['v-a', 'review']]),
-    epicProgressById: new Map(sessions.map((p) => [p.epicId, p])),
-    liveEpicSessions: sessions,
+    milestoneProgressById: new Map(sessions.map((p) => [p.milestoneId, p])),
+    liveMilestoneSessions: sessions,
     mergeQueue: null,
     readyIds: new Set(opts.readyIds ?? []),
     linearLinks: {},
-    handlePauseEpic: (id: string) => {
+    handlePauseMilestone: (id: string) => {
       handlers.paused.push(id);
       return Promise.resolve();
     },
-    handleResumeEpic: (id: string) => {
+    handleResumeMilestone: (id: string) => {
       handlers.resumed.push(id);
       return Promise.resolve();
     },
-    handleStopEpic: () => Promise.resolve(),
-    handleLandEpic: () => Promise.resolve(),
-    handleWorkEpic: () => Promise.resolve(),
+    handleStopMilestone: () => Promise.resolve(),
+    handleLandMilestone: () => Promise.resolve(),
+    handleWorkMilestone: () => Promise.resolve(),
     retryEnsureDispatchd: () => {},
   } as unknown as DispatchProjectData;
 }
@@ -459,7 +459,7 @@ describe('LiveView', () => {
 
   test('only the bands near the viewport mount', () => {
     const tasks: TaskListItem[] = [];
-    const sessions: EpicProgress[] = [];
+    const sessions: MilestoneProgress[] = [];
     for (let m = 0; m < 12; m++) {
       const id = `m-${String(m).padStart(2, '0')}`;
       tasks.push(task(id, { kind: 'milestone', title: `Milestone ${id}` }));

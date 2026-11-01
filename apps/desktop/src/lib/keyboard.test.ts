@@ -288,7 +288,6 @@ describe('resolveListKeyCommand', () => {
     expect(resolveListKeyCommand(key('l'), baseListCtx)).toBe(
       'list-set-labels'
     );
-    expect(resolveListKeyCommand(key('e'), baseListCtx)).toBe('list-set-epic');
     expect(resolveListKeyCommand(key('m'), baseListCtx)).toBe(
       'list-set-milestone'
     );
@@ -327,7 +326,7 @@ describe('resolveListKeyCommand', () => {
 
 describe('isTypingTagName', () => {
   // The board's roving-focus track handler used to hardcode `isTyping: false`, so j/k typed
-  // into the epic card's concurrency <input> (nested inside the board's keydown-listening
+  // into the milestone card's concurrency <input> (nested inside the board's keydown-listening
   // track) navigated the board instead of editing the field. This is the pure decision
   // `isTypingTarget` (hooks/useGlobalKeyboard.ts) delegates to once it has pulled a tag name
   // and contenteditable flag off a real DOM node — kept separate so the actual logic is
@@ -348,7 +347,7 @@ describe('isTypingTagName', () => {
 });
 
 describe('isInteractiveControlTagName', () => {
-  // The Board track wraps an epic card's Work/Stop <button>s and a card's inline
+  // The Board track wraps a milestone card's Work/Stop <button>s and a card's inline
   // "Dispatch →" button. A keydown on one of those must NOT be hijacked for board
   // navigation — Enter should activate the button. Non-controls fall through (return
   // false) to roving navigation.

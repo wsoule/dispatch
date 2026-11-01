@@ -121,6 +121,56 @@
   margin-left: -8px;
 }
 
+/* The outside agents: avatar, name over its one-line summary, when they last spoke. */
+.agents {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent {
+  display: flex;
+  gap: var(--s-2);
+  align-items: center;
+  min-width: 0;
+}
+
+.agentText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.agentName,
+.agentSummary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentName {
+  font-size: var(--fs-sm);
+}
+
+.agentSummary {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.agentSummary[data-waiting='true'] {
+  color: var(--amber);
+}
+
+.agentWhen {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
 /* The spec's declared writes, read-only: mono paths one per line. */
 .writes {
   display: flex;

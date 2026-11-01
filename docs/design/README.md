@@ -58,8 +58,8 @@ it run. Two halves:
   in.
 
 Useful entry points: `LBL` (the state labels), `ribbonDef` (the seven counters),
-the `feed` builder (grouping, caps, per-row actions), and `epicList()` (task
-state derivation).
+the `feed` builder (grouping, caps, per-row actions), and `milestoneList()`
+(task state derivation).
 
 ## What is here that the app does not have
 
@@ -86,5 +86,6 @@ holds a second plan slot (`notePlanId` / `notePlanRecord` /
 `handleConfirmNotePlan`) that AI-drafts a task from one item, which is Brain
 dump's "Plan it" action. Neither is dead code.
 
-The mockup's **Plans** screen is also not its own epic: `PlansView.tsx` already
-covers it, and the conversational-planning work is tracked under `e-359627`.
+The mockup's **Plans** screen is also not its own milestone: `PlansView.tsx`
+already covers it, and the conversational-planning work is tracked under
+`e-359627`.

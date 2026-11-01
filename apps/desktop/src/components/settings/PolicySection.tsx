@@ -93,7 +93,7 @@ const GATE_COPY: Record<PolicyGate, { label: string; meaning: string }> = {
 
 // The irreversibility floor, rendered but never configurable. Display copy
 // only — enforcement lives server-side and never consults the rung. The six
-// members are the settled ladder's (epic e-ad1978 ledger); this list is what
+// members are the settled ladder's (milestone e-ad1978 ledger); this list is what
 // the UI *promises*, so keep it in step with the server's floor checks.
 const FLOOR_ROWS: readonly { text: string; keywords: string }[] = [
   { text: "Force-pushing over a branch the run doesn't own", keywords: 'git' },
@@ -289,7 +289,7 @@ const RECEIPT_LIMIT = 8;
 /** Both lenses' policy control over the one per-project config: the builder's
  *  autonomy slider, the engineer's full gate table, and the receipts the
  *  auto-decisions leave behind. Rendered together until the lens field ships
- *  (epic e-3a6884) — the lens shells then pick up `AutonomySlider` and
+ *  (milestone e-3a6884) — the lens shells then pick up `AutonomySlider` and
  *  `GateTable` individually. */
 export function PolicySection({
   config,

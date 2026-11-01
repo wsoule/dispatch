@@ -199,7 +199,7 @@ describe('SqliteLedgerStore', () => {
     );
     expect(entry).toEqual({
       id: entry.id,
-      epicId: null,
+      milestoneId: null,
       sourceTaskId: null,
       kind: 'constraint',
       title: 'Auth tokens are opaque',
@@ -218,22 +218,22 @@ describe('SqliteLedgerStore', () => {
     const store = new SqliteLedgerStore(db);
     const decision = store.add({
       ...AUTHORED,
-      epicId: 'e-99e113',
+      milestoneId: 'e-99e113',
       sourceTaskId: 't-7cc78a',
       kind: 'decision',
       title: 'SQLite via node:sqlite',
       detail: 'No new dependency; ships with the runtime.',
       appliesTo: ['t-7cc78a'],
     });
-    expect(store.list({ epicId: 'e-99e113' })).toEqual([decision]);
+    expect(store.list({ milestoneId: 'e-99e113' })).toEqual([decision]);
     expect(store.list().filter((e) => e.kind === 'decision')).toEqual([
       decision,
     ]);
   });
 
-  // `epicId: null` is a real filter (project-wide entries) and is not the same
+  // `milestoneId: null` is a real filter (project-wide entries) and is not the same
   // question as an omitted filter (everything) — SQL's `= NULL` never matches.
-  it('separates an omitted epic filter from an explicitly null one', () => {
+  it('separates an omitted milestone filter from an explicitly null one', () => {
     const store = new SqliteLedgerStore(db);
     const projectWide = store.add({
       ...AUTHORED,
@@ -243,19 +243,19 @@ describe('SqliteLedgerStore', () => {
     });
     const scoped = store.add({
       ...AUTHORED,
-      epicId: 'e-99e113',
+      milestoneId: 'e-99e113',
       kind: 'hazard',
-      title: 'Epic-scoped',
+      title: 'Milestone-scoped',
       detail: 'd',
     });
     expect(store.list().map((e) => e.id)).toEqual([projectWide.id, scoped.id]);
-    expect(store.list({ epicId: null }).map((e) => e.id)).toEqual([
+    expect(store.list({ milestoneId: null }).map((e) => e.id)).toEqual([
       projectWide.id,
     ]);
-    expect(store.list({ epicId: 'e-99e113' }).map((e) => e.id)).toEqual([
+    expect(store.list({ milestoneId: 'e-99e113' }).map((e) => e.id)).toEqual([
       scoped.id,
     ]);
-    expect(store.list({ epicId: 'e-other0' })).toEqual([]);
+    expect(store.list({ milestoneId: 'e-other0' })).toEqual([]);
   });
 
   it('entriesFor returns targeted entries plus untargeted ones in scope', () => {
@@ -266,23 +266,23 @@ describe('SqliteLedgerStore', () => {
       title: 'Project-wide',
       detail: 'd',
     });
-    const sameEpic = store.add({
+    const sameMilestone = store.add({
       ...AUTHORED,
-      epicId: 'e-99e113',
+      milestoneId: 'e-99e113',
       kind: 'constraint',
-      title: 'Same epic',
+      title: 'Same milestone',
       detail: 'd',
     });
-    const otherEpic = store.add({
+    const otherMilestone = store.add({
       ...AUTHORED,
-      epicId: 'e-other0',
+      milestoneId: 'e-other0',
       kind: 'constraint',
-      title: 'Other epic',
+      title: 'Other milestone',
       detail: 'd',
     });
     const targeted = store.add({
       ...AUTHORED,
-      epicId: 'e-other0',
+      milestoneId: 'e-other0',
       kind: 'handoff',
       title: 'Aimed at this task',
       detail: 'd',
@@ -291,13 +291,13 @@ describe('SqliteLedgerStore', () => {
 
     expect(store.entriesFor('t-7cc78a', 'e-99e113').map((e) => e.id)).toEqual([
       projectWide.id,
-      sameEpic.id,
+      sameMilestone.id,
       targeted.id,
     ]);
-    // An entry targeting someone else is invisible even inside its own epic.
+    // An entry targeting someone else is invisible even inside its own milestone.
     expect(store.entriesFor('t-nobody', 'e-other0').map((e) => e.id)).toEqual([
       projectWide.id,
-      otherEpic.id,
+      otherMilestone.id,
     ]);
   });
 
@@ -429,13 +429,13 @@ describe('record stores reject rows they cannot trust', () => {
   });
 
   // The worst of the coerce-to-[] failures: a ledger entry aimed at one task
-  // reads as an entry aimed at every task under its epic, so a damaged column
+  // reads as an entry aimed at every task under its milestone, so a damaged column
   // silently broadcasts a handoff meant for someone else.
   it('throws rather than broadcasting a damaged applies_to', () => {
     const store = new SqliteLedgerStore(db);
     const entry = store.add({
       authoredBy: 'human:wyat',
-      epicId: 'e-99e113',
+      milestoneId: 'e-99e113',
       kind: 'handoff',
       title: 'For one task only',
       detail: 'd',

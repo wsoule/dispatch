@@ -343,6 +343,12 @@ export const TERMINAL_RUN_STATES: ReadonlySet<RunState> = new Set([
   'interrupted-dirty',
 ]);
 
+// The reason stamped onto every run reconcileOnBoot force-fails. The run's
+// agent did nothing wrong — dispatchd lost track of it across a restart — and
+// the process itself survives a daemon restart, so it may still be working.
+export const BOOT_FORCE_FAIL_ERROR =
+  'dispatchd restarted while this run was in flight; the agent process may still be running';
+
 // What survived a run that did not finish cleanly, read straight from its
 // worktree's git status — recovery info instead of a hand inspection.
 export interface RunSurvey {
@@ -462,10 +468,11 @@ export interface RunMeta {
   stackParents?: string[];
   // The exact commit this run's worktree was branched from, resolved at
   // dispatch time. This is what says where the run's OWN commits begin, which
-  // is the one fact both restack paths need once the base branch has been
-  // rewritten out from under it: `git rebase --onto <newBase> <this> <branch>`
-  // and jj's `roots(<this>..<branch>)`. Only set for stacked runs — an
-  // unblocked run has nothing above its base to preserve.
+  // is the one fact a restack needs once the base branch has been rewritten
+  // out from under it: `git rebase --onto <newBase> <this> <branch>`. Only set
+  // for stacked runs — an unblocked run has nothing above its base to
+  // preserve. A restack that rebuilds a multi-parent base moves it to the new
+  // base commit.
   stackBaseCommit?: string;
   // Set when the base this run was stacked on can no longer be repaired
   // automatically. Nothing is rewritten or deleted — the run is flagged so the
@@ -523,7 +530,7 @@ export type DecoratedRunMeta = RunMeta & {
   /**
    * Finished runs that are unreviewed or merged: 'origin' when Land pushes to
    * the remote's base (the project has a remote), 'local' when it merges into
-   * the local base only (no remote, or an epic integration branch).
+   * the local base only (no remote, or a milestone integration branch).
    */
   landsOn?: 'origin' | 'local';
   /** Merged runs on origin, when the repo has a `v*` tag: the newest one and
@@ -535,6 +542,42 @@ export type DecoratedRunMeta = RunMeta & {
 // before `kind` existed.
 export function runKind(meta: Pick<RunMeta, 'kind'>): RunKind {
   return meta.kind ?? 'execute';
+}
+
+// Whether a run ended the way that moves its task to review: a finish or a
+// failure the daemon recorded. A cancel leaves the task as it is, and so does
+// a run force-failed at boot, whose agent may still be working.
+export function runEndedForReview(
+  run: Pick<RunMeta, 'state' | 'error'>
+): boolean {
+  if (!TERMINAL_RUN_STATES.has(run.state) || run.state === 'cancelled') {
+    return false;
+  }
+  return run.error !== BOOT_FORCE_FAIL_ERROR;
+}
+
+// Tasks whose newest execute run ended for review (runEndedForReview): when
+// the review status is also the dispatched one, this is what says the work is
+// up for review.
+export function tasksWithFinishedRun(
+  runs: readonly Pick<
+    RunMeta,
+    'taskId' | 'kind' | 'state' | 'createdAt' | 'error'
+  >[]
+): Set<string> {
+  const newest = new Map<string, (typeof runs)[number]>();
+  for (const run of runs) {
+    if (runKind(run) !== 'execute') continue;
+    const seen = newest.get(run.taskId);
+    if (seen === undefined || run.createdAt > seen.createdAt) {
+      newest.set(run.taskId, run);
+    }
+  }
+  const out = new Set<string>();
+  for (const [taskId, run] of newest) {
+    if (runEndedForReview(run)) out.add(taskId);
+  }
+  return out;
 }
 
 // The human a run acts for; null means no one. Runs from before the field
@@ -593,17 +636,17 @@ export function runLineage(
 // - 'orphan':     no run in the registry claims this ref at all (a
 //                 hand-deleted transcript, or a crash between creating the
 //                 ref and writing the transcript header).
-// - 'epic':       an epic's integration branch (`epic/<id>`) — owned by the
-//                 epic, not by any single run, so none of the run-shaped
+// - 'milestone':       a milestone's integration branch (`milestone/<id>`) — owned by the
+//                 milestone, not by any single run, so none of the run-shaped
 //                 statuses above apply. Deliberately distinct from 'orphan':
-//                 an epic branch with unmerged child work must never be swept
+//                 a milestone branch with unmerged child work must never be swept
 //                 up by orphan cleanup.
 export type BranchEntryStatus =
   | 'active'
   | 'reviewable'
   | 'leftover'
   | 'orphan'
-  | 'epic';
+  | 'milestone';
 
 // One row of the branches surface: a join of what git knows (the ref exists,
 // here is its worktree and how far ahead it is) with what the run registry
@@ -644,9 +687,9 @@ export interface BranchEntry {
   // Commits the base has gained since this branch diverged — how far unmerged
   // work has fallen behind. Only measured while the branch is unmerged; once
   // the work landed the count stops meaning anything, so merged rows omit it.
-  // For 'epic' entries the same count is the signal the integration branch
+  // For 'milestone' entries the same count is the signal the integration branch
   // has fallen behind the default base and a human should update it —
-  // dispatch deliberately never rebases or merges an epic branch on its own.
+  // dispatch deliberately never rebases or merges a milestone branch on its own.
   behindBase?: number;
   mergedIntoBase: boolean;
 

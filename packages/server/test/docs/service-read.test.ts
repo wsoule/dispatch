@@ -166,7 +166,7 @@ describe('specLine', () => {
     });
     const owner = service.actorFor(OWNER);
     service.create(owner, {
-      title: 'Epic spec',
+      title: 'Milestone spec',
       body: 'x\n',
       links: [{ target: { type: 'task', id: 'e-1' }, rel: 'spec' }],
     });

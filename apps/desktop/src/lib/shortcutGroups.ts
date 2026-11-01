@@ -7,7 +7,8 @@ import type { ShortcutGroup } from '@dispatch/ui';
 // Mirrors `lib/keyboard.ts` and `keyAction` (lib/appNav.ts): a chord listed
 // here that the resolver does not know, or one it knows that is not listed,
 // fails shortcutGroups.test.ts. `g h`, `g c` and `g a` are unlisted aliases
-// of `g o`.
+// of `g o`. The Task group mirrors `resolveListKeyCommand` the same way: each
+// row's key must resolve, and each property or dispatch key must be listed.
 
 /** The chords of the Go to group: the second key and the place. */
 export const GOTO_CHORDS: readonly { key: string; label: string }[] = [
@@ -90,7 +91,6 @@ export function buildShortcutGroups(mod: string): ShortcutGroup[] {
         { label: 'Priority', keys: ['P'] },
         { label: 'Assignee', keys: ['A'] },
         { label: 'Labels', keys: ['L'] },
-        { label: 'Epic', keys: ['E'] },
         { label: 'Milestone', keys: ['M'] },
         { label: 'Dispatch', keys: ['D'] },
       ],

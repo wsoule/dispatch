@@ -50,6 +50,9 @@ pub fn open(db_path: &Path) -> anyhow::Result<Connection> {
         M::up(include_str!(
             "../../migrations/0008_reset_cumulative_token_totals.sql"
         )),
+        M::up(include_str!(
+            "../../migrations/0009_ingest_continuation.sql"
+        )),
     ]);
     migrations.to_latest(&mut conn)?;
 

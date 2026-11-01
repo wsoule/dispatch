@@ -7,6 +7,7 @@ import type {
   TaskListItem,
 } from '@dispatch-foo/core/browser';
 import {
+  draftStatus,
   isContainerKind,
   isValidParentKind,
   labelRef,
@@ -139,7 +140,7 @@ interface TaskComposerSlideOverProps {
   statuses: string[];
   /** Every container (a container kind, or an issue with sub-issues) — where a new task
    * can be filed. */
-  epics: TaskListItem[];
+  milestones: TaskListItem[];
   /** Every label in use across the project: the Labels picker's candidates. */
   labels: readonly string[];
   /** The project's label registry; only its hex colours are drawn (as swatches). */
@@ -198,7 +199,7 @@ function ComposerPanel({
   mode: requestedMode,
   onModeChange,
   statuses,
-  epics,
+  milestones,
   labels: labelsInUse,
   labelDefinitions = NO_LABEL_DEFINITIONS,
   projectName = 'Dispatch',
@@ -234,7 +235,7 @@ function ComposerPanel({
   // The container the task goes under, shared by Describe and Quick add: dropping it in one
   // drops it in the other.
   const [parent, setParent] = useState<string | null>(
-    createPreset?.epic ?? null
+    createPreset?.milestone ?? null
   );
 
   const describe = useDescribe({
@@ -247,7 +248,7 @@ function ComposerPanel({
   const quick = useQuickAdd({
     preset: createPreset,
     statuses,
-    epics,
+    milestones,
     initialStatus,
     parent,
     setParent,
@@ -303,7 +304,8 @@ function ComposerPanel({
   const parentTitle =
     parent === null
       ? null
-      : (epics.find((epic) => epic.meta.id === parent)?.meta.title ?? parent);
+      : (milestones.find((milestone) => milestone.meta.id === parent)?.meta
+          .title ?? parent);
   // Drop a thought files nothing as a task: it keeps the old quick capture's own name and
   // its Notes crumb, so a screen reader hears what ⌘D opened.
   const heading = mode === 'capture' ? 'Quick capture' : 'New task';
@@ -353,7 +355,7 @@ function ComposerPanel({
       body = (
         <QuickAddFields
           state={quick}
-          epics={epics}
+          milestones={milestones}
           labelsInUse={labelsInUse}
           labelDefinitions={labelDefinitions}
           fieldRef={setFocusTarget}
@@ -574,6 +576,9 @@ interface QuickAddState {
   setCreateMore: (next: boolean) => void;
   submitting: boolean;
   canSubmit: boolean;
+  /** Where "Save as draft" files the task: the board's first backlog status, else triage
+   * (core's `draftStatus`). Null on a board with neither, which offers no draft. */
+  draftStatus: string | null;
   submit: (asStatus?: string) => void;
 }
 
@@ -599,7 +604,7 @@ function composerStates(
 function useQuickAdd({
   preset,
   statuses,
-  epics,
+  milestones,
   initialStatus,
   parent,
   setParent,
@@ -611,7 +616,7 @@ function useQuickAdd({
 }: {
   preset: CreateTaskPreset | null;
   statuses: readonly string[];
-  epics: readonly TaskListItem[];
+  milestones: readonly TaskListItem[];
   initialStatus: string | undefined;
   parent: string | null;
   setParent: (next: string | null) => void;
@@ -653,6 +658,8 @@ function useQuickAdd({
 
   const canAttach = onUploadAttachments !== undefined;
   const canSubmit = title.trim() !== '' && !submitting;
+  // A board with no backlog or triage status has nowhere to keep a draft.
+  const draft = draftStatus(model);
 
   // Queues files for the upload after create; the ones over the daemon's cap get one toast
   // now rather than a 413 later.
@@ -673,7 +680,9 @@ function useQuickAdd({
   // the new kind cannot live under is dropped rather than sent to be refused.
   function changeKind(next: TaskKind) {
     setKind(next);
-    const current = epics.find((epic) => epic.meta.id === parent);
+    const current = milestones.find(
+      (milestone) => milestone.meta.id === parent
+    );
     if (current !== undefined && !isValidParentKind(next, current.meta.kind)) {
       setParent(null);
     }
@@ -684,11 +693,11 @@ function useQuickAdd({
     setLabels((prev) => (prev.includes(name) ? prev : [...prev, name]));
   }
 
-  // `asStatus` overrides the picker for "Save as draft". Only a landed create clears the
-  // persisted title and description; with "Create more" the panel stays open with the
-  // properties kept for the next one, and focus goes to the cleared title. The task exists
-  // before its files are sent, so a failed upload is a toast per file rather than a failed
-  // create. Resolves whether the panel stays open with the same draft.
+  // `asStatus` overrides the picker for "Save as draft" (the board's draft status). Only a
+  // landed create clears the persisted title and description; with "Create more" the panel
+  // stays open with the properties kept for the next one, and focus goes to the cleared
+  // title. The task exists before its files are sent, so a failed upload is a toast per file
+  // rather than a failed create. Resolves whether the panel stays open with the same draft.
   async function create(asStatus: string): Promise<boolean> {
     try {
       const created = await onCreate({
@@ -774,6 +783,7 @@ function useQuickAdd({
     setCreateMore,
     submitting,
     canSubmit,
+    draftStatus: draft,
     submit,
   };
 }
@@ -782,27 +792,27 @@ function useQuickAdd({
 // that already have sub-issues, archived ones left out — the rail's "Move to" rule.
 function parentOptions(
   kind: TaskKind,
-  epics: readonly TaskListItem[]
+  milestones: readonly TaskListItem[]
 ): PickerOption[] {
   const containers: TaskListItem[] = [];
   const parents: TaskListItem[] = [];
-  for (const epic of epics) {
-    if (epic.meta.archivedAt !== undefined) continue;
-    if (!isValidParentKind(kind, epic.meta.kind)) continue;
-    if (isContainerKind(epic.meta.kind)) containers.push(epic);
-    else parents.push(epic);
+  for (const milestone of milestones) {
+    if (milestone.meta.archivedAt !== undefined) continue;
+    if (!isValidParentKind(kind, milestone.meta.kind)) continue;
+    if (isContainerKind(milestone.meta.kind)) containers.push(milestone);
+    else parents.push(milestone);
   }
-  return [...containers, ...parents].map((epic) => ({
-    value: epic.meta.id,
-    label: epic.meta.title,
-    hint: kindLabel(epic.meta.kind),
+  return [...containers, ...parents].map((milestone) => ({
+    value: milestone.meta.id,
+    label: milestone.meta.title,
+    hint: kindLabel(milestone.meta.kind),
     mark: {
       kind: 'node',
       node: (
         <ContainerIcon
-          kind={epic.meta.kind}
-          icon={epic.meta.icon}
-          color={epic.meta.color}
+          kind={milestone.meta.kind}
+          icon={milestone.meta.icon}
+          color={milestone.meta.color}
         />
       ),
     },
@@ -840,13 +850,13 @@ function composerLabelChoices(
 
 function QuickAddFields({
   state,
-  epics,
+  milestones,
   labelsInUse,
   labelDefinitions,
   fieldRef,
 }: {
   state: QuickAddState;
-  epics: readonly TaskListItem[];
+  milestones: readonly TaskListItem[];
   labelsInUse: readonly string[];
   labelDefinitions: readonly LabelDefinition[];
   fieldRef: (el: HTMLElement | null) => void;
@@ -854,13 +864,14 @@ function QuickAddFields({
   const parentTitle =
     state.parent === null
       ? undefined
-      : epics.find((epic) => epic.meta.id === state.parent)?.meta.title;
+      : milestones.find((milestone) => milestone.meta.id === state.parent)?.meta
+          .title;
   // Built once per input change, not on every keystroke in the title: a project can hold
   // hundreds of containers and labels.
   const { kind, createdLabels, labels: chosenLabels } = state;
   const parentChoices = useMemo(
-    () => parentOptions(kind, epics),
-    [kind, epics]
+    () => parentOptions(kind, milestones),
+    [kind, milestones]
   );
   const labelChoices = useMemo(
     () =>
@@ -998,6 +1009,7 @@ function QuickAddFooter({
   onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const draft = state.draftStatus;
   return (
     <div className={styles.footerRow} onKeyDown={onKeyDown}>
       <div className={styles.footerLead}>
@@ -1032,11 +1044,11 @@ function QuickAddFooter({
           checked={state.createMore}
           onChange={(next) => state.setCreateMore(next)}
         />
-        {state.title.trim() !== '' && (
+        {state.title.trim() !== '' && draft !== null && (
           <Button
             variant="quiet"
             disabled={state.submitting}
-            onClick={() => state.submit('draft')}
+            onClick={() => state.submit(draft)}
           >
             Save as draft
           </Button>

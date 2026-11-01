@@ -1,6 +1,6 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
 import { statusModelOf } from '@dispatch-foo/core/browser';
-import type { EpicProgress, RunMeta } from '@dispatch/client';
+import type { MilestoneProgress, RunMeta } from '@dispatch/client';
 import {
   act,
   cleanup,
@@ -66,7 +66,7 @@ const LIVE: RunMeta = {
   executor: 'claude',
   state: 'running',
   branch: 'dispatch/t-b',
-  baseBranch: 'epic/e-1',
+  baseBranch: 'milestone/e-1',
   worktreePath: '/tmp',
   createdAt: '2026-09-20T00:00:00.000Z',
   updatedAt: '2026-09-20T00:00:00.000Z',
@@ -95,13 +95,13 @@ function plan(
 function progress(
   state: 'active' | 'paused',
   concurrency = 2,
-  epicId = 'e-1'
-): EpicProgress {
+  milestoneId = 'e-1'
+): MilestoneProgress {
   return {
-    epicId,
+    milestoneId,
     active: state === 'active',
     session: {
-      epicId,
+      milestoneId,
       concurrency,
       executor: 'fake',
       state,
@@ -130,7 +130,7 @@ function progress(
 function dataWith(
   tasks: TaskListItem[],
   runs: RunMeta[] = [LIVE],
-  sessions: EpicProgress[] = []
+  sessions: MilestoneProgress[] = []
 ): DispatchProjectData {
   const noop = () => Promise.resolve();
   return {
@@ -145,15 +145,15 @@ function dataWith(
     liveRunStateByTaskId: new Map(
       runs.filter((r) => r.state === 'running').map((r) => [r.taskId, r.state])
     ),
-    epicProgressById: new Map(sessions.map((p) => [p.epicId, p])),
+    milestoneProgressById: new Map(sessions.map((p) => [p.milestoneId, p])),
     linearLinks: {},
     branches: [],
     readyIds: new Set(),
-    handlePauseEpic: noop,
-    handleResumeEpic: noop,
-    handleStopEpic: noop,
-    handleLandEpic: noop,
-    handleWorkEpic: noop,
+    handlePauseMilestone: noop,
+    handleResumeMilestone: noop,
+    handleStopMilestone: noop,
+    handleLandMilestone: noop,
+    handleWorkMilestone: noop,
   } as unknown as DispatchProjectData;
 }
 
@@ -289,7 +289,7 @@ describe('FlightPlan', () => {
       task('t-2', { assignee: 'human:wyat' }),
     ];
     const base = progress('active');
-    const mayas: EpicProgress = {
+    const mayas: MilestoneProgress = {
       ...base,
       session:
         base.session === null
@@ -519,13 +519,13 @@ describe('FlightPlan', () => {
 
   test('a send-agents ask from the host opens Send agents once, on its container only', () => {
     const served: number[] = [];
-    const host = (epicId: string) => ({
+    const host = (milestoneId: string) => ({
       data: dataWith(plan()),
       dispatchTask: () => Promise.resolve(),
       onDispatchFailed: () => {},
       onOpenTask: () => {},
       onPeekTask: () => {},
-      sendAgents: { epicId, nonce: 7 },
+      sendAgents: { milestoneId, nonce: 7 },
       onSendAgentsServed: (nonce: number) => served.push(nonce),
     });
     const { unmount } = render(

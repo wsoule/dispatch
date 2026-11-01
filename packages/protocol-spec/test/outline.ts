@@ -252,6 +252,7 @@ export const OUTLINE: readonly {
       '## F.5 Receive',
       '## F.6 Settlement',
       '## F.7 Team memory and doc ops',
+      '## F.8 End-to-end team content',
     ],
   },
 ];

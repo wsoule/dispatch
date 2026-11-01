@@ -9,9 +9,9 @@ import {
   AssigneeControl,
   CycleControl,
   DueDateControl,
-  EpicControl,
   EstimateControl,
   LabelsControl,
+  MilestoneControl,
   PriorityControl,
   StatusControl,
 } from './PropertyControls';
@@ -33,8 +33,11 @@ function renderOpen(ui: ReactElement) {
   });
 }
 
-function epic(id: string, title: string): TaskDoc {
-  return { meta: { id, title, kind: 'epic' }, body: '' } as unknown as TaskDoc;
+function milestone(id: string, title: string): TaskDoc {
+  return {
+    meta: { id, title, kind: 'milestone' },
+    body: '',
+  } as unknown as TaskDoc;
 }
 
 /** The label picker's rows, in order, with whether each carries the check. */
@@ -107,19 +110,19 @@ describe('PropertyControls', () => {
     expect(trigger.querySelector('svg')?.dataset['priority']).toBe('none');
   });
 
-  test('an unassigned row says Assign; an unparented row says Add to epic', () => {
+  test('an unassigned row says Assign; an unparented row says Add to milestone', () => {
     render(
       <>
         <AssigneeControl value="none" onChange={() => {}} variant="row" />
-        <EpicControl value={null} epics={[]} onChange={() => {}} />
+        <MilestoneControl value={null} milestones={[]} onChange={() => {}} />
       </>
     );
     expect(
       screen.getByRole('button', { name: 'Change assignee' }).textContent
     ).toBe('Assign');
     expect(
-      screen.getByRole('button', { name: 'Change epic' }).textContent
-    ).toBe('Add to epic');
+      screen.getByRole('button', { name: 'Change milestone' }).textContent
+    ).toBe('Add to milestone');
   });
 
   test('a set row is not muted and names the assignee', () => {
@@ -227,11 +230,11 @@ describe('PropertyControls', () => {
     expect(screen.getByRole('menu')).not.toBeNull();
   });
 
-  test('the epic menu lists No epic then every epic by title', async () => {
+  test('the milestone menu lists No milestone then every milestone by title', async () => {
     await renderOpen(
-      <EpicControl
+      <MilestoneControl
         value="e-2"
-        epics={[epic('e-1', 'Payments'), epic('e-2', 'Search')]}
+        milestones={[milestone('e-1', 'Payments'), milestone('e-2', 'Search')]}
         onChange={() => {}}
         open
         onOpenChange={() => {}}
@@ -239,7 +242,7 @@ describe('PropertyControls', () => {
     );
     const items = screen.getAllByRole('menuitem');
     expect(items.map((i) => i.textContent)).toEqual([
-      'No epic',
+      'No milestone',
       'Payments',
       'Search',
     ]);

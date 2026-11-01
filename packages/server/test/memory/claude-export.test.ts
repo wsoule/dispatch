@@ -123,7 +123,7 @@ beforeEach(() => {
     title: 'pnpm onlyBuiltDependencies stopped working',
     body: '',
     writes: [],
-    epic: null,
+    milestone: null,
     risk: 'routine',
     a2a: false,
   });

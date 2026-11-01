@@ -133,6 +133,27 @@ describe('loadSavedViews / saveSavedViews', () => {
     expect(bare?.display).toEqual(DEFAULT_TASKS_DISPLAY);
   });
 
+  test('a view saved with an epic filter clause keeps it as a milestone clause', () => {
+    const storage = memoryStorage();
+    storage.setItem(
+      'dispatch:saved-views:/a',
+      JSON.stringify([
+        {
+          id: 'v-1',
+          name: 'Payments',
+          filters: {
+            clauses: [{ facet: 'epic', op: 'is', values: ['e-1'] }],
+            join: 'and',
+          },
+        },
+      ])
+    );
+    expect(loadSavedViews('/a', storage)[0]?.filters).toEqual({
+      clauses: [{ facet: 'milestone', op: 'is', values: ['e-1'] }],
+      join: 'and',
+    });
+  });
+
   test('a throwing setItem is swallowed', () => {
     const storage = {
       setItem: () => {
@@ -162,7 +183,7 @@ describe('loadFavorites / saveFavorites', () => {
     storage.setItem(
       'dispatch:favorites:/a',
       JSON.stringify([
-        { kind: 'epic', id: 'e-1' },
+        { kind: 'milestone', id: 'e-1' },
         { kind: 'task', id: 7 },
         { kind: 'task', id: 't-2' },
       ])

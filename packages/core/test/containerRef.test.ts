@@ -24,7 +24,7 @@ function c(
 const tasks = [
   c('p-1', 'Payments', 'project'),
   c('m-1', 'Beta', 'milestone'),
-  c('e-1', 'Legacy', 'epic'),
+  c('e-1', 'Legacy', 'milestone'),
   c('i-1', 'Growth', 'initiative'),
   c('t-1', 'Parent issue', 'task'),
   c('m-9', 'Old', 'milestone', '2026-01-01T00:00:00.000Z'),
@@ -37,7 +37,7 @@ describe('resolveMilestoneRef', () => {
       ok: true,
       id: 'p-1',
     });
-    // A legacy epic reads as a milestone.
+    // A legacy milestone reads as a milestone.
     expect(resolveMilestoneRef(tasks, 'Legacy')).toEqual({
       ok: true,
       id: 'e-1',

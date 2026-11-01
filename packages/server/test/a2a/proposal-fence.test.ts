@@ -153,17 +153,17 @@ it('needs the decide tier to re-parent an A2A task, proposal or not', async () =
     { body: '', choice: 'approve' },
     { address: 'human:test', canDecide: true }
   );
-  const epic = (await (
+  const milestone = (await (
     await fetch(`http://127.0.0.1:${handle.port}/api/tasks`, {
       method: 'POST',
       headers: json,
-      body: JSON.stringify({ title: 'An epic', kind: 'epic' }),
+      body: JSON.stringify({ title: 'A milestone', kind: 'milestone' }),
     })
   ).json()) as { meta: { id: string } };
   const res = await asAgent(id, {
     method: 'PATCH',
     headers: json,
-    body: JSON.stringify({ parent: epic.meta.id }),
+    body: JSON.stringify({ parent: milestone.meta.id }),
   });
   expect(res.status).toBe(403);
 });
@@ -285,7 +285,7 @@ it('keeps subtasks of an A2A task inside its provenance', async () => {
   // Its run never sees the A2A task's body as parent context.
   await handle.orchestrator.dispatch(meta.id, 'record');
   const prompt = recorder.prompts.at(-1) ?? '';
-  expect(prompt).not.toContain('Parent epic');
+  expect(prompt).not.toContain('Parent milestone');
   expect(prompt).not.toContain('Please add limits.');
 });
 
@@ -309,14 +309,14 @@ it('refuses a subtask of an A2A clone below decide tier', async () => {
   expect(viaAgent.status).toBe(403);
 });
 
-it('marks an inbox item converted under an A2A epic as A2A-origin', async () => {
+it('marks an inbox item converted under an A2A milestone as A2A-origin', async () => {
   const id = await approvedDraft();
   expect(
     (
       await owner(id, {
         method: 'PATCH',
         headers: json,
-        body: JSON.stringify({ kind: 'epic' }),
+        body: JSON.stringify({ kind: 'milestone' }),
       })
     ).status
   ).toBe(200);
@@ -333,9 +333,9 @@ it('marks an inbox item converted under an A2A epic as A2A-origin', async () => 
         hash: 'h',
         kind: 'task',
         kindConfidence: 1,
-        epicId: id,
-        epicTitle: 'Rate-limit uploads',
-        epicConfidence: 1,
+        milestoneId: id,
+        milestoneTitle: 'Rate-limit uploads',
+        milestoneConfidence: 1,
         duplicates: [],
       },
     },

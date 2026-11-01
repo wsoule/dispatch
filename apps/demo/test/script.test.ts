@@ -16,8 +16,8 @@ describe('storefront demo script', () => {
     expect(script.finish.state).toBe('finished');
   });
 
-  test('plan proposal has an epic and ordered tasks', () => {
-    expect(STOREFRONT_PLAN_PROPOSAL.epic?.title.length).toBeGreaterThan(0);
+  test('plan proposal has a milestone and ordered tasks', () => {
+    expect(STOREFRONT_PLAN_PROPOSAL.milestone?.title.length).toBeGreaterThan(0);
     expect(STOREFRONT_PLAN_PROPOSAL.tasks.length).toBeGreaterThanOrEqual(2);
   });
 });

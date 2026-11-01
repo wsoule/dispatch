@@ -1,11 +1,11 @@
 import type { Priority, TaskListItem } from '@dispatch-foo/core/browser';
 import { statusModelOf } from '@dispatch-foo/core/browser';
 import type {
-  EpicChildPhase,
-  EpicProgress,
-  EpicSessionState,
   LinearIssueLink,
   MergeQueueEntryState,
+  MilestoneChildPhase,
+  MilestoneProgress,
+  MilestoneSessionState,
   RunState,
 } from '@dispatch/client';
 import type { TaskPriority } from '@dispatch/ui';
@@ -111,7 +111,7 @@ function group(
     icon: null,
     rows: [],
     preset: {},
-    epicId: null,
+    milestoneId: null,
     archived: false,
     ...over,
   };
@@ -129,25 +129,25 @@ function grouped(
 ): ListGroup[] {
   return groupTasks(tasks, prefs(over), {
     statuses: STATUSES,
-    epics: CONTAINERS,
+    milestones: CONTAINERS,
     archivedTasks,
     model: MODEL,
   });
 }
 
 function progress(
-  epicId: string,
-  children: { id: string; phase: EpicChildPhase }[],
-  sessionState: EpicSessionState | null = null
-): EpicProgress {
+  milestoneId: string,
+  children: { id: string; phase: MilestoneChildPhase }[],
+  sessionState: MilestoneSessionState | null = null
+): MilestoneProgress {
   return {
-    epicId,
+    milestoneId,
     active: sessionState === 'active',
     session:
       sessionState === null
         ? null
         : {
-            epicId,
+            milestoneId,
             concurrency: 2,
             executor: 'claude',
             state: sessionState,
@@ -470,14 +470,14 @@ describe('toTaskRow: chips', () => {
   test('a fan-out phase is a chip when it adds a word the bucket does not say', () => {
     const doc = taskDoc({ id: 't', title: 't', parent: 'e-1' });
     // A working bucket here is an agent's live run, as in the app.
-    const withPhase = (phase: EpicChildPhase, bucket: TaskBucket) =>
+    const withPhase = (phase: MilestoneChildPhase, bucket: TaskBucket) =>
       chips(doc, {
         buckets: { t: bucket },
         liveRunStateByTaskId:
           bucket === 'working'
             ? new Map([['t', 'running' as RunState]])
             : undefined,
-        epicProgressById: new Map([
+        milestoneProgressById: new Map([
           ['e-1', progress('e-1', [{ id: 't', phase }])],
         ]),
       });
@@ -521,7 +521,7 @@ describe('toTaskRow: chips', () => {
     const doc = taskDoc({ id: 't', title: 't', parent: 'e-1' });
     expect(
       chips(doc, {
-        epicProgressById: new Map([
+        milestoneProgressById: new Map([
           ['e-1', progress('e-1', [{ id: 'other', phase: 'reviewing' }])],
         ]),
       })
@@ -564,7 +564,7 @@ describe('toTaskRow: chips', () => {
         buckets: { t: 'need-you' },
         liveRunStateByTaskId: new Map([['t', 'awaiting-approval' as RunState]]),
         landingByTaskId: new Map([['t', 'verifying' as MergeQueueEntryState]]),
-        epicProgressById: new Map([
+        milestoneProgressById: new Map([
           ['e-1', progress('e-1', [{ id: 't', phase: 'reviewing' }])],
         ]),
         childCountByParent: new Map([['t', 2]]),
@@ -811,11 +811,11 @@ describe('toTaskGroup: container groups', () => {
       tasks: [...(input.tasks ?? []), ...tasks, container],
     });
     const g = group({
-      key: `epic:${container.meta.id}`,
+      key: `parent:${container.meta.id}`,
       kind: 'milestone',
       label: container.meta.title,
-      icon: { kind: 'epic', epicId: container.meta.id },
-      epicId: container.meta.id,
+      icon: { kind: 'parent', parentId: container.meta.id },
+      milestoneId: container.meta.id,
       rows: tasks.map((doc) => row(doc)),
     });
     return toTaskGroup(g, ctx);
@@ -824,7 +824,7 @@ describe('toTaskGroup: container groups', () => {
   test('titled by the container, with the container above as its eyebrow, droppable, rows with the project named', () => {
     const out = milestoneGroup([member('t-1')]);
     expect(out).toMatchObject({
-      id: 'epic:m-1',
+      id: 'parent:m-1',
       title: 'Dual-write',
       eyebrow: 'Atlas',
       droppable: true,
@@ -948,26 +948,26 @@ describe('toTaskGroup: container groups', () => {
 
   test('a paused fan-out session is a Paused tag; an active one is nothing', () => {
     const paused = milestoneGroup([member('t-1')], {
-      epicProgressById: new Map([['m-1', progress('m-1', [], 'paused')]]),
+      milestoneProgressById: new Map([['m-1', progress('m-1', [], 'paused')]]),
     });
     expect(paused.tags).toEqual(['Paused']);
     const active = milestoneGroup([member('t-1')], {
-      epicProgressById: new Map([['m-1', progress('m-1', [], 'active')]]),
+      milestoneProgressById: new Map([['m-1', progress('m-1', [], 'active')]]),
     });
     expect(active.tags).toBeUndefined();
     expect(milestoneGroup([member('t-1')]).tags).toBeUndefined();
   });
 
-  test('the No epic group has no container facts and takes a drop (to no parent)', () => {
+  test('the No parent group has no container facts and takes a drop (to no parent)', () => {
     const groups = grouped([taskDoc({ id: 't', title: 't' })], {
-      grouping: 'epic',
+      grouping: 'parent',
     });
-    const none = groups.find((g) => g.key === 'epic:none');
+    const none = groups.find((g) => g.key === 'parent:none');
     expect(none).toBeDefined();
     const out = toTaskGroup(none, context());
     expect(out).toMatchObject({
-      id: 'epic:none',
-      title: 'No epic',
+      id: 'parent:none',
+      title: 'No parent',
       droppable: true,
     });
     expect(out.status).toBeUndefined();
@@ -992,11 +992,11 @@ describe('toTaskGroup: container groups', () => {
 
   test("a group for a parent the window does not know keeps the grouping's label", () => {
     const g = group({
-      key: 'epic:gone',
+      key: 'parent:gone',
       kind: 'milestone',
       label: 'gone',
-      icon: { kind: 'epic', epicId: 'gone' },
-      epicId: 'gone',
+      icon: { kind: 'parent', parentId: 'gone' },
+      milestoneId: 'gone',
     });
     const out = toTaskGroup(g, context());
     expect(out.title).toBe('gone');
@@ -1111,8 +1111,8 @@ describe('dropTargetFor', () => {
     });
   });
 
-  test('an epic or milestone group re-parents; No epic to no parent', () => {
-    expect(dropTargetFor('epic:e-1')).toEqual({
+  test('a parent or milestone group re-parents; No parent to no parent', () => {
+    expect(dropTargetFor('parent:e-1')).toEqual({
       kind: 'parent',
       parentId: 'e-1',
     });
@@ -1120,7 +1120,7 @@ describe('dropTargetFor', () => {
       kind: 'parent',
       parentId: 'm-1',
     });
-    expect(dropTargetFor('epic:none')).toEqual({
+    expect(dropTargetFor('parent:none')).toEqual({
       kind: 'parent',
       parentId: null,
     });
@@ -1134,7 +1134,7 @@ describe('dropTargetFor', () => {
       'assignee:none',
       'priority:high',
       'status:',
-      'epic:',
+      'parent:',
       'other:x',
     ]) {
       expect(dropTargetFor(key)).toBeNull();
@@ -1150,8 +1150,8 @@ describe('dropVerdict', () => {
 
   test('a status or container group takes plain tasks', () => {
     expect(dropVerdict(['t-1'], 'status:done', tasksById)).toBe(true);
-    expect(dropVerdict(['t-1'], 'epic:e-1', tasksById)).toBe(true);
-    expect(dropVerdict(['t-1'], 'epic:none', tasksById)).toBe(true);
+    expect(dropVerdict(['t-1'], 'parent:e-1', tasksById)).toBe(true);
+    expect(dropVerdict(['t-1'], 'parent:none', tasksById)).toBe(true);
     expect(dropVerdict(['t-1', 'unknown'], 'milestone:e-1', tasksById)).toBe(
       true
     );
@@ -1171,7 +1171,7 @@ describe('dropVerdict', () => {
       'Projects and milestones stay where they are'
     );
     expect(
-      dropVerdict(['x-9'], 'epic:x-9', new Map<string, TaskListItem>())
+      dropVerdict(['x-9'], 'parent:x-9', new Map<string, TaskListItem>())
     ).toBe('A task cannot hold itself');
   });
 });
@@ -1295,25 +1295,28 @@ describe('filterChips', () => {
     ]);
   });
 
-  test('an epic reads by its title; one the window does not know is flagged', () => {
+  test('a milestone reads by its title; one the window does not know is flagged', () => {
     const titles = new Map([['e-1', 'Payments']]);
     const known = filterChips(
       {
-        clauses: [{ facet: 'epic', op: 'is', values: ['e-1', 'none'] }],
+        clauses: [{ facet: 'milestone', op: 'is', values: ['e-1', 'none'] }],
         join: 'and',
       },
-      { epicTitleById: titles }
+      { milestoneTitleById: titles }
     );
-    expect(known[0].summary).toBe('Payments, No epic');
+    expect(known[0].summary).toBe('Payments, No milestone');
     expect(known[0].unknown).toBeUndefined();
     const gone = filterChips(
-      { clauses: [{ facet: 'epic', op: 'is', values: ['e-9'] }], join: 'and' },
-      { epicTitleById: titles }
+      {
+        clauses: [{ facet: 'milestone', op: 'is', values: ['e-9'] }],
+        join: 'and',
+      },
+      { milestoneTitleById: titles }
     );
     expect(gone[0]).toMatchObject({ summary: 'e-9', unknown: true });
     // Without titles nothing can be judged unknown.
     const blind = filterChips({
-      clauses: [{ facet: 'epic', op: 'is', values: ['e-9'] }],
+      clauses: [{ facet: 'milestone', op: 'is', values: ['e-9'] }],
       join: 'and',
     });
     expect(blind[0].unknown).toBeUndefined();

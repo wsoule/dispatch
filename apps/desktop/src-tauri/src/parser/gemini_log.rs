@@ -11,21 +11,19 @@
 //! Field names for token usage (`promptTokenCount`/`candidatesTokenCount`/
 //! `cachedContentTokenCount`) are the real `UsageMetadata` field names from the Gemini API
 //! response shape, so those are on firmer ground than the surrounding log-envelope shape
-//! (`session_start` header, per-turn `user`/`model` records), which is a best guess. As with
-//! `codex_jsonl.rs`, `cwd`/session id are assumed to appear once on a leading `session_start`
-//! line and are cached per `raw_log_path` for later lines in the same file.
+//! (`session_start` header, per-turn `user`/`model` records), which is a best guess. Header
+//! context is caller-owned and committed with the file cursor, as in `codex_jsonl`.
 
 use super::record::{ParsedRecord, Usage, UsageKind};
 use serde_json::Value;
+#[cfg(test)]
 use std::collections::HashMap;
+#[cfg(test)]
 use std::sync::{Mutex, OnceLock};
 
-#[derive(Debug, Clone, Default)]
-struct FileContext {
-    session_id: Option<String>,
-    cwd: Option<String>,
-}
+use super::FileContext;
 
+#[cfg(test)]
 fn context_cache() -> &'static Mutex<HashMap<String, FileContext>> {
     static CACHE: OnceLock<Mutex<HashMap<String, FileContext>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -33,7 +31,14 @@ fn context_cache() -> &'static Mutex<HashMap<String, FileContext>> {
 
 /// Parses a single complete line from a Gemini CLI session log. `raw_log_path` is used purely
 /// as a cache key to remember this file's `session_start` header across calls.
+#[cfg(test)]
 pub fn parse_line(line: &str, raw_log_path: &str) -> Option<ParsedRecord> {
+    let mut cache = context_cache().lock().unwrap();
+    parse_with_context(line, cache.entry(raw_log_path.to_string()).or_default())
+}
+
+/// Parses against caller-owned state so rollback never leaves an advanced global cache.
+pub fn parse_with_context(line: &str, context: &mut FileContext) -> Option<ParsedRecord> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return None;
@@ -65,15 +70,10 @@ pub fn parse_line(line: &str, raw_log_path: &str) -> Option<ParsedRecord> {
                 .map(String::from);
             let cwd = value.get("cwd").and_then(Value::as_str).map(String::from);
 
-            let mut cache = context_cache().lock().unwrap();
-            cache.insert(
-                raw_log_path.to_string(),
-                FileContext {
-                    session_id: session_id.clone(),
-                    cwd: cwd.clone(),
-                },
-            );
-            drop(cache);
+            *context = FileContext {
+                session_id: session_id.clone(),
+                cwd: cwd.clone(),
+            };
 
             Some(ParsedRecord {
                 record_type,
@@ -90,7 +90,7 @@ pub fn parse_line(line: &str, raw_log_path: &str) -> Option<ParsedRecord> {
             })
         }
         "user" | "model" => {
-            let ctx = cached_context(raw_log_path);
+            let ctx = context.clone();
             let text = value.get("text").and_then(Value::as_str).map(String::from);
             let model = if record_type == "model" {
                 value.get("model").and_then(Value::as_str).map(String::from)
@@ -115,15 +115,6 @@ pub fn parse_line(line: &str, raw_log_path: &str) -> Option<ParsedRecord> {
         }
         _ => None,
     }
-}
-
-fn cached_context(raw_log_path: &str) -> FileContext {
-    context_cache()
-        .lock()
-        .unwrap()
-        .get(raw_log_path)
-        .cloned()
-        .unwrap_or_default()
 }
 
 /// Maps the Gemini API's real `UsageMetadata` field names onto the shared `Usage` shape.

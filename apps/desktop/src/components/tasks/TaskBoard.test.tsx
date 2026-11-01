@@ -1,17 +1,17 @@
 import type { TaskDoc } from '@dispatch-foo/core/browser';
 import { PRIORITY_ORDER } from '@dispatch-foo/core/browser';
 import type {
-  EpicProgress,
-  EpicProgressChild,
-  EpicSession,
+  MilestoneProgress,
+  MilestoneProgressChild,
+  MilestoneSession,
   ReadinessReading,
 } from '@dispatch/client';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 import { Profiler, type ReactNode, useState } from 'react';
 
-import { toggleCollapsedGroup } from '../../lib/collapsedEpics';
-import type { WorkEpicOptions } from '../../lib/epicSession';
+import { toggleCollapsedGroup } from '../../lib/collapsedMilestones';
+import type { WorkMilestoneOptions } from '../../lib/milestoneSession';
 import { priorityLabel } from '../../lib/taskDisplay';
 import {
   DEFAULT_TASKS_DISPLAY,
@@ -58,12 +58,12 @@ const NO_KEYS: ReadonlySet<string> = new Set();
 // A progress row with the session/spend/wave halves defaulted, so a test states only the
 // children it cares about.
 function progressFor(
-  epicId: string,
-  children: Pick<EpicProgressChild, 'id' | 'title' | 'status'>[],
-  overrides: Partial<EpicProgress> = {}
-): EpicProgress {
+  milestoneId: string,
+  children: Pick<MilestoneProgressChild, 'id' | 'title' | 'status'>[],
+  overrides: Partial<MilestoneProgress> = {}
+): MilestoneProgress {
   return {
-    epicId,
+    milestoneId,
     active: false,
     session: null,
     spend: {
@@ -87,11 +87,11 @@ function progressFor(
 }
 
 function sessionWith(
-  state: EpicSession['state'],
-  overrides: Partial<EpicSession> = {}
-): EpicSession {
+  state: MilestoneSession['state'],
+  overrides: Partial<MilestoneSession> = {}
+): MilestoneSession {
   return {
-    epicId: 'e-1',
+    milestoneId: 'e-1',
     concurrency: 3,
     executor: 'claude',
     state,
@@ -106,14 +106,14 @@ function sessionWith(
   };
 }
 
-const EPICS = [
-  task('e-1', 'Payments epic', 'todo', null, 'epic'),
-  task('e-2', 'Search epic', 'todo', null, 'epic'),
-  task('e-empty', 'Nothing here epic', 'todo', null, 'epic'),
+const MILESTONES = [
+  task('e-1', 'Payments milestone', 'todo', null, 'milestone'),
+  task('e-2', 'Search milestone', 'todo', null, 'milestone'),
+  task('e-empty', 'Nothing here milestone', 'todo', null, 'milestone'),
 ];
 
 const TASKS = [
-  ...EPICS,
+  ...MILESTONES,
   task('t-1', 'Card one', 'todo', 'e-1', 'task', {
     priority: 'urgent',
     assignee: 'human:wyat',
@@ -186,21 +186,21 @@ function Harness({
         <TaskBoard
           tasks={TASKS}
           statuses={STATUSES}
-          epics={EPICS}
+          milestones={MILESTONES}
           readyIds={new Set()}
           blockedIds={new Set()}
           liveRunStateByTaskId={new Map()}
           latestRunByTaskId={new Map()}
-          epicProgressById={new Map()}
-          epicConcurrencyDefault={3}
-          display={display('epic')}
+          milestoneProgressById={new Map()}
+          milestoneConcurrencyDefault={3}
+          display={display('parent')}
           collapsedLaneKeys={collapsed}
           onToggleLane={(key) =>
             setCollapsed((prev) => toggleCollapsedGroup(prev, key))
           }
           onSelect={() => {}}
-          onWorkEpic={async () => {}}
-          onStopEpic={async () => {}}
+          onWorkMilestone={async () => {}}
+          onStopMilestone={async () => {}}
           {...props}
         />
       </TooltipProvider>
@@ -252,31 +252,35 @@ function columnHeaders(): HTMLElement[] {
   );
 }
 
-test('every epic with children heads a lane, and the no-epic lane comes last', () => {
+test('every milestone with children heads a lane, and the no-milestone lane comes last', () => {
   render(<Harness />);
-  expect(laneTitles()).toEqual(['Payments epic', 'Search epic', 'No epic']);
+  expect(laneTitles()).toEqual([
+    'Payments milestone',
+    'Search milestone',
+    'No milestone',
+  ]);
   for (const title of laneTitles()) {
     expect(laneToggle(title).getAttribute('aria-expanded')).toBe('true');
   }
 });
 
-// Twenty epics with three active ones must not render seventeen blank rows.
-test('an epic with no children in the configured statuses is not rendered', () => {
+// Twenty milestones with three active ones must not render seventeen blank rows.
+test('a milestone with no children in the configured statuses is not rendered', () => {
   render(<Harness />);
-  expect(screen.queryByText('Nothing here epic')).toBeNull();
+  expect(screen.queryByText('Nothing here milestone')).toBeNull();
 });
 
-test('clicking an epic header hides its cards, and clicking again brings them back', () => {
+test('clicking a milestone header hides its cards, and clicking again brings them back', () => {
   render(<Harness />);
   expect(screen.queryByText('Card one')).not.toBeNull();
 
-  fireEvent.click(laneToggle('Payments epic'));
+  fireEvent.click(laneToggle('Payments milestone'));
   expect(screen.queryByText('Card one')).toBeNull();
   expect(screen.queryByText('Card three')).toBeNull();
-  // A sibling lane is untouched — collapse is per epic, not a board-wide mode.
+  // A sibling lane is untouched — collapse is per milestone, not a board-wide mode.
   expect(screen.queryByText('Card four')).not.toBeNull();
 
-  fireEvent.click(laneToggle('Payments epic'));
+  fireEvent.click(laneToggle('Payments milestone'));
   expect(screen.queryByText('Card one')).not.toBeNull();
 });
 
@@ -286,24 +290,24 @@ test('a column header keeps its plain count when a lane collapses', () => {
   render(<Harness />);
   const todo = columnHeaders()[0];
   expect(todo.textContent).toContain('3');
-  fireEvent.click(laneToggle('Payments epic'));
+  fireEvent.click(laneToggle('Payments milestone'));
   expect(columnHeaders()[0].textContent).toContain('3');
   expect(screen.queryByText(/hidden/)).toBeNull();
 });
 
-test('the no-epic lane collapses like any other', () => {
+test('the no-milestone lane collapses like any other', () => {
   render(<Harness />);
-  fireEvent.click(laneToggle('No epic'));
+  fireEvent.click(laneToggle('No milestone'));
   expect(screen.queryByText('Unparented card')).toBeNull();
 });
 
-// Epics are containers, not objects on the board: they head a lane and are never dragged.
+// Milestones are containers, not objects on the board: they head a lane and are never dragged.
 test('only plain task cards are draggable', () => {
   render(<Harness />);
   const titles = draggableTitles();
   expect(titles).toHaveLength(5);
-  for (const epic of EPICS) {
-    expect(titles.some((t) => t.includes(epic.meta.title))).toBe(false);
+  for (const milestone of MILESTONES) {
+    expect(titles.some((t) => t.includes(milestone.meta.title))).toBe(false);
   }
   expect(titles.some((t) => t.includes('Card one'))).toBe(true);
 });
@@ -315,43 +319,43 @@ test('an archived card is not draggable', () => {
   expect(titles.some((t) => t.includes('Card two'))).toBe(true);
 });
 
-test('the epic header carries the epic dispatch and flight plan controls as pills', () => {
+test('the milestone header carries the milestone dispatch and flight plan controls as pills', () => {
   const opened: [string, string | undefined][] = [];
   render(<Harness opened={opened} />);
   // The id chip is the one open affordance; the shared controls' Open button stays off.
   expect(screen.queryByRole('button', { name: 'Open e-1' })).not.toBeNull();
   expect(
-    screen.queryByRole('button', { name: 'Open Payments epic' })
+    screen.queryByRole('button', { name: 'Open Payments milestone' })
   ).toBeNull();
-  // The graph button opens the epic's full Flight Plan.
+  // The graph button opens the milestone's full Flight Plan.
   fireEvent.click(
     screen.getByRole('button', { name: 'Open the flight plan for e-1' })
   );
   expect(opened).toEqual([['e-1', 'plan']]);
   const concurrency = screen.getByLabelText(
-    'Epic dispatch concurrency for e-1'
+    'Milestone dispatch concurrency for e-1'
   );
   expect(concurrency.tagName).toBe('BUTTON');
   expect(concurrency.textContent).toBe('3×');
   expect(concurrency.className).toContain('rounded-pill');
-  // The "No epic" lane has nothing to dispatch, so it gets none of them.
+  // The "No milestone" lane has nothing to dispatch, so it gets none of them.
   const work = screen.getAllByRole('button', { name: 'Send agents…' });
   expect(work).toHaveLength(2);
   expect(work[0]?.className).toContain('rounded-pill');
 });
 
-test('the epic dispatch button routes through the confirmation preview', () => {
+test('the milestone dispatch button routes through the confirmation preview', () => {
   const requested: string[] = [];
-  render(<Harness onRequestWorkEpic={(id) => requested.push(id)} />);
+  render(<Harness onRequestWorkMilestone={(id) => requested.push(id)} />);
   fireEvent.click(screen.getAllByRole('button', { name: 'Send agents…' })[0]);
   expect(requested).toEqual(['e-1']);
 });
 
 test('without a preview handler Send agents… starts a session at the picked concurrency', async () => {
-  const worked: [string, WorkEpicOptions][] = [];
+  const worked: [string, WorkMilestoneOptions][] = [];
   render(
     <Harness
-      onWorkEpic={(id, opts) => {
+      onWorkMilestone={(id, opts) => {
         worked.push([id, opts]);
         return Promise.resolve();
       }}
@@ -374,7 +378,7 @@ test('an active session shows Pause and Stop, and a paused one Resume and Raise 
   ];
   const { unmount } = render(
     <Harness
-      epicProgressById={
+      milestoneProgressById={
         new Map([
           [
             'e-1',
@@ -385,20 +389,20 @@ test('an active session shows Pause and Stop, and a paused one Resume and Raise 
           ],
         ])
       }
-      onPauseEpic={(id) => {
+      onPauseMilestone={(id) => {
         paused.push(id);
         return Promise.resolve();
       }}
-      onResumeEpic={(id) => {
+      onResumeMilestone={(id) => {
         resumed.push(id);
         return Promise.resolve();
       }}
-      onRaiseCeilingEpic={(id) => raised.push(id)}
+      onRaiseCeilingMilestone={(id) => raised.push(id)}
     />
   );
   // The concurrency picker belongs to a fresh session; a live one chose it already.
   expect(
-    screen.queryByLabelText('Epic dispatch concurrency for e-1')
+    screen.queryByLabelText('Milestone dispatch concurrency for e-1')
   ).toBeNull();
   expect(screen.getAllByRole('button', { name: 'Send agents…' })).toHaveLength(
     1
@@ -412,7 +416,7 @@ test('an active session shows Pause and Stop, and a paused one Resume and Raise 
 
   render(
     <Harness
-      epicProgressById={
+      milestoneProgressById={
         new Map([
           [
             'e-1',
@@ -422,11 +426,11 @@ test('an active session shows Pause and Stop, and a paused one Resume and Raise 
           ],
         ])
       }
-      onResumeEpic={(id) => {
+      onResumeMilestone={(id) => {
         resumed.push(id);
         return Promise.resolve();
       }}
-      onRaiseCeilingEpic={(id) => raised.push(id)}
+      onRaiseCeilingMilestone={(id) => raised.push(id)}
     />
   );
   expect(screen.getByText('Paused — budget ceiling')).not.toBeNull();
@@ -441,7 +445,7 @@ test('an active session shows Pause and Stop, and a paused one Resume and Raise 
 test('a header without pause wiring shows only Stop on an active session', () => {
   render(
     <Harness
-      epicProgressById={
+      milestoneProgressById={
         new Map([
           [
             'e-1',
@@ -463,8 +467,8 @@ test('a header without pause wiring shows only Stop on an active session', () =>
 });
 
 // The land affordance follows the server's own readiness rule (every child done or
-// cancelled): a finished epic's header swaps the then-useless Work button for Land.
-test('a finished epic swaps Work for a Land button that lands it', async () => {
+// cancelled): a finished milestone's header swaps the then-useless Work button for Land.
+test('a finished milestone swaps Work for a Land button that lands it', async () => {
   const landed: string[] = [];
   const progress = new Map([
     [
@@ -478,8 +482,8 @@ test('a finished epic swaps Work for a Land button that lands it', async () => {
   ]);
   render(
     <Harness
-      epicProgressById={progress}
-      onLandEpic={(id) => {
+      milestoneProgressById={progress}
+      onLandMilestone={(id) => {
         landed.push(id);
         return Promise.resolve();
       }}
@@ -513,7 +517,7 @@ test('the ◔ progress pie exposes exactly the done fraction of its arc', () => 
       ]),
     ],
   ]);
-  render(<Harness epicProgressById={progress} />);
+  render(<Harness milestoneProgressById={progress} />);
   expect(
     document.querySelector('[data-slot=milestone-progress]')?.textContent
   ).toBe('1/2');
@@ -531,7 +535,7 @@ test('the concurrency pill opens a radio menu with the current choice checked', 
   render(<Harness />);
   await settle(() => {
     fireEvent.click(
-      screen.getAllByLabelText('Epic dispatch concurrency for e-1')[0]
+      screen.getAllByLabelText('Milestone dispatch concurrency for e-1')[0]
     );
   });
   const items = screen.getAllByRole('menuitemradio');
@@ -548,7 +552,8 @@ test('the concurrency pill opens a radio menu with the current choice checked', 
     fireEvent.click(items[0]);
   });
   expect(
-    screen.getAllByLabelText('Epic dispatch concurrency for e-1')[0].textContent
+    screen.getAllByLabelText('Milestone dispatch concurrency for e-1')[0]
+      .textContent
   ).toBe('1×');
 });
 
@@ -663,16 +668,16 @@ test('a column header "+" opens the creator pre-set to that status', () => {
   expect(presets).toEqual([{ status: 'done' }]);
 });
 
-test('a lane header "+" presets the epic', () => {
+test('a lane header "+" presets the milestone', () => {
   const presets: CreateTaskPreset[] = [];
   render(<Harness presets={presets} />);
   fireEvent.click(
-    screen.getByRole('button', { name: 'New task in Payments epic' })
+    screen.getByRole('button', { name: 'New task in Payments milestone' })
   );
-  expect(presets).toEqual([{ epic: 'e-1' }]);
+  expect(presets).toEqual([{ milestone: 'e-1' }]);
 });
 
-test('the flat board has no lane headers and crumbs each card with its epic', () => {
+test('the flat board has no lane headers and crumbs each card with its milestone', () => {
   render(<Harness display={display('none')} />);
   expect(document.querySelector('[data-slot=group-header]')).toBeNull();
   expect(
@@ -682,7 +687,7 @@ test('the flat board has no lane headers and crumbs each card with its epic', ()
   const meta = card?.querySelector('[data-slot=task-card-meta]');
   expect(meta?.textContent).toContain('t-1');
   expect(meta?.querySelector('[data-slot=task-card-crumb]')?.textContent).toBe(
-    'Payments epic'
+    'Payments milestone'
   );
 });
 
@@ -699,7 +704,7 @@ function groupHeaders(): { title: string; icon: Element | null }[] {
 }
 
 // Sub-grouping › Assignee: agents lead, then people by handle, then the unassigned lane —
-// each header the assignee's own 16px avatar, and the cards keep their epic crumb.
+// each header the assignee's own 16px avatar, and the cards keep their milestone crumb.
 test('assignee lanes put agents first and Unassigned last, avatar on every header', () => {
   render(<Harness display={display('assignee')} />);
   const headers = groupHeaders();
@@ -727,12 +732,12 @@ test('assignee lanes put agents first and Unassigned last, avatar on every heade
     'assignee:human:wyat',
     'assignee:none',
   ]);
-  // Epics head epic lanes only; on any other board they are not cards either.
+  // Milestones head milestone lanes only; on any other board they are not cards either.
   expect(draggableTitles()).toHaveLength(5);
   expect(draggableTitles().some((t) => t.startsWith('e-'))).toBe(false);
   const card = screen.getByText('Card one').closest('[data-slot=task-card]');
   expect(card?.querySelector('[data-slot=task-card-crumb]')?.textContent).toBe(
-    'Payments epic'
+    'Payments milestone'
   );
   // No `+` on the lane headers (the column headers keep theirs): a new task cannot be
   // preset to an assignee.
@@ -840,7 +845,7 @@ test('a drop in a priority lane column still moves status', async () => {
   expect(moved).toEqual([['t-2', 'done']]);
 });
 
-/** Every lane header's sticky wrapper — the `px-3` div around an epic, assignee or priority
+/** Every lane header's sticky wrapper — the `px-3` div around a milestone, assignee or priority
  * lane's header — in lane order. */
 function laneHeaderWrappers(): HTMLElement[] {
   return Array.from(
@@ -965,7 +970,9 @@ function cardIds(): string[] {
 }
 
 test('a long column mounts only the cards near the viewport', () => {
-  render(<Harness tasks={LONG_COLUMN} epics={[]} display={display('none')} />);
+  render(
+    <Harness tasks={LONG_COLUMN} milestones={[]} display={display('none')} />
+  );
   const mounted = cardIds();
   expect(mounted.length).toBeGreaterThan(0);
   expect(mounted.length).toBeLessThan(40);
@@ -976,7 +983,7 @@ test('the keyboard cursor keeps its card mounted far down a column', () => {
   render(
     <Harness
       tasks={LONG_COLUMN}
-      epics={[]}
+      milestones={[]}
       display={display('none')}
       focusedTaskId="t-250"
     />
@@ -987,7 +994,9 @@ test('the keyboard cursor keeps its card mounted far down a column', () => {
 });
 
 test('a dragged card stays mounted when the board scrolls it out of view', async () => {
-  render(<Harness tasks={LONG_COLUMN} epics={[]} display={display('none')} />);
+  render(
+    <Harness tasks={LONG_COLUMN} milestones={[]} display={display('none')} />
+  );
   const card = document.querySelector<HTMLElement>('[data-slot=task-card]');
   const handle = card?.querySelector<HTMLElement>('[data-task-card-open]');
   if (card == null || handle == null) throw new Error('no card');
@@ -1023,7 +1032,7 @@ test('a scroll renders every column in one commit, before its event returns', ()
   let commits = 0;
   render(
     <Profiler id="board" onRender={() => (commits += 1)}>
-      <Harness tasks={tall} epics={[]} display={display('none')} />
+      <Harness tasks={tall} milestones={[]} display={display('none')} />
     </Profiler>
   );
   const board = document.querySelector<HTMLElement>('[data-slot=task-board]');
@@ -1074,26 +1083,26 @@ test('moving the cursor redraws only the two cards it moves between', () => {
   const shell = shellWith([]);
   const onToggleLane = () => {};
   const onSelect = () => {};
-  const onEpic = async () => {};
+  const onMilestone = async () => {};
   const board = (focusedTaskId: string) => (
     <TooltipProvider>
       <TaskBoard
         tasks={TASKS}
         statuses={STATUSES}
-        epics={EPICS}
+        milestones={MILESTONES}
         readyIds={readyIds}
         blockedIds={blockedIds}
         liveRunStateByTaskId={runs}
         latestRunByTaskId={runs}
         readinessById={readinessById}
-        epicProgressById={progress}
-        epicConcurrencyDefault={3}
+        milestoneProgressById={progress}
+        milestoneConcurrencyDefault={3}
         display={DEFAULT_TASKS_DISPLAY}
         collapsedLaneKeys={NO_KEYS}
         onToggleLane={onToggleLane}
         onSelect={onSelect}
-        onWorkEpic={onEpic}
-        onStopEpic={onEpic}
+        onWorkMilestone={onMilestone}
+        onStopMilestone={onMilestone}
         focusedTaskId={focusedTaskId}
       />
     </TooltipProvider>

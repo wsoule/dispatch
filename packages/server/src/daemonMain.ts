@@ -311,13 +311,13 @@ function buildAskFakeScript(): FakeExecutorScript {
 }
 
 // The one default proposal every DISPATCH_ENABLE_FAKES daemon's 'fake'
-// planner returns, regardless of the prompt it's given — an epic with two
+// planner returns, regardless of the prompt it's given — a milestone with two
 // tasks, the second blocked on the first, so `dispatch plan --planner fake`
-// has a real dependency arrow to render and `dispatch epic start` afterward
+// has a real dependency arrow to render and `dispatch milestone start` afterward
 // has more than one child to dispatch.
 const DEFAULT_FAKE_PROPOSAL: PlanProposal = {
-  epic: {
-    title: 'Fake planned epic',
+  milestone: {
+    title: 'Fake planned milestone',
     description: 'Produced by FakePlanner for DISPATCH_ENABLE_FAKES e2e runs.',
   },
   tasks: [

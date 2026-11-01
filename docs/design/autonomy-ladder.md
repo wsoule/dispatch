@@ -1,7 +1,7 @@
 # The autonomy ladder: stops, gate assignments, presets, floor
 
 Status: decision record, 2026-09-03. Settles the design task `t-df1163` under
-epic `e-ad1978` (Policy: autonomy with receipts). This document **amends**
+milestone `e-ad1978` (Policy: autonomy with receipts). This document **amends**
 `docs/archive/design/lovable-workstreams.md` §"Policy: autonomy with receipts" —
 the archive is read-only by `docs/archive/README.md`'s own rule, so the
 amendment lives here and this file is now the source of truth for the ladder.
@@ -102,11 +102,12 @@ one key.
 - "Green" means: fix loop `complete`. A loop that stopped `capped`
   (`rounds-exhausted`, `standing-block`, `error`, `stopped`) never
   auto-enqueues.
-- Epic children land on `epic/<id>` as usual; **landing the epic branch onto
-  main stays a human act at every rung** (`POST /api/epics/:id/land`,
-  `packages/server/src/orchestrator/orchestrator.ts:2583`). The epic land is the
-  batch review point rung 4 preserves; a standalone task's run, whose base is
-  main, does land on main automatically at rung 4.
+- Milestone children land on `milestone/<id>` as usual; **landing the milestone
+  branch onto main stays a human act at every rung**
+  (`POST /api/milestones/:id/land`,
+  `packages/server/src/orchestrator/orchestrator.ts:2583`). The milestone land
+  is the batch review point rung 4 preserves; a standalone task's run, whose
+  base is main, does land on main automatically at rung 4.
 - The `memory` gate (an agent's proposal to add to, change or retire a project
   or team memory entry, `packages/server/src/memory/gate.ts`) demotes here too,
   not earlier: a bad team lesson reaches every teammate's runs. Policy applies
@@ -128,9 +129,9 @@ one key.
 - **engineer = 2 (`auto-scope`)** — confirmed. Closest stop to today's behavior
   plus relief from the one gate that measurably interrupts (scope requests park
   the agent mid-run on a 30s long-poll).
-- Both presets surface the same `policy.rung` key; the lens epic (`e-3a6884`)
-  sets the default at project creation, the settings escape hatch moves it any
-  time.
+- Both presets surface the same `policy.rung` key; the lens milestone
+  (`e-3a6884`) sets the default at project creation, the settings escape hatch
+  moves it any time.
 
 ## Per-task risk modifier
 
@@ -150,8 +151,8 @@ the project rung:
 whole function. This also gives the floor's "npm publish is never reachable by
 auto-dispatch" a mechanical home: release/publish tasks are declared `critical`
 (the planner already emits risk; `prReviewTask.ts:93` shows the pattern), and
-the epic engine holds `critical` children for explicit human dispatch exactly as
-it already holds tasks whose declared writes were flagged
+the milestone engine holds `critical` children for explicit human dispatch
+exactly as it already holds tasks whose declared writes were flagged
 (`packages/server/src/orchestrator/plan.ts:674`).
 
 ## The irreversibility floor
@@ -168,8 +169,8 @@ are confirmed; three are added. For each: how it is enforced.
 2. **Deletes outside declared `writes`** — confirmed. Same enforcement surface
    (tool-approval classification), plus the existing guards never demote: branch
    deletion with unlanded commits requires the explicit `?force=1`
-   (`packages/server/src/api.ts:1897-1901`), and epic branches with unreviewed
-   children are refused outright.
+   (`packages/server/src/api.ts:1897-1901`), and milestone branches with
+   unreviewed children are refused outright.
 3. **Spend above the budget cap** — confirmed, with a sharper reading:
    `maxBudgetUsd` (`packages/core/src/configTypes.ts:15`, "the real guard" —
    `config.ts:66`) is a hard stop the SDK enforces per run. The floor property
@@ -177,12 +178,12 @@ are confirmed; three are added. For each: how it is enforced.
    parks as a stalled decision-feed item; more budget is a human config edit,
    never an auto-grant.
 4. **Publishing artifacts** — added, from the 2026-09-01 incident on the publish
-   epic (epic auto-dispatch launched the npm-publish task the moment its blocker
-   flipped, unreviewed). Covers `npm publish` / any registry publish, and
-   pushing `v*`/release tags (a tag push _is_ the release trigger in this repo's
-   pipeline — same irreversibility, different spelling). Enforced twice:
-   publish/release tasks are `critical` risk (no auto-dispatch, rung capped at
-   1), and publish-shaped commands are floor patterns in the approval
+   milestone (milestone auto-dispatch launched the npm-publish task the moment
+   its blocker flipped, unreviewed). Covers `npm publish` / any registry
+   publish, and pushing `v*`/release tags (a tag push _is_ the release trigger
+   in this repo's pipeline — same irreversibility, different spelling). Enforced
+   twice: publish/release tasks are `critical` risk (no auto-dispatch, rung
+   capped at 1), and publish-shaped commands are floor patterns in the approval
    classifier.
 5. **Repo visibility and remote settings** — added, same incident class:
    `gh repo edit --visibility`, remote repo deletion, default-branch changes.
@@ -214,9 +215,9 @@ verifiably complete, not because the ladder touches it.
 | 6   | Fix-loop rulings (`requiresRuling`, capped loops)                                                                   | `fixLoop.ts:80-84`; feed kind `fix-loop-capped`                                                                                   | floor (#6)                                                                                                                                                                                                                                                |
 | 7   | Review verdict → merge (`review(id,'merge')`, `submitReview` approve → enqueue)                                     | `orchestrator.ts:2126`; `api.ts:1713,1798,4979`                                                                                   | **4**                                                                                                                                                                                                                                                     |
 | 8   | Merge-queue processing once enqueued (rebase, `verifySteps`, merge)                                                 | `mergeQueue.ts`                                                                                                                   | already autonomous; its `blocked-environment` / `waiting-github` holds are invariants and never demote                                                                                                                                                    |
-| 9   | Epic child auto-dispatch after `start()`                                                                            | `epic.ts` (EpicEngine)                                                                                                            | already autonomous once a human starts the epic; `critical`-risk children and flagged undeclared-writes tasks (`plan.ts:674`) never auto-dispatch                                                                                                         |
+| 9   | Milestone child auto-dispatch after `start()`                                                                       | `milestone.ts` (MilestoneEngine)                                                                                                  | already autonomous once a human starts the milestone; `critical`-risk children and flagged undeclared-writes tasks (`plan.ts:674`) never auto-dispatch                                                                                                    |
 | 10  | Plan confirm (proposed graph dispatches on confirm)                                                                 | planner/plan confirm path                                                                                                         | n/a — **never demotes.** Filing and first-dispatching work always has a human at the top of the chain; the ladder governs gates inside dispatched work. This is the anti-Lovable property the spec names                                                  |
-| 11  | Epic land onto main                                                                                                 | `orchestrator.ts:2583`                                                                                                            | n/a — stays human at every rung (rung 4 lands children onto the epic branch)                                                                                                                                                                              |
+| 11  | Milestone land onto main                                                                                            | `orchestrator.ts:2583`                                                                                                            | n/a — stays human at every rung (rung 4 lands children onto the milestone branch)                                                                                                                                                                         |
 | 12  | Branch deletion with unlanded commits (`?force=1`)                                                                  | `api.ts:1897-1901`                                                                                                                | floor (#2)                                                                                                                                                                                                                                                |
 | 13  | Overseer mutating-action confirmations and built-in tool-call approvals                                             | `overseerTools.ts:381-521`; `overseer.ts` (QUEUED_NOTE, authorizeTool); gates from `messaging/overseerBus.ts`                     | n/a — the overseer is the human's own console; its confirm protects against the chat model acting unilaterally, which no autonomy rung is a mandate for. Its built-in tools (Bash, Edit) run under the same permission mode and floor as a dispatched run |
 | 14  | `maxBudgetUsd` hard stop                                                                                            | `configTypes.ts:15`; `executors/claude.ts:574`                                                                                    | floor (#3)                                                                                                                                                                                                                                                |
@@ -227,7 +228,7 @@ verifiably complete, not because the ladder touches it.
 
 ## Mechanism: one seam, a switch per gate
 
-The decision feed already reserved the seam for exactly this epic:
+The decision feed already reserved the seam for exactly this milestone:
 `DecisionPolicy` and `DecisionDisposition`
 (`packages/server/src/decisionFeed.ts:83-87`, and the comment at `:39-41` naming
 `e-ad1978`). Implementation is therefore:
@@ -256,6 +257,6 @@ The decision feed already reserved the seam for exactly this epic:
   above the executor's permission machinery, in the decision feed.
 - Mixed per-user policy (different members, different rungs) — same non-goal as
   mixed-lens teams in the direction doc.
-- Auto-answering plain questions, auto-ruling findings, auto-landing epics: all
-  considered and rejected above; recorded here so they are re-litigated
+- Auto-answering plain questions, auto-ruling findings, auto-landing milestones:
+  all considered and rejected above; recorded here so they are re-litigated
   deliberately or not at all.

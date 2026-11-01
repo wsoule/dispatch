@@ -34,13 +34,13 @@ import { useShellActions } from '../components/shell/ShellActionsContext';
 import { DispatchDialog } from '../components/tasks/DispatchDialog';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { liveClaimsFrom } from '../lib/dispatchPreview';
-import type { WorkEpicOptions } from '../lib/epicSession';
 import { fanoutVerbs } from '../lib/fanoutVerbs';
 import { filterBySearch } from '../lib/issueSearch';
 import { resolveListKeyCommand } from '../lib/keyboard';
 import { landingStateByTaskId } from '../lib/landingBadge';
 import { resolveLinearLink } from '../lib/linearSettings';
 import { groupTasks, type ListGroup } from '../lib/listGrouping';
+import type { WorkMilestoneOptions } from '../lib/milestoneSession';
 import type { NeedsYou } from '../lib/needsYou';
 import { taskHref } from '../lib/shellRoutes';
 import { useStatusModelOf } from '../lib/statusModel';
@@ -119,7 +119,7 @@ function defaultCollapsedGroups(
  * container's children (the group menu's Send agents…). */
 type Dialog =
   | { kind: 'tasks'; ids: readonly string[] }
-  | { kind: 'epic'; epicId: string };
+  | { kind: 'milestone'; milestoneId: string };
 
 const BULK_BAR_OFFSET_PX = 20;
 const BULK_BAR_LINE_PX = 44;
@@ -251,11 +251,18 @@ export function IssuesTable({
     if (data.config === null) return [];
     return groupTasks(visibleTasks, prefs, {
       statuses: data.config.statuses,
-      epics: data.epics,
+      milestones: data.milestones,
       archivedTasks: visibleArchived,
       model,
     });
-  }, [data.config, data.epics, visibleTasks, visibleArchived, prefs, model]);
+  }, [
+    data.config,
+    data.milestones,
+    visibleTasks,
+    visibleArchived,
+    prefs,
+    model,
+  ]);
   const groupByKey = useMemo(
     () => new Map(groups.map((group) => [group.key, group])),
     [groups]
@@ -304,7 +311,7 @@ export function IssuesTable({
       linearLinks,
       liveRunStateByTaskId: data.liveRunStateByTaskId,
       landingByTaskId,
-      epicProgressById: data.epicProgressById,
+      milestoneProgressById: data.milestoneProgressById,
       asksByTaskId: needs.byTask,
       unreadByTaskId,
       pendingDispatch,
@@ -321,7 +328,7 @@ export function IssuesTable({
       linearLinks,
       data.liveRunStateByTaskId,
       landingByTaskId,
-      data.epicProgressById,
+      data.milestoneProgressById,
       needs.byTask,
       unreadByTaskId,
       pendingDispatch,
@@ -450,7 +457,10 @@ export function IssuesTable({
     () => stateChoices(statuses, model),
     [statuses, model]
   );
-  const milestones = useMemo(() => milestoneChoices(data.epics), [data.epics]);
+  const milestones = useMemo(
+    () => milestoneChoices(data.milestones),
+    [data.milestones]
+  );
   const pickerCtx = useMemo<PickerContext>(
     () => ({
       states,
@@ -560,44 +570,48 @@ export function IssuesTable({
     (action: GroupAction, group: TaskGroupData) => {
       const source = latest.current.groupByKey.get(group.id);
       if (source === undefined) return;
-      const epicId = source.epicId;
+      const milestoneId = source.milestoneId;
       switch (action) {
         case 'new-task':
           shell.openCreateTask(source.preset);
           return;
         case 'open-plan':
-          if (epicId !== null) shell.openTask(epicId, 'plan');
+          if (milestoneId !== null) shell.openTask(milestoneId, 'plan');
           return;
         case 'send':
-          if (epicId !== null) setDialog({ kind: 'epic', epicId });
+          if (milestoneId !== null)
+            setDialog({ kind: 'milestone', milestoneId });
           return;
         case 'pause':
-          if (epicId !== null) void data.handlePauseEpic(epicId);
+          if (milestoneId !== null) void data.handlePauseMilestone(milestoneId);
           return;
         case 'resume':
-          if (epicId !== null) void data.handleResumeEpic(epicId);
+          if (milestoneId !== null)
+            void data.handleResumeMilestone(milestoneId);
           return;
         case 'stop':
-          if (epicId !== null) void data.handleStopEpic(epicId);
+          if (milestoneId !== null) void data.handleStopMilestone(milestoneId);
           return;
         case 'land':
-          if (epicId !== null) void data.handleLandEpic(epicId);
+          if (milestoneId !== null) void data.handleLandMilestone(milestoneId);
       }
     }
   );
-  const epicProgressById = data.epicProgressById;
+  const milestoneProgressById = data.milestoneProgressById;
   const groupActions = useCallback(
     (group: TaskGroupData) => {
       const source = groupByKey.get(group.id);
       if (source === undefined || source.archived) return null;
       const container =
-        source.epicId === null ? undefined : tasksById.get(source.epicId);
+        source.milestoneId === null
+          ? undefined
+          : tasksById.get(source.milestoneId);
       const verbs =
         container !== undefined && editable
           ? fanoutVerbs(
               container,
               model,
-              epicProgressById.get(container.meta.id),
+              milestoneProgressById.get(container.meta.id),
               childCountByParent.get(container.meta.id) ?? 0
             )
           : [];
@@ -615,7 +629,7 @@ export function IssuesTable({
       tasksById,
       editable,
       model,
-      epicProgressById,
+      milestoneProgressById,
       childCountByParent,
       onGroupAction,
     ]
@@ -745,7 +759,6 @@ export function IssuesTable({
       case 'list-set-assignee':
         openPicker('assignee');
         return;
-      case 'list-set-epic':
       case 'list-set-milestone':
         openPicker('milestone');
         return;
@@ -812,7 +825,7 @@ export function IssuesTable({
   // ---- render -------------------------------------------------------------
 
   const emptyMessage =
-    data.tasks.length === 0 && data.epics.length === 0
+    data.tasks.length === 0 && data.milestones.length === 0
       ? 'No tasks yet'
       : 'No tasks match';
   const dialogTasks =
@@ -822,7 +835,7 @@ export function IssuesTable({
         ? dialog.ids
             .map((id) => tasksById.get(id))
             .filter((doc): doc is TaskListItem => doc !== undefined)
-        : data.tasks.filter((t) => t.meta.parent === dialog.epicId);
+        : data.tasks.filter((t) => t.meta.parent === dialog.milestoneId);
   const dialogTitle =
     dialog === null
       ? ''
@@ -830,7 +843,7 @@ export function IssuesTable({
         ? `Send agents at ${dialogTasks.length} selected ${
             dialogTasks.length === 1 ? 'task' : 'tasks'
           }`
-        : `Send agents · ${tasksById.get(dialog.epicId)?.meta.title ?? dialog.epicId}`;
+        : `Send agents · ${tasksById.get(dialog.milestoneId)?.meta.title ?? dialog.milestoneId}`;
 
   return (
     <div
@@ -899,14 +912,16 @@ export function IssuesTable({
           readyIds={data.readyIds}
           runningNow={data.liveRunStateByTaskId.size}
           liveClaims={liveClaimsFrom(data.runs)}
-          defaultConcurrency={data.config?.orchestrator.epicConcurrency ?? 3}
+          defaultConcurrency={
+            data.config?.orchestrator.milestoneConcurrency ?? 3
+          }
           maxConcurrency={data.config?.orchestrator.maxConcurrency}
           runCostEstimateUsd={data.config?.orchestrator.runCostEstimateUsd}
           fixLoopAuto={data.config?.fixLoop.auto}
           onCancel={() => setDialog(null)}
-          onConfirm={async (opts: WorkEpicOptions) => {
-            if (dialog.kind === 'epic') {
-              await data.handleWorkEpic(dialog.epicId, opts);
+          onConfirm={async (opts: WorkMilestoneOptions) => {
+            if (dialog.kind === 'milestone') {
+              await data.handleWorkMilestone(dialog.milestoneId, opts);
             } else {
               // Dispatched one at a time up to the chosen concurrency, matching
               // what the preview promised — the per-task endpoint is the only one

@@ -35,7 +35,7 @@ export interface MemoryEntry {
   title: string;
   body: string;
   refs: Ref[];
-  epic: string | null;
+  milestone: string | null;
   appliesTo: string[];
   projectKey: string | null;
   author: Address;
@@ -62,7 +62,7 @@ export interface ProposalContent {
   title: string;
   body: string;
   refs: Ref[];
-  epic: string | null;
+  milestone: string | null;
   appliesTo: string[];
 }
 
@@ -118,7 +118,7 @@ export interface IndexContext {
   title: string;
   body: string;
   writes: string[];
-  epic: string | null;
+  milestone: string | null;
   risk: 'routine' | 'elevated' | 'critical' | undefined;
   a2a: boolean;
 }

@@ -1,7 +1,7 @@
 export type { TaskStatus } from './status.js';
 import type { ContainerKind } from './kinds.js';
 
-// Linear's hierarchy: containers group tasks (see kinds.ts). Legacy `epic`
+// Linear's hierarchy: containers group tasks (see kinds.ts). Legacy `milestone`
 // reads as `milestone`.
 export type TaskKind = 'task' | ContainerKind;
 export type Priority = 'urgent' | 'high' | 'medium' | 'low' | 'none';
@@ -18,7 +18,7 @@ export interface TaskMeta {
   status: string;
   kind: TaskKind;
   parent: string | null;
-  // A milestone/project name this task belongs to — the Linear-style grouping *above* epics,
+  // A milestone/project name this task belongs to — the Linear-style grouping *above* milestones,
   // free-form (ad-hoc names, not ids) so a project doesn't need any per-project setup. `null`
   // when the task isn't assigned to one.
   milestone: string | null;

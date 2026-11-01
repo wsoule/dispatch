@@ -18,6 +18,10 @@ export function describeAction(name: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase();
 }
 
+/** The 409 a team change gets while this machine lacks the team's e2e key. */
+export const CONTENT_KEY_MISSING =
+  'Not saved: this machine has not received the team’s encryption key yet. It has asked for it, and a teammate’s Dispatch sends it on their next sync. Try again after that.';
+
 /**
  * The daemon's message if there is one, since it is nearly always the useful part.
  *
@@ -30,6 +34,8 @@ export function describeAction(name: string): string {
 export function describeError(err: unknown): string {
   if (typeof err === 'string') return err;
   if (typeof err === 'object' && err !== null) {
+    if ((err as { code?: unknown }).code === 'content_key_missing')
+      return CONTENT_KEY_MISSING;
     const message = (err as { message?: unknown }).message;
     if (typeof message === 'string' && message !== '') return message;
   }

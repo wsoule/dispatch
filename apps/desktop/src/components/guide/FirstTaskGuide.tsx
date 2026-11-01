@@ -10,12 +10,12 @@ import {
 import { type ReactNode, useState } from 'react';
 
 import { useRunStep } from '../../hooks/useRunStep';
-import { formatUsd } from '../../lib/epicSession';
 import {
   GUIDE_STEPS,
   type GuideProvider,
   type GuideView,
 } from '../../lib/firstTaskGuide';
+import { formatUsd } from '../../lib/milestoneSession';
 import { FailureNotice } from '../failure/FailureNotice';
 import { useNarrowMain } from '../shell/DispatchShell';
 import { GlossaryTerm } from './GlossaryTerm';

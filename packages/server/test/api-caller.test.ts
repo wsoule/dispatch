@@ -124,17 +124,17 @@ describe('who a route-started run acts for', () => {
     expect(shared.variants.map((v) => v.run?.operator)).toEqual([null, null]);
   });
 
-  it('an epic started by a human records its operator and its auto-fill acts for them; the agentToken starts one for no one', async () => {
+  it('a milestone started by a human records its operator and its auto-fill acts for them; the agentToken starts one for no one', async () => {
     type Session = { operator?: string };
     const liveOperator = async (child: string) => {
       const runs = await json<RunMeta[]>(await fetch(`${base}/api/runs`));
       return runs.find((r) => r.taskId === child)?.operator;
     };
 
-    const shared = await createTask('shared epic', { kind: 'epic' });
+    const shared = await createTask('shared milestone', { kind: 'milestone' });
     const sharedChild = await createTask('child', { parent: shared });
     const bySharedToken = await post(
-      `/api/epics/${shared}/dispatch`,
+      `/api/milestones/${shared}/dispatch`,
       {},
       handle.tokens.agentToken
     );
@@ -142,9 +142,9 @@ describe('who a route-started run acts for', () => {
     expect((await json<Session>(bySharedToken)).operator).toBeUndefined();
     expect(await liveOperator(sharedChild)).toBeNull();
 
-    const mine = await createTask('my epic', { kind: 'epic' });
+    const mine = await createTask('my milestone', { kind: 'milestone' });
     const myChild = await createTask('child', { parent: mine });
-    const byApp = await post(`/api/epics/${mine}/dispatch`, {});
+    const byApp = await post(`/api/milestones/${mine}/dispatch`, {});
     expect(byApp.status).toBe(201);
     expect((await json<Session>(byApp)).operator).toBe('human:test');
     expect(await liveOperator(myChild)).toBe('human:test');

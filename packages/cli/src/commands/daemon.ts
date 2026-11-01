@@ -512,7 +512,7 @@ const BACKGROUND_DAEMON_IDLE_TIMEOUT_S = 30 * 60;
 
 // Shared "get me a healthy daemon for this project, starting one if none is
 // running" logic — every command that needs to talk to dispatchd (`dispatch
-// ui`, and every Phase 7 orchestrate/plan/epic command) goes through this
+// ui`, and every Phase 7 orchestrate/plan/milestone command) goes through this
 // exact same path: reuse an already-healthy daemon found via its daemon
 // file, or spawn a fresh detached one and poll until it answers
 // `/api/health`. Extracted from `dispatch ui`'s own action (which now just

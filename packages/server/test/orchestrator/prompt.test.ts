@@ -30,7 +30,7 @@ function fixtureOrientation(
   };
 }
 
-// A fixture task/epic pair with every field buildTaskPrompt reads set to a
+// A fixture task/milestone pair with every field buildTaskPrompt reads set to a
 // fixed, deterministic value, so a snapshot of its output is exact-text stable.
 function fixtureTask(): TaskDoc {
   return {
@@ -62,7 +62,7 @@ function fixtureTask(): TaskDoc {
   };
 }
 
-function fixtureEpic(): TaskDoc {
+function fixtureMilestone(): TaskDoc {
   return {
     meta: {
       id: 'e-def456',
@@ -90,20 +90,22 @@ function fixtureEpic(): TaskDoc {
 }
 
 describe('buildTaskPrompt', () => {
-  it('matches the exact prompt text for a fixture task with a parent epic', () => {
-    expect(buildTaskPrompt(fixtureTask(), fixtureEpic())).toMatchSnapshot();
+  it('matches the exact prompt text for a fixture task with a parent milestone', () => {
+    expect(
+      buildTaskPrompt(fixtureTask(), fixtureMilestone())
+    ).toMatchSnapshot();
   });
 
-  it('omits the epic section entirely for a parentless task', () => {
+  it('omits the milestone section entirely for a parentless task', () => {
     const task = fixtureTask();
     task.meta.parent = null;
     const prompt = buildTaskPrompt(task, null);
-    expect(prompt).not.toContain('Parent epic');
+    expect(prompt).not.toContain('Parent milestone');
     expect(prompt).toContain('Add login rate limiting');
   });
 
   it('always includes the collaboration note and commit instruction', () => {
-    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic());
+    const prompt = buildTaskPrompt(fixtureTask(), fixtureMilestone());
     expect(prompt).toContain('run_list');
     expect(prompt).toContain('task_comment');
     expect(prompt).toContain('msg_send');
@@ -113,7 +115,7 @@ describe('buildTaskPrompt', () => {
   it('names the messaging tools and the human to ask', () => {
     const prompt = buildTaskPrompt(
       fixtureTask(),
-      fixtureEpic(),
+      fixtureMilestone(),
       null,
       null,
       true,
@@ -129,7 +131,7 @@ describe('buildTaskPrompt', () => {
   it("sends scope requests to the owner when the run's human cannot grant them (XH-R9)", () => {
     const prompt = buildTaskPrompt(
       fixtureTask(),
-      fixtureEpic(),
+      fixtureMilestone(),
       null,
       null,
       true,
@@ -148,7 +150,7 @@ describe('buildTaskPrompt', () => {
   it("asks the run's human for scope too when they can grant it", () => {
     const prompt = buildTaskPrompt(
       fixtureTask(),
-      fixtureEpic(),
+      fixtureMilestone(),
       null,
       null,
       true,
@@ -163,7 +165,7 @@ describe('buildTaskPrompt', () => {
   });
 
   it('tells implementers to record evidence and mutation-test guards', () => {
-    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic());
+    const prompt = buildTaskPrompt(fixtureTask(), fixtureMilestone());
     expect(prompt).toContain('record_evidence');
     expect(prompt).toContain('record_mutation');
     expect(prompt).toContain('instead of describing test results in prose');
@@ -191,35 +193,35 @@ describe('buildTaskPrompt', () => {
   });
 
   it('renders no memory section when there is none', () => {
-    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), null);
+    const prompt = buildTaskPrompt(fixtureTask(), fixtureMilestone(), null);
     expect(prompt).not.toContain('## Memory');
     expect(prompt).not.toContain('Findings and decisions');
   });
 
-  it('renders the memory section after the parent epic and before orientation', () => {
+  it('renders the memory section after the parent milestone and before orientation', () => {
     const section = '## Memory\n- hazard: x (#AAAAAAAA)';
     const prompt = buildTaskPrompt(
       fixtureTask(),
-      fixtureEpic(),
+      fixtureMilestone(),
       section,
       fixtureOrientation()
     );
-    const epicIdx = prompt.indexOf('## Parent epic');
+    const milestoneIdx = prompt.indexOf('## Parent milestone');
     const memoryIdx = prompt.indexOf(section);
-    expect(epicIdx).toBeGreaterThan(-1);
-    expect(memoryIdx).toBeGreaterThan(epicIdx);
+    expect(milestoneIdx).toBeGreaterThan(-1);
+    expect(memoryIdx).toBeGreaterThan(milestoneIdx);
     expect(prompt.indexOf('## Repo orientation')).toBeGreaterThan(memoryIdx);
   });
 
   it('renders no orientation section when none was collected', () => {
-    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), null);
+    const prompt = buildTaskPrompt(fixtureTask(), fixtureMilestone(), null);
     expect(prompt).not.toContain('## Repo orientation');
   });
 
   it('renders the collected orientation facts', () => {
     const prompt = buildTaskPrompt(
       fixtureTask(),
-      fixtureEpic(),
+      fixtureMilestone(),
       null,
       fixtureOrientation()
     );
@@ -234,7 +236,7 @@ describe('buildTaskPrompt', () => {
   it('names no dispatch MCP tools for an executor that has none', () => {
     const prompt = buildTaskPrompt(
       fixtureTask(),
-      fixtureEpic(),
+      fixtureMilestone(),
       null,
       fixtureOrientation(),
       false
@@ -257,7 +259,7 @@ describe('buildTaskPrompt', () => {
   it('keeps the generic skills line when orientation found no skills to index', () => {
     const prompt = buildTaskPrompt(
       fixtureTask(),
-      fixtureEpic(),
+      fixtureMilestone(),
       null,
       fixtureOrientation({ skills: [] })
     );
@@ -269,12 +271,12 @@ describe('buildTaskPrompt', () => {
   // The whole point of collecting orientation is to stop instructing agents to
   // go and re-derive what it already contains.
   it('drops the go-enumerate-the-skills instruction when orientation supplies the index', () => {
-    const without = buildTaskPrompt(fixtureTask(), fixtureEpic(), null);
+    const without = buildTaskPrompt(fixtureTask(), fixtureMilestone(), null);
     expect(without).toContain('.agents/skills or');
 
     const withOrientation = buildTaskPrompt(
       fixtureTask(),
-      fixtureEpic(),
+      fixtureMilestone(),
       null,
       fixtureOrientation()
     );
@@ -285,12 +287,12 @@ describe('buildTaskPrompt', () => {
   });
 
   it('drops the opening run_list instruction when concurrency is already reported', () => {
-    const without = buildTaskPrompt(fixtureTask(), fixtureEpic(), null);
+    const without = buildTaskPrompt(fixtureTask(), fixtureMilestone(), null);
     expect(without).toContain('before assuming you have exclusive access');
 
     const withOrientation = buildTaskPrompt(
       fixtureTask(),
-      fixtureEpic(),
+      fixtureMilestone(),
       null,
       fixtureOrientation()
     );
@@ -315,14 +317,19 @@ describe('buildTaskPrompt', () => {
       digest: null,
       concurrentRuns: [],
     };
-    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), null, empty);
+    const prompt = buildTaskPrompt(
+      fixtureTask(),
+      fixtureMilestone(),
+      null,
+      empty
+    );
     expect(prompt).not.toContain('## Repo orientation');
     expect(prompt).toContain('.agents/skills or');
     expect(prompt).toContain('before assuming you have exclusive access');
   });
 
   it('renders no Amendments section for a task without one', () => {
-    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic());
+    const prompt = buildTaskPrompt(fixtureTask(), fixtureMilestone());
     expect(prompt).not.toContain('## Amendments');
   });
 
@@ -420,7 +427,7 @@ describe('the comment thread in a dispatch prompt', () => {
 });
 
 // XH-R5: an A2A-origin task's amendments and comments may carry a client's
-// words, so they are fenced; and its run sees no epic context.
+// words, so they are fenced; and its run sees no milestone context.
 describe('an A2A-origin task', () => {
   const task = (): TaskDoc => {
     const t = fixtureTask();
@@ -438,10 +445,10 @@ describe('an A2A-origin task', () => {
     } as TaskComment,
   ];
 
-  it('fences amendments and comments, and leaves the epic out', () => {
+  it('fences amendments and comments, and leaves the milestone out', () => {
     const prompt = buildTaskPrompt(
       task(),
-      fixtureEpic(),
+      fixtureMilestone(),
       null,
       null,
       true,
@@ -450,7 +457,7 @@ describe('an A2A-origin task', () => {
       comments,
       true
     );
-    expect(prompt).not.toContain('Parent epic');
+    expect(prompt).not.toContain('Parent milestone');
     expect(prompt).not.toContain('Harden auth');
     const fence = /~{8,} ([^\n]*) ~{8,}\n[\s\S]*?\n~{8,} \1 ~{8,}/g;
     const outside = prompt.replace(fence, '');
@@ -481,8 +488,14 @@ describe('an A2A-origin task', () => {
     expect(prompt).toContain('# Task t-abc123');
   });
 
-  it('keeps the epic for an ordinary task', () => {
-    const prompt = buildTaskPrompt(task(), fixtureEpic(), null, null, true);
-    expect(prompt).toContain('Parent epic');
+  it('keeps the milestone for an ordinary task', () => {
+    const prompt = buildTaskPrompt(
+      task(),
+      fixtureMilestone(),
+      null,
+      null,
+      true
+    );
+    expect(prompt).toContain('Parent milestone');
   });
 });

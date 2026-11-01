@@ -136,7 +136,7 @@ describe('Activity attribution', () => {
     expect(store.get(task.meta.id)!.body).toContain('[hook error] boom — none');
   });
 
-  it("(c again) epic auto-fill dispatches with an explicit 'none' actor override", async () => {
+  it("(c again) milestone auto-fill dispatches with an explicit 'none' actor override", async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     orchestrator.registerExecutor(
       'fake',
@@ -144,7 +144,7 @@ describe('Activity attribution', () => {
     );
     const task = store.create({ title: 'Auto-filled' });
 
-    // Mirrors EpicEngine.enqueueFill's own call exactly — the epic scheduler
+    // Mirrors MilestoneEngine.enqueueFill's own call exactly — the milestone scheduler
     // decided this, no human pressed dispatch for this specific task.
     const meta = await orchestrator.dispatch(task.meta.id, 'fake', {
       actor: 'none',

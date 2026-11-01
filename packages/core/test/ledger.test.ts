@@ -12,7 +12,7 @@ describe('generateLedgerId', () => {
 describe('LedgerEntry shape', () => {
   const base: LedgerEntry = {
     id: generateLedgerId('2026-07-13T00:00:00Z', 'n1'),
-    epicId: 'e-abc123',
+    milestoneId: 'e-abc123',
     sourceTaskId: 't-def456',
     kind: 'constraint',
     title: 'Auth tokens are opaque',
@@ -32,7 +32,7 @@ describe('LedgerEntry shape', () => {
   it('round-trips a project-wide entry with its nulls, not as absent keys', () => {
     const projectWide: LedgerEntry = {
       ...base,
-      epicId: null,
+      milestoneId: null,
       sourceTaskId: null,
       appliesTo: [],
     };

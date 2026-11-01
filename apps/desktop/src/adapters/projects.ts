@@ -1,4 +1,4 @@
-import type { EpicProgress } from '@dispatch/client';
+import type { MilestoneProgress } from '@dispatch/client';
 import type {
   ProjectAllocationPlan,
   ProjectStatusType,
@@ -172,20 +172,20 @@ export interface ProjectsPageModel {
 }
 
 /** What the register reads about the agents under a container: the runs
- * live right now (`EpicProgress.liveRuns`), by container id. */
+ * live right now (`MilestoneProgress.liveRuns`), by container id. */
 export type LiveRunsByContainer = ReadonlyMap<
   string,
-  Pick<EpicProgress, 'liveRuns'>
+  Pick<MilestoneProgress, 'liveRuns'>
 >;
 
 export interface ProjectsPageInput {
   timeline: TimelineView;
   /** The planning snapshot's projects, for each one's status name. */
   projects: ReadonlyMap<string, { statusName: string }>;
-  /** Fan-out progress per container (`DispatchProjectData.epicProgressById`):
+  /** Fan-out progress per container (`DispatchProjectData.milestoneProgressById`):
    * the runs live under a project or one of its milestones are the agents
    * working on it. */
-  epicProgressById: LiveRunsByContainer;
+  milestoneProgressById: LiveRunsByContainer;
 }
 
 /**
@@ -196,11 +196,11 @@ export interface ProjectsPageInput {
  */
 export function agentsWorking(
   lane: Pick<TimelineLane, 'projectId' | 'bars' | 'undated'>,
-  epicProgressById: LiveRunsByContainer
+  milestoneProgressById: LiveRunsByContainer
 ): number {
   const runIds = new Set<string>();
   const collect = (containerId: string) => {
-    const progress = epicProgressById.get(containerId);
+    const progress = milestoneProgressById.get(containerId);
     if (progress === undefined) return;
     for (const run of progress.liveRuns) runIds.add(run.id);
   };
@@ -289,7 +289,7 @@ function toRow(
 ): ProjectRowModel {
   const next = nextMilestone(lane, input.timeline.today);
   const allocation = allocationCell(
-    agentsWorking(lane, input.epicProgressById),
+    agentsWorking(lane, input.milestoneProgressById),
     lane.allocation
   );
   const blocked = lane.allocation?.outcome === 'blocked';

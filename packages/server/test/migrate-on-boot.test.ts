@@ -54,10 +54,10 @@ afterEach(async () => {
 // JSONL sidecars, and no storage marker.
 function seedLegacyProject(): void {
   const store = TaskStore.init(root);
-  const epic = store.create({ title: 'Storage spine', kind: 'epic' });
+  const milestone = store.create({ title: 'Storage spine', kind: 'milestone' });
   const task = store.create({
     title: 'Import the board',
-    blockedBy: [epic.meta.id],
+    blockedBy: [milestone.meta.id],
   });
   writeFileSync(
     join(root, DISPATCH_DIR, 'findings.jsonl'),
@@ -82,7 +82,7 @@ function seedLegacyProject(): void {
     join(root, DISPATCH_DIR, 'ledger.jsonl'),
     `${JSON.stringify({
       id: 'l-aaa111',
-      epicId: epic.meta.id,
+      milestoneId: milestone.meta.id,
       sourceTaskId: null,
       kind: 'decision',
       title: 'Use SQLite',

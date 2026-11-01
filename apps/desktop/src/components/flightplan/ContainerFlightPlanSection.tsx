@@ -18,7 +18,7 @@ export interface FlightPlanHost {
   onPeekTask: (taskId: string) => void;
   /** A pending "open Send agents on this container" ask, from Plans' "Create &
    * send agents…" in Two views. */
-  sendAgents?: { epicId: string; nonce: number } | null;
+  sendAgents?: { milestoneId: string; nonce: number } | null;
   onSendAgentsServed?: (nonce: number) => void;
 }
 
@@ -60,7 +60,7 @@ export function ContainerFlightPlanSection({
       onOpenTask={host.onOpenTask}
       onPeekTask={host.onPeekTask}
       sendAgentsRequest={
-        host.sendAgents?.epicId === containerId ? host.sendAgents : null
+        host.sendAgents?.milestoneId === containerId ? host.sendAgents : null
       }
       onSendAgentsServed={host.onSendAgentsServed}
       openIn={openIn}

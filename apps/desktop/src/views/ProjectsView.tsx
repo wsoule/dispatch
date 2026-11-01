@@ -112,9 +112,9 @@ function ProjectsLoaded({
       buildProjectsPage({
         timeline: planning.timeline,
         projects: planning.snapshot.projects,
-        epicProgressById: data.epicProgressById,
+        milestoneProgressById: data.milestoneProgressById,
       }),
-    [planning, data.epicProgressById]
+    [planning, data.milestoneProgressById]
   );
   const shown = useMemo(
     () => filterProjectGroups(page.groups, query, filter),

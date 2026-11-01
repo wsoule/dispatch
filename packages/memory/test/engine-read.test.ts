@@ -47,7 +47,7 @@ function setup(fts: 'auto' | 'off' = 'auto') {
     title: 'Bump pnpm',
     body: 'pnpm allowBuilds migration',
     writes: ['pnpm-workspace.yaml'],
-    epic: 'e-000001',
+    milestone: 'e-000001',
     risk: 'routine',
     a2a: false,
   });
@@ -93,22 +93,25 @@ describe('MemoryEngine reads', () => {
     expect(listed({ origin: 'amendment' })).toEqual([]);
   });
 
-  // The task page's Memory section lists what reaches the task; an epic's
+  // The task page's Memory section lists what reaches the task; a milestone's
   // page lists what its tasks' runs narrowed to it.
-  it('lists by taskId only the entries that reach that task or epic', () => {
+  it('lists by taskId only the entries that reach that task or milestone', () => {
     const t = setup();
     t.host.tasks.set('e-000001', {
       taskId: 'e-000001',
       title: 'pnpm 11',
       body: '',
       writes: [],
-      epic: null,
+      milestone: null,
       risk: 'routine',
       a2a: false,
     });
     const wide = put(t.shared, { title: 'everywhere' });
-    const mine = put(t.shared, { title: 'this epic', epic: 'e-000001' });
-    put(t.shared, { title: 'other epic', epic: 'e-000009' });
+    const mine = put(t.shared, {
+      title: 'this milestone',
+      milestone: 'e-000001',
+    });
+    put(t.shared, { title: 'other milestone', milestone: 'e-000009' });
     put(t.shared, { title: 'other task', appliesTo: ['t-ffffff'] });
     const titles = (taskId: string) =>
       t.engine

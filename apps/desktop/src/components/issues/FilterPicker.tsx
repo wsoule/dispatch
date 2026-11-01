@@ -15,7 +15,6 @@ import {
   ChevronLeft,
   CircleDot,
   ListFilter,
-  Milestone,
   SignalHigh,
   Sparkles,
   Tag,
@@ -63,7 +62,6 @@ const FACET_ICON: Record<FilterFacet, ReactNode> = {
   priority: icon(SignalHigh),
   assignee: icon(User),
   labels: icon(Tag),
-  epic: icon(Milestone),
   milestone: icon(Target),
   run: icon(Activity),
   created: icon(Calendar),
@@ -149,7 +147,7 @@ export interface FilterPickerProps {
  * Linear's Filter menu (§7) off the toolbar's funnel (or `f`), as a two-step PickerPopover.
  * Step one (an `Add filter` search box over the `Filter facets` list, with the F keycap)
  * lists `AI filter` (with `onAiFilter`) and the facets (Status, Priority, Assignee, Labels,
- * Epic, Milestone, Run state, Created, Updated) with their chosen counts; typing searches
+ * Milestone, Run state, Created, Updated) with their chosen counts; typing searches
  * the facets and every facet's values together, and Enter on a single facet match opens it.
  * Step two lists `Back to filters` and the facet's values under the facet's name: enums and
  * labels toggle and stay open, a date facet keeps one quick pick (picking it again refreshes

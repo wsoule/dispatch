@@ -29,6 +29,10 @@ describe('askGroup', () => {
     [{ kind: 'doc' }, 'knowledge'],
     [{ kind: 'memory' }, 'knowledge'],
     [{ kind: 'question' }, 'people'],
+    [{ kind: 'question', from: 'human:sam' }, 'people'],
+    // DIS-129: an outside A2A agent's question sits with its proposals.
+    [{ kind: 'question', from: 'agent:sam/a2a.ci-bot' }, 'outside'],
+    [{ kind: 'question', from: 'a2a:acme' }, 'outside'],
     [{ kind: 'approval', reason: 'task-proposal' }, 'outside'],
     [
       { kind: 'approval', reason: 'overseer-action', conversation: 'c-1' },
@@ -271,5 +275,68 @@ describe('mailbox asks', () => {
       { mailbox: [mail('g-1')] }
     );
     expect(result.count).toBe(1);
+  });
+});
+
+// DIS-129 and DIS-123: everything an outside A2A agent asks lands in one
+// group, and a handoff proposal reaches Needs you until it is decided.
+describe('outside A2A asks', () => {
+  const CLIENT = 'agent:wyat/a2a.ci-bot';
+
+  test("a client's question and its handoff proposal share the Outside group", () => {
+    const result = needsYou(
+      [
+        item({
+          id: 'approval:p-1',
+          kind: 'approval',
+          reason: 'task-proposal',
+          messageId: 'p-1',
+          owner: ME,
+        }),
+        item({
+          id: 'question:q-1',
+          kind: 'question',
+          messageId: 'q-1',
+          from: CLIENT,
+          owner: ME,
+        }),
+      ],
+      ME
+    );
+    expect(
+      result.groups.map((g) => [g.group, g.items.map((i) => i.messageId)])
+    ).toEqual([['outside', ['p-1', 'q-1']]]);
+  });
+
+  test('a mailbox question from a client carries its sender, so it groups as Outside', () => {
+    const result = needsYou([], ME, {
+      mailbox: [
+        {
+          delivery: { state: 'delivered' },
+          message: {
+            id: 'q-2',
+            kind: 'question',
+            from: CLIENT,
+            to: [ME],
+            body: 'Ship tonight?',
+            blocking: true,
+            createdAt: '2026-10-06T09:00:00.000Z',
+          },
+        } as unknown as MailboxAsk,
+      ],
+    });
+    expect(result.asks[0]?.from).toBe(CLIENT);
+    expect(result.groups.map((g) => g.group)).toEqual(['outside']);
+  });
+
+  test('a handoff proposal leaves Needs you once it is approved or declined', () => {
+    const proposal = item({
+      id: 'approval:p-1',
+      kind: 'approval',
+      reason: 'task-proposal',
+      messageId: 'p-1',
+    });
+    expect(needsYou([proposal], ME).count).toBe(1);
+    expect(needsYou([{ ...proposal, state: 'resolved' }], ME).count).toBe(0);
   });
 });

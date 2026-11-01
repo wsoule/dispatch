@@ -1,5 +1,5 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
-import { canonicalKind, isContainerKind } from '@dispatch-foo/core/browser';
+import { isContainerKind } from '@dispatch-foo/core/browser';
 
 // Which tasks a container's Flight Plan draws, and in which bands. A milestone or parent
 // issue plans its direct children — the ones its fan-out session dispatches. A project or
@@ -96,7 +96,7 @@ export function flightScope(
 ): FlightScope {
   const id = container.meta.id;
   const direct = children.get(id) ?? [];
-  const kind = canonicalKind(container.meta.kind);
+  const kind = container.meta.kind;
   const broad = kind === 'project' || kind === 'initiative';
   const bandContainers = broad
     ? direct.filter((c) => isContainerKind(c.meta.kind))

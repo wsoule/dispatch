@@ -613,3 +613,44 @@ test('offers no blind approve on a memory gate when the proposal cannot be read'
   ).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'approve' })).toBeNull();
 });
+
+// DIS-128: in the middle conversation a free-text question from an outside
+// agent offers an answer next to Decline, and the answer replies to it.
+test('answers an open free-text question inline, beside Decline, where the surface asks for it', async () => {
+  cleanup();
+  const q = msg('m-ask', {
+    from: 'agent:wyat/a2a.ci-bot',
+    kind: 'question',
+    blocking: true,
+    body: 'Can the refund change hit staging tonight?',
+  });
+  const onAnswer = renderRow(q, {
+    inlineAnswer: true,
+    client: clientWith({}),
+  });
+  expect(screen.getByRole('button', { name: 'Decline' })).toBeDefined();
+  fireEvent.click(screen.getByRole('button', { name: 'Answer…' }));
+  fireEvent.change(screen.getByPlaceholderText('Type your answer'), {
+    target: { value: 'Yes, tonight' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Send answer' }));
+  await waitFor(() =>
+    expect(onAnswer).toHaveBeenCalledWith(q, { body: 'Yes, tonight' })
+  );
+});
+
+test('offers no inline answer box on surfaces with a reply box of their own, or on a question with choices', () => {
+  cleanup();
+  renderRow(msg('m-ask', { kind: 'question', blocking: true }));
+  expect(screen.queryByRole('button', { name: 'Answer…' })).toBeNull();
+  cleanup();
+  renderRow(
+    msg('m-choose', {
+      kind: 'question',
+      blocking: true,
+      choices: ['yes', 'no'],
+    }),
+    { inlineAnswer: true }
+  );
+  expect(screen.queryByRole('button', { name: 'Answer…' })).toBeNull();
+});

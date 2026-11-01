@@ -150,12 +150,12 @@ describe('DisplayPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Grouping: Status' }));
     const status = screen.getByRole('option', { name: 'Status' });
     expect(status.getAttribute('aria-selected')).toBe('true');
-    for (const name of ['Epic', 'Milestone', 'Assignee', 'No grouping']) {
+    for (const name of ['Parent', 'Milestone', 'Assignee', 'No grouping']) {
       expect(
         screen.getByRole('option', { name }).getAttribute('aria-disabled')
       ).toBe('true');
     }
-    fireEvent.click(screen.getByRole('option', { name: 'Epic' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Parent' }));
     expect(writes).toEqual([]);
   });
 
@@ -209,11 +209,17 @@ describe('DisplayPanel', () => {
     const slot = document.querySelector('[data-slot="display-properties"]');
     expect(slot).not.toBeNull();
     const props = within(slot as HTMLElement);
-    const milestone = props.getByRole('button', { name: 'Milestone' });
-    expect(milestone.getAttribute('aria-pressed')).toBe('false');
-    fireEvent.click(milestone);
-    expect(last()?.properties.has('milestone')).toBe(true);
-    expect(milestone.getAttribute('aria-pressed')).toBe('true');
+    // The parent chip (Milestone) is on by default; Links is off.
+    expect(
+      props
+        .getByRole('button', { name: 'Milestone' })
+        .getAttribute('aria-pressed')
+    ).toBe('true');
+    const links = props.getByRole('button', { name: 'Links' });
+    expect(links.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(links);
+    expect(last()?.properties.has('links')).toBe(true);
+    expect(links.getAttribute('aria-pressed')).toBe('true');
     const id = props.getByRole('button', { name: 'ID' });
     expect(id.getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(id);
@@ -225,10 +231,12 @@ describe('DisplayPanel', () => {
     const { open } = mount();
     const panel = open();
     fireEvent.click(screen.getByRole('button', { name: 'Grouping: Status' }));
-    await pickOption('Epic');
+    await pickOption('Parent');
     expect(screen.queryByRole('dialog', { name: 'Grouping' })).toBeNull();
     expect(panel.isConnected).toBe(true);
-    expect(screen.getByRole('button', { name: 'Grouping: Epic' })).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'Grouping: Parent' })
+    ).toBeTruthy();
   });
 
   test("the inner picker's Escape closes only the picker", () => {

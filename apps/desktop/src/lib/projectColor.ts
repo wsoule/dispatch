@@ -1,7 +1,7 @@
 const PROJECT_COLOR_COUNT = 8;
 
 /** Maps any stable id onto one of the `--project-color-1..8` tokens in tokens.css. Shared by
- * the project and epic helpers below so the two can never drift into different hash functions
+ * the project and milestone helpers below so the two can never drift into different hash functions
  * and start disagreeing about which color a given id owns. */
 function colorForId(id: string): string {
   let hash = 0;
@@ -22,11 +22,11 @@ export function colorForProject(projectId: string): string {
 }
 
 /**
- * The same treatment for an epic, giving each swim lane and epic breadcrumb its own stable
- * color. These are categorical (which epic is this) rather than semantic (what does this need
+ * The same treatment for a milestone, giving each swim lane and milestone breadcrumb its own stable
+ * color. These are categorical (which milestone is this) rather than semantic (what does this need
  * from me), so they deliberately draw from the project palette instead of the `--state-*`
- * roles — an epic's color must never be mistaken for a run state.
+ * roles — a milestone's color must never be mistaken for a run state.
  */
-export function colorForEpic(epicId: string): string {
-  return colorForId(epicId);
+export function colorForMilestone(milestoneId: string): string {
+  return colorForId(milestoneId);
 }

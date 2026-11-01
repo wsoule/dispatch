@@ -45,6 +45,8 @@ export interface TaskPageModel {
   children: readonly TaskListItem[];
   tasksById: ReadonlyMap<string, TaskListItem>;
   unmetBlockers: string[];
+  /** Whether a task's latest run has ended: review where review shares dispatched's status. */
+  finishedRun: (id: string) => boolean;
   /** Whether it can go now and what to check first; the card, the menu and `d` share it. */
   readiness: DispatchReadiness;
   /** The project's statuses, from its config in the render that carries it. */

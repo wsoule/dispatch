@@ -292,9 +292,9 @@ describe('joinChannel', () => {
   it('POSTs /api/channels/:name/members with an encoded channel name and no member when omitted', async () => {
     const stub = stubFetch();
     try {
-      await createApiClient(BASE).joinChannel('epic/e-abc123');
+      await createApiClient(BASE).joinChannel('milestone/e-abc123');
       expect(stub.calls[0].url).toBe(
-        `${BASE}/api/channels/epic%2Fe-abc123/members`
+        `${BASE}/api/channels/milestone%2Fe-abc123/members`
       );
       expect(stub.calls[0].init?.method).toBe('POST');
       expect(sentJson(stub.calls[0])).toEqual({});
@@ -306,7 +306,10 @@ describe('joinChannel', () => {
   it('includes member in the body when given', async () => {
     const stub = stubFetch();
     try {
-      await createApiClient(BASE).joinChannel('epic/e-abc123', 'agent:wyat/x');
+      await createApiClient(BASE).joinChannel(
+        'milestone/e-abc123',
+        'agent:wyat/x'
+      );
       expect(sentJson(stub.calls[0])).toEqual({ member: 'agent:wyat/x' });
     } finally {
       stub.restore();
@@ -318,9 +321,12 @@ describe('leaveChannel', () => {
   it('DELETEs /api/channels/:name/members/:addr with both segments encoded', async () => {
     const stub = stubFetch();
     try {
-      await createApiClient(BASE).leaveChannel('epic/e-abc123', 'agent:wyat/x');
+      await createApiClient(BASE).leaveChannel(
+        'milestone/e-abc123',
+        'agent:wyat/x'
+      );
       expect(stub.calls[0].url).toBe(
-        `${BASE}/api/channels/epic%2Fe-abc123/members/agent%3Awyat%2Fx`
+        `${BASE}/api/channels/milestone%2Fe-abc123/members/agent%3Awyat%2Fx`
       );
       expect(stub.calls[0].init?.method).toBe('DELETE');
     } finally {
@@ -331,9 +337,9 @@ describe('leaveChannel', () => {
   it('DELETEs /api/channels/:name/members with no address when member is omitted', async () => {
     const stub = stubFetch();
     try {
-      await createApiClient(BASE).leaveChannel('epic/e-abc123');
+      await createApiClient(BASE).leaveChannel('milestone/e-abc123');
       expect(stub.calls[0].url).toBe(
-        `${BASE}/api/channels/epic%2Fe-abc123/members`
+        `${BASE}/api/channels/milestone%2Fe-abc123/members`
       );
       expect(stub.calls[0].init?.method).toBe('DELETE');
     } finally {

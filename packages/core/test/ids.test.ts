@@ -14,12 +14,12 @@ import {
 import { slugify } from '../src/slug.js';
 
 describe('generateTaskId', () => {
-  it('prefixes tasks with t- and epics with e-, 6 hex chars', () => {
+  it('prefixes tasks with t- and milestones with e-, 6 hex chars', () => {
     expect(
       generateTaskId('task', 'Fix login', '2026-07-13T00:00:00Z', 'n1')
     ).toMatch(/^t-[0-9a-f]{6}$/);
     expect(
-      generateTaskId('epic', 'Auth', '2026-07-13T00:00:00Z', 'n1')
+      generateTaskId('milestone', 'Auth', '2026-07-13T00:00:00Z', 'n1')
     ).toMatch(/^e-[0-9a-f]{6}$/);
   });
   it('is deterministic for identical inputs, differs across nonces', () => {
@@ -124,7 +124,7 @@ describe('synced task ids', () => {
     expect(id).toMatch(/^t-[0-9a-f]{8}$/);
     expect(isTaskId(id)).toBe(true);
     expect(
-      generateSyncedTaskId('epic', 'Auth', '2026-09-23T00:00:00Z')
+      generateSyncedTaskId('milestone', 'Auth', '2026-09-23T00:00:00Z')
     ).toMatch(/^e-[0-9a-f]{8}$/);
   });
 

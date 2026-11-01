@@ -224,7 +224,7 @@ function adaptDriver(
 }
 
 // The single database a daemon-owned project keeps its orchestration state
-// in: tasks (epics are tasks with `kind = 'epic'`), review findings, ledger
+// in: tasks (milestones are tasks with `kind = 'milestone'`), review findings, ledger
 // entries (decisions are ledger rows with `kind = 'decision'`), and the
 // command/mutation evidence a run records. Everything the markdown task files
 // and the `.dispatch/*.jsonl` sidecars hold today, in one place a writer can
@@ -238,7 +238,7 @@ function adaptDriver(
  * be migrated through. Stored in SQLite's own `user_version` pragma, so the
  * schema carries its version without a table of its own.
  */
-export const DISPATCH_DB_VERSION = 4;
+export const DISPATCH_DB_VERSION = 5;
 
 /**
  * Where a project's database lives by default.
@@ -344,7 +344,7 @@ CREATE INDEX IF NOT EXISTS findings_verdict_idx ON findings (verdict);
 
 CREATE TABLE IF NOT EXISTS ledger_entries (
   id             TEXT PRIMARY KEY,
-  epic_id        TEXT,
+  milestone_id   TEXT,
   source_task_id TEXT,
   kind           TEXT NOT NULL,
   title          TEXT NOT NULL,
@@ -353,7 +353,7 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
   created_at     TEXT NOT NULL,
   authored_by    TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS ledger_epic_idx ON ledger_entries (epic_id);
+CREATE INDEX IF NOT EXISTS ledger_milestone_idx ON ledger_entries (milestone_id);
 
 -- Task comments (comments.ts). A new table needs no version bump: the DDL
 -- creates it on any database that lacks it.
@@ -465,9 +465,26 @@ export function openDispatchDb(dbPath: string): SqliteDatabase {
   if (existing >= 1 && existing < 4) {
     db.exec('ALTER TABLE tasks ADD COLUMN sort_order REAL');
   }
+  // v5: epics became milestones, in the ledger's scope column and in any
+  // task row still carrying the pre-hierarchy kind.
+  if (existing >= 1 && existing < 5) migrateEpicsToMilestones(db);
   db.exec(DDL);
   db.exec(`PRAGMA user_version = ${DISPATCH_DB_VERSION}`);
   return db;
+}
+
+// The v5 step. The ledger table may predate a file that never wrote one, so
+// its column is renamed only where it exists.
+function migrateEpicsToMilestones(db: SqliteDatabase): void {
+  const ledgerColumns = queryAll<{ name: string }>(
+    db,
+    'PRAGMA table_info(ledger_entries)'
+  ).map((c) => c.name);
+  if (ledgerColumns.includes('epic_id')) {
+    db.exec('DROP INDEX IF EXISTS ledger_epic_idx');
+    db.exec('ALTER TABLE ledger_entries RENAME COLUMN epic_id TO milestone_id');
+  }
+  db.exec("UPDATE tasks SET kind = 'milestone' WHERE kind = 'epic'");
 }
 
 // A driver types every result row as an opaque `unknown`, which never
@@ -506,7 +523,7 @@ export function dbVersion(db: SqliteDatabase): number {
  * Damaged rows are surfaced, never coerced. A `blocked_by` that read as `[]`
  * would silently un-block a task; a `writes` that read as `[]` would erase a
  * task's declared write scope; an `applies_to` that read as `[]` would
- * broadcast a ledger entry aimed at one task to every task under its epic.
+ * broadcast a ledger entry aimed at one task to every task under its milestone.
  * The file backend throws a TaskParseError in exactly these situations, and
  * listSafe() is the seam that turns one bad record into a skip rather than a
  * failed scan.

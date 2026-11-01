@@ -3,7 +3,7 @@ import {
   DEFAULT_STATUS_MODEL,
   DEFAULT_STATUS_ROLES,
 } from '@dispatch-foo/core/browser';
-import type { EpicProgress, RunMeta } from '@dispatch/client';
+import type { MilestoneProgress, RunMeta } from '@dispatch/client';
 import {
   assessWorkspace,
   buildDependencyGraph,
@@ -478,17 +478,17 @@ describe('buildWorkspaceData: the hierarchy', () => {
 });
 
 describe('buildWorkspaceData: project status', () => {
-  function projectWith(status: string, session?: EpicProgress['session']) {
-    const progress = new Map<string, Pick<EpicProgress, 'session'>>();
+  function projectWith(status: string, session?: MilestoneProgress['session']) {
+    const progress = new Map<string, Pick<MilestoneProgress, 'session'>>();
     if (session !== undefined) progress.set('p', { session });
     return build([taskDoc({ id: 'p', title: 'P', kind: 'project', status })], {
-      epicProgressById: progress,
+      milestoneProgressById: progress,
     }).projects[0].statusType;
   }
 
   const paused = {
     state: 'paused',
-  } as unknown as NonNullable<EpicProgress['session']>;
+  } as unknown as NonNullable<MilestoneProgress['session']>;
 
   test('maps the status type onto the planning project statuses', () => {
     expect(projectWith('draft')).toBe('backlog');
@@ -506,7 +506,7 @@ describe('buildWorkspaceData: project status', () => {
     expect(projectWith('dropped', paused)).toBe('canceled');
     const active = {
       state: 'active',
-    } as unknown as NonNullable<EpicProgress['session']>;
+    } as unknown as NonNullable<MilestoneProgress['session']>;
     expect(projectWith('working', active)).toBe('started');
     expect(projectWith('working', null)).toBe('started');
   });

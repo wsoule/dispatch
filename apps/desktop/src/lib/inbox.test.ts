@@ -3,10 +3,12 @@ import { describe, expect, test } from 'bun:test';
 import type { InboxEntry, InboxEntryDraft, InboxState } from './inbox';
 import {
   addEntries,
+  clearEntries,
   loadInbox,
   markAllRead,
   markRead,
   projectViewForInboxTarget,
+  removeEntry,
   saveInbox,
   unreadCount,
 } from './inbox';
@@ -225,6 +227,30 @@ describe('markRead', () => {
     };
     expect(markRead(state, 'a')).toBe(state);
     expect(markRead(state, 'zzz')).toBe(state);
+  });
+});
+
+describe('removeEntry / clearEntries', () => {
+  const entry = (id: string): InboxEntry => ({
+    id,
+    ts: 't',
+    title: id,
+    body: '',
+    target: { kind: 'queue' },
+    read: true,
+  });
+
+  test('removeEntry drops only the named entry', () => {
+    const state: InboxState = { entries: [entry('a'), entry('b')] };
+    expect(removeEntry(state, 'a').entries.map((e) => e.id)).toEqual(['b']);
+    expect(removeEntry(state, 'zzz')).toBe(state);
+  });
+
+  test('clearEntries empties the inbox', () => {
+    const state: InboxState = { entries: [entry('a'), entry('b')] };
+    expect(clearEntries(state).entries).toEqual([]);
+    const empty: InboxState = { entries: [] };
+    expect(clearEntries(empty)).toBe(empty);
   });
 });
 

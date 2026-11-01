@@ -1,4 +1,4 @@
-import type { EpicProgress, RunMeta } from '@dispatch/client';
+import type { MilestoneProgress, RunMeta } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
 import { liveCeilingsLabel, liveCeilingsOf, spendToday } from './liveSpend';
@@ -16,16 +16,16 @@ function run(id: string, overrides: Partial<RunMeta> = {}): RunMeta {
 
 // A live fan-out with its settled spend and, when given, a spend ceiling.
 function progress(
-  epicId: string,
+  milestoneId: string,
   state: 'active' | 'paused',
   maxSpendUsd: number | null,
   settledUsd: number
-): EpicProgress {
+): MilestoneProgress {
   return {
-    epicId,
-    session: { epicId, state, maxSpendUsd },
+    milestoneId,
+    session: { milestoneId, state, maxSpendUsd },
     spend: { settledUsd },
-  } as EpicProgress;
+  } as MilestoneProgress;
 }
 
 describe('spendToday', () => {

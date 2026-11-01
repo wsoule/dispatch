@@ -20,7 +20,7 @@ function seedLines(dir: string, records: Record<string, unknown>[]): void {
 }
 
 describe('LedgerStore', () => {
-  test('add() writes one JSONL line and defaults epicId/appliesTo', () => {
+  test('add() writes one JSONL line and defaults milestoneId/appliesTo', () => {
     const store = new LedgerStore(root());
     const entry = store.add({
       kind: 'hazard',
@@ -28,7 +28,7 @@ describe('LedgerStore', () => {
       detail: 'every catch downstream of it is dead code',
       authoredBy: '',
     });
-    expect(entry.epicId).toBeNull();
+    expect(entry.milestoneId).toBeNull();
     expect(entry.sourceTaskId).toBeNull();
     expect(entry.appliesTo).toEqual([]);
     expect(store.list()).toEqual([entry]);
@@ -47,7 +47,7 @@ describe('LedgerStore', () => {
     expect(store.list()).toHaveLength(2);
   });
 
-  test('list({ epicId }) filters to that epic, including project-wide-only when epicId is null', () => {
+  test('list({ milestoneId }) filters to that milestone, including project-wide-only when milestoneId is null', () => {
     const store = new LedgerStore(root());
     const wide = store.add({
       kind: 'decision',
@@ -56,36 +56,40 @@ describe('LedgerStore', () => {
       authoredBy: '',
     });
     const scoped = store.add({
-      epicId: 'e-111111',
+      milestoneId: 'e-111111',
       kind: 'decision',
       title: 'b',
       detail: 'b',
       authoredBy: '',
     });
 
-    expect(store.list({ epicId: null }).map((e) => e.id)).toEqual([wide.id]);
-    expect(store.list({ epicId: 'e-111111' }).map((e) => e.id)).toEqual([
+    expect(store.list({ milestoneId: null }).map((e) => e.id)).toEqual([
+      wide.id,
+    ]);
+    expect(store.list({ milestoneId: 'e-111111' }).map((e) => e.id)).toEqual([
       scoped.id,
     ]);
   });
 
   describe('entriesFor()', () => {
-    test('an untargeted entry scoped to an epic applies to every task under it', () => {
+    test('an untargeted entry scoped to a milestone applies to every task under it', () => {
       const store = new LedgerStore(root());
       const entry = store.add({
-        epicId: 'e-111111',
+        milestoneId: 'e-111111',
         kind: 'hazard',
         title: 'shared trap',
         detail: 'watch out',
         authoredBy: '',
       });
 
-      expect(store.entriesFor('t-under-epic', 'e-111111')).toEqual([entry]);
-      expect(store.entriesFor('t-other-epic', 'e-222222')).toEqual([]);
-      expect(store.entriesFor('t-no-epic', null)).toEqual([]);
+      expect(store.entriesFor('t-under-milestone', 'e-111111')).toEqual([
+        entry,
+      ]);
+      expect(store.entriesFor('t-other-milestone', 'e-222222')).toEqual([]);
+      expect(store.entriesFor('t-no-milestone', null)).toEqual([]);
     });
 
-    test('a project-wide entry (epicId null) applies regardless of the task’s own epic', () => {
+    test('a project-wide entry (milestoneId null) applies regardless of the task’s own milestone', () => {
       const store = new LedgerStore(root());
       const entry = store.add({
         kind: 'constraint',
@@ -101,7 +105,7 @@ describe('LedgerStore', () => {
     test('a targeted entry (non-empty appliesTo) reaches only the listed tasks', () => {
       const store = new LedgerStore(root());
       const entry = store.add({
-        epicId: 'e-111111',
+        milestoneId: 'e-111111',
         kind: 'decision',
         title: 'use fetch retries',
         detail: 'retry POSTs up to 3 times',
@@ -114,14 +118,14 @@ describe('LedgerStore', () => {
     });
 
     // Targeting is the stronger signal: an entry aimed at a task follows it
-    // even when the epic it was raised under is not the task's own.
-    test('an explicit appliesTo target wins regardless of epic', () => {
+    // even when the milestone it was raised under is not the task's own.
+    test('an explicit appliesTo target wins regardless of milestone', () => {
       const store = new LedgerStore(root());
       const entry = store.add({
-        epicId: 'e-111111',
+        milestoneId: 'e-111111',
         kind: 'hazard',
         title: 'the migration renames this column',
-        detail: 'coordinate with the other epic',
+        detail: 'coordinate with the other milestone',
         appliesTo: ['t-target'],
         authoredBy: '',
       });
@@ -143,7 +147,7 @@ function ledgerLine(
 ): Record<string, unknown> {
   return {
     id: 'l-good01',
-    epicId: null,
+    milestoneId: null,
     sourceTaskId: null,
     kind: 'constraint',
     title: 'a real one',
@@ -209,7 +213,7 @@ describe('LedgerStore malformed lines', () => {
         JSON.stringify(ledgerLine()),
         '{"id": "l-trunc0", "kind": "hazard"',
         JSON.stringify(noAppliesTo),
-        JSON.stringify(ledgerLine({ id: 'l-good02', epicId: 'e-111111' })),
+        JSON.stringify(ledgerLine({ id: 'l-good02', milestoneId: 'e-111111' })),
       ].join('\n') + '\n'
     );
     const errors = spyOn(console, 'error').mockImplementation(() => {});
@@ -219,7 +223,7 @@ describe('LedgerStore malformed lines', () => {
       expect(all.records.map((e) => e.id)).toEqual(['l-good01', 'l-good02']);
       expect(all.errors).toHaveLength(2);
       expect(
-        store.listSafe({ epicId: 'e-111111' }).records.map((e) => e.id)
+        store.listSafe({ milestoneId: 'e-111111' }).records.map((e) => e.id)
       ).toEqual(['l-good02']);
       expect(new LedgerStore(root()).listSafe()).toEqual({
         records: [],
@@ -239,7 +243,7 @@ describe('LedgerStore id collisions', () => {
     seedLines(dir, [
       {
         id: 'l-abc123',
-        epicId: null,
+        milestoneId: null,
         sourceTaskId: null,
         kind: 'constraint',
         title: 'the older entry',
@@ -249,7 +253,7 @@ describe('LedgerStore id collisions', () => {
       },
       {
         id: 'l-abc123',
-        epicId: null,
+        milestoneId: null,
         sourceTaskId: null,
         kind: 'hazard',
         title: 'the newer entry',
@@ -279,7 +283,7 @@ describe('LedgerStore id collisions', () => {
     const dir = root();
     const line = {
       id: 'l-dupdup',
-      epicId: null,
+      milestoneId: null,
       sourceTaskId: null,
       kind: 'decision',
       title: 'one entry',
@@ -349,7 +353,7 @@ describe('LedgerStore attribution', () => {
     seedLines(dir, [
       {
         id: 'l-legacy',
-        epicId: null,
+        milestoneId: null,
         sourceTaskId: null,
         kind: 'decision',
         title: 'old',

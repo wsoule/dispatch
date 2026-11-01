@@ -49,7 +49,7 @@ export function notifyLiveRuns(
     if (!sharedScopesFor(deps.engine.viewer(principal)).includes(scope))
       continue;
     const ctx = deps.host.taskContext(run.taskId);
-    const rankCtx = { taskId: run.taskId, epic: ctx?.epic ?? null };
+    const rankCtx = { taskId: run.taskId, milestone: ctx?.milestone ?? null };
     if (!reaches(entry, rankCtx, projectKey)) continue;
     try {
       deps.orchestrator.notifyRun(run.id, liveDigest(entry));

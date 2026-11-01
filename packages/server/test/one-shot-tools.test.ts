@@ -39,7 +39,6 @@ describe('one-shot model calls run with no tools and no MCP servers', () => {
       statuses: ['ready'],
       labels: [],
       milestones: [],
-      epics: [],
       runStates: [],
     });
     expect(seen.options?.tools).toEqual([]);

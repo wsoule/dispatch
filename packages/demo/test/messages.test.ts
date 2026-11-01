@@ -36,7 +36,7 @@ function allMessages(store: SqliteMessageStore): Message[] {
 }
 
 describe('writeMessages', () => {
-  test('seeds a granted scope gate, two open questions, an accepted handoff and an epic notice', () => {
+  test('seeds a granted scope gate, two open questions, an accepted handoff and a milestone notice', () => {
     withStore(seeded().path, (store) => {
       expect(
         store
@@ -70,7 +70,7 @@ describe('writeMessages', () => {
       const reached = store
         .deliveries({ messageId: notice?.id ?? 'missing' })
         .map((d) => `${d.recipient} ${d.via} ${d.state}`);
-      // Everyone on the epic's channel but the sender's own task.
+      // Everyone on the milestone's channel but the sender's own task.
       const members = TASKS.filter(
         (t) => t.parent === 'e-4a19c2' && t.id !== 't-3f8a21'
       ).map((t) => `task:${t.id} channel read`);
@@ -103,7 +103,7 @@ describe('writeMessages', () => {
         ...store.deliveries({}).map((d) => d.id),
       ]).sort();
     const first = ids(seeded().path);
-    expect(first).toHaveLength(7 + 6 + epicSiblings().length);
+    expect(first).toHaveLength(7 + 6 + milestoneSiblings().length);
     expect(ids(seeded().path)).toEqual(first);
   });
 
@@ -148,7 +148,7 @@ describe('writeMessages', () => {
   });
 });
 
-function epicSiblings(): string[] {
+function milestoneSiblings(): string[] {
   return TASKS.filter(
     (t) => t.parent === 'e-4a19c2' && t.id !== 't-3f8a21'
   ).map((t) => t.id);

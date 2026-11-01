@@ -8,6 +8,7 @@ import {
 } from '@dispatch-foo/core/browser';
 import { useEffect, useState } from 'react';
 
+import { useSidePanelNotifications } from '../../hooks/useSidePanelNotifications';
 import { SettingsSwitch } from './fields';
 import { SettingsGroup, SettingsRow } from './SettingsGroup';
 import { PillButton } from '@/ui/ai/pill';
@@ -58,7 +59,8 @@ const KIND_INFO: Record<NotificationKind, { label: string; hint: string }> = {
   },
 };
 
-/** Delivery beyond the app: which kinds of thing awaiting you fire a native
+/** Whether the side panel lists the notification history, then delivery
+ *  beyond the app: which kinds of thing awaiting you fire a native
  *  notification while the window is in the background, and the webhook that
  *  carries the same items out as JSON. Save feedback lives in the shell. */
 export function NotificationsSection({
@@ -72,6 +74,7 @@ export function NotificationsSection({
   // out of the input: `replacing` is the user having asked for an empty one.
   const [replacing, setReplacing] = useState(false);
   const [refused, setRefused] = useState(false);
+  const [sidePanelShown, setSidePanelShown] = useSidePanelNotifications();
 
   const stored = config.notifications.webhook ?? '';
   const masked = stored !== '' && isMaskedSecretUrl(stored);
@@ -134,6 +137,26 @@ export function NotificationsSection({
             }
           />
         ))}
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="In the app"
+        hint="Saved on this device only. The Inbox keeps every notification either way."
+        keywords="side panel sidebar coming in hide"
+        requires="none"
+      >
+        <SettingsRow
+          title="Show notifications in the side panel"
+          subtitle="The run and merge history under Coming in."
+          htmlFor="side-panel-notifications"
+          control={
+            <SettingsSwitch
+              id="side-panel-notifications"
+              checked={sidePanelShown}
+              onCheckedChange={setSidePanelShown}
+            />
+          }
+        />
       </SettingsGroup>
 
       <SettingsGroup title="Webhook" keywords="slack zapier http">

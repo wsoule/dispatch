@@ -16,7 +16,7 @@ interface LaneHeaderProps {
  * The board's lane header for an assignee or priority swim lane (Display › Sub-grouping): a
  * 36px `GroupHeader` with no tint, the assignee's avatar or the priority glyph, the lane
  * title as the collapse target and the card count. No `+`: a new task can be preset to an
- * epic or a status, not to an assignee or a priority.
+ * milestone or a status, not to an assignee or a priority.
  */
 export function LaneHeader({ lane, expanded, onToggle }: LaneHeaderProps) {
   const value = lane.value ?? '';

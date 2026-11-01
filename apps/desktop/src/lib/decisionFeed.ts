@@ -57,8 +57,10 @@ export interface DecisionItem {
   messageId?: string;
   /** The Overseer conversation an overseer-action or tool-approval gate is parked on. */
   conversation?: string;
+  /** The address that asked, on a gate or mailbox ask. */
+  from?: string;
   /** The policy engine's split: `blocking` items demand an answer, `recorded`
-   * ones land quietly. Everything is `blocking` until epic e-ad1978 ships. */
+   * ones land quietly. Everything is `blocking` until milestone e-ad1978 ships. */
   disposition: 'blocking' | 'recorded';
 }
 
@@ -92,7 +94,7 @@ export function isDecisionsChanged(event: { type: string }): boolean {
 }
 
 /** Open items still demanding an answer — the shell badge's count. `recorded`
- * items are excluded by contract so the policy epic's reclassification quiets
+ * items are excluded by contract so the policy milestone's reclassification quiets
  * the badge without this file changing. */
 export function pendingDecisionCount(items: DecisionItem[]): number {
   return items.filter(

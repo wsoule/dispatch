@@ -331,7 +331,9 @@ describe('docs of a task', () => {
       host.advance(1);
       return service.create(as(OWNER), { title, body: 'x\n', links });
     };
-    mk('Epic spec', [{ target: { type: 'task', id: 'e-1' }, rel: 'spec' }]);
+    mk('Milestone spec', [
+      { target: { type: 'task', id: 'e-1' }, rel: 'spec' },
+    ]);
     mk('Root spec', [{ target: { type: 'task', id: 'e-root' }, rel: 'spec' }]);
     mk('Own context', [
       { target: { type: 'task', id: 't-1' }, rel: 'context' },
@@ -340,7 +342,9 @@ describe('docs of a task', () => {
       { target: { type: 'task', id: 't-1' }, rel: 'spec' },
       { target: { type: 'task', id: 'e-1' }, rel: 'context' },
     ]);
-    mk('Epic plan', [{ target: { type: 'task', id: 'e-1' }, rel: 'plan' }]);
+    mk('Milestone plan', [
+      { target: { type: 'task', id: 'e-1' }, rel: 'plan' },
+    ]);
     mk('Mentioned', []);
     const ranked = service
       .list(as(OWNER), { taskId: 't-1' })
@@ -351,9 +355,9 @@ describe('docs of a task', () => {
       ]);
     expect(ranked).toEqual([
       ['own-spec', 'spec', false],
-      ['epic-spec', 'spec', true],
+      ['milestone-spec', 'spec', true],
       ['root-spec', 'spec', true],
-      ['epic-plan', 'plan', true],
+      ['milestone-plan', 'plan', true],
       ['mentioned', 'context', false],
       ['own-context', 'context', false],
     ]);

@@ -120,7 +120,7 @@ interface PolicyReceiptDeps {
   events: Pick<EventBus, 'broadcast'>;
   appendPolicyActivity: (taskId: string, text: string) => void;
   ownerRef: string;
-  epicOf: (taskId: string) => string | null;
+  milestoneOf: (taskId: string) => string | null;
 }
 
 // A policy approval's receipt: a ledger decision and the source task's
@@ -137,7 +137,7 @@ function recordDocPolicyApproval(
     title,
     detail: `proposal ${p.rev} from ${proposer(p)} — ${authorization}`,
     authoredBy: deps.ownerRef,
-    epicId: p.taskId === null ? null : deps.epicOf(p.taskId),
+    milestoneId: p.taskId === null ? null : deps.milestoneOf(p.taskId),
     sourceTaskId: p.taskId,
   });
   deps.events.broadcast({ type: 'ledger.changed' });

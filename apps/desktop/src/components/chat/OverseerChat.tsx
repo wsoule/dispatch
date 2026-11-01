@@ -20,6 +20,7 @@ import type {
   OverseerApprovalDecision,
   OverseerSession,
 } from '../../hooks/useOverseerSession';
+import { cardRaw } from '../../lib/cardContent';
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import {
   DEFAULT_EFFORT_ID,
@@ -39,6 +40,7 @@ import {
 import { slashSuggestions } from '../../lib/slashCommands';
 import { askAgentToFix, FailureNotice } from '../failure/FailureNotice';
 import { Markdown } from '../runs/Markdown';
+import { CardErrorBoundary } from '../shell/CardErrorBoundary';
 import { cn } from '@/lib/utils';
 import { IconButton, type IconButtonProps } from '@/ui/ai/icon-button';
 import { PillButton } from '@/ui/ai/pill';
@@ -940,7 +942,17 @@ export function OverseerChat({
     .filter((m) => m.role === 'user')
     .at(-1)?.text;
 
+  // Each row draws inside its own boundary, so one malformed message or tool
+  // card shows as a fallback row instead of blanking the conversation.
   function renderRow(item: OverseerStreamItem) {
+    return (
+      <CardErrorBoundary key={item.key} raw={cardRaw(item)}>
+        {renderRowContent(item)}
+      </CardErrorBoundary>
+    );
+  }
+
+  function renderRowContent(item: OverseerStreamItem) {
     switch (item.kind) {
       case 'message':
         return (

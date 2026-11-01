@@ -6,7 +6,7 @@ import {
   isStartedStatus,
   statusLabel,
 } from '@dispatch-foo/core/browser';
-import type { EpicProgressChild, RunMeta } from '@dispatch/client';
+import type { MilestoneProgressChild, RunMeta } from '@dispatch/client';
 
 import type { FlightNode } from './flightPlan';
 
@@ -41,7 +41,7 @@ export function joinRefs(refs: readonly string[]): string {
 /** What a live run is doing right now, in two words at most. */
 export function runStep(
   run: RunMeta | undefined,
-  phase: EpicProgressChild | undefined
+  phase: MilestoneProgressChild | undefined
 ): string {
   if (run === undefined || run.state === 'provisioning') return 'Starting';
   if (run.state === 'awaiting-approval') return 'Waiting on approval';
@@ -66,7 +66,7 @@ export interface SentenceInput {
   /** The node's live run, else its latest. */
   run: RunMeta | undefined;
   /** The server's reading of the node inside its fan-out, when a session exists. */
-  phase: EpicProgressChild | undefined;
+  phase: MilestoneProgressChild | undefined;
   /** The display name of the teammate a `teammate` node belongs to. */
   personName: string | null;
   model: StatusModel;

@@ -1,5 +1,5 @@
 // Seeds the demo's message bus beside its run history, so Threads opens on a
-// granted scope gate, open questions, an accepted handoff and an epic notice.
+// granted scope gate, open questions, an accepted handoff and a milestone notice.
 import {
   createUlidFactory,
   openMessagesDb,
@@ -25,7 +25,7 @@ function ago(hours: number, minutes = 0): string {
   return new Date(BASE_MS - hours * 3_600_000 - minutes * 60_000).toISOString();
 }
 
-const EPIC = 'e-4a19c2';
+const MILESTONE = 'e-4a19c2';
 const SCOPE_REASON =
   'The client-trusted check being retired is inlined in the route handler, not just discount.ts — moving it server-side means touching both files together.';
 
@@ -143,7 +143,7 @@ export function seedMessages(handle: string): SeededMessages {
   );
   const notice = message({
     from: 'run:r-1e6a4f',
-    to: [`channel:epic/${EPIC}`],
+    to: [`channel:milestone/${MILESTONE}`],
     kind: 'notice',
     body: 'Discount validation moved server-side; the cart reads `applied` from the session now.',
     createdAt: ago(26, 5),
@@ -165,9 +165,9 @@ export function seedMessages(handle: string): SeededMessages {
     delivery(scope, human, 'answered', { updatedAt: granted.createdAt }),
     // Each answer reached its run while it was live.
     delivery(granted, 'run:r-1e6a4f', 'pushed', { runId: 'r-1e6a4f' }),
-    // The epic's other tasks, already read so no later run gets a stale digest.
-    ...TASKS.filter((t) => t.parent === EPIC && t.id !== 't-3f8a21').map((t) =>
-      delivery(notice, `task:${t.id}`, 'read', { via: 'channel' })
+    // The milestone's other tasks, already read so no later run gets a stale digest.
+    ...TASKS.filter((t) => t.parent === MILESTONE && t.id !== 't-3f8a21').map(
+      (t) => delivery(notice, `task:${t.id}`, 'read', { via: 'channel' })
     ),
     delivery(handoff, human, 'answered', { updatedAt: accepted.createdAt }),
     delivery(accepted, 'run:r-f30c76', 'pushed', { runId: 'r-f30c76' }),

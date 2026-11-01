@@ -1,10 +1,10 @@
 import type {
   DiffFile,
-  EpicProgress,
-  EpicProgressChild,
-  EpicSession,
-  EpicSpend,
   Message,
+  MilestoneProgress,
+  MilestoneProgressChild,
+  MilestoneSession,
+  MilestoneSpend,
   NormalizedEntry,
   PlanProposal,
   PlanRecord,
@@ -176,8 +176,8 @@ export function formatDiffFiles(files: DiffFile[]): string {
 // per task. Index-based, matching `blockedByIndices` — a proposal has no ids until confirm.
 export function formatProposal(proposal: PlanProposal): string {
   const lines: string[] = [];
-  if (proposal.epic !== undefined) {
-    lines.push(`Epic: ${proposal.epic.title}`);
+  if (proposal.milestone !== undefined) {
+    lines.push(`Milestone: ${proposal.milestone.title}`);
   }
   proposal.tasks.forEach((task, i) => {
     lines.push(`  ${i}. ${task.title} [${task.priority}]`);
@@ -215,9 +215,9 @@ function usd(n: number): string {
   return `$${n.toFixed(2)}`;
 }
 
-// Why a session is paused, in the words `dispatch epic status` prints after
+// Why a session is paused, in the words `dispatch milestone status` prints after
 // `paused —`. A `fill-failed` pause carries the failing dispatch's message.
-function formatPausedReason(session: EpicSession): string {
+function formatPausedReason(session: MilestoneSession): string {
   switch (session.pausedReason) {
     case 'budget':
       return 'spend ceiling reached';
@@ -237,7 +237,7 @@ function formatPausedReason(session: EpicSession): string {
 
 // The spend line: `spend $41.20 settled + ~$30.00 in flight of $60.00 · 7/20
 // runs`. The `of` / `/N` halves only appear when that ceiling is set.
-function formatSpendLine(spend: EpicSpend): string {
+function formatSpendLine(spend: MilestoneSpend): string {
   const ceiling =
     spend.maxSpendUsd !== null ? ` of ${usd(spend.maxSpendUsd)}` : '';
   const runs =
@@ -250,17 +250,17 @@ function formatSpendLine(spend: EpicSpend): string {
   );
 }
 
-// `dispatch epic status`'s progress rendering: the session state and spend,
+// `dispatch milestone status`'s progress rendering: the session state and spend,
 // one row per child with its wave and phase, plus any currently-live runs.
-export function formatEpicProgress(progress: EpicProgress): string {
+export function formatMilestoneProgress(progress: MilestoneProgress): string {
   const session = progress.session;
-  // A never-dispatched epic has no session; `active` still says what --watch
+  // A never-dispatched milestone has no session; `active` still says what --watch
   // would see.
   const state =
     session !== null ? session.state : progress.active ? 'active' : 'inactive';
   const concurrency = session?.concurrency ?? progress.concurrency;
   const lines: string[] = [
-    `epic ${progress.epicId}: ${state}` +
+    `milestone ${progress.milestoneId}: ${state}` +
       (concurrency !== undefined
         ? ` (concurrency ${String(concurrency)})`
         : ''),
@@ -279,7 +279,7 @@ export function formatEpicProgress(progress: EpicProgress): string {
 
 // The children table; a REASON column appears only when some child has one
 // (a blocked dependency, a failed run's error) so the common case stays narrow.
-function formatChildrenTable(children: EpicProgressChild[]): string {
+function formatChildrenTable(children: MilestoneProgressChild[]): string {
   const withReason = children.some((c) => c.reason !== undefined);
   const header = ['ID', 'WAVE', 'PHASE', 'STATUS', 'TITLE'];
   if (withReason) header.push('REASON');

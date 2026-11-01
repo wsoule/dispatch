@@ -1,12 +1,18 @@
-import { dbVersion, openSqliteDb, queryOne } from '@dispatch-foo/core';
+import {
+  dbVersion,
+  openSqliteDb,
+  queryAll,
+  queryOne,
+} from '@dispatch-foo/core';
 import type { SqliteDatabase } from '@dispatch-foo/core';
 import { chmodSync, existsSync } from 'node:fs';
 
 import { MemoryError } from './errors.js';
 
-export const MEMORY_DB_VERSION = 1;
-// Raised only by a change older builds cannot read or write.
-export const MEMORY_MIN_READER_VERSION = 1;
+export const MEMORY_DB_VERSION = 2;
+// Raised only by a change older builds cannot read or write: v2 renamed the
+// entries' `epic` column to `milestone`.
+export const MEMORY_MIN_READER_VERSION = 2;
 export type SearchMode = 'fts5' | 'like';
 
 // memory.db and every personal <identity>.db share this schema; some tables
@@ -15,7 +21,7 @@ const TABLES = `
 CREATE TABLE IF NOT EXISTS entries (
   seq INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, handle TEXT NOT NULL UNIQUE,
   scope TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL,
-  refs TEXT NOT NULL, epic TEXT, applies_to TEXT NOT NULL, project_key TEXT,
+  refs TEXT NOT NULL, milestone TEXT, applies_to TEXT NOT NULL, project_key TEXT,
   author TEXT NOT NULL, trust TEXT NOT NULL, status TEXT NOT NULL, status_reason TEXT,
   decay TEXT NOT NULL, pinned INTEGER NOT NULL, supersedes TEXT, superseded_by TEXT,
   origin TEXT UNIQUE, proposal_id TEXT, decided_by TEXT, decided_by_policy TEXT,
@@ -131,6 +137,22 @@ function enableFts(db: SqliteDatabase): SearchMode {
   }
 }
 
+// v1 to v2: epics became milestones. Renames the entries column and the key
+// in every stored entry snapshot (revisions, proposal content).
+function migrateEpicToMilestone(db: SqliteDatabase): void {
+  const columns = queryAll<{ name: string }>(db, 'PRAGMA table_info(entries)');
+  if (!columns.some((c) => c.name === 'epic')) return;
+  db.exec('ALTER TABLE entries RENAME COLUMN epic TO milestone');
+  for (const [table, column] of [
+    ['revisions', 'snapshot_json'],
+    ['proposals', 'content_json'],
+  ] as const) {
+    db.exec(
+      `UPDATE ${table} SET ${column} = json_remove(json_set(${column}, '$.milestone', json_extract(${column}, '$.epic')), '$.epic') WHERE json_type(${column}, '$.epic') IS NOT NULL`
+    );
+  }
+}
+
 function privateFiles(path: string): void {
   for (const file of [path, `${path}-wal`, `${path}-shm`]) {
     if (!existsSync(file)) continue;
@@ -169,9 +191,10 @@ export function openMemoryDb(
         'store'
       );
     }
+    migrateEpicToMilestone(db);
     db.exec(TABLES);
     db.prepare(
-      "INSERT OR IGNORE INTO meta (key, value) VALUES ('min_reader_version', ?)"
+      "INSERT OR REPLACE INTO meta (key, value) VALUES ('min_reader_version', ?)"
     ).run(String(MEMORY_MIN_READER_VERSION));
     if (dbVersion(db) < MEMORY_DB_VERSION)
       db.exec(`PRAGMA user_version = ${MEMORY_DB_VERSION}`);

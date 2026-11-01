@@ -17,6 +17,7 @@ export {
   speaksForHandle,
 } from './roster.js';
 export type {
+  ContentE2e,
   Dismissal,
   FoldInput,
   KeyInfo,

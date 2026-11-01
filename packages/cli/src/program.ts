@@ -27,6 +27,7 @@ import { registerDocsCommands } from './commands/docs.js';
 import { registerDoctorCommand } from './commands/doctor.js';
 import { registerFanoutCommand } from './commands/fanout.js';
 import { registerLicenseCommands } from './commands/license.js';
+import { registerLinearCommands } from './commands/linear.js';
 import { registerMemoryCommands } from './commands/memory.js';
 import { registerMergeTaskCommand } from './commands/mergeTask.js';
 import { registerMergeTeamCommand } from './commands/mergeTeam.js';
@@ -341,6 +342,7 @@ export function makeProgram(ctx: CliContext): Command {
   registerShareCommands(program, ctx);
   registerTeamCommands(program, ctx);
   registerBoardSyncCommands(program, ctx);
+  registerLinearCommands(program, ctx);
   registerReceiptsCommands(program, ctx);
   registerDocsCommands(program, ctx);
   registerLicenseCommands(program, ctx);

@@ -3,7 +3,7 @@ import { SECRET_URL_MASK_SUFFIX } from '@dispatch-foo/core';
 // Webhook URLs (Slack, Discord) carry their secret in the path — the URL is
 // the credential. GET /api/config hands the whole config back to any client
 // with a request-tier token, so this masks those paths on the way out. The
-// notifications block that stores one is landing separately (epic e-6cfcc7);
+// notifications block that stores one is landing separately (milestone e-6cfcc7);
 // keying on the field name rather than a config type means that landing is
 // covered without this file changing.
 

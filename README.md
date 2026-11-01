@@ -178,6 +178,22 @@ connection comes from your own `~/.ssh/config`:
 Terminals can be opened on a remote. Agent runs cannot — the orchestrator works
 in local worktree paths throughout.
 
+**Linear from the CLI.** Link a project in **Settings → Linear**; then
+`dispatch linear` reports on the link and drives it from a terminal. The first
+pass sends no task that predates the link, so push those yourself:
+
+    dispatch linear                      # the link, the last pass, what is not in Linear
+    dispatch linear sync                 # run a pass now (board sync is `dispatch sync`)
+    dispatch linear push t-1a2b t-3c4d   # send these tasks by id
+    dispatch linear push --unlinked      # every open task not in Linear; --all adds finished ones
+    dispatch linear push --failed        # retry the creates that failed
+    dispatch linear coverage             # which tasks are not in Linear, and why
+    dispatch linear capacity             # active issues against the plan's limit
+    dispatch linear archive-closed       # archive closed issues to free room (app token)
+
+Long exports and archives run in the daemon; the command follows them and prints
+progress. Every subcommand takes `--json`.
+
 ## Running more than one agent
 
 Dispatch ships native executors for Claude and Codex. Any other coding agent
@@ -435,6 +451,33 @@ tasks themselves. Findings, ledger entries, notes and run evidence stay on the
 machine that made them, and so do attachment files, although the task still
 lists them.
 
+### What the relay can read
+
+A team made with `dispatch team start` syncs through the relay at
+relay.dispatch.foo, or over a git branch with `--git`. Messages between
+teammates are always sealed to their recipients' machines. The rest of the
+team's content (the board, team memory, team docs, presence and agents) is
+readable by the relay until an admin turns on end-to-end encryption:
+
+    dispatch team encrypt          # on or off, and what still blocks it
+    dispatch team encrypt --on     # turn it on for the whole team, after a confirm
+
+The same is under **Settings → Members → End-to-end encryption**. It needs every
+teammate on a Dispatch build that reads encrypted content, and the window for
+older builds closed (`dispatch team advanced close-legacy`). From then on that
+content travels encrypted under team keys only the team's machines hold, and
+each removal from the team starts a new key. It cannot be turned off.
+
+What it does not cover:
+
+- Anything published before you turned it on stays readable on the relay. Board
+  history is never pruned; starting a new team is the only way to purge it.
+- A removed teammate keeps what they already received.
+- One key covers everything until the next removal, so there is no forward
+  secrecy within it.
+- The relay still sees who published each change, when, its type and size, and
+  the roster with the team's license key.
+
 ### Keeping the audit log off the machine
 
 The receipt log (every task, finding, decision and piece of run evidence, as
@@ -473,16 +516,16 @@ An entry has one of three scopes:
   is saved for one project only. A run writes its operator's personal memory
   directly, and **Settings → Memory** can undo it. Nobody else sees it. A run's
   operator is whoever started, continued or woke it; the owner only on the app
-  token, and no one when an agent, a run or policy did. An epic's auto-fill acts
-  for whoever last started or resumed the epic, and only on tasks that person
-  created and last edited. The desktop app and a signed-in browser present the
-  app token; the CLI presents the daemon file's agent token, so a run the owner
-  starts from the CLI acts for no one unless the CLI is given the app token
-  (`--token` or `DISPATCH_APP_TOKEN`). A teammate below `decide` cannot message
-  a live run that acts for someone else; they message its task or that person
-  instead. An agent registered in your name reads your personal memory only once
-  you approve it with the app token, so one approved before that rule must be
-  approved again.
+  token, and no one when an agent, a run or policy did. A milestone's auto-fill
+  acts for whoever last started or resumed the milestone, and only on tasks that
+  person created and last edited. The desktop app and a signed-in browser
+  present the app token; the CLI presents the daemon file's agent token, so a
+  run the owner starts from the CLI acts for no one unless the CLI is given the
+  app token (`--token` or `DISPATCH_APP_TOKEN`). A teammate below `decide`
+  cannot message a live run that acts for someone else; they message its task or
+  that person instead. An agent registered in your name reads your personal
+  memory only once you approve it with the app token, so one approved before
+  that rule must be approved again.
 - **Team** is the default for a code lesson: the constraints, hazards and
   decisions every run of this project should know. The ledger's old lessons were
   imported here; the ledger keeps the audit receipts. Replicating team memory to
@@ -564,7 +607,7 @@ Linear tools as well):
 | `dispatch_note`   | `{ kind, title, body? }`                                                                                     | `{ ok, id }`                                            |
 | `memory_search`   | `{ query, scope?, kind?, includeStale?, limit? }`                                                            | `{ hits, search }`                                      |
 | `memory_read`     | `{ id }`                                                                                                     | `{ entry, body, provenance, revisions }`                |
-| `memory_save`     | `{ scope, kind, title, body, refs?, epic?, appliesTo?, supersedes?, projectOnly? }`                          | `{ status, id?, handle?, proposal?, gate? }`            |
+| `memory_save`     | `{ scope, kind, title, body, refs?, milestone?, appliesTo?, supersedes?, projectOnly? }`                     | `{ status, id?, handle?, proposal?, gate? }`            |
 | `memory_forget`   | `{ id, reason }`                                                                                             | `{ status, id?, handle?, proposal?, gate? }`            |
 | `record_evidence` | `{ command, exitCode, durationMs, summary }`                                                                 | `{ ok }`                                                |
 | `record_mutation` | `{ guard, file, testsFailed }`                                                                               | `{ ok }`                                                |

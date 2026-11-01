@@ -33,18 +33,18 @@ export function groupTasksByStatus(
 
 export interface BoardLane {
   /** What the lane is tracked by in the collapsed set — namespaced by kind (`e-…` /
-   * `__no-epic__` for epic lanes, `assignee:…`, `priority:…`, `all` for the flat board) so a
+   * `__no-milestone__` for milestone lanes, `assignee:…`, `priority:…`, `all` for the flat board) so a
    * fold on one sub-grouping never hides a lane of another. */
   key: string;
   /** Which Display › Sub-grouping produced the lane; `none` is the flat board's single lane. */
   kind: TasksSubGrouping;
-  /** The raw bucket value the lane groups on — the epic id, the `meta.assignee` string or
-   * the priority — so a header can render it without parsing `key`; `null` for the no-epic
+  /** The raw bucket value the lane groups on — the milestone id, the `meta.assignee` string or
+   * the priority — so a header can render it without parsing `key`; `null` for the no-milestone
    * and flat lanes. */
   value: string | null;
-  /** The epic an `epic` lane belongs to, `null` for its catch-all "No epic" lane — and for
+  /** The milestone an `milestone` lane belongs to, `null` for its catch-all "No milestone" lane — and for
    * every lane of another kind. */
-  epicId: string | null;
+  milestoneId: string | null;
   title: string;
   columns: BoardColumnGroup[];
   /**
@@ -57,37 +57,37 @@ export interface BoardLane {
 }
 
 /**
- * The board: one lane per epic, each lane a full set of status columns.
+ * The board: one lane per milestone, each lane a full set of status columns.
  *
- * This reads as a grid of epics against statuses rather than one tall column per status, which
- * answers a different and usually more useful question — not "what is in review" but "which epic
+ * This reads as a grid of milestones against statuses rather than one tall column per status, which
+ * answers a different and usually more useful question — not "what is in review" but "which milestone
  * is stuck" — and collapsing the lanes (see `countLaneStatuses`) gets the status-only overview
  * back without a second layout. The status columns are derived from the project's own
  * `.dispatch/config.yml` order, never hardcoded, so drag-and-drop between them keeps working and
  * a project with custom statuses is not quietly reduced to someone else's six.
  *
- * Epics come first in the order `epics` gives (the project's own), then a lane for tasks whose
- * parent does not resolve to a known epic, then the no-epic catch-all. Empty lanes are dropped so
- * a project with twenty epics and three active ones does not render seventeen blank rows.
+ * Milestones come first in the order `milestones` gives (the project's own), then a lane for tasks whose
+ * parent does not resolve to a known milestone, then the no-milestone catch-all. Empty lanes are dropped so
+ * a project with twenty milestones and three active ones does not render seventeen blank rows.
  */
 function countPlaced(columns: BoardColumnGroup[]): number {
   return columns.reduce((n, c) => n + c.tasks.length, 0);
 }
 
-export function groupTasksByEpicLane(
+export function groupTasksByMilestoneLane(
   tasks: TaskListItem[],
   statuses: string[],
-  epics: TaskListItem[]
+  milestones: TaskListItem[]
 ): BoardLane[] {
   const byParent = new Map<string, TaskListItem[]>();
-  const noEpic: TaskListItem[] = [];
+  const noMilestone: TaskListItem[] = [];
   for (const task of tasks) {
-    // An epic is a lane heading, not a card inside one — including it as its own child would
+    // A milestone is a lane heading, not a card inside one — including it as its own child would
     // double-count it against its own progress.
     if (isContainerKind(task.meta.kind)) continue;
     const parent = task.meta.parent;
     if (parent === null) {
-      noEpic.push(task);
+      noMilestone.push(task);
       continue;
     }
     const bucket = byParent.get(parent);
@@ -97,44 +97,44 @@ export function groupTasksByEpicLane(
 
   const lanes: BoardLane[] = [];
   const seen = new Set<string>();
-  for (const epic of epics) {
-    const bucket = byParent.get(epic.meta.id);
+  for (const milestone of milestones) {
+    const bucket = byParent.get(milestone.meta.id);
     if (bucket === undefined || bucket.length === 0) continue;
-    seen.add(epic.meta.id);
+    seen.add(milestone.meta.id);
     const columns = groupTasksByStatus(bucket, statuses);
     lanes.push({
-      key: laneKey(epic.meta.id),
-      kind: 'epic',
-      value: epic.meta.id,
-      epicId: epic.meta.id,
-      title: epic.meta.title,
+      key: laneKey(milestone.meta.id),
+      kind: 'parent',
+      value: milestone.meta.id,
+      milestoneId: milestone.meta.id,
+      title: milestone.meta.title,
       columns,
       total: countPlaced(columns),
     });
   }
-  // A parent id that does not resolve to a known epic still needs somewhere honest to render,
-  // rather than silently joining the no-epic lane and looking unparented.
+  // A parent id that does not resolve to a known milestone still needs somewhere honest to render,
+  // rather than silently joining the no-milestone lane and looking unparented.
   for (const [parentId, bucket] of byParent) {
     if (seen.has(parentId) || bucket.length === 0) continue;
     const columns = groupTasksByStatus(bucket, statuses);
     lanes.push({
       key: laneKey(parentId),
-      kind: 'epic',
+      kind: 'parent',
       value: parentId,
-      epicId: parentId,
+      milestoneId: parentId,
       title: parentId,
       columns,
       total: countPlaced(columns),
     });
   }
-  if (noEpic.length > 0) {
-    const columns = groupTasksByStatus(noEpic, statuses);
+  if (noMilestone.length > 0) {
+    const columns = groupTasksByStatus(noMilestone, statuses);
     lanes.push({
       key: laneKey(null),
-      kind: 'epic',
+      kind: 'parent',
       value: null,
-      epicId: null,
-      title: 'No epic',
+      milestoneId: null,
+      title: 'No milestone',
       columns,
       total: countPlaced(columns),
     });
@@ -144,11 +144,11 @@ export function groupTasksByEpicLane(
   return lanes.filter((lane) => lane.total > 0);
 }
 
-/** The key a lane is tracked by in the collapsed-epic set: its epic id, or a reserved sentinel
- * for the catch-all "No epic" lane, which has no id of its own but still collapses. The sentinel
- * cannot collide with a real epic id — dispatch ids are `e-<hex>`. */
-export function laneKey(epicId: string | null): string {
-  return epicId ?? '__no-epic__';
+/** The key a lane is tracked by in the collapsed-milestone set: its milestone id, or a reserved sentinel
+ * for the catch-all "No milestone" lane, which has no id of its own but still collapses. The sentinel
+ * cannot collide with a real milestone id — dispatch ids are `e-<hex>`. */
+export function laneKey(milestoneId: string | null): string {
+  return milestoneId ?? '__no-milestone__';
 }
 
 // A lane of one kind over one bucket of cards; the columns are the bucket by status.
@@ -165,7 +165,7 @@ function laneOf(
     key,
     kind,
     value,
-    epicId: null,
+    milestoneId: null,
     title,
     columns,
     total: countPlaced(columns),
@@ -237,20 +237,20 @@ function groupTasksByPriorityLane(
 }
 
 /**
- * The board's swim lanes for a Display › Sub-grouping: `epic` is `groupTasksByEpicLane`,
+ * The board's swim lanes for a Display › Sub-grouping: `milestone` is `groupTasksByMilestoneLane`,
  * `assignee` and `priority` bucket on the task's own field, `none` is the one headerless lane
- * of the flat board. Whatever the kind, epics never become cards (they head epic lanes and
+ * of the flat board. Whatever the kind, milestones never become cards (they head milestone lanes and
  * have no place in any other), every lane is the full status column set over its bucket, and
  * a lane the status filter emptied is dropped rather than drawn as a bare header.
  */
 export function groupTasksByLane(
   tasks: TaskListItem[],
   statuses: string[],
-  epics: TaskListItem[],
+  milestones: TaskListItem[],
   subGrouping: TasksSubGrouping
 ): BoardLane[] {
-  if (subGrouping === 'epic') {
-    return groupTasksByEpicLane(tasks, statuses, epics);
+  if (subGrouping === 'parent') {
+    return groupTasksByMilestoneLane(tasks, statuses, milestones);
   }
   const cards = tasks.filter((t) => !isContainerKind(t.meta.kind));
   if (subGrouping === 'none') {
@@ -265,7 +265,7 @@ export function groupTasksByLane(
 
 /**
  * Cards per status across every lane, for the board's shared column header row — the one
- * count that never moves: a collapsed epic folds its cards out of sight, not out of the
+ * count that never moves: a collapsed milestone folds its cards out of sight, not out of the
  * column, so the header keeps saying how much work is in each status.
  */
 export function countLaneStatuses(

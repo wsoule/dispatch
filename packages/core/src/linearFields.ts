@@ -3,6 +3,7 @@ import type {
   LinearIssue,
   LinearIssueInput,
   LinearLabel,
+  LinearLabelMatch,
   LinearProjectStatus,
   LinearRef,
   LinearTruncatedField,
@@ -83,6 +84,8 @@ export interface LinearMapContext {
   labelsById: ReadonlyMap<string, LinearLabel>;
   /** Whether Acceptance Criteria travels in the Linear description. */
   includeAcceptanceCriteria: boolean;
+  /** Whether a finished task's archive is pushed (linear.archiveFinished). */
+  archiveFinished: boolean;
   projectStatuses: readonly LinearProjectStatus[];
 }
 
@@ -105,6 +108,66 @@ export function labelFor(
     candidates.find((l) => l.teamId === teamId) ??
     candidates.find((l) => l.teamId == null)
   );
+}
+
+/**
+ * What to do when Linear refuses to create label `name` in `teamId` as a
+ * duplicate, given every label spelling it: reuse a live one this team can
+ * apply, else say why none fits, else null (keep Linear's own error).
+ */
+export function labelCollision(
+  name: string,
+  teamId: string,
+  matches: readonly LinearLabelMatch[]
+): { reuse: LinearLabel } | { blocked: string } | null {
+  const key = name.toLowerCase();
+  const spelled = matches.filter(
+    (m) => m.name.toLowerCase() === key || labelKey(m).toLowerCase() === key
+  );
+  const live = spelled.filter(
+    (m) =>
+      !m.isGroup &&
+      !m.archived &&
+      !m.retired &&
+      labelKey(m).toLowerCase() === key
+  );
+  const reuse =
+    live.find((m) => m.teamId === teamId) ?? live.find((m) => m.teamId == null);
+  if (reuse !== undefined) return { reuse };
+  // Only this team's or a workspace label can collide with a create here, so
+  // those explain the refusal before another team's.
+  const inReach = spelled.filter(
+    (m) => m.teamId === teamId || m.teamId == null
+  );
+  const grouped = inReach.find((m) => labelKey(m).toLowerCase() !== key);
+  const blocked =
+    unusableReason(name, inReach) ??
+    (grouped === undefined
+      ? null
+      : `label "${name}" is in the "${grouped.group}" group in Linear; label the task ${labelKey(grouped)} instead`) ??
+    unusableReason(name, spelled) ??
+    (spelled.length === 0
+      ? null
+      : `label "${name}" belongs to another Linear team`);
+  return blocked === null ? null : { blocked };
+}
+
+// Why a label in `pool` cannot be applied at all: a group, then retired, then
+// archived. Null when every one is live.
+function unusableReason(
+  name: string,
+  pool: readonly LinearLabelMatch[]
+): string | null {
+  if (pool.some((m) => m.isGroup)) {
+    return `label "${name}" is a label group in Linear; apply one of its labels instead`;
+  }
+  if (pool.some((m) => m.retired)) {
+    return `label "${name}" is retired in Linear; restore it there to sync it`;
+  }
+  if (pool.some((m) => m.archived)) {
+    return `label "${name}" is archived in Linear; restore it there or rename the local label`;
+  }
+  return null;
 }
 
 /**
@@ -531,11 +594,12 @@ export function taskIssueValues(
     meta.duplicateOf === null
       ? null
       : (remoteIdOf(meta.duplicateOf, 'issue', ctx) ?? UNMAPPED);
-  // A finished task's archive is the board tidying up after itself; Linear
-  // archives completed issues on its own schedule, so only an archive of live
-  // work is pushed (see the report's "lossy" notes).
+  // Linear archives finished issues on its own schedule, so a finished task's
+  // archive is pushed only with linear.archiveFinished, and never an unarchive.
   const archived = isDoneStatus(meta.status, ctx.model)
-    ? UNMAPPED
+    ? ctx.archiveFinished && meta.archivedAt !== undefined
+      ? true
+      : UNMAPPED
     : meta.archivedAt !== undefined;
   return {
     title: meta.title,
@@ -750,13 +814,20 @@ export interface IssuePush {
   archive: boolean | null;
 }
 
-/** Local labels no Linear label usable in `teamId` spells, to create before a push. */
+/** Local labels no Linear label usable in `teamId` spells, to create before a
+ *  push. A label the task repeats in any case is listed once. */
 export function missingLabels(
   doc: TaskDoc,
   ctx: LinearMapContext,
   teamId: string = ctx.defaultTeamId
 ): string[] {
-  return doc.meta.labels.filter((l) => labelFor(l, teamId, ctx) === undefined);
+  const seen = new Set<string>();
+  return doc.meta.labels.filter((l) => {
+    const key = l.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return labelFor(l, teamId, ctx) === undefined;
+  });
 }
 
 function setDiff(a: readonly string[], b: readonly string[]): string[] {

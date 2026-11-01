@@ -1,6 +1,6 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
 import { DEFAULT_STATUS_MODEL } from '@dispatch-foo/core/browser';
-import type { EpicProgressChild, RunMeta } from '@dispatch/client';
+import type { MilestoneProgressChild, RunMeta } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
 import type { FlightNode, FlightNodeState } from './flightPlan';
@@ -114,7 +114,7 @@ describe('nodeSentence', () => {
     expect(
       text(
         input(node('blocked', { status: 'working' }), {
-          phase: { phase: 'capped' } as EpicProgressChild,
+          phase: { phase: 'capped' } as MilestoneProgressChild,
         })
       )
     ).toBe('Fix loop capped · needs a ruling');
@@ -194,7 +194,7 @@ test('runStep reads the run, then the fan-out phase', () => {
     'Waiting on approval'
   );
   expect(runStep(live({ kind: 'review' }), undefined)).toBe('Reviewing');
-  expect(runStep(live({}), { phase: 'fixing' } as EpicProgressChild)).toBe(
+  expect(runStep(live({}), { phase: 'fixing' } as MilestoneProgressChild)).toBe(
     'Fixing findings'
   );
   expect(runStep(live({}), undefined)).toBe('Working');

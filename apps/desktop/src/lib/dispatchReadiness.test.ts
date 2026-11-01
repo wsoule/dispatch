@@ -1,5 +1,9 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
-import { DEFAULT_STATUS_MODEL, readyTasks } from '@dispatch-foo/core/browser';
+import {
+  DEFAULT_STATUS_MODEL,
+  readyTasks,
+  statusModelOf,
+} from '@dispatch-foo/core/browser';
 import type { RunMeta } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
@@ -185,5 +189,45 @@ describe('a blocker id naming no task', () => {
       tone: 'block',
       taskIds: ['t-2'],
     });
+  });
+});
+
+// A Linear team with no review state: review shares In Progress with dispatched.
+describe('a blocker whose review status is its dispatched one', () => {
+  const model = statusModelOf({
+    statuses: ['Backlog', 'Todo', 'In Progress', 'Done', 'Canceled'],
+    statusDefinitions: [
+      { name: 'Backlog', type: 'backlog', color: null },
+      { name: 'Todo', type: 'unstarted', color: null },
+      { name: 'In Progress', type: 'started', color: null },
+      { name: 'Done', type: 'completed', color: null },
+      { name: 'Canceled', type: 'canceled', color: null },
+    ],
+    statusRoles: {
+      ready: 'Todo',
+      dispatched: 'In Progress',
+      review: 'In Progress',
+      landing: null,
+      landed: 'Done',
+      dropped: 'Canceled',
+    },
+  });
+  const blocker = task('t-a', { status: 'In Progress' });
+  const subject = task('t-1', { status: 'Todo', blockedBy: ['t-a'] });
+  const byId = new Map([blocker, subject].map((t) => [t.meta.id, t] as const));
+
+  test('holds its dependent while its run is live', () => {
+    expect(unmetBlockers(subject, byId, model)).toEqual(['t-a']);
+    expect(unmetBlockers(subject, byId, model, () => false)).toEqual(['t-a']);
+  });
+
+  test('lets it go once its run has ended', () => {
+    expect(unmetBlockers(subject, byId, model, (id) => id === 't-a')).toEqual(
+      []
+    );
+    const result = dispatchReadiness(
+      input(subject, [blocker], { model, finishedRun: (id) => id === 't-a' })
+    );
+    expect(result.blocked).toBe(false);
   });
 });

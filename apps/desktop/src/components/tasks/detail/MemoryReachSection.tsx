@@ -15,7 +15,7 @@ interface MemoryReachSectionProps {
 }
 
 /** The memory entries the caller may see that reach this task (named for it,
- *  for its epic, or for every run), read-only, each with where it came from. */
+ *  for its milestone, or for every run), read-only, each with where it came from. */
 export function MemoryReachSection({
   client,
   port,

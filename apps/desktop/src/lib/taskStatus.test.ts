@@ -1,4 +1,5 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
+import { statusModelOf } from '@dispatch-foo/core/browser';
 import type { RunMeta } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
@@ -166,5 +167,38 @@ describe('taskStatusCounts', () => {
     );
     const counts = taskStatusCounts(tasks, { ...c, asking: asks.taskIds });
     expect(counts.buckets['need-you']).toBeLessThanOrEqual(asks.count);
+  });
+});
+
+// A Linear team with no review state: review shares In Progress with dispatched.
+describe('itemBucket where review shares the dispatched status', () => {
+  const model = statusModelOf({
+    statuses: ['Backlog', 'Todo', 'In Progress', 'Done', 'Canceled'],
+    statusDefinitions: [
+      { name: 'Backlog', type: 'backlog', color: null },
+      { name: 'Todo', type: 'unstarted', color: null },
+      { name: 'In Progress', type: 'started', color: null },
+      { name: 'Done', type: 'completed', color: null },
+      { name: 'Canceled', type: 'canceled', color: null },
+    ],
+    statusRoles: {
+      ready: 'Todo',
+      dispatched: 'In Progress',
+      review: 'In Progress',
+      landing: null,
+      landed: 'Done',
+      dropped: 'Canceled',
+    },
+  });
+
+  test('an In Progress task with no run is someone working on it', () => {
+    expect(itemBucket(task('t', 'In Progress'), ctx({ model }))).toBe(
+      'working'
+    );
+  });
+
+  test('it reads as review once its run has ended', () => {
+    const c = ctx({ model, latestRun: new Map([['t', run('t', 'finished')]]) });
+    expect(itemBucket(task('t', 'In Progress'), c)).toBe('review');
   });
 });

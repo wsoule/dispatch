@@ -1,5 +1,5 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
-import type { EpicProgress, RunMeta } from '@dispatch/client';
+import type { MilestoneProgress, RunMeta } from '@dispatch/client';
 import { renderHook } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 
@@ -56,7 +56,7 @@ function input(over: Partial<PlanningInput> = {}): PlanningInput {
     me: 'human:wyat',
     linearLinks: {},
     latestRunByTaskId: new Map<string, RunMeta>(),
-    epicProgressById: new Map<string, EpicProgress>(),
+    milestoneProgressById: new Map<string, MilestoneProgress>(),
     ...over,
   };
 }
@@ -153,14 +153,14 @@ describe('usePlanning', () => {
     const progress = (
       state: 'active' | 'paused',
       completed: number
-    ): EpicProgress =>
+    ): MilestoneProgress =>
       ({
-        epicId: 'proj-1',
+        milestoneId: 'proj-1',
         session: { state },
         completed,
-      }) as unknown as EpicProgress;
+      }) as unknown as MilestoneProgress;
     const first = input({
-      epicProgressById: new Map([['proj-1', progress('active', 1)]]),
+      milestoneProgressById: new Map([['proj-1', progress('active', 1)]]),
     });
     const { result, rerender } = renderHook(
       (props: PlanningInput) => usePlanning(props),
@@ -171,13 +171,13 @@ describe('usePlanning', () => {
     // A new Map (a count moved) with the same session state.
     rerender({
       ...first,
-      epicProgressById: new Map([['proj-1', progress('active', 2)]]),
+      milestoneProgressById: new Map([['proj-1', progress('active', 2)]]),
     });
     expect(result.current).toBe(before);
     // The session paused: the project is paused, so the plan moves.
     rerender({
       ...first,
-      epicProgressById: new Map([['proj-1', progress('paused', 2)]]),
+      milestoneProgressById: new Map([['proj-1', progress('paused', 2)]]),
     });
     expect(result.current).not.toBe(before);
     expect(result.current.workspace.projects[0]?.statusType).toBe('paused');

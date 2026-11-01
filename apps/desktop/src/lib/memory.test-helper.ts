@@ -15,7 +15,7 @@ export function content(over: Partial<Content> = {}): Content {
     title: 'pnpm 11 ignores onlyBuiltDependencies',
     body: 'Use allowBuilds.',
     refs: [],
-    epic: null,
+    milestone: null,
     appliesTo: [],
     ...over,
   };
@@ -61,7 +61,7 @@ export function entry(over: Partial<MemoryEntryView> = {}): MemoryEntryView {
     title: 'pnpm builds',
     body: 'old',
     refs: [],
-    epic: null,
+    milestone: null,
     appliesTo: [],
     projectKey: null,
     author: 'human:wyat',

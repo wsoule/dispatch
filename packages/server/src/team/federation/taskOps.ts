@@ -5,6 +5,7 @@ import type { FederatedOp } from '@dispatch-foo/protocol/federation';
 import type { BoardOp } from '../boardSync/engine.js';
 import { recordLocal, splitBody } from '../boardSync/engine.js';
 import type { SyncLedger } from '../boardSync/ledger.js';
+import { ContentKeyMissingError } from './content.js';
 import type { RosterService } from './roster.js';
 import type { FedStore } from './store.js';
 
@@ -13,15 +14,23 @@ import type { FedStore } from './store.js';
 export const MAX_TASK_FIELD_BYTES = 896 * 1024;
 /** Room for the header, signature and framing around a task op's body. */
 export const OP_ENVELOPE_BYTES = 8 * 1024;
+/** A task op's body budget once content is e2e: its ciphertext travels as
+ *  base64url (4/3) beside the envelope's epoch, nonce and tag. */
+const E2E_TASK_BODY_BYTES = Math.floor(
+  ((MAX_OP_BYTES - OP_ENVELOPE_BYTES - 1024) * 3) / 4
+);
+/** The field cap once content is e2e, so one field still fits one op. */
+const E2E_TASK_FIELD_BYTES = 640 * 1024;
 
 export class TaskTooLargeError extends Error {
   override name = 'TaskTooLargeError';
   constructor(
     readonly field: string,
-    readonly bytes: number
+    readonly bytes: number,
+    cap: number = MAX_TASK_FIELD_BYTES
   ) {
     super(
-      `This task is too large to sync with your team: ${field} is ${Math.ceil(bytes / 1024)} KiB; the limit is ${MAX_TASK_FIELD_BYTES / 1024} KiB. Split it, or move long text into a doc.`
+      `This task is too large to sync with your team: ${field} is ${Math.ceil(bytes / 1024)} KiB; the limit is ${cap / 1024} KiB. Split it, or move long text into a doc.`
     );
   }
 }
@@ -32,33 +41,35 @@ const jsonBytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v));
 
 function over(
   field: string,
-  value: unknown
+  value: unknown,
+  cap: number
 ): { field: string; bytes: number } | null {
   const bytes = jsonBytes(value ?? null);
-  return bytes > MAX_TASK_FIELD_BYTES ? { field, bytes } : null;
+  return bytes > cap ? { field, bytes } : null;
 }
 
 // The first field a write would send over the cap (F-D36): each non-body field
 // whole, and the body as taskFields sends it, so a long body of modest
 // sections passes and is split into several ops instead.
 export function oversizedField(
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  cap: number = MAX_TASK_FIELD_BYTES
 ): { field: string; bytes: number } | null {
   for (const [key, value] of Object.entries(input)) {
     if (key === 'body') continue;
-    const hit = over(key, value);
+    const hit = over(key, value, cap);
     if (hit !== null) return hit;
   }
   const body = input.body;
   if (typeof body !== 'string') return null;
   const { preamble, sections } = splitBody(body);
-  const first = over('body', preamble);
+  const first = over('body', preamble, cap);
   if (first !== null) return first;
   for (const { heading, content } of sections) {
     // Activity travels line by line, the way taskFields sends it.
     const pieces = heading === 'Activity' ? content.split('\n') : [content];
     for (const piece of pieces) {
-      const hit = over(`body (section "${heading}")`, piece);
+      const hit = over(`body (section "${heading}")`, piece, cap);
       if (hit !== null) return hit;
     }
   }
@@ -122,17 +133,35 @@ export class TaskOpSigner {
     return this.deps.roster.founded();
   }
 
+  // Whether the team's content goes out e2e, so ops carry ciphertext.
+  private e2e(): boolean {
+    return this.deps.fed.content?.current() != null;
+  }
+
+  /** The largest field one task op carries. */
+  fieldCap(): number {
+    return this.e2e() ? E2E_TASK_FIELD_BYTES : MAX_TASK_FIELD_BYTES;
+  }
+
+  /** Before a write: refused while this machine lacks the team's content key,
+   *  so a change is never made here and left unsynced. */
+  assertCanPublish(): void {
+    const missing = this.deps.fed.content?.missing() ?? null;
+    if (missing !== null) throw new ContentKeyMissingError(missing);
+  }
+
   // Each piece is recorded in the merge state under the clock it travels with,
   // so every replica holds the same clock for every field.
   commit(change: TaskChange): FederatedOp[] {
     const { ledger, fed } = this.deps;
     const fields: Record<string, unknown> = {};
+    const cap = this.fieldCap();
     for (const [key, value] of Object.entries(change.fields ?? {})) {
       // No op can carry it, and one that tried would wedge the chain (F-D36).
-      if (jsonBytes(value ?? null) > MAX_TASK_FIELD_BYTES)
+      if (jsonBytes(value ?? null) > cap)
         fed.problem(
           `task:${change.task}`,
-          `${key} of ${change.task} is over the ${MAX_TASK_FIELD_BYTES / 1024} KiB sync limit and was not sent; shorten it`
+          `${key} of ${change.task} is over the ${cap / 1024} KiB sync limit and was not sent; shorten it`
         );
       else fields[key] = value;
     }
@@ -145,8 +174,12 @@ export class TaskOpSigner {
       return [];
     const trimmed: TaskChange =
       change.fields === undefined ? change : { ...change, fields };
-    const pieces = splitChange(trimmed, MAX_OP_BYTES - OP_ENVELOPE_BYTES);
-    const v1Copy = this.deps.v1Copy;
+    const pieces = splitChange(
+      trimmed,
+      this.e2e() ? E2E_TASK_BODY_BYTES : MAX_OP_BYTES - OP_ENVELOPE_BYTES
+    );
+    // E2e content never leaves in a v1 copy, which is plain text.
+    const v1Copy = this.e2e() ? undefined : this.deps.v1Copy;
     return ledger.atomically(() =>
       pieces.map((piece) =>
         fed.append({

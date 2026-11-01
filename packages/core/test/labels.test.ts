@@ -9,6 +9,7 @@ import {
   labelColorIndex,
   labelDefinitionError,
   labelRef,
+  uniqueLabels,
   withLabelColor,
 } from '../src/labels.js';
 
@@ -79,6 +80,17 @@ describe('label registry', () => {
     expect(cleared).toEqual([
       { name: 'Bug', group: 'Type', color: null, external: 'linear:l-bug' },
     ]);
+  });
+});
+
+describe('uniqueLabels', () => {
+  it('keeps the first of each repeated label', () => {
+    expect(uniqueLabels(['cost', 'web', 'cost', 'Cost', 'web'])).toEqual([
+      'cost',
+      'web',
+      'Cost',
+    ]);
+    expect(uniqueLabels([])).toEqual([]);
   });
 });
 

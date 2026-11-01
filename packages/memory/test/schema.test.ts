@@ -106,6 +106,41 @@ describe('openMemoryDb', () => {
     );
   });
 
+  it('moves a v1 file off the epic column and snapshot key', () => {
+    const path = tempDb();
+    openMemoryDb(path).db.close();
+    const raw = openSqliteDb(path);
+    raw.exec('ALTER TABLE entries RENAME COLUMN milestone TO epic');
+    raw
+      .prepare(
+        "INSERT INTO revisions (memory_id, rev, snapshot_json, by_addr, cause, at) VALUES ('m-1', 1, ?, 'agent:a', 'create', '2026-01-01')"
+      )
+      .run(JSON.stringify({ title: 'Payments', epic: 'e-1' }));
+    raw
+      .prepare("UPDATE meta SET value = '1' WHERE key = 'min_reader_version'")
+      .run();
+    raw.close();
+
+    const { db } = openMemoryDb(path);
+    const columns = (
+      db.prepare('PRAGMA table_info(entries)').all() as { name: string }[]
+    ).map((c) => c.name);
+    expect(columns).toContain('milestone');
+    expect(columns).not.toContain('epic');
+    const { snapshot_json } = db
+      .prepare('SELECT snapshot_json FROM revisions')
+      .get() as { snapshot_json: string };
+    expect(JSON.parse(snapshot_json)).toEqual({
+      title: 'Payments',
+      milestone: 'e-1',
+    });
+    const { value } = db
+      .prepare("SELECT value FROM meta WHERE key = 'min_reader_version'")
+      .get() as { value: string };
+    expect(value).toBe(String(MEMORY_DB_VERSION));
+    db.close();
+  });
+
   it('rebuilds the FTS index when a LIKE-mode file is reopened with FTS', () => {
     const path = tempDb();
     const like = openMemoryDb(path, { fts: 'off' });

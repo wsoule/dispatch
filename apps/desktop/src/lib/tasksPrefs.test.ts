@@ -65,9 +65,9 @@ describe('parseTasksDisplay', () => {
     expect(d.showEmptyGroups).toBe(false);
     expect([...d.properties].sort()).toEqual([
       'assignee',
-      'epic',
       'id',
       'labels',
+      'milestone',
       'priority',
       'run',
       'status',
@@ -79,7 +79,7 @@ describe('parseTasksDisplay', () => {
     const prefs = {
       ...DEFAULT_TASKS_DISPLAY,
       layout: 'list' as const,
-      grouping: 'epic' as const,
+      grouping: 'parent' as const,
       ordering: 'updated' as const,
       orderDir: 'desc' as const,
       nestedSubtasks: false,
@@ -148,18 +148,18 @@ describe('parseTasksDisplay', () => {
   });
 
   // Board lanes moved from `grouping` to `subGrouping`; a board stored before the move
-  // keeps its epic lanes, while `grouping` stays as stored for the list.
-  it('migrates a board grouped by epic to an epic sub-grouping', () => {
+  // keeps its milestone lanes, while `grouping` stays as stored for the list.
+  it('migrates a board grouped by milestone to a milestone sub-grouping', () => {
     const migrated = parseTasksDisplay(
       '{"layout": "board", "grouping": "epic"}'
     );
-    expect(migrated.subGrouping).toBe('epic');
-    expect(migrated.grouping).toBe('epic');
+    expect(migrated.subGrouping).toBe('parent');
+    expect(migrated.grouping).toBe('parent');
     expect(
       parseTasksDisplay(
         '{"layout": "board", "grouping": "epic", "subGrouping": "none"}'
       ).subGrouping
-    ).toBe('epic');
+    ).toBe('parent');
     expect(
       parseTasksDisplay(
         '{"layout": "board", "grouping": "epic", "subGrouping": "assignee"}'
@@ -168,7 +168,7 @@ describe('parseTasksDisplay', () => {
   });
 
   // The migration is one-shot: once a build that stamps the payload writes it back, a
-  // board with `grouping: 'epic'` and lanes turned off must stay ungrouped across launches.
+  // board with `grouping: 'parent'` and lanes turned off must stay ungrouped across launches.
   it('does not re-migrate a stamped payload', () => {
     expect(
       parseTasksDisplay(
@@ -179,10 +179,10 @@ describe('parseTasksDisplay', () => {
       parseTasksDisplay(
         '{"layout": "board", "grouping": "epic", "subGrouping": "none", "version": 1}'
       ).subGrouping
-    ).toBe('epic');
+    ).toBe('parent');
     const ungrouped = {
       ...DEFAULT_TASKS_DISPLAY,
-      grouping: 'epic' as const,
+      grouping: 'parent' as const,
       subGrouping: 'none' as const,
     };
     const stored = serializeTasksDisplay(ungrouped);
@@ -190,9 +190,14 @@ describe('parseTasksDisplay', () => {
     expect(parseTasksDisplay(stored)).toEqual(ungrouped);
   });
 
-  it('leaves a list layout grouped by epic untouched', () => {
+  it('reads a stored epic chip as the milestone chip', () => {
+    const parsed = parseTasksDisplay('{"properties": ["id", "epic"]}');
+    expect([...parsed.properties].sort()).toEqual(['id', 'milestone']);
+  });
+
+  it('leaves a list layout grouped by milestone untouched', () => {
     const list = parseTasksDisplay('{"layout": "list", "grouping": "epic"}');
-    expect(list.grouping).toBe('epic');
+    expect(list.grouping).toBe('parent');
     expect(list.subGrouping).toBe('none');
     expect(
       parseTasksDisplay('{"layout": "board", "grouping": "status"}').subGrouping
@@ -232,11 +237,11 @@ describe('parseTasksDisplay', () => {
 
 describe('toggleDisplayProperty', () => {
   it('flips membership without mutating the input', () => {
-    const on = toggleDisplayProperty(DEFAULT_TASKS_DISPLAY, 'milestone');
-    expect(on.properties.has('milestone')).toBe(true);
-    expect(DEFAULT_TASKS_DISPLAY.properties.has('milestone')).toBe(false);
-    const off = toggleDisplayProperty(on, 'milestone');
-    expect(off.properties.has('milestone')).toBe(false);
+    const on = toggleDisplayProperty(DEFAULT_TASKS_DISPLAY, 'links');
+    expect(on.properties.has('links')).toBe(true);
+    expect(DEFAULT_TASKS_DISPLAY.properties.has('links')).toBe(false);
+    const off = toggleDisplayProperty(on, 'links');
+    expect(off.properties.has('links')).toBe(false);
   });
 });
 

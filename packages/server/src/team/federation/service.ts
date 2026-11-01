@@ -26,6 +26,8 @@ import type { RepoSyncResult } from '../boardSync/repo.js';
 import { personOf } from '../boardSync/repo.js';
 import type { SyncedTaskStore } from '../boardSync/syncedStore.js';
 import type { AuditKind } from './audit.js';
+import type { Opened } from './content.js';
+import { ContentKeyMissingError, TeamContent } from './content.js';
 import type { LegacyWindow, V1Log } from './legacy.js';
 import { LinkOpsOffTeamLog } from './linkOps.js';
 import type { RosterService } from './roster.js';
@@ -244,9 +246,22 @@ export class FederationService {
   // holding back all but its key op (backfillOnceAdmitted).
   private backfill = false;
 
+  /** End-to-end team content: its keys, grants and the seal on every op. */
+  readonly content: TeamContent;
+
   constructor(private readonly opts: FederationServiceOptions) {
     this.current = opts.transport;
     this.register(new LinkOpsOffTeamLog(opts));
+    this.content = new TeamContent({
+      fed: opts.fed,
+      roster: opts.roster,
+      changed: () => {
+        this.notifyLocalChange();
+      },
+      now: () => this.now(),
+    });
+    opts.fed.setContentSealer(this.content);
+    this.addCollector(this.content);
   }
 
   /** The next pass pulls `replica` from below `seqs` and hands each of those
@@ -397,8 +412,9 @@ export class FederationService {
         return;
       }
       this.paused = null;
-      // An older build's ops first, before any op this pass mints passes them.
-      legacy.reissue();
+      // An older build's ops first, before any op this pass mints passes them;
+      // e2e content waits for its key, never going out in the clear.
+      if (this.content.missing() === null) legacy.reissue();
       try {
         legacy.maybeClose();
       } catch (err) {
@@ -409,7 +425,15 @@ export class FederationService {
       // A switch the roster made, once nothing waits for the old transport.
       await this.followTransport();
       await this.backfillOnceAdmitted();
-      for (const c of this.collectors) c.collect(now);
+      for (const c of this.collectors) {
+        // Content that cannot be sealed yet waits; the pass goes on for its key.
+        try {
+          c.collect(now);
+        } catch (err) {
+          if (!(err instanceof ContentKeyMissingError)) throw err;
+          this.content.waiting();
+        }
+      }
       // Offline keeps both outboxes; the pull below says why.
       try {
         await this.publish();
@@ -432,8 +456,14 @@ export class FederationService {
       this.afterFold(before);
       // A machine waiting with proof of an invite issued here is let in.
       if (roster.autoAdmit().length > 0) this.notifyLocalChange();
+      const keyWaiting = this.keyWaiting();
       const changed = this.stage(verified, v1Ops, now);
       this.stageRereads(entries, now);
+      this.content.passEnded();
+      // Ops parked for a key that came drain a budget a pass: on to the next.
+      const stillWaiting = this.keyWaiting();
+      if (stillWaiting > 0 && stillWaiting < keyWaiting)
+        this.notifyLocalChange();
       await this.findNamedKeys();
       if (this.inbox !== null) await this.inbox.drain(now);
       await this.current.ack(this.watermarks());
@@ -953,9 +983,17 @@ export class FederationService {
       const ctx: StageContext = {
         view,
         now,
-        evidence: evidenceOf(verified, view),
+        evidence: evidenceOf(verified, view, (e) => this.bodyOf(e)),
       };
-      this.restage(ctx);
+      // Grants in this pull first, so content behind them in clock order opens.
+      for (const v of verified.values())
+        for (const { entry } of v.entries)
+          if (entry.type === 'state' && !isStub(entry))
+            this.content.takeGrant(
+              entry,
+              standsAt(view, entry.replica, entry.seq)
+            );
+      if (this.restage(ctx)) changed = true;
       const blocked = new Set<string>();
       // An op this build cannot read, from someone who stands, pauses applying.
       if (view.unknown !== null)
@@ -1023,7 +1061,7 @@ export class FederationService {
     ctx: StageContext,
     now: Date
   ): 'block' | 'changed' | 'moved' {
-    const { fed, roster, store } = this.opts;
+    const { fed, roster } = this.opts;
     const r = entry.replica;
     // A revoked replica's ops above its cut are dropped; those below stand.
     const cut = view.revoked.get(r);
@@ -1067,33 +1105,18 @@ export class FederationService {
       return 'moved';
     }
     if (entry.type === 'task') {
-      const body = entry.body as unknown as Omit<
-        BoardOp,
-        'v' | 'replica' | 'seq' | 'hlc'
-      >;
-      const result = store.applyRemote({
-        v: 1,
-        replica: r,
-        seq: entry.seq,
-        hlc: entry.hlc,
-        ...body,
-      });
-      if (result.held === true) return 'block';
-      if (result.problem !== undefined)
-        this.opts.ledger.recordProblem(
-          body.task,
-          result.problem,
-          now.toISOString()
-        );
-      fed.db
-        .query(
-          'INSERT OR IGNORE INTO fed_applied (replica, seq, task, at) VALUES (?, ?, ?, ?)'
-        )
-        .run(r, entry.seq, body.task, now.toISOString());
-      if (!result.changed) return 'moved';
-      this.applied += 1;
-      return 'changed';
+      const out = this.stageTask(entry, now);
+      // Its epoch's key has not reached this machine: it waits for a grant.
+      if (out === 'parked') this.park(entry, 'parked');
+      return out === 'parked' ? 'moved' : out;
     }
+    // A content key grant is the content side's, never a delivery report.
+    if (
+      entry.type === 'state' &&
+      this.content.takeGrant(entry, standsAt(view, r, entry.seq))
+    )
+      return 'moved';
+    if (entry.type === 'presence') this.content.noteWants(entry, view);
     const handler = this.handlers.get(entry.type);
     // FW-R32(7): team messaging ops wait until this machine is firmly in.
     const waiting = F2_TYPES.has(entry.type) && !this.opts.roster.mailReady();
@@ -1111,15 +1134,87 @@ export class FederationService {
     return 'moved';
   }
 
+  // A task op onto the board: 'parked' while its epoch's key is missing.
+  private stageTask(
+    entry: FederatedOp,
+    now: Date
+  ): 'block' | 'changed' | 'moved' | 'parked' {
+    const { fed, store } = this.opts;
+    const r = entry.replica;
+    const opened = this.content.open(entry);
+    if (opened.kind === 'missing') return 'parked';
+    if (opened.kind === 'malformed' || opened.kind === 'request') {
+      this.malformed(entry, opened);
+      return 'moved';
+    }
+    const body = opened.op.body as unknown as Omit<
+      BoardOp,
+      'v' | 'replica' | 'seq' | 'hlc'
+    >;
+    const result = store.applyRemote({
+      v: 1,
+      replica: r,
+      seq: entry.seq,
+      hlc: entry.hlc,
+      ...body,
+    });
+    if (result.held === true) return 'block';
+    if (result.problem !== undefined)
+      this.opts.ledger.recordProblem(
+        body.task,
+        result.problem,
+        now.toISOString()
+      );
+    fed.db
+      .query(
+        'INSERT OR IGNORE INTO fed_applied (replica, seq, task, at) VALUES (?, ?, ?, ?)'
+      )
+      .run(r, entry.seq, body.task, now.toISOString());
+    if (!result.changed) return 'moved';
+    this.applied += 1;
+    return 'changed';
+  }
+
+  // A content op whose envelope does not open with the key held, or whose
+  // clear hints lie about it: dropped with a rolling note.
+  private malformed(op: FederatedOp, opened: Opened): void {
+    const why = opened.kind === 'malformed' ? opened.why : 'it is no content';
+    dropNote(
+      this.opts.fed,
+      'malformed',
+      op.replica,
+      `${this.opts.roster.label(op.replica)}'s ${op.type} op at seq ${op.seq} was dropped: ${why}`
+    );
+  }
+
+  // A verified op's body as evidence reads it: opened, or none while sealed.
+  private bodyOf(entry: LogEntry): Record<string, unknown> | undefined {
+    if (isStub(entry)) return undefined;
+    const opened = this.content.open(entry);
+    if (opened.kind !== 'plain' && opened.kind !== 'opened') return undefined;
+    return opened.op.body as Record<string, unknown> | undefined;
+  }
+
   // FW-R32(3): a handler that throws drops that one op with a rolling note;
-  // no op can stop a pass.
+  // no op can stop a pass. A content op reaches its handler opened; one whose
+  // epoch's key is missing waits parked for a grant.
   private stageSafely(
     handler: OpHandler,
     op: FederatedOp,
     ctx: StageContext
   ): 'applied' | 'parked' | 'dropped' {
+    const opened = this.content.open(op);
+    if (opened.kind === 'missing') return 'parked';
+    if (opened.kind === 'malformed') {
+      this.malformed(op, opened);
+      return 'dropped';
+    }
+    if (opened.kind === 'request') {
+      this.content.applyRequest(op);
+      return 'applied';
+    }
     try {
-      const out = handler.stage(op, ctx);
+      const out = handler.stage(opened.op, ctx);
       if (out === 'applied' && handler.countsApplied === true)
         this.applied += 1;
       return out;
@@ -1150,8 +1245,11 @@ export class FederationService {
     fed.audit('clock-hold', subject, { replica, aheadMs: ahead });
   }
 
-  private park(op: FederatedOp, reason: string): void {
-    this.makeRoom('fed_parked', op);
+  // An op waiting for a team epoch's key is kept outside the per-publisher
+  // cap: a joiner may read a long history before its grant arrives.
+  private park(op: FederatedOp, why: string): void {
+    const reason = this.content.awaitsKey(op) ? 'key' : why;
+    if (reason !== 'key') this.makeRoom('fed_parked', op);
     this.opts.fed.db
       .query(
         'INSERT OR REPLACE INTO fed_parked (replica, seq, op_json, reason, first_at) VALUES (?, ?, ?, ?, ?)'
@@ -1251,9 +1349,12 @@ export class FederationService {
     this.backfill = false;
   }
 
-  // Tells a parked op's handler that retention dropped it.
+  // Tells a parked op's handler that retention dropped it, opened when it can be.
   private droppedParked(json: string, reason: 'overflow' | 'revoked'): void {
-    const op = JSON.parse(json) as FederatedOp;
+    const raw = JSON.parse(json) as FederatedOp;
+    const opened = this.content.open(raw);
+    const op =
+      opened.kind === 'plain' || opened.kind === 'opened' ? opened.op : raw;
     try {
       this.handlers.get(op.type)?.dropped?.(op, reason);
     } catch (err) {
@@ -1281,7 +1382,7 @@ export class FederationService {
       const ctx: StageContext = {
         view,
         now,
-        evidence: evidenceOf(new Map(), view),
+        evidence: evidenceOf(new Map(), view, (e) => this.bodyOf(e)),
       };
       for (const e of entries) {
         if (asked.get(e.replica)?.has(e.seq) !== true || isStub(e)) continue;
@@ -1313,20 +1414,22 @@ export class FederationService {
   private makeRoom(table: 'fed_parked' | 'fed_unknown', op: FederatedOp): void {
     const { db } = this.opts.fed;
     const cap = this.opts.maxParkedPerPublisher ?? MAX_PARKED_PER_PUBLISHER;
+    // Ops waiting for a content key neither count nor go.
+    const capped = table === 'fed_parked' ? " AND reason != 'key'" : '';
     const held =
       db
         .query<{ n: number }, [string, number]>(
-          `SELECT COUNT(*) AS n FROM ${table} WHERE replica = ? AND seq != ?`
+          `SELECT COUNT(*) AS n FROM ${table} WHERE replica = ? AND seq != ?${capped}`
         )
         .get(op.replica, op.seq)?.n ?? 0;
     if (held < cap) return;
     const gone = db
       .query<{ seq: number; op_json: string }, [string, number, number]>(
-        `SELECT seq, op_json FROM ${table} WHERE replica = ? AND seq != ? ORDER BY seq LIMIT ?`
+        `SELECT seq, op_json FROM ${table} WHERE replica = ? AND seq != ?${capped} ORDER BY seq LIMIT ?`
       )
       .all(op.replica, op.seq, held - cap + 1);
     db.query(
-      `DELETE FROM ${table} WHERE replica = ? AND seq IN (SELECT seq FROM ${table} WHERE replica = ? AND seq != ? ORDER BY seq LIMIT ?)`
+      `DELETE FROM ${table} WHERE replica = ? AND seq IN (SELECT seq FROM ${table} WHERE replica = ? AND seq != ?${capped} ORDER BY seq LIMIT ?)`
     ).run(op.replica, op.replica, op.seq, held - cap + 1);
     if (table === 'fed_parked')
       for (const row of gone) this.droppedParked(row.op_json, 'overflow');
@@ -1338,8 +1441,11 @@ export class FederationService {
     );
   }
 
-  // Parked ops and ops of a type now registered get their handler again.
-  private restage(ctx: StageContext): void {
+  // Parked ops and ops of a type now registered get their handler again; a
+  // task op waiting for its key goes onto the board once the key is here.
+  // True when the board changed.
+  private restage(ctx: StageContext): boolean {
+    let changed = false;
     const { fed } = this.opts;
     const { db } = fed;
     // FW-R33(5), FW-R35(3): a budget per publisher and per pass; within a
@@ -1413,17 +1519,53 @@ export class FederationService {
         this.droppedParked(row.op_json, 'revoked');
         continue;
       }
+      if (op.type === 'task' && row.table === 'fed_parked') {
+        const out = this.stageTask(op, ctx.now);
+        if (out === 'block') this.keyArrived(op);
+        if (out === 'parked' || out === 'block') continue;
+        if (out === 'changed') changed = true;
+        db.query('DELETE FROM fed_parked WHERE replica = ? AND seq = ?').run(
+          row.replica,
+          row.seq
+        );
+        continue;
+      }
       const handler = this.handlers.get(op.type);
       if (handler === undefined) continue;
       if (F2_TYPES.has(op.type) && !ready) continue;
       const parked = this.stageSafely(handler, op, ctx) === 'parked';
-      if (parked && row.table === 'fed_parked') continue;
+      if (parked && row.table === 'fed_parked') {
+        this.keyArrived(op);
+        continue;
+      }
       db.query(`DELETE FROM ${row.table} WHERE replica = ? AND seq = ?`).run(
         row.replica,
         row.seq
       );
       if (parked) this.park(op, 'parked');
     }
+    return changed;
+  }
+
+  // A parked op whose key is here now waits as any parked op does.
+  private keyArrived(op: FederatedOp): void {
+    if (this.content.awaitsKey(op)) return;
+    this.opts.fed.db
+      .query(
+        "UPDATE fed_parked SET reason = 'parked' WHERE replica = ? AND seq = ? AND reason = 'key'"
+      )
+      .run(op.replica, op.seq);
+  }
+
+  // Ops parked for a content key.
+  private keyWaiting(): number {
+    return (
+      this.opts.fed.db
+        .query<{ n: number }, []>(
+          "SELECT COUNT(*) AS n FROM fed_parked WHERE reason = 'key'"
+        )
+        .get()?.n ?? 0
+    );
   }
 
   // v1 lines once founded: the legacy window decides which apply, which are
@@ -1614,16 +1756,19 @@ function orNull<T>(fn: () => T): T | null {
   }
 }
 
+// `bodyOf` opens an e2e content body; a sealed one whose key is missing
+// makes no claim.
 function evidenceOf(
   verified: Map<string, Verified>,
-  view: RosterView
+  view: RosterView,
+  bodyOf: (entry: LogEntry) => Record<string, unknown> | undefined
 ): Evidence {
   const evidence: Evidence = { runs: new Map(), agents: new Map() };
   for (const [replica, v] of verified)
     for (const { entry } of v.entries) {
       // FW-R32(5): only a replica standing at its op makes a claim.
       if (isStub(entry) || !standsAt(view, replica, entry.seq)) continue;
-      const body = entry.body as Record<string, unknown> | undefined;
+      const body = bodyOf(entry);
       if (body === undefined) continue;
       if (
         entry.type === 'presence' &&

@@ -348,7 +348,8 @@ describe('batch 3 review: K2, K3', () => {
           oldJwk: publicJwkOf(k1.publicJwk),
           oldKey: createPrivateKey({ key: k1.privateJwk, format: 'jwk' }),
           newJwk: publicJwkOf(x),
-          at: new Date(),
+          // B refuses a statement no newer than its pin, which can share this millisecond.
+          at: new Date(Date.now() + 1),
         })
       ),
     });

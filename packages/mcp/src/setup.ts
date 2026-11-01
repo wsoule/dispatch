@@ -165,12 +165,14 @@ function writeJson(path: string, value: unknown): void {
   writeText(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-// Adds (or updates setup's own) mcpServers.dispatch in a JSON config:
-// Cursor, Gemini, Claude Desktop and Windsurf share this shape.
+// Adds (or updates setup's own) mcpServers[name] in a JSON config: Cursor,
+// Gemini, Claude Desktop and Windsurf share this shape. Under another name, an
+// old `dispatch` entry setup wrote is moved to it.
 function addToJsonConfig(
   client: string,
   path: string,
-  launch: Launch
+  launch: Launch,
+  name = 'dispatch'
 ): StepResult {
   const config = readJson(path);
   if (config === 'unparseable')
@@ -184,24 +186,37 @@ function addToJsonConfig(
     typeof current.mcpServers === 'object' && current.mcpServers !== null
       ? (current.mcpServers as Record<string, unknown>)
       : {};
-  const existing = servers.dispatch;
-  if (existing !== undefined && same(existing, launch))
+  const existing = servers[name];
+  const legacy = name !== 'dispatch' && ours(servers.dispatch);
+  if (existing !== undefined && same(existing, launch) && !legacy)
     return { client, status: 'present' };
   if (existing !== undefined && !ours(existing))
     return {
       client,
       status: 'skipped',
-      reason: 'it already has a different "dispatch" server',
+      reason: `it already has a different "${name}" server`,
     };
+  const kept = legacy
+    ? Object.fromEntries(
+        Object.entries(servers).filter(([k]) => k !== 'dispatch')
+      )
+    : servers;
   writeJson(path, {
     ...current,
     mcpServers: {
-      ...servers,
-      dispatch: { command: launch.command, args: launch.args },
+      ...kept,
+      [name]: { command: launch.command, args: launch.args },
     },
   });
-  return { client, status: existing === undefined ? 'added' : 'updated' };
+  return {
+    client,
+    status: existing === undefined && !legacy ? 'added' : 'updated',
+  };
 }
+
+// Claude Desktop reserves `dispatch` for its own feature and refuses a server
+// by that name in Cowork and Code sessions.
+const CLAUDE_DESKTOP_SERVER = 'dispatch-foo';
 
 function claudeDesktopConfig(env: SetupEnv): string {
   if (env.platform === 'darwin')
@@ -384,7 +399,12 @@ export function connectClients(env: SetupEnv, launch: Launch): StepResult[] {
     );
   if (existsSync(dirname(claudeDesktopConfig(env))))
     results.push(
-      addToJsonConfig('Claude Desktop', claudeDesktopConfig(env), launch)
+      addToJsonConfig(
+        'Claude Desktop',
+        claudeDesktopConfig(env),
+        launch,
+        CLAUDE_DESKTOP_SERVER
+      )
     );
   if (existsSync(join(home, '.codeium', 'windsurf')))
     results.push(

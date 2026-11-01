@@ -4,7 +4,9 @@ import { keyAction } from './appNav';
 import {
   type GlobalKeyboardContext,
   type GlobalKeyCommand,
+  type ListKeyCommand,
   resolveChordKey,
+  resolveListKeyCommand,
 } from './keyboard';
 import { buildShortcutGroups, GOTO_CHORDS } from './shortcutGroups';
 
@@ -13,6 +15,14 @@ const ARMED: GlobalKeyboardContext = {
   modalOpen: false,
   pendingPrefix: 'g',
 };
+
+/** The list command a focused row resolves this bare letter to, or null. */
+function listKey(letter: string): ListKeyCommand | null {
+  return resolveListKeyCommand(
+    { key: letter.toLowerCase(), metaKey: false, ctrlKey: false },
+    { isTyping: false }
+  );
+}
 
 /** The command an armed `g` plus this letter resolves to, or null. */
 function chord(letter: string): GlobalKeyCommand | null {
@@ -119,5 +129,33 @@ describe('the Go to chords mirror lib/keyboard.ts', () => {
       'G',
       'G',
     ]);
+  });
+});
+
+describe('the Task keys mirror lib/keyboard.ts', () => {
+  const task = buildShortcutGroups('Ctrl').find((g) => g.title === 'Task');
+  const rows = task?.rows ?? [];
+
+  test('every Task row is one bare key a focused row resolves', () => {
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.keys).toHaveLength(1);
+      const command = listKey(row.keys[0] ?? '');
+      expect(command, `${row.label} (${row.keys[0]})`).not.toBeNull();
+    }
+  });
+
+  test('every property and dispatch key the resolver knows is listed', () => {
+    const isTaskCommand = (command: ListKeyCommand | null): boolean =>
+      command !== null &&
+      (command.startsWith('list-set-') || command === 'list-dispatch');
+    const listed = new Set(rows.map((row) => listKey(row.keys[0] ?? '')));
+    const known = new Set<ListKeyCommand | null>();
+    for (let code = 97; code <= 122; code++) {
+      const command = listKey(String.fromCharCode(code));
+      if (isTaskCommand(command)) known.add(command);
+    }
+    expect(known.size).toBeGreaterThan(0);
+    expect([...known].sort()).toEqual([...listed].sort());
   });
 });

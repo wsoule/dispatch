@@ -175,7 +175,7 @@ describe('PATCH /api/config — orchestrator caps', () => {
 });
 
 // The fan-out ceilings: the hard concurrency cap and the per-run cost
-// estimate the epic engine's spend gate reads.
+// estimate the milestone engine's spend gate reads.
 describe('PATCH /api/config — fan-out ceilings', () => {
   it('accepts maxConcurrency and runCostEstimateUsd and they round-trip through GET', async () => {
     const res = await patchConfig({
@@ -294,7 +294,7 @@ describe('GET /api/health — daemon identity without a daemon file', () => {
 
 // A webhook URL is the credential (Slack and Discord put the secret in the
 // path), and GET /api/config answers any request-tier token. The
-// notifications block that stores one lands separately (epic e-6cfcc7);
+// notifications block that stores one lands separately (milestone e-6cfcc7);
 // until loadConfig carries it through, this passes because the key is
 // dropped, and once it does, because secretUrls.ts masks it — either way
 // the secret never leaves the daemon.

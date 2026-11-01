@@ -1,8 +1,8 @@
 import { Pause, Play } from 'lucide-react';
 import { memo, type ReactNode } from 'react';
 
-import { formatUsd } from '../../lib/epicSession';
 import type { LiveCeilings } from '../../lib/liveSpend';
+import { formatUsd } from '../../lib/milestoneSession';
 import type { LiveTotals } from './liveBandModel';
 import { PillButton } from '@/ui/ai/pill';
 

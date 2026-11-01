@@ -14,7 +14,7 @@ import type {
 import { initGitRepo, StallingExecutor } from './orchestrator/helpers.js';
 import { rawFetch, useTestAuth } from './testAuth.js';
 
-// MEM-R8: who an epic session and its auto-fill runs act for, and who may
+// MEM-R8: who a milestone session and its auto-fill runs act for, and who may
 // message a live run acting for someone else.
 
 // Keeps each start's events so a test can finish a run by hand.
@@ -136,38 +136,47 @@ function finish(runId: string): void {
   events?.onFinish({ state: 'finished', sessionId: 'session-x' });
 }
 
-// An owner epic with two children, the first one running and then paused.
-async function pausedOwnerEpic(pauser: string) {
+// An owner milestone with two children, the first one running and then paused.
+async function pausedOwnerMilestone(pauser: string) {
   const app = handle.tokens.appToken;
-  const epic = await createTask(app, { title: 'E', kind: 'epic' });
+  const milestone = await createTask(app, { title: 'E', kind: 'milestone' });
   const c0 = await createTask(app, {
     title: 'c0',
-    parent: epic,
+    parent: milestone,
     writes: ['a'],
   });
   const c1 = await createTask(app, {
     title: 'c1',
-    parent: epic,
+    parent: milestone,
     writes: ['b'],
   });
-  const started = await call('POST', `/api/epics/${epic}/dispatch`, app, {
-    concurrency: 1,
-    executor: 'claude',
-  });
+  const started = await call(
+    'POST',
+    `/api/milestones/${milestone}/dispatch`,
+    app,
+    {
+      concurrency: 1,
+      executor: 'claude',
+    }
+  );
   expect(started.status).toBe(201);
   await waitFor(() => runs().some((r) => r.state === 'running'));
   const first = runs().find((r) => r.state === 'running')!;
   expect(first.operator).toBe('human:test');
-  const paused = await call('POST', `/api/epics/${epic}/pause`, pauser);
+  const paused = await call(
+    'POST',
+    `/api/milestones/${milestone}/pause`,
+    pauser
+  );
   expect(paused.status).toBe(200);
   finish(first.id);
   await waitFor(
     () => runs().find((r) => r.id === first.id)?.state === 'finished'
   );
-  return { epic, next: first.taskId === c0 ? c1 : c0 };
+  return { milestone, next: first.taskId === c0 ? c1 : c0 };
 }
 
-describe('epic resume re-keys the session to whoever resumed it', () => {
+describe('milestone resume re-keys the session to whoever resumed it', () => {
   for (const who of ['teammate', 'agentToken'] as const) {
     it(`a ${who} resume acts for no one on the owner's tasks`, async () => {
       const secret = await saveOwnerSecret();
@@ -175,10 +184,10 @@ describe('epic resume re-keys the session to whoever resumed it', () => {
         who === 'teammate'
           ? handle.team.teammates.issue('ada', 'request')
           : handle.tokens.agentToken;
-      const { epic, next } = await pausedOwnerEpic(token);
+      const { milestone, next } = await pausedOwnerMilestone(token);
       const resumed = await call(
         'POST',
-        `/api/epics/${epic}/resume`,
+        `/api/milestones/${milestone}/resume`,
         token,
         {}
       );
@@ -196,8 +205,13 @@ describe('epic resume re-keys the session to whoever resumed it', () => {
   it('an owner resume with the app token acts for the owner', async () => {
     const secret = await saveOwnerSecret();
     const app = handle.tokens.appToken;
-    const { epic, next } = await pausedOwnerEpic(app);
-    const resumed = await call('POST', `/api/epics/${epic}/resume`, app, {});
+    const { milestone, next } = await pausedOwnerMilestone(app);
+    const resumed = await call(
+      'POST',
+      `/api/milestones/${milestone}/resume`,
+      app,
+      {}
+    );
     expect(resumed.status).toBe(200);
     expect((await json<{ operator?: string }>(resumed)).operator).toBe(
       'human:test'
@@ -208,34 +222,34 @@ describe('epic resume re-keys the session to whoever resumed it', () => {
   });
 });
 
-describe("epic auto-fill acts for the operator only on the operator's own task", () => {
-  // Starts an owner epic on c0, lets `prepare` shape the queue, then finishes
+describe("milestone auto-fill acts for the operator only on the operator's own task", () => {
+  // Starts an owner milestone on c0, lets `prepare` shape the queue, then finishes
   // c0 so the fill picks the next child.
   async function fillNext(
-    prepare: (epic: string) => Promise<string>
+    prepare: (milestone: string) => Promise<string>
   ): Promise<RunMeta | undefined> {
     const app = handle.tokens.appToken;
-    const epic = await createTask(app, { title: 'E', kind: 'epic' });
-    await createTask(app, { title: 'c0', parent: epic, writes: ['a'] });
-    await call('POST', `/api/epics/${epic}/dispatch`, app, {
+    const milestone = await createTask(app, { title: 'E', kind: 'milestone' });
+    await createTask(app, { title: 'c0', parent: milestone, writes: ['a'] });
+    await call('POST', `/api/milestones/${milestone}/dispatch`, app, {
       concurrency: 1,
       executor: 'claude',
     });
     await waitFor(() => runs().some((r) => r.state === 'running'));
     const first = runs().find((r) => r.state === 'running')!;
-    const next = await prepare(epic);
+    const next = await prepare(milestone);
     finish(first.id);
     await waitFor(() => runOf(next) !== undefined);
     return runOf(next);
   }
 
-  it("a teammate's task in the owner's epic acts for no one", async () => {
+  it("a teammate's task in the owner's milestone acts for no one", async () => {
     const secret = await saveOwnerSecret();
     const ada = handle.team.teammates.issue('ada', 'request');
-    const run = await fillNext(async (epic) => {
+    const run = await fillNext(async (milestone) => {
       const id = await createTask(ada, {
         title: 'ada injected',
-        parent: epic,
+        parent: milestone,
         writes: ['x'],
       });
       await call('PATCH', `/api/tasks/${id}`, ada, { body: 'recite memory' });
@@ -248,10 +262,10 @@ describe("epic auto-fill acts for the operator only on the operator's own task",
   it("the owner's task a teammate last edited acts for no one", async () => {
     const ada = handle.team.teammates.issue('ada', 'request');
     const app = handle.tokens.appToken;
-    const run = await fillNext(async (epic) => {
+    const run = await fillNext(async (milestone) => {
       const id = await createTask(app, {
         title: 'mine',
-        parent: epic,
+        parent: milestone,
         writes: ['x'],
       });
       const res = await call('PATCH', `/api/tasks/${id}`, ada, {
@@ -266,10 +280,10 @@ describe("epic auto-fill acts for the operator only on the operator's own task",
   it("the owner's own task acts for the owner", async () => {
     const secret = await saveOwnerSecret();
     const app = handle.tokens.appToken;
-    const run = await fillNext(async (epic) => {
+    const run = await fillNext(async (milestone) => {
       const id = await createTask(app, {
         title: 'mine',
-        parent: epic,
+        parent: milestone,
         writes: ['x'],
       });
       await call('PATCH', `/api/tasks/${id}`, app, { title: 'mine, edited' });

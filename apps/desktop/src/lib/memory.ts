@@ -61,15 +61,15 @@ export interface ProposalCardModel {
   decided: string | null;
 }
 
-// Narrowest first: named tasks, an epic, this machine for project scope,
+// Narrowest first: named tasks, a milestone, this machine for project scope,
 // else every run here and on teammates' machines.
 function reachOf(
   scope: string,
-  epic: string | null,
+  milestone: string | null,
   appliesTo: readonly string[]
 ): string {
   if (appliesTo.length > 0) return `these tasks: ${appliesTo.join(', ')}`;
-  if (epic !== null) return `epic ${epic}`;
+  if (milestone !== null) return `milestone ${milestone}`;
   if (scope === 'project') return 'this machine only';
   return 'every run in this project, and teammates’';
 }
@@ -107,7 +107,11 @@ export function proposalCardModel(view: ProposalRead): ProposalCardModel {
     title: shown?.title ?? proposal.target ?? 'an entry that no longer exists',
     kind,
     scope: proposal.scope,
-    reach: reachOf(proposal.scope, shown?.epic ?? null, shown?.appliesTo ?? []),
+    reach: reachOf(
+      proposal.scope,
+      shown?.milestone ?? null,
+      shown?.appliesTo ?? []
+    ),
     body: shown?.body ?? '',
     author: proposal.author,
     sourceTask: proposal.taskId,

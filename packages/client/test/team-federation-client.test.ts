@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import { createApiClient } from '../src/api';
-import type { TeamKeys } from '../src/api';
+import type { ContentE2eStatus, TeamKeys } from '../src/api';
 
 // The stubFetch and sentJson helpers, copied from messaging-client.test.ts,
 // which keeps them local.
@@ -63,7 +63,9 @@ describe('team federation bindings', () => {
         confirmed: true,
         registrationToken: 'relay-token',
       });
-      expect(stub.calls.map((c) => [c.init?.method, c.url])).toEqual([
+      await client.enableContentE2e();
+      await client.getContentE2e();
+      expect(stub.calls.map((c) => [c.init?.method ?? 'GET', c.url])).toEqual([
         ['POST', `${BASE}/api/team/found`],
         ['POST', `${BASE}/api/team/trust`],
         ['POST', `${BASE}/api/team/keys/cy-0000000c/admit`],
@@ -73,7 +75,10 @@ describe('team federation bindings', () => {
         ['POST', `${BASE}/api/team/dismiss`],
         ['POST', `${BASE}/api/team/problems/ack`],
         ['POST', `${BASE}/api/team/transport`],
+        ['POST', `${BASE}/api/team/content-e2e`],
+        ['GET', `${BASE}/api/team/content-e2e`],
       ]);
+      expect(sentJson(stub.calls[9] ?? {})).toEqual({});
       expect(sentJson(stub.calls[8] ?? {})).toEqual({
         kind: 'relay',
         url: 'wss://relay.example',
@@ -128,6 +133,30 @@ describe('team federation bindings', () => {
         keys
       );
       expect(stub.calls[0]?.url).toBe(`${BASE}/api/team/keys`);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('reads the e2e content status as the server sends it', async () => {
+    const answer = {
+      on: true,
+      since: 'a'.repeat(64),
+      sinceAt: '2026-10-20T12:00:00.000Z',
+      current: 'b'.repeat(64),
+      epochs: [
+        { epoch: 'a'.repeat(64), held: true },
+        { epoch: 'b'.repeat(64), held: false },
+      ],
+      missing: ['b'.repeat(64)],
+      lacking: [{ replica: 'cy-0000000c', handle: 'cy' }],
+      legacyClosed: true,
+    } satisfies ContentE2eStatus;
+    const stub = stubFetch(answer);
+    try {
+      expect(await createApiClient(BASE, 'app-token').getContentE2e()).toEqual(
+        answer
+      );
     } finally {
       stub.restore();
     }

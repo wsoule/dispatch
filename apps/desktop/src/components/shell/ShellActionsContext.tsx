@@ -8,12 +8,12 @@ import type {
   TaskTab,
 } from '../../lib/appNav';
 
-/** What a "+" on a status group, an epic's "add task", or a milestone row pre-fills into the
+/** What a "+" on a status group, a milestone's "add task", or a milestone row pre-fills into the
  * task creator. Every field is optional; the creator defaults the rest. */
 export interface CreateTaskPreset {
   status?: string;
   /** The container (milestone, project, parent issue…) the new task goes under. */
-  epic?: string;
+  milestone?: string;
   /** What to create; any kind but a task skips the AI composer for the quick-add form. */
   kind?: TaskKind;
 }

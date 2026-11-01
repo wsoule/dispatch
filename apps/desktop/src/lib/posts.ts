@@ -66,3 +66,15 @@ export function buildPosts(
     a.latest.createdAt.localeCompare(b.latest.createdAt)
   );
 }
+
+/**
+ * The question a reply typed on `post` answers: its newest message, when that
+ * is a question someone else put. A reply to anything else is a plain
+ * message. Answering through the question's own reply route is what settles
+ * it (an outside A2A client's task completes with the answer); a new message
+ * beside it leaves the question open.
+ */
+export function questionToAnswer(post: Post, me: string): Message | null {
+  const { latest } = post;
+  return latest.kind === 'question' && latest.from !== me ? latest : null;
+}

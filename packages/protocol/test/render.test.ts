@@ -17,7 +17,7 @@ describe('renderForAgent', () => {
       thread: 'm-01abc',
       replyTo: null,
       from: 'run:r-000001',
-      to: ['channel:epic/e-000001'],
+      to: ['channel:milestone/e-000001'],
       kind: 'message',
       body: 'see the spec',
       refs: [{ type: 'doc', id: 'doc-01K', at: 'api' }],

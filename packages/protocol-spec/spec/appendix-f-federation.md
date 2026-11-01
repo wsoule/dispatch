@@ -110,7 +110,10 @@ interface OpStub extends OpHeader {
 
 Only `mail`, `state` and `a2a` are sealed. The other types are the team's shared
 state and travel in the clear, so a transport can read the board, team memory
-and documents, presence and the roster, but not the mail.
+and documents, presence and the roster, but not the mail. A team can switch its
+`task`, `presence`, `agent`, `channel`, `memory` and `doc` bodies to end-to-end
+encrypted content envelopes ([§F.8](appendix-f-federation.md#sF.8)); the roster
+and the headers stay in the clear.
 
 `a2a` is a draft entry. It carries A2A between two paired agents over a
 **teammate link**, a log of its own that only those two replicas publish to, and
@@ -133,6 +136,7 @@ a line feed, so that none can be replayed as another:
 | ---------------------- | ----------------------------------- |
 | `dispatch-op-v2`       | every op header                     |
 | `dispatch-sealed-v1`   | sealed payloads and their key wraps |
+| `dispatch-content-v1`  | end-to-end content envelopes (F.8)  |
 | `dispatch-ack-v1`      | a transport's acknowledgements      |
 | `dispatch-relay-v1`    | a relay's connection challenge      |
 | `dispatch-invite-v1`   | an invited key's proof              |
@@ -386,3 +390,73 @@ documents design defines it: the document's id, `put` or `remove`, the author
 against what the publisher speaks for, keeps a revision whose parents have not
 arrived until they do, and applies a revision in clock order. A revision fits
 one op.
+
+## F.8 End-to-end team content
+
+**The switch.** An admin's `roster` op with `action: 'content-e2e'` turns it on
+for the whole team, for good; no op turns it off. The route that signs it
+refuses while the legacy window is open, or while any admitted machine or
+waiting invitee does not announce the `content-e2e` capability
+([§F.1](appendix-f-federation.md#sF.1)).
+
+**Epochs.** The switch opens the first epoch, and each accepted revoke folded
+after it opens the next. An epoch is named by the `opHash` of the roster op that
+opened it, and has one 32-byte team content key (TCK). The replica that
+published that op makes the key; no other replica ever makes one for it. New
+content always goes under the latest epoch's key.
+
+**The envelope.** Once the switch is folded, a content op's `body` is:
+
+```ts
+interface ContentEnvelope {
+  e2e: 1;
+  epoch: string; // the epoch's opHash
+  nonce: string; // 12 random bytes
+  ct: string; // AES-256-GCM(TCK, nonce, JCS(body), aad), the 16-byte tag appended
+  kind?: string; // presence only: the body's kind
+  run?: string; // presence only: HMAC-SHA256(TCK, run id), hex
+  caps?: string[]; // replica presence only: the body's caps
+  wants?: string[]; // replica presence only: epochs whose key the publisher lacks
+}
+```
+
+- `aad` is `"dispatch-content-v1\n" + replica + "\n" + seq + "\n" + type`, so a
+  ciphertext cannot move into another op. `bodyHash` covers the envelope as
+  usual.
+- The clear hints let a relay keep the latest presence per run and replica, and
+  let a team read caps and key requests, without the key. A receiver that opens
+  an envelope checks every hint against the decrypted body and drops an op whose
+  hints disagree as malformed.
+- A replica that lacks the current epoch's key publishes no content. Its replica
+  presence becomes a key request: an envelope with empty `nonce` and `ct`,
+  `kind: 'replica'`, its `caps` and its `wants`.
+- Ops published before the switch keep their plain bodies and are applied as
+  they are.
+
+**Grants.** Keys travel only inside sealed `state` ops
+([§F.3](appendix-f-federation.md#sF.3)), whose payload is:
+
+```ts
+interface GrantPayload {
+  grant: { epoch: string; key: string }[]; // key: the epoch's TCK
+}
+```
+
+- The replica that opened an epoch grants its key to every admitted member,
+  observers included; an admitter grants every epoch it holds to the member it
+  admitted; and any holder answers a member's `wants`, at most once per member
+  and epoch every 5 minutes. Observers receive keys but grant none.
+- A receiver keeps the first key it receives for each epoch the roster names and
+  ignores a grant for any other.
+- A revoked replica receives no grant for an epoch opened after its revocation,
+  so it cannot read content published under it. It keeps the keys, and so the
+  content, it already had.
+
+**Receive.** An op whose envelope names an epoch the receiver has no key for
+waits, beside the publisher's later ops, until a grant brings the key. An
+envelope that does not decrypt is malformed.
+
+**Limits.** Content published before the switch stays readable to the transport;
+a removed replica keeps what it received; an epoch's key opens every op under
+it, so there is no forward secrecy within an epoch; and headers, sizes, the
+roster and the license stay in the clear.

@@ -278,9 +278,11 @@ describe('summarizeThreads', () => {
   });
 
   test('takes the channel from the root, as a bare name', () => {
-    const root = msg('m-001', { to: ['channel:epic/e-c25f9c', 'task:t-1a2b'] });
+    const root = msg('m-001', {
+      to: ['channel:milestone/e-c25f9c', 'task:t-1a2b'],
+    });
     const inChannel = only(summarizeThreads([root], [], ME, NO_GATES));
-    expect(inChannel.channel).toBe('epic/e-c25f9c');
+    expect(inChannel.channel).toBe('milestone/e-c25f9c');
     const direct = only(summarizeThreads([msg('m-002')], [], ME, NO_GATES));
     expect(direct.channel).toBeNull();
   });
@@ -428,7 +430,7 @@ describe('completeAddress', () => {
       { id: 't-3c4d', title: 'Auth refactor' },
       { id: 'x-0001', title: 'Pipeline export audit' },
     ],
-    channels: ['auth-refactor', 'epic/e-c25f9c', 'releases'],
+    channels: ['auth-refactor', 'milestone/e-c25f9c', 'releases'],
     agents: ['agent:wyat/claude', 'agent:ada/codex'],
     humans: ['human:wyat', 'human:ada'],
   };
@@ -459,13 +461,13 @@ describe('completeAddress', () => {
   test('lists channels for # and channel:', () => {
     const all = [
       'channel:auth-refactor',
-      'channel:epic/e-c25f9c',
+      'channel:milestone/e-c25f9c',
       'channel:releases',
     ];
     expect(addresses('@#')).toEqual(all);
     expect(addresses('@channel:')).toEqual(all);
-    expect(completeAddress('@#epic', known)).toEqual([
-      { address: 'channel:epic/e-c25f9c', label: '#epic/e-c25f9c' },
+    expect(completeAddress('@#milestone', known)).toEqual([
+      { address: 'channel:milestone/e-c25f9c', label: '#milestone/e-c25f9c' },
     ]);
   });
 
@@ -564,8 +566,8 @@ describe('addressLabel', () => {
     expect(addressLabel('human:wyat', lookups)).toBe('wyat');
     expect(addressLabel('agent:wyat/claude', lookups)).toBe('wyat/claude');
     expect(addressLabel('run:r-9f2c01', lookups)).toBe('r-9f2c01');
-    expect(addressLabel('channel:epic/e-c25f9c', lookups)).toBe(
-      '#epic/e-c25f9c'
+    expect(addressLabel('channel:milestone/e-c25f9c', lookups)).toBe(
+      '#milestone/e-c25f9c'
     );
   });
 

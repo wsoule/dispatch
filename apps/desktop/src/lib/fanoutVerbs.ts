@@ -1,13 +1,13 @@
 import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
 import { isCompletedStatus, isDoneStatus } from '@dispatch-foo/core/browser';
-import type { EpicProgress } from '@dispatch/client';
+import type { MilestoneProgress } from '@dispatch/client';
 
-// Which fan-out verbs a container (an epic, a milestone) offers right now, as
-// one pure rule the Issues list's group menu reads. The rules are
-// FanoutControls' (components/milestones) and EpicLaneHeader's `landable`,
-// stated once without React so a menu with no header to draw can ask the same
-// question. A verb here is an offer: the server stays the authority and
-// answers a stale one with its own reason.
+// Which fan-out verbs a container (an initiative, project, milestone or
+// parent issue) offers right now, as one pure rule the Issues list's group
+// menu reads. The rules are FanoutControls' (components/milestones) and
+// MilestoneLaneHeader's `landable`, stated once without React so a menu with
+// no header to draw can ask the same question. A verb here is an offer: the
+// server stays the authority and answers a stale one with its own reason.
 
 export type FanoutVerb = 'send' | 'pause' | 'resume' | 'stop' | 'land';
 
@@ -35,7 +35,7 @@ export const FANOUT_VERB_LABEL: Record<FanoutVerb, string> = {
 export function fanoutVerbs(
   container: TaskListItem,
   model: StatusModel,
-  progress: EpicProgress | undefined,
+  progress: MilestoneProgress | undefined,
   childCount?: number
 ): FanoutVerb[] {
   const state = progress?.session?.state;

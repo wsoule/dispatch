@@ -126,26 +126,26 @@ export function mergeQueuePath(rootDir: string): string {
   return join(runsDir(rootDir), 'merge-queue.json');
 }
 
-// Where EpicEngine's dispatch sessions live (see its persist()/hydrate()):
-// the per-epic concurrency, ceilings and state a daemon restart re-arms
+// Where MilestoneEngine's dispatch sessions live (see its persist()/hydrate()):
+// the per-milestone concurrency, ceilings and state a daemon restart re-arms
 // instead of forgetting. Beside merge-queue.json for the same reason, and
 // beside the run registry it derives spend from.
-export function epicSessionsPath(rootDir: string): string {
-  return join(runsDir(rootDir), 'epic-sessions.json');
+export function milestoneSessionsPath(rootDir: string): string {
+  return join(runsDir(rootDir), 'milestone-sessions.json');
 }
 
-// Who created and last wrote each task (see TaskAuthorship), for epic auto-fill.
+// Who created and last wrote each task (see TaskAuthorship), for milestone auto-fill.
 export function taskAuthorshipPath(rootDir: string): string {
   return join(runsDir(rootDir), 'task-authorship.json');
 }
 
-// Where PrManager's epic-PR ledger lives: the PRs opened to land whole epic
-// branches on the default base (epicId -> PR url), persisted so a daemon
-// restart keeps polling them to merged instead of forgetting an epic mid-land.
+// Where PrManager's milestone-PR ledger lives: the PRs opened to land whole milestone
+// branches on the default base (milestoneId -> PR url), persisted so a daemon
+// restart keeps polling them to merged instead of forgetting a milestone mid-land.
 // One file per project, same flat-alongside-the-runs placement as
 // mergeQueuePath above it.
-export function epicPrsPath(rootDir: string): string {
-  return join(runsDir(rootDir), 'epic-prs.json');
+export function milestonePrsPath(rootDir: string): string {
+  return join(runsDir(rootDir), 'milestone-prs.json');
 }
 
 // A review run's own directory: the diff package handed to it and the findings

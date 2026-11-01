@@ -76,7 +76,7 @@ const isText = (value: unknown): boolean => typeof value === 'string';
 // hold any JSON there; a row naming targets but no task id reached no task.
 function isDamaged(row: LedgerEntry): boolean {
   if (!isLedgerKind(row.kind)) return true;
-  if (row.epicId !== null && !isText(row.epicId)) return true;
+  if (row.milestoneId !== null && !isText(row.milestoneId)) return true;
   if (row.sourceTaskId !== null && !isText(row.sourceTaskId)) return true;
   if (!isText(row.authoredBy)) return true;
   return (
@@ -239,9 +239,9 @@ export function importLedger(input: LedgerImportInput): LedgerImportReport {
           memory.duplicates += 1;
           continue;
         }
-        const epic =
-          row.epicId !== null && TASK_ID_PATTERN.test(row.epicId)
-            ? row.epicId
+        const milestone =
+          row.milestoneId !== null && TASK_ID_PATTERN.test(row.milestoneId)
+            ? row.milestoneId
             : null;
         const targets = [
           ...new Set(row.appliesTo.filter((id) => TASK_ID_PATTERN.test(id))),
@@ -271,7 +271,7 @@ export function importLedger(input: LedgerImportInput): LedgerImportReport {
                   title: content.title,
                   body: content.body,
                   refs,
-                  epic,
+                  milestone,
                   appliesTo,
                 },
                 reason: cutUtf8(reason, MEMORY_LIMITS.reasonBytes),
@@ -301,7 +301,7 @@ export function importLedger(input: LedgerImportInput): LedgerImportReport {
                 title: content.title,
                 body: content.body,
                 refs,
-                epic,
+                milestone,
                 appliesTo,
                 author,
                 trust: 'agent',

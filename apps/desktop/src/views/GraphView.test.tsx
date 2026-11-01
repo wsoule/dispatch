@@ -1,5 +1,5 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
-import type { EpicProgress, RunMeta, RunState } from '@dispatch/client';
+import type { MilestoneProgress, RunMeta, RunState } from '@dispatch/client';
 import type { GraphScope } from '@dispatch/planning';
 import {
   cleanup,
@@ -170,7 +170,7 @@ function input(tasks: TaskListItem[]): PlanningInput {
     me: 'human:ana',
     linearLinks: {},
     latestRunByTaskId: new Map<string, RunMeta>(),
-    epicProgressById: new Map<string, EpicProgress>(),
+    milestoneProgressById: new Map<string, MilestoneProgress>(),
   };
 }
 

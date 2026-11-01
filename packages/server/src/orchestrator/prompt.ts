@@ -85,7 +85,7 @@ function scopeAsk(human: string, decider: string | null): string {
 // own content plus carried-forward context. Pure, so it's snapshot-stable.
 export function buildTaskPrompt(
   task: TaskDoc,
-  parentEpic: TaskDoc | null,
+  parentMilestone: TaskDoc | null,
   // The rendered `## Memory` section, or null when there is nothing to show.
   memorySection: string | null = null,
   // Optional so this stays callable (and snapshot-stable) without a real
@@ -101,7 +101,7 @@ export function buildTaskPrompt(
   docsSection: string | null = null,
   // The task's comment thread, oldest first; its newest entries join the prompt.
   comments: readonly TaskComment[] = [],
-  // An A2A-origin task (XH-R5): amendments and comments fenced, no epic.
+  // An A2A-origin task (XH-R5): amendments and comments fenced, no milestone.
   a2aOrigin = false,
   // Who decides a scope request, when not `human`: the owner, for an
   // operator who cannot decide (XH-R9).
@@ -128,9 +128,9 @@ export function buildTaskPrompt(
   const commentsSection = renderCommentsSection(comments, a2aOrigin);
   if (commentsSection !== null) sections.push(commentsSection);
 
-  if (parentEpic !== null && !a2aOrigin) {
+  if (parentMilestone !== null && !a2aOrigin) {
     sections.push(
-      `## Parent epic: ${parentEpic.meta.id} — ${untrustedInline(parentEpic.meta.title)}\n\n${parentEpic.body.trim()}`
+      `## Parent milestone: ${parentMilestone.meta.id} — ${untrustedInline(parentMilestone.meta.title)}\n\n${parentMilestone.body.trim()}`
     );
   }
 
