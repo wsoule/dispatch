@@ -11,9 +11,28 @@ let rendererLoad: Promise<Renderer | null> | null = null;
 // Each diagram type is its own chunk: a chat with one flowchart loads only that parser.
 const typeLoads = new Map<DiagramType, Promise<boolean>>();
 
+// CSS that can reach the network or run code: any url() except a local `#id` fragment,
+// @import, image-set() and IE's expression().
+const REMOTE_CSS =
+  /url\(\s*(?!['"]?#)|@import|image-set\(|expression\(|\\[0-9a-f]/i;
+
+// A DOMPurify instance for diagram SVG. Mermaid `style`/`classDef` lines land in style,
+// fill, filter, mask and the like, so any attribute that could fetch is dropped (pele
+// draws its own markers by #id).
+function diagramPurifier(createPurify: Purify): ReturnType<Purify> {
+  const purify = createPurify(window);
+  purify.addHook('uponSanitizeAttribute', (_node, data) => {
+    if (REMOTE_CSS.test(data.attrValue)) data.keepAttr = false;
+  });
+  return purify;
+}
+
 function loadRenderer(): Promise<Renderer | null> {
   rendererLoad ??= Promise.all([import('pele/lazy'), import('dompurify')]).then(
-    ([pele, dompurify]) => ({ pele, purify: dompurify.default(window) }),
+    ([pele, dompurify]) => ({
+      pele,
+      purify: diagramPurifier(dompurify.default),
+    }),
     () => null
   );
   return rendererLoad;
@@ -29,14 +48,15 @@ function loadType(pele: Pele, type: DiagramType): Promise<boolean> {
 
 // Agent output is untrusted: pele escapes labels and links and images are off, and this
 // strips anything left that could navigate, run script or fetch.
+const SANITIZE_OPTIONS = {
+  FORBID_ATTR: ['href', 'xlink:href', 'src', 'srcset'],
+  FORBID_TAGS: ['a', 'image', 'foreignObject', 'style', 'script'],
+  USE_PROFILES: { svg: true, svgFilters: true },
+};
+
 function sanitizer(purify: ReturnType<Purify>) {
   return (svg: string): Node =>
-    purify.sanitize(svg, {
-      FORBID_ATTR: ['href', 'xlink:href', 'src', 'srcset'],
-      FORBID_TAGS: ['a', 'image', 'foreignObject', 'style', 'script'],
-      USE_PROFILES: { svg: true, svgFilters: true },
-      RETURN_DOM_FRAGMENT: true,
-    });
+    purify.sanitize(svg, { ...SANITIZE_OPTIONS, RETURN_DOM_FRAGMENT: true });
 }
 
 /**
@@ -114,9 +134,13 @@ export function MermaidDiagram({
         data-rendered={rendered || undefined}
         className="focus-visible:outline-ring block w-full cursor-zoom-in overflow-x-auto rounded-md p-2 focus-visible:outline-2"
         onClick={() => {
-          // The mount holds sanitized SVG only, so its markup is safe to re-show.
           const svg = mountRef.current?.innerHTML;
-          if (svg) setExpanded(svg);
+          if (!svg) return;
+          // Sanitized again rather than trusted: re-parsing serialized markup can differ.
+          void loadRenderer().then((renderer) => {
+            if (renderer)
+              setExpanded(renderer.purify.sanitize(svg, SANITIZE_OPTIONS));
+          });
         }}
       >
         <span ref={mountRef} className="pele flex w-full justify-center" />
