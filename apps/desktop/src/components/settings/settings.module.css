@@ -1,0 +1,180 @@
+/* The settings kit shared by every Settings page: a group's heading over its card, the
+   rows inside the card, and the small text and layout pieces the pages repeat. */
+
+/* A group: heading and hint, then the card. */
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+/* While searching, a group left with no matching rows hides itself. */
+.group[data-searching]:not(:has([data-settings-row])) {
+  display: none;
+}
+
+.groupHead {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 2px;
+}
+
+.titleLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.groupTitle {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
+.fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+/* The card the rows live in. */
+.card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+/* One row of a card: a divider under every row but the last. */
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-height: 44px;
+  padding: 10px var(--s-3);
+  border-bottom: 1px solid var(--divider);
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+/* Title and control side by side, or stacked for a full-width control. */
+.rowLine {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+}
+
+.rowLine[data-stacked] {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--s-2);
+}
+
+.rowText {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rowTitle {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+.rowControl {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.rowLine[data-stacked] .rowControl {
+  width: 100%;
+}
+
+/* Prose beside a control: small and muted. */
+.hint {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 17px;
+  color: var(--text-3);
+}
+
+/* The lock beside a setting the viewer may read but not change. */
+.lock {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-3);
+}
+
+/* A read-only value standing in for a locked text field. */
+.readonly {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+/* A short number field and its unit. */
+.numberField {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Two classes, so the width wins over the field's own 100%. */
+.numberField .numberInput {
+  width: 96px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.suffix {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.select {
+  width: 180px;
+}
+
+/* Shared text pieces the pages repeat. */
+.error {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--red);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.monoInput {
+  font-family: var(--font-mono);
+}
+
+/* A wrapper that adds no box of its own (search's matching content). */
+.contents {
+  display: contents;
+}

@@ -1,19 +1,9 @@
+import { SegmentedControl, Select, Switch, TextField } from '@dispatch/ui';
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 
+import styles from './settings.module.css';
 import { OPERATOR_ONLY, SettingsRow, useGroupLocked } from './SettingsGroup';
-import { cn } from '@/lib/utils';
-import type { SwitchProps } from '@/ui/ai/switch';
-import { Switch } from '@/ui/ai/switch';
-import { Input } from '@/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/ui/select';
-import { ToggleGroup, ToggleGroupItem } from '@/ui/toggle-group';
 
 // The kinds of setting most Settings pages are made of, each saving the way
 // General's fields always have: text and numbers on blur, only when the
@@ -61,14 +51,14 @@ export function TextSetting({
       stacked
     >
       {locked !== undefined ? (
-        <p className="font-mono text-[13px]">{value ?? '—'}</p>
+        <p className={styles.readonly}>{value ?? '—'}</p>
       ) : (
-        <Input
+        <TextField
           id={id}
           value={draft}
           placeholder={placeholder}
           spellCheck={false}
-          className={mono ? 'font-mono' : undefined}
+          className={mono ? styles.monoInput : undefined}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => {
             const next = draft.trim();
@@ -118,15 +108,15 @@ export function NumberSetting({
       htmlFor={id}
       control={
         locked !== undefined ? (
-          <span className="tabular-nums">{shown || '—'}</span>
+          <span className="num">{shown || '—'}</span>
         ) : (
-          <span className="flex items-center gap-1.5">
-            <Input
+          <span className={styles.numberField}>
+            <TextField
               id={id}
               value={draft}
               inputMode="decimal"
               placeholder={placeholder}
-              className="w-24 text-right tabular-nums"
+              className={styles.numberInput}
               onChange={(e) => setDraft(e.target.value)}
               onBlur={() => {
                 const trimmed = draft.trim();
@@ -148,9 +138,7 @@ export function NumberSetting({
               }}
             />
             {suffix !== undefined && (
-              <span className="text-[13px] text-(--text-secondary)">
-                {suffix}
-              </span>
+              <span className={styles.suffix}>{suffix}</span>
             )}
           </span>
         )
@@ -159,18 +147,33 @@ export function NumberSetting({
   );
 }
 
-/** The Switch every Settings page uses: disabled inside a locked group, which
- *  its span escapes, and dimmed when disabled (it never matches `:disabled`). */
-export function SettingsSwitch({ disabled, className, ...props }: SwitchProps) {
+interface SettingsSwitchProps {
+  /** The row's `<label htmlFor>` names the switch through this id. */
+  id?: string;
+  checked: boolean;
+  disabled?: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  'aria-label'?: string;
+}
+
+/** The Switch every Settings page uses: just the track, named by its row's label, and
+ *  disabled inside a locked group. */
+export function SettingsSwitch({
+  id,
+  checked,
+  disabled,
+  onCheckedChange,
+  'aria-label': ariaLabel,
+}: SettingsSwitchProps) {
   const groupLocked = useGroupLocked();
   return (
     <Switch
-      {...props}
+      id={id}
+      label=""
+      aria-label={ariaLabel}
+      checked={checked}
       disabled={groupLocked || disabled === true}
-      className={cn(
-        'data-disabled:cursor-not-allowed data-disabled:opacity-50',
-        className
-      )}
+      onChange={onCheckedChange}
     />
   );
 }
@@ -226,28 +229,24 @@ export function ChoiceSetting<T extends string>({
       htmlFor={id}
       control={
         <Select
+          id={id}
+          label={title}
           value={value}
+          options={choices}
           disabled={locked !== undefined}
-          onValueChange={(next) => onSave(next as T)}
-        >
-          <SelectTrigger id={id} aria-label={title} className="w-[180px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {choices.map((c) => (
-              <SelectItem key={c.value} value={c.value}>
-                {c.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          className={styles.select}
+          onChange={(next) => {
+            const picked = choices.find((c) => c.value === next);
+            if (picked !== undefined) onSave(picked.value);
+          }}
+        />
       }
     />
   );
 }
 
-/** A choice of two or three short modes with every one in view: a toggle
- *  group, like the app's other mode switches, where ChoiceSetting's select
+/** A choice of two or three short modes with every one in view: a segmented
+ *  control, like the app's other mode switches, where ChoiceSetting's select
  *  would hide the rest. Pressing the current mode again saves nothing. */
 export function ModeSetting<T extends string>({
   id,
@@ -263,9 +262,8 @@ export function ModeSetting<T extends string>({
   choices: { value: T; label: string }[];
   onSave: (next: T) => void;
 }) {
-  // Read like SettingsSwitch does: Base UI keeps its own disabled state, which
-  // a disabled fieldset around a locked group never sets.
-  const groupLocked = useGroupLocked();
+  // The control disables option by option, so a locked group is read here too.
+  const disabled = useGroupLocked() || locked !== undefined;
   return (
     <SettingsRow
       title={title}
@@ -273,27 +271,24 @@ export function ModeSetting<T extends string>({
       keywords={keywords}
       locked={locked !== undefined}
       control={
-        <ToggleGroup
-          id={id}
-          aria-label={title}
-          variant="outline"
-          size="sm"
-          value={[value]}
-          disabled={groupLocked || locked !== undefined}
-          onValueChange={([next]) => {
-            // Re-pressing the current mode hands back an empty list.
-            const picked = choices.find((c) => c.value === next);
-            if (picked !== undefined && picked.value !== value) {
-              onSave(picked.value);
-            }
-          }}
-        >
-          {choices.map((c) => (
-            <ToggleGroupItem key={c.value} value={c.value}>
-              {c.label}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
+        <span id={id}>
+          <SegmentedControl
+            label={title}
+            size="sm"
+            value={value}
+            options={choices.map((c) => ({
+              id: c.value,
+              label: c.label,
+              disabled,
+            }))}
+            onChange={(next) => {
+              const picked = choices.find((c) => c.value === next);
+              if (picked !== undefined && picked.value !== value) {
+                onSave(picked.value);
+              }
+            }}
+          />
+        </span>
       }
     />
   );

@@ -9,6 +9,7 @@ import {
   DEFAULT_NOTIFICATIONS,
   DEFAULT_REPO_DIGEST,
 } from '@dispatch-foo/core/browser';
+import { act, fireEvent, screen } from '@testing-library/react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 
@@ -154,4 +155,46 @@ export function dataWith(
       Promise.resolve({ started: true, candidates: 0 }),
     ...rest,
   } as unknown as DispatchProjectData;
+}
+
+type RoleQueries = Pick<typeof screen, 'getByRole' | 'queryByRole'>;
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** A settings Select's trigger by the setting's name: the button reads "Name" while
+ *  empty and "Name: Value" once chosen. */
+export function selectTrigger(
+  name: string,
+  root: RoleQueries = screen
+): HTMLElement {
+  return root.getByRole('button', {
+    name: new RegExp(`^${escapeRegExp(name)}(: |$)`),
+  });
+}
+
+/** The same trigger, or null when the setting shows no Select. */
+export function querySelectTrigger(
+  name: string,
+  root: RoleQueries = screen
+): HTMLElement | null {
+  return root.queryByRole('button', {
+    name: new RegExp(`^${escapeRegExp(name)}(: |$)`),
+  });
+}
+
+/** Picks an option in the open Select (or picker) list. */
+export function chooseOption(name: string | RegExp): void {
+  act(() => {
+    fireEvent.click(screen.getByRole('option', { name }));
+  });
+}
+
+/** Elements printing `text` that a viewer can see: a Tooltip keeps its tip in the DOM,
+ *  hidden until hovered, so a plain text query finds it too. */
+export function visibleText(text: string): HTMLElement[] {
+  return screen
+    .queryAllByText(text)
+    .filter((el) => el.closest('[hidden]') === null);
 }
