@@ -163,7 +163,7 @@ function SelectContent({
           data-slot="select-content"
           data-align-trigger={alignItemWithTrigger}
           className={cn(
-            'relative z-50 max-h-(--available-height) min-w-[8rem] origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-control bg-popover text-popover-foreground shadow-overlay transition-[opacity,scale] duration-100 outline-none data-[align-trigger=true]:transition-none data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0',
+            'relative z-50 max-h-(--available-height) min-w-[8rem] origin-(--transform-origin) overflow-x-hidden overflow-y-auto dropdown-glass rounded-lg text-popover-foreground shadow-overlay transition-[opacity,scale] duration-100 outline-none data-[align-trigger=true]:transition-none data-ending-style:scale-98 data-ending-style:opacity-0 data-starting-style:scale-98 data-starting-style:opacity-0',
             className
           )}
           {...props}
@@ -204,7 +204,7 @@ function SelectItem({
     <SelectPrimitive.Item
       data-slot="select-item"
       className={cn(
-        "relative flex h-8 w-full cursor-default items-center gap-2 rounded-control pr-8 pl-2 text-[13px] outline-hidden select-none data-highlighted:bg-surface-hover data-highlighted:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5 [&_svg:not([class*='text-'])]:text-muted-foreground",
+        "relative flex h-8 w-full cursor-default items-center gap-2 rounded-control pr-8 pl-2 text-[13px] outline-hidden select-none data-highlighted:bg-surface-hover data-highlighted:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground [&_svg:not([class*='text-'])]:opacity-80",
         className
       )}
       {...props}

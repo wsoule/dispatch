@@ -5,23 +5,21 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from './lib/utils';
 
 const badgeVariants = cva(
-  'inline-flex h-6 w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-pill border-[0.5px] border-border-chip px-2 text-[12px] font-medium whitespace-nowrap transition-[color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring [&>svg]:pointer-events-none [&>svg]:size-3',
+  'inline-flex h-5 w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-sm border border-transparent px-1.5 text-[12px] font-medium whitespace-nowrap transition-[color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring [&>svg]:pointer-events-none [&>svg]:size-3',
   {
-    // A badge is the 24px pill: quaternary surface, chip ring, secondary text. Only
-    // `default` keeps the indigo fill, for the rare filled case.
+    // T3 Code's badge: a small rounded-sm tag. Tones are a tint of their hue (8% light,
+    // 16% dark) with the hue as text; `outline` is a hairline-edged neutral.
     variants: {
       variant: {
         default:
-          'border-transparent bg-primary text-primary-foreground [a&]:hover:bg-[var(--accent-hover)]',
+          'border-primary/40 bg-primary/10 text-primary [a&]:hover:bg-primary/16',
         secondary:
-          'bg-surface-quaternary text-(--text-secondary) [a&]:hover:bg-surface-active',
-        destructive:
-          'bg-surface-quaternary text-red [a&]:hover:bg-surface-active',
+          'bg-secondary text-(--text-secondary) [a&]:hover:bg-surface-active',
+        destructive: 'bg-red/8 text-red dark:bg-red/16 [a&]:hover:bg-red/16',
         outline:
-          'bg-surface-quaternary text-(--text-secondary) [a&]:hover:bg-surface-active',
-        ghost:
-          'border-transparent text-muted-foreground [a&]:hover:bg-surface-hover',
-        link: 'border-transparent text-primary underline-offset-4 [a&]:hover:underline',
+          'border-input text-(--text-secondary) [a&]:hover:bg-surface-hover',
+        ghost: 'text-muted-foreground [a&]:hover:bg-surface-hover',
+        link: 'text-primary underline-offset-4 [a&]:hover:underline',
       },
     },
     defaultVariants: {

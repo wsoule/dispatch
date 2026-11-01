@@ -54,16 +54,12 @@ function TooltipContent({
         <TooltipPrimitive.Popup
           data-slot="tooltip-content"
           className={cn(
-            'z-50 w-fit origin-(--transform-origin) rounded-control bg-tooltip-bg px-3 py-1.5 text-xs text-balance text-tooltip-fg shadow-overlay transition-[opacity,scale] duration-150 data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0',
+            'z-50 w-fit origin-(--transform-origin) rounded-md border bg-popover px-2 py-1 text-xs text-balance text-popover-foreground shadow-md/5 transition-[opacity,scale] duration-150 data-ending-style:scale-98 data-ending-style:opacity-0 data-starting-style:scale-98 data-starting-style:opacity-0',
             className
           )}
           {...props}
         >
           {children}
-          {/* Base UI places the arrow itself and says which edge it sits on
-              via `data-side`; the offsets here nudge the rotated square so
-              its point just crosses the popup edge on every side. */}
-          <TooltipPrimitive.Arrow className="bg-tooltip-bg fill-tooltip-bg z-50 size-2.5 rotate-45 rounded-[2px] data-[side=bottom]:-top-1 data-[side=left]:top-1/2! data-[side=left]:-right-1 data-[side=left]:-translate-y-1/2 data-[side=right]:top-1/2! data-[side=right]:-left-1 data-[side=right]:-translate-y-1/2 data-[side=top]:-bottom-1" />
         </TooltipPrimitive.Popup>
       </TooltipPrimitive.Positioner>
     </TooltipPrimitive.Portal>

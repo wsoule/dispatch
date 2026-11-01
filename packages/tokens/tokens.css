@@ -144,7 +144,6 @@
   --glass-blur: 12px;
   --glass-opacity: 80%;
   --glass-saturation: 1.14;
-  --glass-edge: rgba(0, 0, 0, 0.1);
 
   /* The user's chat bubble and the composer outline. */
   --surface-message: color-mix(in srgb, #e4e4e7 55%, #f4f4f5);
@@ -389,7 +388,6 @@
 
     --glass-blur: 16px;
     --glass-saturation: 1.08;
-    --glass-edge: rgba(255, 255, 255, 0.08);
     --surface-message: color-mix(in srgb, #0a0a0a 92%, white);
     --composer-outline: rgba(255, 255, 255, 0.05);
     --scrollbar-thumb: rgb(255 255 255 / 0.08);

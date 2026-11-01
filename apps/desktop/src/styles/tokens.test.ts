@@ -117,7 +117,6 @@ const perTheme = [
   '--shadow-composer',
   '--glass-blur',
   '--glass-saturation',
-  '--glass-edge',
   '--surface-message',
   '--composer-outline',
   '--scrollbar-thumb',

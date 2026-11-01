@@ -15,11 +15,11 @@ function Input({
       data-slot="input"
       data-variant={variant}
       className={cn(
-        'h-7 w-full min-w-0 rounded-control bg-field px-2.5 text-[13px] font-book text-foreground shadow-inset-field transition-[color,box-shadow] outline-none file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-[13px] file:font-medium file:text-foreground placeholder:text-muted-foreground disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50',
-        'focus-visible:ring-2 focus-visible:ring-ring',
+        'h-7 w-full min-w-0 rounded-control border border-input bg-background px-2.5 text-[13px] font-book text-foreground shadow-xs/5 transition-[color,box-shadow,border-color] dark:bg-input/32 outline-none file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-[13px] file:font-medium file:text-foreground placeholder:text-muted-foreground disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50',
+        'focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24',
         'aria-invalid:ring-2 aria-invalid:ring-destructive',
         variant === 'borderless' &&
-          'h-auto rounded-none bg-transparent px-0 shadow-none focus-visible:ring-0',
+          'h-auto rounded-none border-0 bg-transparent px-0 shadow-none focus-visible:ring-0 dark:bg-transparent',
         className
       )}
       {...props}

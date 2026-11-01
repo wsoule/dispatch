@@ -43,7 +43,7 @@
   --destructive: var(--red);
   --destructive-foreground: var(--accent-contrast);
   --border: var(--border-default);
-  --input: var(--border-default);
+  --input: var(--border-strong);
   --ring: var(--focus-ring);
   --sidebar: var(--surface-frame);
   --sidebar-foreground: var(--text-primary);
@@ -222,7 +222,8 @@
 }
 
 /* Frosted glass for floating chrome (menus, popovers, tooltips): the popover surface at
-   `--glass-opacity` with a blurred, slightly saturated backdrop and a hairline edge. */
+   `--glass-opacity` with a blurred, slightly saturated backdrop. Pair with `shadow-overlay`,
+   whose 0.5px ring is the edge. */
 @utility dropdown-glass {
   background-color: color-mix(
     in srgb,
@@ -230,7 +231,6 @@
     transparent
   );
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-  border: 0.5px solid var(--glass-edge);
 }
 
 /* The dialog flavour: same glass, deeper drop. */
@@ -241,7 +241,6 @@
     transparent
   );
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-  border: 0.5px solid var(--glass-edge);
   box-shadow: var(--shadow-overlay), 0 24px 64px -24px rgb(0 0 0 / 65%);
 }
 

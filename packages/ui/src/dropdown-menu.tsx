@@ -26,7 +26,7 @@ function DropdownMenuTrigger({ ...props }: MenuPrimitive.Trigger.Props) {
 // placement (`side`, `align`, offsets) and exposes the popup's origin and the
 // space left in the viewport as CSS variables.
 const MENU_POPUP_CLASS =
-  'z-50 max-h-(--available-height) min-w-[8rem] origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-control bg-popover p-1 text-popover-foreground shadow-overlay transition-[opacity,scale] duration-100 outline-none data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0';
+  'z-50 max-h-(--available-height) min-w-[8rem] origin-(--transform-origin) overflow-x-hidden overflow-y-auto dropdown-glass rounded-lg p-1 text-popover-foreground shadow-overlay transition-[opacity,scale] duration-100 outline-none data-ending-style:scale-98 data-ending-style:opacity-0 data-starting-style:scale-98 data-starting-style:opacity-0';
 
 function DropdownMenuContent({
   align = 'start',
@@ -87,7 +87,7 @@ function DropdownMenuLabel({
 // roving highlight rather than DOM focus), and activation is a plain
 // `onClick` — there is no radix-style `onSelect`.
 const MENU_ITEM_CLASS =
-  "relative flex h-8 cursor-default items-center gap-2 rounded-control px-2 text-[13px] outline-hidden select-none data-highlighted:bg-surface-hover data-highlighted:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50 data-[inset]:pl-8 data-[variant=destructive]:text-destructive data-[variant=destructive]:data-highlighted:bg-surface-hover data-[variant=destructive]:data-highlighted:text-destructive [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5 [&_svg:not([class*='text-'])]:text-muted-foreground data-[variant=destructive]:*:[svg]:text-destructive!";
+  "relative flex h-7 cursor-default items-center gap-2 rounded-sm px-2 text-[13px] outline-hidden select-none data-highlighted:bg-surface-hover data-highlighted:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50 data-[inset]:pl-8 data-[variant=destructive]:text-destructive data-[variant=destructive]:data-highlighted:bg-surface-hover data-[variant=destructive]:data-highlighted:text-destructive [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground [&_svg:not([class*='text-'])]:opacity-80 data-[variant=destructive]:*:[svg]:text-destructive!";
 
 function DropdownMenuItem({
   className,
@@ -126,7 +126,7 @@ function DropdownMenuSubTrigger({
       data-slot="dropdown-menu-sub-trigger"
       data-inset={inset}
       className={cn(
-        "flex h-8 cursor-default items-center gap-2 rounded-control px-2 text-[13px] outline-hidden select-none data-highlighted:bg-surface-hover data-highlighted:text-foreground data-[inset]:pl-8 data-popup-open:bg-surface-hover data-popup-open:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5 [&_svg:not([class*='text-'])]:text-muted-foreground",
+        "flex h-8 cursor-default items-center gap-2 rounded-control px-2 text-[13px] outline-hidden select-none data-highlighted:bg-surface-hover data-highlighted:text-foreground data-[inset]:pl-8 data-popup-open:bg-surface-hover data-popup-open:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground [&_svg:not([class*='text-'])]:opacity-80",
         className
       )}
       {...props}

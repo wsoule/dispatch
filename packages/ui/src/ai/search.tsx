@@ -137,7 +137,7 @@ export function SearchPanel({
   }
 
   return (
-    <div className="rounded-popover bg-popover shadow-overlay flex w-full flex-col overflow-hidden">
+    <div className="dropdown-glass shadow-overlay flex w-full flex-col overflow-hidden rounded-lg">
       <div className="shadow-hairline-bottom flex h-10 shrink-0 items-center gap-2 px-3">
         <SearchIcon
           aria-hidden

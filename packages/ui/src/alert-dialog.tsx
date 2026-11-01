@@ -30,7 +30,7 @@ function AlertDialogOverlay({
     <AlertDialogPrimitive.Backdrop
       data-slot="alert-dialog-overlay"
       className={cn(
-        'fixed inset-0 z-50 bg-[var(--overlay)] transition-opacity duration-100 data-ending-style:opacity-0 data-starting-style:opacity-0',
+        'fixed inset-0 z-50 dialog-backdrop transition-opacity duration-200 data-ending-style:opacity-0 data-starting-style:opacity-0',
         className
       )}
       {...props}
@@ -52,7 +52,7 @@ function AlertDialogContent({
         data-slot="alert-dialog-content"
         data-size={size}
         className={cn(
-          'group/alert-dialog-content fixed top-1/2 left-1/2 z-50 flex w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-0 rounded-popover bg-popover p-0 shadow-overlay transition-[opacity,scale] duration-100 outline-none data-[size=sm]:max-w-xs data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0 data-[size=default]:sm:max-w-lg',
+          'group/alert-dialog-content fixed top-1/2 left-1/2 z-50 flex w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-0 dialog-glass rounded-bubble p-0 transition-[opacity,scale] duration-200 ease-in-out outline-none data-[size=sm]:max-w-xs data-ending-style:scale-98 data-ending-style:opacity-0 data-starting-style:scale-98 data-starting-style:opacity-0 data-[size=default]:sm:max-w-lg',
           className
         )}
         {...props}
