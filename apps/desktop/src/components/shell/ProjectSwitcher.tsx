@@ -1,3 +1,4 @@
+import { Button, InitialsAvatar, Menu, type MenuEntry } from '@dispatch/ui';
 import {
   ChevronDown,
   Cog,
@@ -8,21 +9,9 @@ import {
   Repeat2,
 } from 'lucide-react';
 
-import { colorForProject } from '../../lib/projectColor';
-import { InitialsAvatar } from '@/ui/ai/initials-avatar';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuShortcut,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from '@/ui/dropdown-menu';
+import styles from './ProjectSwitcher.module.css';
+
+const ICON = { size: 14, strokeWidth: 1.8 } as const;
 
 /** A project offered in the switcher's submenu. */
 interface SwitchProject {
@@ -76,118 +65,114 @@ export function ProjectSwitcher({
 }: ProjectSwitcherProps) {
   if (projectName === null) {
     return noProjectYet ? (
-      <button
-        type="button"
+      <Button
+        variant="quiet"
+        size="sm"
+        icon={<Plus {...ICON} />}
         onClick={onAddProject}
-        className="rounded-control text-muted-foreground hover:bg-surface-hover flex h-7 min-w-0 items-center gap-2 px-1.5 text-[13px] font-medium transition-colors duration-100 hover:text-(--text-secondary)"
       >
-        <Plus className="size-3.5 shrink-0" />
-        <span className="truncate">Add project…</span>
-      </button>
+        Add project…
+      </Button>
     ) : (
-      <span className="text-muted-foreground flex h-7 items-center px-1.5 text-[13px]">
-        Resolving project…
-      </span>
+      <span className={styles.resolving}>Resolving project…</span>
     );
   }
 
   const otherProjects = switchProjects.filter((p) => p.path !== projectPath);
+  const items: MenuEntry[] = [
+    {
+      id: 'settings',
+      label: 'Settings',
+      icon: <Cog {...ICON} />,
+      shortcut: 'G then S',
+      onSelect: onOpenSettings,
+    },
+    {
+      id: 'add',
+      label: 'Add project…',
+      icon: <Plus {...ICON} />,
+      onSelect: onAddProject,
+    },
+    {
+      kind: 'submenu',
+      id: 'switch',
+      label: 'Switch project',
+      icon: <Repeat2 {...ICON} />,
+      emptyLabel: 'No other dispatch projects',
+      items: otherProjects.map((p) => ({
+        id: p.path,
+        label: p.name,
+        title: p.path,
+        icon: <InitialsAvatar name={p.name} />,
+        onSelect: () => onSelectProject(p.path),
+      })),
+    },
+  ];
+  if (onRestartGuide !== undefined) {
+    items.push(
+      { kind: 'separator', id: 'help-rule' },
+      {
+        kind: 'group',
+        id: 'help',
+        label: 'Help',
+        items: [
+          {
+            id: 'restart-guide',
+            label: 'Restart the guide',
+            icon: <LifeBuoy {...ICON} />,
+            onSelect: onRestartGuide,
+          },
+        ],
+      }
+    );
+  }
+  items.push(
+    { kind: 'separator', id: 'path-rule' },
+    {
+      id: 'path',
+      // Trimmed from the start, so the project's own folder stays visible.
+      label: (
+        <span className={styles.path}>
+          <span dir="ltr">{shortPath(projectPath ?? projectName)}</span>
+        </span>
+      ),
+      icon: <FolderGit2 {...ICON} />,
+      title: projectPath ?? undefined,
+      disabled: true,
+      onSelect: () => {},
+    }
+  );
+  if (teamSession !== undefined) {
+    items.push(
+      { kind: 'separator', id: 'session-rule' },
+      {
+        id: 'sign-out',
+        label: `Sign out ${teamSession.handle}`,
+        icon: <LogOut {...ICON} />,
+        onSelect: teamSession.onSignOut,
+      }
+    );
+  }
 
   return (
-    <DropdownMenu open={open} onOpenChange={onOpenChange}>
-      <DropdownMenuTrigger
-        title={projectPath ?? projectName}
-        className="rounded-control hover:bg-surface-hover data-popup-open:bg-surface-hover flex h-7 min-w-0 items-center gap-2 pr-1.5 pl-1 text-left transition-colors duration-100 outline-none"
-      >
-        <InitialsAvatar
-          square
-          name={projectName}
-          color={colorForProject(projectName)}
-        />
-        <span className="min-w-0 flex-1 truncate text-[13px] font-[550] text-(--text-secondary)">
-          {projectName}
-        </span>
-        <ChevronDown
-          aria-hidden
-          className="text-muted-foreground size-3 shrink-0"
-          strokeWidth={2}
-        />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-56">
-        <DropdownMenuItem onClick={onOpenSettings}>
-          <Cog />
-          Settings
-          <DropdownMenuShortcut>G then S</DropdownMenuShortcut>
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={onAddProject}>
-          <Plus />
-          Add project…
-        </DropdownMenuItem>
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger>
-            <Repeat2 />
-            Switch project
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="w-56">
-            {otherProjects.length === 0 ? (
-              <div className="text-muted-foreground px-2 py-1.5 text-[12px]">
-                No other dispatch projects
-              </div>
-            ) : (
-              otherProjects.map((p) => (
-                <DropdownMenuItem
-                  key={p.path}
-                  title={p.path}
-                  onClick={() => onSelectProject(p.path)}
-                >
-                  <InitialsAvatar
-                    square
-                    name={p.name}
-                    color={colorForProject(p.name)}
-                    className="size-3.5 text-[7px]"
-                  />
-                  <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                </DropdownMenuItem>
-              ))
-            )}
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
-        {onRestartGuide !== undefined && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuLabel>Help</DropdownMenuLabel>
-              <DropdownMenuItem onClick={onRestartGuide}>
-                <LifeBuoy />
-                Restart the guide
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-          </>
-        )}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          disabled
-          className="text-muted-foreground"
-          title={projectPath}
+    <Menu
+      label="Project"
+      items={items}
+      open={open}
+      onOpenChange={onOpenChange}
+      trigger={(props) => (
+        <Button
+          {...props}
+          variant="quiet"
+          size="sm"
+          title={projectPath ?? projectName}
+          className={styles.trigger}
+          icon={<InitialsAvatar name={projectName} />}
+          iconAfter={<ChevronDown size={12} strokeWidth={2} />}
         >
-          <FolderGit2 />
-          {/* Trimmed from the start, so the project's own folder stays visible. */}
-          <span className="min-w-0 flex-1 truncate [direction:rtl]">
-            <span dir="ltr">{shortPath(projectPath)}</span>
-          </span>
-        </DropdownMenuItem>
-        {teamSession !== undefined && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={teamSession.onSignOut}>
-              <LogOut />
-              <span className="min-w-0 flex-1 truncate">
-                Sign out {teamSession.handle}
-              </span>
-            </DropdownMenuItem>
-          </>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+          {projectName}
+        </Button>
+      )}
+    />
   );
 }

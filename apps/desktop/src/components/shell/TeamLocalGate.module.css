@@ -1,0 +1,7 @@
+/* The team-local gate while a stored session is re-checked: one spinner, centred. */
+.checking {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  color: var(--text-3);
+}

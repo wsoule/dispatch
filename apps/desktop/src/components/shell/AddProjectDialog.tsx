@@ -1,3 +1,11 @@
+import {
+  Button,
+  Dialog,
+  EmptyState,
+  Notice,
+  Spinner,
+  TextField,
+} from '@dispatch/ui';
 import { ChevronLeft, FolderOpen, GitBranch, Search } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -7,18 +15,7 @@ import {
   listGithubRepos,
   pickDirectory,
 } from '../../lib/tauri';
-import { Button } from '@/ui/button';
-import { EmptyState } from '@/ui/chrome';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/ui/dialog';
-import { InputGroup, InputGroupAddon, InputGroupInput } from '@/ui/input-group';
-import { ScrollArea } from '@/ui/scroll-area';
-import { Spinner } from '@/ui/spinner';
+import styles from './AddProjectDialog.module.css';
 
 type Mode = 'choose' | 'github';
 
@@ -138,146 +135,129 @@ export function AddProjectDialog({
   return (
     <Dialog
       open
-      onOpenChange={(open) => {
-        if (!open && busy === null) onClose();
+      onClose={() => {
+        if (busy === null) onClose();
       }}
+      title={
+        <span className={styles.title}>
+          {mode === 'github' && (
+            <Button
+              variant="quiet"
+              size="sm"
+              icon={<ChevronLeft size={14} strokeWidth={1.8} />}
+              aria-label="Back"
+              onClick={() => {
+                setMode('choose');
+                setError(null);
+              }}
+            />
+          )}
+          {mode === 'github' ? 'Clone from GitHub' : 'Add project'}
+        </span>
+      }
+      description={
+        mode === 'github'
+          ? 'Pick a repository to clone, then choose where to put it.'
+          : 'Open a local folder, or clone a repository from GitHub.'
+      }
+      footer={
+        <Button variant="secondary" onClick={onClose} disabled={busy !== null}>
+          Cancel
+        </Button>
+      }
     >
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            {mode === 'github' && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                onClick={() => {
-                  setMode('choose');
-                  setError(null);
-                }}
-                aria-label="Back"
-                className="text-muted-foreground hover:text-foreground -ml-1 size-auto rounded p-0.5 hover:bg-transparent"
-              >
-                <ChevronLeft className="size-4" />
-              </Button>
-            )}
-            {mode === 'github' ? 'Clone from GitHub' : 'Add project'}
-          </DialogTitle>
-          <DialogDescription>
-            {mode === 'github'
-              ? 'Pick a repository to clone, then choose where to put it.'
-              : 'Open a local folder, or clone a repository from GitHub.'}
-          </DialogDescription>
-        </DialogHeader>
+      {error !== null && (
+        <Notice tone="danger" role="alert">
+          <span className={styles.error}>{error}</span>
+        </Notice>
+      )}
 
-        {error !== null && (
-          <div className="bg-destructive/10 text-destructive rounded-md px-3 py-2 text-[13px] whitespace-pre-wrap">
-            {error}
-          </div>
-        )}
-
-        {busy !== null ? (
-          <div className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-[13px]">
-            <Spinner />
-            {busy}
-          </div>
-        ) : mode === 'choose' ? (
-          <div className="flex flex-col gap-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              onClick={() => void pickLocalFolder()}
-              className="shadow-hairline rounded-card h-auto justify-start gap-3 px-3 py-3 text-left text-[length:inherit] font-normal has-[>svg]:px-3"
-            >
-              <FolderOpen className="text-muted-foreground size-5 shrink-0" />
-              <span className="flex flex-col">
-                <span className="text-foreground text-[13px] font-medium">
-                  Local folder…
-                </span>
-                <span className="text-muted-foreground text-[12px]">
-                  Add a project already on this machine
-                </span>
-              </span>
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              onClick={() => setMode('github')}
-              className="shadow-hairline rounded-card h-auto justify-start gap-3 px-3 py-3 text-left text-[length:inherit] font-normal has-[>svg]:px-3"
-            >
-              <GitBranch className="text-muted-foreground size-5 shrink-0" />
-              <span className="flex flex-col">
-                <span className="text-foreground text-[13px] font-medium">
-                  From GitHub
-                </span>
-                <span className="text-muted-foreground text-[12px]">
-                  Clone one of your repositories
-                </span>
-              </span>
-            </Button>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2">
-            <InputGroup>
-              <InputGroupAddon>
-                <Search className="size-3.5" />
-              </InputGroupAddon>
-              <InputGroupInput
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                placeholder="Search repositories…"
-                ref={filterRef}
-              />
-            </InputGroup>
-
-            {reposLoading ? (
-              <div className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-[13px]">
-                <Spinner />
-                Loading repositories…
-              </div>
-            ) : repos !== null && filteredRepos.length === 0 ? (
-              <EmptyState
-                message={
-                  repos.length === 0
-                    ? 'No repositories found.'
-                    : 'No repositories match your search.'
-                }
-              />
-            ) : (
-              <ScrollArea className="max-h-72">
-                <div className="flex flex-col gap-0.5">
-                  {filteredRepos.map((repo) => (
-                    <Button
-                      key={repo.nameWithOwner}
-                      type="button"
-                      variant="ghost"
-                      onClick={() => void cloneRepo(repo)}
-                      title={repo.description || repo.nameWithOwner}
-                      className="h-auto flex-col items-start justify-start gap-0.5 px-2.5 py-2 text-left font-normal"
-                    >
-                      <span className="text-foreground w-full truncate text-[13px] font-medium">
-                        {repo.nameWithOwner}
-                      </span>
-                      {repo.description !== '' && (
-                        <span className="text-muted-foreground w-full truncate text-[12px]">
-                          {repo.description}
-                        </span>
-                      )}
-                    </Button>
-                  ))}
-                </div>
-              </ScrollArea>
-            )}
-          </div>
-        )}
-
-        <div className="flex justify-end">
-          <Button variant="outline" onClick={onClose} disabled={busy !== null}>
-            Cancel
-          </Button>
+      {busy !== null ? (
+        <div className={styles.waiting}>
+          <Spinner label={null} />
+          {busy}
         </div>
-      </DialogContent>
+      ) : mode === 'choose' ? (
+        <div className={styles.choices}>
+          <button
+            type="button"
+            className={styles.choice}
+            onClick={() => void pickLocalFolder()}
+          >
+            <FolderOpen
+              className={styles.choiceIcon}
+              size={20}
+              strokeWidth={1.6}
+              aria-hidden="true"
+            />
+            <span className={styles.choiceText}>
+              <span className={styles.choiceName}>Local folder…</span>
+              <span className={styles.choiceNote}>
+                Add a project already on this machine
+              </span>
+            </span>
+          </button>
+          <button
+            type="button"
+            className={styles.choice}
+            onClick={() => setMode('github')}
+          >
+            <GitBranch
+              className={styles.choiceIcon}
+              size={20}
+              strokeWidth={1.6}
+              aria-hidden="true"
+            />
+            <span className={styles.choiceText}>
+              <span className={styles.choiceName}>From GitHub</span>
+              <span className={styles.choiceNote}>
+                Clone one of your repositories
+              </span>
+            </span>
+          </button>
+        </div>
+      ) : (
+        <div className={styles.github}>
+          <TextField
+            ref={filterRef}
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Search repositories…"
+            aria-label="Search repositories"
+            start={<Search size={14} strokeWidth={1.8} aria-hidden="true" />}
+          />
+
+          {reposLoading ? (
+            <div className={styles.waiting}>
+              <Spinner label={null} />
+              Loading repositories…
+            </div>
+          ) : repos !== null && filteredRepos.length === 0 ? (
+            <EmptyState icon={null}>
+              {repos.length === 0
+                ? 'No repositories found.'
+                : 'No repositories match your search.'}
+            </EmptyState>
+          ) : (
+            <div className={styles.repos}>
+              {filteredRepos.map((repo) => (
+                <button
+                  key={repo.nameWithOwner}
+                  type="button"
+                  className={styles.repo}
+                  onClick={() => void cloneRepo(repo)}
+                  title={repo.description || repo.nameWithOwner}
+                >
+                  <span className={styles.repoName}>{repo.nameWithOwner}</span>
+                  {repo.description !== '' && (
+                    <span className={styles.repoNote}>{repo.description}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </Dialog>
   );
 }

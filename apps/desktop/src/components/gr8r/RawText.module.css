@@ -1,0 +1,21 @@
+/* Raw output (RawText.tsx): a sunken mono well that scrolls past 12 lines. */
+.raw {
+  max-height: 192px;
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  overflow: auto;
+  border-radius: var(--r-sm);
+  background: var(--sunken);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  line-height: var(--lh);
+  color: var(--text-2);
+  text-align: start;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Under a Details button: a little air between the button and the well. */
+.details {
+  margin-top: var(--s-1);
+}

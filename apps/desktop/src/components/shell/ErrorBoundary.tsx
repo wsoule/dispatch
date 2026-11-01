@@ -1,8 +1,10 @@
+import { Button } from '@dispatch/ui';
 import { OctagonAlert } from 'lucide-react';
 import { Component, type ErrorInfo, Fragment, type ReactNode } from 'react';
 
+import { RawText } from '../gr8r/RawText';
+import styles from './ErrorBoundary.module.css';
 import { errorDetails, isStaleChunkError } from './errorBoundaryUtils';
-import { Button } from '@/ui/button';
 
 interface ErrorBoundaryProps {
   /** Human-readable name for the crashed view, used in the fallback's message — e.g. "the
@@ -65,19 +67,22 @@ export class ErrorBoundary extends Component<
     const staleChunk = isStaleChunkError(error.message);
 
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-        <OctagonAlert className="text-destructive size-5" />
-        <p className="text-foreground max-w-sm text-[13px]">
+      <div className={styles.fallback}>
+        <OctagonAlert
+          className={styles.icon}
+          size={20}
+          strokeWidth={1.8}
+          aria-hidden="true"
+        />
+        <p className={styles.title}>
           Dispatch couldn&apos;t display {this.props.label ?? 'this view'}.
         </p>
-        <p className="text-muted-foreground max-w-sm text-[12px]">
+        <p className={styles.note}>
           Your runs and tasks are unaffected. Try again, or reload the app if it
           keeps happening.
         </p>
-        <pre className="text-muted-foreground bg-secondary/50 max-h-48 max-w-lg overflow-auto rounded-md p-3 text-left font-mono text-[11px] whitespace-pre-wrap">
-          {error.message}
-        </pre>
-        <div className="flex items-center gap-2">
+        <RawText className={styles.raw}>{error.message}</RawText>
+        <div className={styles.actions}>
           <Button variant="secondary" size="sm" onClick={this.reset}>
             Try again
           </Button>
@@ -89,7 +94,7 @@ export class ErrorBoundary extends Component<
             Reload app
           </Button>
           <Button
-            variant="ghost"
+            variant="quiet"
             size="sm"
             onClick={() =>
               void navigator.clipboard?.writeText(errorDetails(error))
@@ -99,7 +104,7 @@ export class ErrorBoundary extends Component<
           </Button>
         </div>
         {staleChunk && (
-          <p className="text-muted-foreground/70 max-w-sm text-[11px]">
+          <p className={styles.hint}>
             A stale module was requested — reloading usually fixes this after an
             update.
           </p>

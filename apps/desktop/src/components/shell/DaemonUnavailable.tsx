@@ -1,9 +1,8 @@
+import { Button, EmptyState, Spinner } from '@dispatch/ui';
 import { OctagonAlert } from 'lucide-react';
 
-import { DetailsDisclosure } from '../setup/DetailsDisclosure';
-import { Button } from '@/ui/button';
-import { EmptyState } from '@/ui/chrome';
-import { Spinner } from '@/ui/spinner';
+import { RawDetails } from '../gr8r/RawText';
+import styles from './DaemonUnavailable.module.css';
 
 interface DaemonUnavailableProps {
   /** The daemon is still starting — a lighter, non-error status line, no Retry button (there
@@ -27,32 +26,32 @@ export function DaemonUnavailable({
 }: DaemonUnavailableProps) {
   if (starting) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-        <Spinner className="text-muted-foreground size-5" />
-        <EmptyState
-          message="Starting Dispatch’s background service…"
-          className="p-0"
-        />
+      <div className={styles.frame}>
+        <EmptyState icon={<Spinner size="lg" label={null} />}>
+          Starting Dispatch’s background service…
+        </EmptyState>
       </div>
     );
   }
 
   const detail = describeDaemonError(errorDetail);
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-      <OctagonAlert className="text-destructive size-5" />
+    <div className={styles.frame}>
       <EmptyState
-        message="Dispatch couldn’t start for this project"
-        className="p-0"
+        icon={
+          <OctagonAlert className={styles.alert} size={20} strokeWidth={1.8} />
+        }
         action={
-          <>
-            {detail !== null && <DetailsDisclosure text={detail} />}
+          <div className={styles.actions}>
+            {detail !== null && <RawDetails text={detail} />}
             <Button variant="secondary" size="sm" onClick={onRetry}>
               Retry
             </Button>
-          </>
+          </div>
         }
-      />
+      >
+        Dispatch couldn’t start for this project
+      </EmptyState>
     </div>
   );
 }

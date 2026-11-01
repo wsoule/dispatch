@@ -1,0 +1,21 @@
+/* The background-service state (DaemonUnavailable.tsx): an empty state centred in the view. */
+.frame {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: var(--s-6);
+}
+
+.alert {
+  color: var(--red);
+}
+
+/* Details folds open above Retry, both centred under the sentence. */
+.actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-2);
+}

@@ -55,11 +55,10 @@ test('the dialog stays closed until opened, and there is no floating button', ()
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(screen.queryByRole('button', { name: 'Add to Notes' })).toBeNull();
   openPanel();
-  expect(screen.getByRole('dialog')).not.toBeNull();
+  expect(screen.getByRole('dialog', { name: 'Quick capture' })).not.toBeNull();
   // The 12px crumb names where the thought goes.
-  const crumb = document.querySelector('[data-slot="dialog-chrome"]');
-  expect(crumb?.textContent).toContain('Notes');
-  expect(crumb?.textContent).toContain('Quick capture');
+  expect(screen.getByText('Notes')).not.toBeNull();
+  expect(screen.getAllByText('Quick capture').length).toBeGreaterThan(0);
 });
 
 test('capturing hands the draft to onCapture, then clears and closes', async () => {
@@ -131,7 +130,7 @@ test('the Drop it button is disabled while the draft is blank', () => {
 
 test('Escape closes the dialog', () => {
   mount();
-  openPanel();
-  fireEvent.keyDown(document, { key: 'Escape' });
+  const textarea = openPanel();
+  fireEvent.keyDown(textarea, { key: 'Escape' });
   expect(screen.queryByRole('dialog')).toBeNull();
 });

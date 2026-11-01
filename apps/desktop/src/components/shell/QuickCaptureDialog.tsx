@@ -1,3 +1,4 @@
+import { Button, Dialog, TextArea } from '@dispatch/ui';
 import { Inbox } from 'lucide-react';
 import { useRef, useState } from 'react';
 
@@ -5,17 +6,7 @@ import {
   BRAIN_DUMP_DRAFT_KEY,
   usePersistedDraft,
 } from '../../hooks/usePersistedDraft';
-import { Button } from '@/ui/button';
-import {
-  Dialog,
-  DialogBody,
-  DialogChrome,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogTitle,
-} from '@/ui/dialog';
-import { Textarea } from '@/ui/textarea';
+import styles from './QuickCaptureDialog.module.css';
 
 interface QuickCaptureDialogProps {
   /** Owned by App so the ⌘D global shortcut and the rail's "Drop a thought" row open the
@@ -64,63 +55,60 @@ export function QuickCaptureDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="top-[30%] w-[32rem] max-w-[calc(100vw-2rem)]"
-        showCloseButton={false}
-        // The dialog opens straight into the box — the whole point is typing immediately.
-        initialFocus={textareaRef}
-      >
-        <DialogChrome>
+    <Dialog
+      open={open}
+      onClose={() => onOpenChange(false)}
+      title="Quick capture"
+      description="Capture quick thoughts, one per line, into the Notes inbox."
+      titleHidden
+      crumb={
+        <>
           <span>Notes</span>
-          <span aria-hidden>›</span>
-          <span className="text-(--text-secondary)">Quick capture</span>
-        </DialogChrome>
-        <DialogTitle className="sr-only">Quick capture</DialogTitle>
-        <DialogDescription className="sr-only">
-          Capture quick thoughts, one per line, into the Notes inbox.
-        </DialogDescription>
-        <DialogBody className="gap-2 pt-0">
-          <Textarea
-            ref={textareaRef}
-            variant="borderless"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              // ⌘⏎ commits, same as the full Brain dump composer; plain Enter stays a
-              // newline so several thoughts can go down in one dump.
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                // `!busy` mirrors the button's own disabled state — without it a rapid
-                // double ⌘⏎ would capture the same draft twice.
-                if (draft.trim() !== '' && !busy) capture();
-              }
-            }}
-            placeholder="Dump it here…"
-            className="field-sizing-fixed min-h-[96px] resize-none text-[15px] leading-6"
-          />
-          {error !== null && (
-            <p className="text-state-failed text-[12px]">{error}</p>
-          )}
-        </DialogBody>
-        <DialogFooter
-          className="pt-0"
-          leading={
-            <span className="text-muted-foreground text-[11px]">
-              ⌘⏎ to drop it
-            </span>
-          }
+          <span aria-hidden="true">›</span>
+          <span className={styles.here}>Quick capture</span>
+        </>
+      }
+      closeButton={false}
+      placement="top"
+      // The dialog opens straight into the box: the whole point is typing immediately.
+      initialFocusRef={textareaRef}
+      footerStart={<span className={styles.hint}>⌘⏎ to drop it</span>}
+      footer={
+        <Button
+          variant="primary"
+          size="sm"
+          icon={<Inbox size={14} strokeWidth={1.8} />}
+          disabled={draft.trim() === '' || busy}
+          onClick={capture}
         >
-          <Button
-            size="sm"
-            disabled={draft.trim() === '' || busy}
-            onClick={capture}
-          >
-            <Inbox />
-            Drop it
-          </Button>
-        </DialogFooter>
-      </DialogContent>
+          Drop it
+        </Button>
+      }
+    >
+      <TextArea
+        ref={textareaRef}
+        variant="inline"
+        autoGrow={false}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          // ⌘⏎ commits, same as the full Brain dump composer; plain Enter stays a
+          // newline so several thoughts can go down in one dump.
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            // `!busy` mirrors the button's own disabled state: without it a rapid
+            // double ⌘⏎ would capture the same draft twice.
+            if (draft.trim() !== '' && !busy) capture();
+          }
+        }}
+        placeholder="Dump it here…"
+        className={styles.box}
+      />
+      {error !== null && (
+        <p role="alert" className={styles.error}>
+          {error}
+        </p>
+      )}
     </Dialog>
   );
 }

@@ -1,0 +1,120 @@
+/* The add-project dialog (AddProjectDialog.tsx): two choice cards, then the GitHub list. */
+.title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+.error {
+  white-space: pre-wrap;
+}
+
+.waiting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  padding: var(--s-8) 0;
+  font-size: var(--fs);
+  color: var(--text-2);
+}
+
+.choices,
+.github {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+/* A choice card: a hairline box with an icon, a name and a quiet line under it. The library
+   has no two-line option card, so it is a plain button styled here. */
+.choice {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition:
+    background-color var(--dur) ease,
+    border-color var(--dur) ease;
+}
+
+@media (hover: hover) {
+  .choice:hover {
+    border-color: var(--border-strong);
+    background: var(--surface-2);
+  }
+}
+
+.choiceIcon {
+  flex: none;
+  color: var(--text-3);
+}
+
+.choiceText,
+.repo {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.choiceName,
+.repoName {
+  font-size: var(--fs);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+.choiceNote,
+.repoNote {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.repos {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 288px;
+  overflow-y: auto;
+}
+
+/* One repository: a row that fills on hover, its name and description cut to one line. */
+.repo {
+  gap: 2px;
+  width: 100%;
+  padding: var(--s-2) 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .repo:hover {
+    background: var(--surface-2);
+  }
+}
+
+.repoName,
+.repoNote {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .choice {
+    transition: none;
+  }
+}

@@ -1,0 +1,44 @@
+/* A crashed view's fallback (ErrorBoundary.tsx): a centred column with the error's message in
+   a raw well and the ways out under it. */
+.fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-3);
+  height: 100%;
+  padding: var(--s-6);
+  text-align: center;
+}
+
+.icon {
+  color: var(--red);
+}
+
+.title {
+  max-width: 384px;
+  font-size: var(--fs);
+  color: var(--text);
+}
+
+.note {
+  max-width: 384px;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.raw {
+  max-width: 512px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.hint {
+  max-width: 384px;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}

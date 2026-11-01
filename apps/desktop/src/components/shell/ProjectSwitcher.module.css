@@ -1,0 +1,24 @@
+/* The topbar's project switcher (ProjectSwitcher.tsx). */
+.trigger {
+  min-width: 0;
+  max-width: 240px;
+}
+
+.resolving {
+  display: inline-flex;
+  align-items: center;
+  height: var(--h-sm);
+  padding: 0 6px;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+/* The project's path, cut from the start so its own folder stays in view. */
+.path {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+}

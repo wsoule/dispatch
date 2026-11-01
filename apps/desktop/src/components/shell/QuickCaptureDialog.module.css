@@ -1,0 +1,22 @@
+/* The quick-capture dialog (QuickCaptureDialog.tsx): a borderless writing box under the
+   "Notes › Quick capture" crumb. */
+.here {
+  color: var(--text);
+}
+
+.box {
+  min-height: 96px;
+  resize: none;
+  font-size: var(--fs-lg);
+  line-height: 1.5;
+}
+
+.error {
+  font-size: var(--fs-xs);
+  color: var(--red);
+}
+
+.hint {
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}

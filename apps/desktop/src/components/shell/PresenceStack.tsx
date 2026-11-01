@@ -1,7 +1,8 @@
 import type { PresenceEntry } from '@dispatch/client';
+import { Tooltip } from '@dispatch/ui';
 
-import { cn } from '@/lib/utils';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
+import { cx } from '../gr8r/cx';
+import styles from './PresenceStack.module.css';
 
 interface PresenceStackProps {
   presence: PresenceEntry[];
@@ -67,68 +68,53 @@ export function PresenceStack({
   const hidden = presence.length - shown.length;
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            data-slot="presence-stack"
-            tabIndex={0}
-            role="group"
-            aria-label={`${presence.length} people here`}
-            className={cn(
-              'focus-visible:ring-ring flex items-center rounded-full outline-none focus-visible:ring-2',
-              className
-            )}
-          />
-        }
+    <Tooltip
+      side="below"
+      content={
+        <ul className={styles.lines}>
+          {presence.map((entry) => (
+            <li key={entry.handle}>{presenceLine(entry, taskTitle)}</li>
+          ))}
+        </ul>
+      }
+    >
+      <span
+        data-slot="presence-stack"
+        tabIndex={0}
+        role="group"
+        aria-label={`${presence.length} people here`}
+        className={cx(styles.stack, className)}
       >
-        {shown.map((entry, i) => {
-          const face = cn(
-            'bg-surface-quaternary border-border-chip flex size-5 items-center justify-center rounded-full border text-[9px] font-medium',
-            i > 0 && 'ml-0.5',
-            entry.runs.length > 0 && 'ring-state-review ring-1'
-          );
-          return onOpenPerson !== undefined ? (
+        {shown.map((entry) =>
+          onOpenPerson !== undefined ? (
             <button
               key={entry.handle}
               type="button"
               aria-label={`Open ${entry.handle}`}
               onClick={() => onOpenPerson(entry.ref)}
-              className={cn(face, 'hover:bg-surface-hover')}
+              className={styles.face}
+              data-busy={entry.runs.length > 0 ? '' : undefined}
             >
               {initialsFor(entry.handle)}
             </button>
           ) : (
+            // Side by side, not overlapped, and ringed while that person has a live agent.
             <span
               key={entry.handle}
-              aria-hidden
-              className={cn(
-                'bg-surface-quaternary border-border-chip flex size-5 items-center justify-center rounded-full border text-[9px] font-medium',
-                // Side by side, not overlapped: two-letter initials stacked
-                // over each other read as one run-together word, not two people.
-                i > 0 && 'ml-0.5',
-                // A ring on anyone with a live agent, so "who is busy" reads
-                // without opening the tooltip.
-                entry.runs.length > 0 && 'ring-state-review ring-1'
-              )}
+              aria-hidden="true"
+              className={styles.face}
+              data-busy={entry.runs.length > 0 ? '' : undefined}
             >
               {initialsFor(entry.handle)}
             </span>
-          );
-        })}
+          )
+        )}
         {hidden > 0 && (
-          <span aria-hidden className="text-muted-foreground ml-1">
+          <span aria-hidden="true" className={styles.more}>
             +{hidden}
           </span>
         )}
-      </TooltipTrigger>
-      <TooltipContent side="top">
-        <ul className="flex flex-col gap-0.5">
-          {presence.map((entry) => (
-            <li key={entry.handle}>{presenceLine(entry, taskTitle)}</li>
-          ))}
-        </ul>
-      </TooltipContent>
+      </span>
     </Tooltip>
   );
 }
@@ -153,32 +139,20 @@ export function AlsoViewing({ viewers }: AlsoViewingProps) {
       ? `${names[0]} also has this open`
       : `${names.slice(0, -1).join(', ')} and ${names.at(-1)} also have this open`;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            data-slot="also-viewing"
-            tabIndex={0}
-            role="group"
-            aria-label={sentence}
-            className="focus-visible:ring-ring flex items-center rounded-full outline-none focus-visible:ring-2"
-          />
-        }
+    <Tooltip side="below" content={sentence}>
+      <span
+        data-slot="also-viewing"
+        tabIndex={0}
+        role="group"
+        aria-label={sentence}
+        className={styles.stack}
       >
-        {viewers.slice(0, MAX_SHOWN).map((v, i) => (
-          <span
-            key={v.handle}
-            aria-hidden
-            className={cn(
-              'bg-surface-quaternary border-border-chip flex size-5 items-center justify-center rounded-full border text-[9px] font-medium',
-              i > 0 && 'ml-0.5'
-            )}
-          >
+        {viewers.slice(0, MAX_SHOWN).map((v) => (
+          <span key={v.handle} aria-hidden="true" className={styles.face}>
             {initialsFor(v.handle)}
           </span>
         ))}
-      </TooltipTrigger>
-      <TooltipContent side="bottom">{sentence}</TooltipContent>
+      </span>
     </Tooltip>
   );
 }
