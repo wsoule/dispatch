@@ -709,6 +709,26 @@ describe('Notice and EmptyState', () => {
     expect(note.getAttribute('data-tone')).toBe('default');
   });
 
+  // A Notice in a narrow card (a gate in the Overseer's 300px inflow)
+  // reflows by its own width: the body drops under the lead-in and the
+  // action onto its own line, rather than squeezing to a sliver. Layout is
+  // not measured here (happy-dom), so the rules are read from the module.
+  test('Notice wraps by its own width; a long lead-in wraps when alone', () => {
+    const css = readFileSync(
+      path.join(import.meta.dir, '..', 'src', 'tasks', 'notice.module.css'),
+      'utf8'
+    ).replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(css).toMatch(/\n\.root \{\s*flex-wrap: wrap;\s*\}/);
+    expect(css).toMatch(
+      /\n\.key\.key \{\s*flex: 0 1 auto;\s*white-space: normal;\s*\}/
+    );
+    expect(css).toMatch(/\n\.body \{\s*flex: 1 1 12rem;\s*min-width: 0;/);
+    // Where the global .notice turns into a column, the basis is dropped:
+    // it would be a height there.
+    const narrow = css.slice(css.indexOf('@media (width <= 768px)'));
+    expect(narrow).toMatch(/\.body \{\s*flex: 0 1 auto;\s*\}/);
+  });
+
   test('EmptyState renders its copy on the .empty primitive', () => {
     const { getByText, container } = render(
       <EmptyState hatched>Nothing due</EmptyState>
@@ -846,6 +866,67 @@ describe('Register passthrough', () => {
     for (const item of getAllByRole('listitem')) {
       expect(item.hasAttribute('aria-pressed')).toBe(false);
     }
+  });
+
+  // A row's in-place card (Needs you's gate card) takes a line of its own.
+  test('span="row" gives a cell the whole row and keeps its hooks', () => {
+    const { getByTestId } = render(
+      <Register columns="1fr auto" label="Needs you">
+        <RegisterRow data-testid="needs-you-row">
+          <RegisterCell variant="name">Wake t-12?</RegisterCell>
+          <RegisterCell>2m</RegisterCell>
+          <RegisterCell span="row" data-testid="gate" data-slot="gate-cell">
+            <div role="group" aria-label="Wake t-12">
+              <button type="button">Wake</button>
+            </div>
+          </RegisterCell>
+        </RegisterRow>
+      </Register>
+    );
+    const cell = getByTestId('gate');
+    expect(cell.getAttribute('data-span')).toBe('row');
+    expect(cell.getAttribute('data-slot')).toBe('gate-cell');
+    // Block content sits in a block value, not a <span>.
+    expect(cell.querySelector('[role="group"]')?.parentElement?.tagName).toBe(
+      'DIV'
+    );
+    // The other cells take no span.
+    const others = [
+      ...getByTestId('needs-you-row').querySelectorAll('[data-tone]'),
+    ].filter((node) => node !== cell);
+    expect(others.map((node) => node.hasAttribute('data-span'))).toEqual([
+      false,
+      false,
+    ]);
+    // Every layout gives it every column.
+    const css = readFileSync(
+      path.join(import.meta.dir, '..', 'src', 'tasks', 'register.module.css'),
+      'utf8'
+    );
+    expect(css).toMatch(/\.spanRow \{\s*grid-column: 1 \/ -1;\s*\}/);
+  });
+
+  // Needs you's "this machine only": a hint over the whole row, the
+  // in-place card included, as the legacy <li> carried it.
+  test('title is a hover hint on the whole row, not on a cell', () => {
+    const { getByTestId } = render(
+      <Register columns="1fr auto" label="Work">
+        <RegisterRow data-testid="ask" title="this machine only">
+          <RegisterCell variant="name">Run tests?</RegisterCell>
+          <RegisterCell>2m</RegisterCell>
+        </RegisterRow>
+        <RegisterRow data-testid="plain">
+          <RegisterCell>No hint</RegisterCell>
+        </RegisterRow>
+      </Register>
+    );
+    const row = getByTestId('ask');
+    expect(row.tagName).toBe('LI');
+    expect(row.getAttribute('title')).toBe('this machine only');
+    expect(
+      [...row.querySelectorAll('[title]')].filter((node) => node !== row)
+    ).toEqual([]);
+    expect(getByTestId('plain').hasAttribute('title')).toBe(false);
   });
 
   test('renders on the server with the hooks and the pressed state', () => {

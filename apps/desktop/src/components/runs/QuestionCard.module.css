@@ -1,0 +1,22 @@
+/* An agent's question (QuestionCard.tsx) inside its DecisionCard: a
+   failed answer's error (the danger tone's ink, from the global
+   .toneText), then the free-text answer with its button at the field's
+   foot. */
+.error {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.answer {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.field {
+  flex: 1 1 auto;
+  min-width: 0;
+}

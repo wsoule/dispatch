@@ -294,6 +294,9 @@ const primitives = (
         data-testid="spend-row"
       >
         <RegisterCell data-slot="cost">$4</RegisterCell>
+        <RegisterCell span="row" data-slot="spend-note">
+          <p>Over budget</p>
+        </RegisterCell>
       </RegisterRow>
     </Register>
   </>

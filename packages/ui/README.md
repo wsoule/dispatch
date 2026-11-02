@@ -411,7 +411,7 @@ the types for the rest.
 |          | `FilterChips` ("Project is …" chips joined by "and", + Filter, Clear all)                                                         | `chips`                                                             |
 |          | `BulkBar` (the floating bar of a selection; confirm strip, busy, note), `useBulkBarHeight()` (its height while up)                | `count`, `onClear`, `children`                                      |
 |          | `DeadlineList`, `StatsStrip`, `ProgressRule`                                                                                      | `groups`; `cells`; `done`/`total`                                   |
-|          | `Register`, `RegisterRow` (`pressed` on a button row), `RegisterCell`                                                             | `columns`, `label`, `children`                                      |
+|          | `Register`, `RegisterRow` (`pressed` on a button row), `RegisterCell` (`span="row"` takes the whole row)                          | `columns`, `label`, `children`                                      |
 |          | `Notice` (`role` status, alert or note), `EmptyState` (a centred icon, optional `label` title, the sentence, an action)           | see `tasks/types.ts`                                                |
 |          | `NavTabs` (`items`, or `groups` for a grouped vertical sub-nav; below), `Checklist`                                               | `label` and `items` or `groups`; `items`                            |
 |          | `Disclosure` (a fold: a trigger and the panel it shows or hides; below)                                                           | `children`                                                          |
@@ -440,7 +440,7 @@ the types for the rest.
 |          | `DateField`                                                                                                                       | `label`, `value`, `onChange`                                        |
 | controls | `TextField` (field or inline; `start` / `end` adornments), `TextArea` (grows with its content)                                    | none (native attributes pass through)                               |
 |          | `Field` (label, `hint`, `error`; the control inside takes its id and description)                                                 | `label`, `children`                                                 |
-|          | `Select` (a field-look `PickerPopover` without search), `RadioGroup` (native radios)                                              | `value`, `options`, `onChange` (and `label` for Select)             |
+|          | `Select` (a field-look `PickerPopover` without search), `RadioGroup` (native radios; `cards`, `badge`, `aside`, `children`)       | `value`, `options`, `onChange` (and `label` for Select)             |
 |          | `Menu` (actions, radio rows, groups, separators, submenus; it and each open submenu are layers of the overlay stack)              | `label`, `trigger` (spread its props onto a `Button`), `items`      |
 
 Pure helpers are exported too: the timeline's date scale (`createScale`,
@@ -487,7 +487,10 @@ row whose title already names it; `aria-label` and `aria-labelledby` still win.
 toggles, so a box inside a clickable header can stop the click there
 (`event.stopPropagation()`). `Notice` takes `role` `status` (polite, something
 that just changed), `alert` (an error) or `note` (an aside that qualifies the
-page, such as why it is read only); static copy needs none.
+page, such as why it is read only); static copy needs none. A `Notice` reflows
+by its own width rather than the viewport's: when the lead-in, a 12rem body and
+the action do not fit on one line (a card in a narrow column), the body drops
+under the lead-in and the action onto a line of its own.
 
 ### Disclosure
 
@@ -619,7 +622,13 @@ take the host's `data-*` hooks on their roots (the register's wrapper, the row's
 `<li>`, the cell), so a host keeps its row hooks (`needs-you-row`, a roster's
 `data-roster-title`) on Register rows. A button row that is a toggle (a project
 filter) passes `pressed`, which sets `aria-pressed` on its stretched button
-only; link and plain rows take no `pressed`, and the `<li>` never carries it.
+only; link and plain rows take no `pressed`, and the `<li>` never carries it. A
+`RegisterCell` with `span="row"` takes every column, in the table and in the
+stacked card layout, on a line of its own under the cells before it, and holds
+its value in a block (an answer-in-place card inside a Needs you row). Any row
+takes `title`, a hover hint over the whole `<li>` for a qualifier not worth a
+column ("this machine only"); it is pointer-only, so say the same fact in words
+somewhere a keyboard reaches.
 
 `stackWithin` (the register's own width, a container query) takes 480, 600, 700,
 900 or 1000. Pick the smallest step the columns' minimum widths fit in (the
@@ -1555,8 +1564,25 @@ and the text controls take its hint and error as their description and
 appearance without a search row: its `onChange` follows the save contract above,
 its open list is a layer of the overlay stack like any picker's, and a host's
 `data-*` hooks land on that list's layer. `RadioGroup` is native radios (one
-`name`, so the browser's arrow keys move and pick); its `data-*` hooks land on
-the radiogroup.
+`name`, generated unless the host passes `name`, so the browser's arrow keys
+move and pick); a host's `data-*` hooks already land on the radiogroup. An
+option's `hint` is a quiet line read as its description; its `badge` (a
+"Recommended" `Chip`) sits inside the label after its words, so it is part of
+the radio's name; its `aside` sits beside the label, outside it, so its buttons
+stay valid controls, stay out of the name and pick nothing; its `children` show
+under it only while it is checked (a reason box); its `aria-label` names the
+radio. `variant="cards"` boxes each option in a row (the decision cards'
+answers): the whole row picks (the native input covers it, under the aside), the
+hover fill answers a pointer, and the checked row takes that fill with a 2px
+accent edge inside its start (a `Highlight` outline in forced colours); the
+focus ring stays on the circle. `activation="manual"` is for choices that act
+the moment they are picked (approve or deny a tool call): an arrow key only
+moves focus (the change the browser makes is not reported, so the checked option
+stays), and Space, Enter (which submits no form) or a click picks, the checked
+option too (reported again, as a button press would be); the default `auto` lets
+an arrow key move and pick, as native radios do. A hint shown as a `Tooltip`
+(`noteAs`) and a `size` step are not built yet; they land with their first
+consumer, the desktop's review verdict bar.
 
 `Menu` is an action menu. `label` names the `role="menu"`; `items` are action
 rows (`shortcut`, `destructive`, `disabled`), radio rows (`kind: 'radio'`,

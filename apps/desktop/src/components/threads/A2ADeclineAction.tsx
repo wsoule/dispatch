@@ -1,9 +1,9 @@
 import type { ApiClient, Message } from '@dispatch/client';
+import { Button, cx, Field, TextField } from '@dispatch/ui';
 import { useEffect, useId, useRef, useState } from 'react';
 
 import { canDecline } from '../../lib/a2a';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
+import styles from './A2ADeclineAction.module.css';
 
 export interface A2ADeclineActionProps {
   message: Message;
@@ -48,7 +48,7 @@ export function A2ADeclineAction({
   if (!confirming) {
     return (
       <div>
-        <Button size="sm" variant="ghost" onClick={() => setConfirming(true)}>
+        <Button size="sm" variant="quiet" onClick={() => setConfirming(true)}>
           Decline
         </Button>
       </div>
@@ -56,35 +56,29 @@ export function A2ADeclineAction({
   }
   return (
     <form
-      className="flex flex-col gap-1.5"
+      className={styles.form}
       onSubmit={(e) => {
         e.preventDefault();
         void decline();
       }}
     >
-      <label htmlFor={reasonId} className="text-muted-foreground text-[12px]">
-        Reason
-      </label>
-      <Input
-        id={reasonId}
-        value={reason}
-        placeholder="Optional; the client sees it"
-        onChange={(e) => setReason(e.target.value)}
-        ref={reasonRef}
-      />
-      <div className="flex gap-1.5">
-        <Button
-          type="submit"
+      <Field label="Reason" id={reasonId}>
+        <TextField
           size="sm"
-          variant="destructive"
-          disabled={pending}
-        >
+          value={reason}
+          placeholder="Optional; the client sees it"
+          onChange={(e) => setReason(e.target.value)}
+          ref={reasonRef}
+        />
+      </Field>
+      <div className={styles.actions}>
+        <Button type="submit" size="sm" variant="danger" disabled={pending}>
           {pending ? 'Declining…' : 'Decline question'}
         </Button>
         <Button
           type="button"
           size="sm"
-          variant="ghost"
+          variant="quiet"
           disabled={pending}
           onClick={() => {
             setConfirming(false);
@@ -95,7 +89,11 @@ export function A2ADeclineAction({
         </Button>
       </div>
       {error !== null && (
-        <p role="alert" className="text-destructive text-[12px]">
+        <p
+          role="alert"
+          className={cx(styles.error, 'toneText')}
+          data-tone="danger"
+        >
           {error}
         </p>
       )}

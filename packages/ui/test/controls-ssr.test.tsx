@@ -40,4 +40,23 @@ describe('controls family server render', () => {
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain('role="menu"');
   });
+
+  test('a cards group renders its badge, hint, aside and the checked option’s children', () => {
+    const html = result.html;
+    expect(html).toMatch(
+      /<div data-testid="answer" role="radiogroup" aria-label="Answer"[^>]*data-variant="cards"/
+    );
+    expect(html).toContain('name="answer"');
+    // The badge inside the label, after a space; the hint and the aside
+    // after it, outside.
+    expect(html).toMatch(
+      /Approve once(<!-- -->)? <span><span>Recommended<\/span><\/span><\/span><\/label>/
+    );
+    expect(html).toMatch(
+      /<\/label><span id="[^"]+">Ends with the run<\/span><\/div><div><button[^>]*><span>Edit scope/
+    );
+    // Only the checked option reveals its children.
+    expect(html).toContain('Reason box');
+    expect(html).not.toContain('Never shown');
+  });
 });

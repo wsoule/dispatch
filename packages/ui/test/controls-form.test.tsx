@@ -195,6 +195,278 @@ describe('RadioGroup', () => {
       screen.getByRole('radiogroup', { name: 'Scope' })
     );
   });
+
+  // The decision cards' answers: boxed rows, a badge that is part of the
+  // name, an aside outside it, and what the checked one reveals.
+  function Cards({
+    onChange,
+    onEdit = () => undefined,
+    initial = null,
+  }: {
+    onChange: (value: string) => void;
+    onEdit?: () => void;
+    initial?: string | null;
+  }) {
+    const [value, setValue] = useState<string | null>(initial);
+    return (
+      <RadioGroup
+        label="Answer"
+        variant="cards"
+        name="answer"
+        value={value}
+        onChange={(next) => {
+          setValue(next);
+          onChange(next);
+        }}
+        options={[
+          {
+            value: 'deny',
+            label: 'Deny and tell it why',
+            children: <textarea aria-label="Reason" />,
+          },
+          {
+            value: 'session',
+            label: 'Allow Bash for this run',
+            hint: 'Ends with the run',
+            aside: (
+              <button type="button" onClick={onEdit}>
+                Edit scope
+              </button>
+            ),
+          },
+          {
+            value: 'once',
+            label: 'Approve once',
+            badge: <span>Recommended</span>,
+          },
+          { value: 'later', label: 'Later', disabled: true },
+        ]}
+      />
+    );
+  }
+
+  test('cards box each option; a badge is in the name, an aside is not', () => {
+    const onChange = mock((_value: string) => undefined);
+    const onEdit = mock(() => undefined);
+    render(<Cards onChange={onChange} onEdit={onEdit} />);
+    const group = screen.getByRole('radiogroup', { name: 'Answer' });
+    expect(group.getAttribute('data-variant')).toBe('cards');
+    // The badge reads after the label, with a space between.
+    const once = screen.getByRole('radio', {
+      name: 'Approve once Recommended',
+    });
+    expect(once).toBeTruthy();
+    // The aside's button is its own control, outside the radio's name.
+    const session = screen.getByRole<HTMLInputElement>('radio', {
+      name: 'Allow Bash for this run',
+    });
+    const edit = screen.getByRole('button', { name: 'Edit scope' });
+    expect(edit.closest('label')).toBeNull();
+    fireEvent.click(edit);
+    expect(onEdit).toHaveBeenCalledTimes(1);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(session.checked).toBe(false);
+    // The hint still describes its radio.
+    expect(
+      document.getElementById(session.getAttribute('aria-describedby') ?? '')
+        ?.textContent
+    ).toBe('Ends with the run');
+    // Each option is a row of its own that says whether it is checked.
+    fireEvent.click(session);
+    expect(onChange).toHaveBeenCalledWith('session');
+    expect(
+      session.closest('[data-checked]')?.getAttribute('data-checked')
+    ).toBe('true');
+  });
+
+  // The whole card row picks, hint line and padding included: the input
+  // covers the head with an explicit size. A themed radio (appearance
+  // auto) turns an auto width and height into its own 13px box, so the
+  // size is 100% and the native look is dropped (the input is invisible).
+  test('the cards input covers its whole row, at an explicit size', () => {
+    const css = readFileSync(
+      path.join(
+        import.meta.dir,
+        '..',
+        'src',
+        'controls',
+        'radio-group.module.css'
+      ),
+      'utf8'
+    ).replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(css).toMatch(
+      /\.cards \.input \{\s*inset: 0;\s*width: 100%;\s*height: 100%;\s*appearance: none;\s*\}/
+    );
+    expect(css).toMatch(/\.cards \.head \{\s*position: relative;/);
+  });
+
+  test('children render only under the checked option, outside its label', () => {
+    render(<Cards onChange={() => undefined} />);
+    expect(screen.queryByRole('textbox', { name: 'Reason' })).toBeNull();
+    fireEvent.click(
+      screen.getByRole('radio', { name: 'Deny and tell it why' })
+    );
+    const reason = screen.getByRole('textbox', { name: 'Reason' });
+    expect(reason.closest('label')).toBeNull();
+    fireEvent.click(screen.getByRole('radio', { name: /^Approve once/ }));
+    expect(screen.queryByRole('textbox', { name: 'Reason' })).toBeNull();
+  });
+
+  test('name reaches every input; aria-label names a radio', () => {
+    render(
+      <RadioGroup
+        label="Verdict"
+        name="verdict"
+        value={null}
+        onChange={() => undefined}
+        options={[
+          { value: 'ok', label: 'OK', 'aria-label': 'Approve the change' },
+          { value: 'no', label: 'No' },
+        ]}
+      />
+    );
+    const radios = screen.getAllByRole('radio');
+    expect(radios.map((radio) => radio.getAttribute('name'))).toEqual([
+      'verdict',
+      'verdict',
+    ]);
+    expect(screen.getByRole('radio', { name: 'Approve the change' })).toBe(
+      radios[0]
+    );
+  });
+
+  test('a disabled option and a disabled group still take no pick', () => {
+    const onChange = mock((_value: string) => undefined);
+    const { rerender } = render(<Cards onChange={onChange} />);
+    const later = screen.getByRole<HTMLInputElement>('radio', {
+      name: 'Later',
+    });
+    expect(later.disabled).toBe(true);
+    expect(later.closest('[data-disabled]')).not.toBeNull();
+    rerender(
+      <RadioGroup
+        label="Answer"
+        variant="cards"
+        disabled
+        value={null}
+        onChange={onChange}
+        options={[{ value: 'once', label: 'Approve once' }]}
+      />
+    );
+    const once = screen.getByRole<HTMLInputElement>('radio', {
+      name: 'Approve once',
+    });
+    expect(once.disabled).toBe(true);
+    expect(
+      screen
+        .getByRole('radiogroup', { name: 'Answer' })
+        .getAttribute('aria-disabled')
+    ).toBe('true');
+    fireEvent.keyDown(once, { key: 'Enter' });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  describe('manual activation', () => {
+    function Manual({ onChange }: { onChange: (value: string) => void }) {
+      const [value, setValue] = useState<string | null>('deny');
+      return (
+        <RadioGroup
+          label="Decision"
+          activation="manual"
+          variant="cards"
+          value={value}
+          onChange={(next) => {
+            setValue(next);
+            onChange(next);
+          }}
+          options={[
+            { value: 'deny', label: 'Deny' },
+            { value: 'once', label: 'Approve once' },
+            { value: 'session', label: 'Allow for this run' },
+          ]}
+        />
+      );
+    }
+
+    test('an arrow key moves without picking; the checked option stays', () => {
+      const onChange = mock((_value: string) => undefined);
+      render(<Manual onChange={onChange} />);
+      const deny = screen.getByRole<HTMLInputElement>('radio', {
+        name: 'Deny',
+      });
+      const once = screen.getByRole<HTMLInputElement>('radio', {
+        name: 'Approve once',
+      });
+      // What a browser does on ArrowDown: keydown on the focused radio,
+      // then focus and a click (the change) on the next one, then keyup.
+      fireEvent.keyDown(deny, { key: 'ArrowDown' });
+      once.focus();
+      fireEvent.click(once);
+      fireEvent.keyUp(once, { key: 'ArrowDown' });
+      expect(onChange).not.toHaveBeenCalled();
+      expect(deny.checked).toBe(true);
+      expect(once.checked).toBe(false);
+      expect(document.activeElement).toBe(once);
+    });
+
+    test('a click, Space or Enter picks', () => {
+      const onChange = mock((_value: string) => undefined);
+      render(<Manual onChange={onChange} />);
+      const once = screen.getByRole<HTMLInputElement>('radio', {
+        name: 'Approve once',
+      });
+      // A press clears an arrow that never saw its keyup.
+      fireEvent.keyDown(once, { key: 'ArrowUp' });
+      fireEvent.pointerDown(once);
+      fireEvent.click(once);
+      expect(onChange.mock.calls).toEqual([['once']]);
+      // Space is a keydown of its own, then the browser's click.
+      const session = screen.getByRole<HTMLInputElement>('radio', {
+        name: 'Allow for this run',
+      });
+      fireEvent.keyDown(once, { key: 'ArrowDown' });
+      fireEvent.keyDown(session, { key: ' ' });
+      fireEvent.click(session);
+      expect(onChange.mock.calls).toEqual([['once'], ['session']]);
+      // Enter on a focused radio picks it (and submits no form).
+      const deny = screen.getByRole('radio', { name: 'Deny' });
+      const enter = fireEvent.keyDown(deny, { key: 'Enter' });
+      expect(enter).toBe(false);
+      expect(onChange.mock.calls).toEqual([['once'], ['session'], ['deny']]);
+    });
+
+    // An answer given again: a click on the checked radio fires no change,
+    // yet manual activation reports it once (an unchecked radio's click is
+    // reported once too, by its change).
+    test('a click on the checked radio reports it again, once', () => {
+      const onChange = mock((_value: string) => undefined);
+      render(<Manual onChange={onChange} />);
+      const deny = screen.getByRole<HTMLInputElement>('radio', {
+        name: 'Deny',
+      });
+      fireEvent.click(deny);
+      expect(onChange.mock.calls).toEqual([['deny']]);
+      fireEvent.click(screen.getByRole('radio', { name: 'Approve once' }));
+      expect(onChange.mock.calls).toEqual([['deny'], ['once']]);
+      // An arrow landing back on the checked radio is still only a move.
+      fireEvent.keyDown(deny, { key: 'ArrowUp' });
+      fireEvent.click(screen.getByRole('radio', { name: 'Approve once' }));
+      expect(onChange.mock.calls).toEqual([['deny'], ['once']]);
+    });
+
+    test('auto activation leaves Enter and arrows to the browser', () => {
+      const onChange = mock((_value: string) => undefined);
+      render(<Host onChange={onChange} />);
+      const personal = screen.getByRole('radio', { name: 'Personal' });
+      fireEvent.keyDown(screen.getByRole('radio', { name: 'Team' }), {
+        key: 'ArrowDown',
+      });
+      fireEvent.click(personal);
+      expect(onChange).toHaveBeenCalledWith('personal');
+      expect(fireEvent.keyDown(personal, { key: 'Enter' })).toBe(true);
+      expect(onChange).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 describe('Select', () => {

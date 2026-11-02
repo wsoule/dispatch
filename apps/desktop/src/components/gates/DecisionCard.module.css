@@ -1,0 +1,117 @@
+/* The answer-in-place card (DecisionCard.tsx): a panel, or the tone's tint
+   under its edge, with a 12px medium sentence-case heading, the answers as
+   RadioGroup cards, a confirmation line, the host's notices and actions.
+   Words on a tint are the tone's ink (the heading) or --text, never
+   --text-3. */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.toned {
+  border-color: var(--tone-line);
+  background: var(--tone-soft);
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.icon {
+  display: inline-flex;
+  flex: none;
+  margin-top: 1px;
+  color: var(--text-2);
+}
+
+.toned .icon {
+  color: var(--tone-ink);
+}
+
+.heading {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* The ask: 12px medium, sentence case (never the eyebrow's capitals). */
+.question {
+  font-size: 12px;
+  font-weight: var(--fw-medium);
+  line-height: 1.4;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.toned .question {
+  color: var(--tone-ink);
+}
+
+.detail {
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.toned .detail {
+  color: var(--text);
+}
+
+/* "Selected — X" / "Answered — X": the check mark is the success tone,
+   the words stay text. */
+.confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding-top: var(--s-2);
+  border-top: 1px solid var(--divider);
+  font-size: var(--fs-xs);
+  color: var(--text);
+}
+
+.check {
+  display: inline-flex;
+  flex: none;
+  color: var(--tone);
+}
+
+.choice {
+  font-weight: var(--fw-medium);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .card {
+    animation: card-in var(--dur) ease-out;
+  }
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}

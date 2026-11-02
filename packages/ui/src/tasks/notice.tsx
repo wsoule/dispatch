@@ -24,7 +24,9 @@ const TONED_KEY: ReadonlySet<UiTone> = new Set<UiTone>([
    or a missing input, success, info), the sentence staying --text. role is
    opt-in: "status" for something that just changed, "alert" for an error,
    "note" for an aside that qualifies the page (why it is read only);
-   static copy needs none. The host's data-* hooks land on the box. */
+   static copy needs none. The box reflows by its own width: in a narrow
+   card the body drops under the lead-in and the action onto its own line.
+   The host's data-* hooks land on the box. */
 export function Notice(props: NoticeProps) {
   const { label, children, tone = 'accent', role, action } = props;
   return (
@@ -32,6 +34,7 @@ export function Notice(props: NoticeProps) {
       {...dataAttributes(props)}
       className={cx(
         'notice',
+        styles.root,
         tone === 'default' || tone === 'muted' ? styles.quiet : undefined
       )}
       role={role}

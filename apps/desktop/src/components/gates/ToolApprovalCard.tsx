@@ -1,10 +1,8 @@
+import { Button, TextArea } from '@dispatch/ui';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 
-import { Button } from '../button';
-import { Collapsible, CollapsibleContent } from '../collapsible';
-import { ScrollArea } from '../scroll-area';
-import { Textarea } from '../textarea';
-import { ApprovalCard, type ApprovalCardOption } from './approval-card';
+import { DecisionCard, type DecisionCardProps } from './DecisionCard';
+import styles from './ToolApprovalCard.module.css';
 
 /** A human's answer to a tool call an agent is parked on. */
 export type ToolApprovalDecision = {
@@ -47,13 +45,16 @@ const ONCE_ID = 'once';
 /**
  * The human-in-the-loop gate for a tool call an agent is parked on: which tool wants
  * to run and with what, then three answers, because "yes", "yes, and stop asking
- * about this tool" and "no" are different instructions. Built on `ApprovalCard`'s
- * option rows. Picking an allow decides at once; picking Deny opens a reason box
+ * about this tool" and "no" are different instructions. Built on `DecisionCard`'s
+ * radio cards. Picking an allow decides at once; picking Deny opens a reason box
  * first, since a bare refusal leaves the agent guessing at what it did wrong, which
  * usually means it guesses again. The reason is optional, and the other options stay
  * disabled while it is being written, so a stray click cannot approve the very thing
- * being denied. One card for every surface that parks a call (a task run, the
- * Overseer); each says what its grant covers through `sessionScope`.
+ * being denied. An arrow key only moves between the answers, so arrowing past
+ * "Approve once" never approves. One card for every surface that parks a call (a task
+ * run, the Overseer); each says what its grant covers through `sessionScope`. The
+ * reason box sits under the answers rather than inside the Deny row, so the radiogroup
+ * holds only radios. `data-slot="tool-approval-card"` is the hook tests count.
  */
 export function ToolApprovalCard({
   toolName,
@@ -112,7 +113,7 @@ export function ToolApprovalCard({
     });
   }
 
-  const options: ApprovalCardOption[] = [
+  const options: DecisionCardProps['options'] = [
     { id: DENY_ID, label: 'Deny and tell it why' },
     ...(sessionScope !== undefined
       ? [
@@ -125,44 +126,43 @@ export function ToolApprovalCard({
       : []),
     { id: ONCE_ID, label: 'Approve once', recommended: true },
   ];
+  const why = reason.trim();
 
   return (
-    <div
+    <DecisionCard
       data-slot="tool-approval-card"
-      className="animate-in fade-in-0 flex flex-col gap-2 duration-100 motion-reduce:animate-none"
+      question={question}
+      detail={detail}
+      options={options}
+      onSelect={handleSelect}
+      selectedId={selectedId}
+      disabled={locked || denying}
+      answered={selectedId !== undefined && selectedId === sentId}
     >
-      <ApprovalCard
-        // Full-width wherever it sits; the primitive's gallery default is `max-w-sm`.
-        className="max-w-none"
-        question={question}
-        detail={detail}
-        options={options}
-        onSelect={handleSelect}
-        selectedId={selectedId}
-        disabled={locked || denying}
-        answered={selectedId !== undefined && selectedId === sentId}
-      />
-      <ScrollArea className="rounded-control border-border-chip bg-surface-quaternary max-h-40 border-[0.5px]">
-        <pre className="text-muted-foreground p-2 font-mono text-[11px] break-words whitespace-pre-wrap">
-          {preview}
-        </pre>
-      </ScrollArea>
+      {/* The call itself, scrollable by keyboard when it runs long; a named
+          region, so the Tab stop announces what it holds. */}
+      <pre
+        className={styles.preview}
+        tabIndex={0}
+        role="region"
+        aria-label="Tool call"
+      >
+        {preview}
+      </pre>
       {children}
-      {/* A real Collapsible rather than a plain conditional: no chevron here, just the
-          reveal behaviour for the reason box. */}
-      <Collapsible open={denying}>
-        <CollapsibleContent className="flex flex-col gap-2">
-          <Textarea
+      {denying ? (
+        <div className={styles.reason}>
+          <TextArea
             ref={reasonRef}
             aria-label="Reason for denying"
             value={reason}
-            onChange={(e) => setReason(e.target.value)}
+            onChange={(event) => setReason(event.target.value)}
             placeholder="Why not? The agent gets this as the reason it was refused."
-            className="font-book min-h-[52px] w-full resize-y text-[13px]"
+            rows={2}
           />
-          <div className="flex justify-end gap-2">
+          <div className={styles.reasonActions}>
             <Button
-              variant="ghost"
+              variant="quiet"
               disabled={deciding}
               onClick={() => {
                 setDenying(false);
@@ -174,18 +174,17 @@ export function ToolApprovalCard({
             <Button
               disabled={deciding || busy}
               onClick={() => {
-                const why = reason.trim();
                 void decide(
                   DENY_ID,
                   why === '' ? { allow: false } : { allow: false, reason: why }
                 );
               }}
             >
-              Deny{reason.trim() === '' ? '' : ' and tell it why'}
+              {why === '' ? 'Deny' : 'Deny and tell it why'}
             </Button>
           </div>
-        </CollapsibleContent>
-      </Collapsible>
-    </div>
+        </div>
+      ) : null}
+    </DecisionCard>
   );
 }

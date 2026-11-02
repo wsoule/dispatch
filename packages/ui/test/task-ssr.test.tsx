@@ -173,6 +173,10 @@ describe('task family server render', () => {
     }
     expect(html).toContain('role="note"');
     expect(html).toContain('data-slot="cost"');
+    // A cell that spans the row holds block content in a block value.
+    expect(html).toMatch(
+      /<div data-slot="spend-note" class="[^"]*" data-tone="default" data-span="row"><div[^>]*><p>Over budget<\/p><\/div><\/div>/
+    );
     // Register's small container step.
     expect(html).toContain('data-stack="container-600"');
     // A segmented option's count is read after its label with a separator.

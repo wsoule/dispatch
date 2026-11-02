@@ -27,6 +27,34 @@ const html = renderToString(
       onChange={noop}
       options={[{ value: 'team', label: 'Team' }]}
     />
+    <RadioGroup
+      label="Answer"
+      variant="cards"
+      activation="manual"
+      name="answer"
+      value="deny"
+      onChange={noop}
+      data-testid="answer"
+      options={[
+        {
+          value: 'deny',
+          label: 'Deny and tell it why',
+          children: <span>Reason box</span>,
+        },
+        {
+          value: 'session',
+          label: 'Allow Bash for this run',
+          hint: 'Ends with the run',
+          aside: <Button>Edit scope</Button>,
+        },
+        {
+          value: 'once',
+          label: 'Approve once',
+          badge: <span>Recommended</span>,
+          children: <span>Never shown</span>,
+        },
+      ]}
+    />
     <Select
       label="Tier"
       value="admin"

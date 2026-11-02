@@ -1,15 +1,15 @@
 import type { ApiClient } from '@dispatch/client';
+import { Button, cx } from '@dispatch/ui';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';
 import type { EntryVersion, ProposalCardModel } from '../../lib/memory';
 import { memoryQueryKey, proposalCardModel } from '../../lib/memory';
+import { DecisionCard, type DecisionCardProps } from '../gates/DecisionCard';
 import { DecideUnavailableNotice } from '../runs/DecideUnavailableNotice';
 import { Markdown } from '../runs/Markdown';
-import type { ApprovalCardOption } from '@/ui/ai/approval-card';
-import { ApprovalCard } from '@/ui/ai/approval-card';
-import { Button } from '@/ui/button';
+import styles from './MemoryGateCard.module.css';
 
 type Choice = 'approve' | 'reject';
 
@@ -25,8 +25,9 @@ interface MemoryGateCardProps {
   onRestartDaemon: () => Promise<void>;
 }
 
-/** A memory gate: the proposed entry (or the one a retire would remove), where
- *  it would reach and who asked, and Approve or Reject once it has loaded. */
+/** A memory gate on DecisionCard: the proposed entry (or the one a retire
+ *  would remove), where it would reach and who asked, and Approve or Reject
+ *  once it has loaded. */
 export function MemoryGateCard({
   proposalId,
   client,
@@ -76,51 +77,46 @@ export function MemoryGateCard({
     void read.refetch();
   }
 
-  const options: ApprovalCardOption[] = [
+  const options: DecisionCardProps['options'] = [
     { id: 'reject', label: pending === 'reject' ? 'Rejecting…' : 'Reject' },
     { id: 'approve', label: pending === 'approve' ? 'Approving…' : 'Approve' },
   ];
 
   return (
-    <div
+    <DecisionCard
       data-slot="memory-gate-card"
-      className="animate-in fade-in-0 flex flex-col gap-2 duration-100 motion-reduce:animate-none"
-    >
-      <ApprovalCard
-        className="max-w-none"
-        question={model?.ask ?? 'A memory proposal is waiting for a decision'}
-        detail={
-          model !== null ? (
-            <ProposalDetail model={model} />
-          ) : read.error !== null && !read.isFetching ? (
-            <span className="flex flex-wrap items-center gap-x-1.5">
-              <span role="alert" className="text-red">
-                Could not read the proposal: {read.error.message}
-              </span>
-              <Button
-                variant="link"
-                size="xs"
-                className="h-auto px-0 text-[12px]"
-                onClick={retry}
-              >
-                Try again
-              </Button>
+      question={model?.ask ?? 'A memory proposal is waiting for a decision'}
+      detail={
+        model !== null ? (
+          <ProposalDetail model={model} />
+        ) : read.error !== null && !read.isFetching ? (
+          <span className={styles.line}>
+            <span role="alert" className="toneText" data-tone="danger">
+              Could not read the proposal: {read.error.message}
             </span>
-          ) : (
-            'Loading the proposal…'
-          )
-        }
-        options={options}
-        onSelect={handleSelect}
-        selectedId={selectedId}
-        disabled={!decidable}
-      />
+            <Button variant="quiet" size="sm" onClick={retry}>
+              Try again
+            </Button>
+          </span>
+        ) : (
+          'Loading the proposal…'
+        )
+      }
+      options={options}
+      onSelect={handleSelect}
+      selectedId={selectedId}
+      disabled={!decidable}
+    >
       <DecideUnavailableNotice
         availability={availability}
         onRestartDaemon={onRestartDaemon}
       />
-      {error !== null && <div className="text-red text-[12px]">{error}</div>}
-    </div>
+      {error !== null ? (
+        <div className={cx(styles.error, 'toneText')} data-tone="danger">
+          {error}
+        </div>
+      ) : null}
+    </DecisionCard>
   );
 }
 
@@ -128,22 +124,22 @@ export function MemoryGateCard({
 // plain text; bodies go through Markdown as other agent text does.
 function ProposalDetail({ model }: { model: ProposalCardModel }) {
   return (
-    <div className="flex flex-col gap-2">
+    <div className={styles.detail}>
       {model.diff === null ? (
         <>
-          <div className="text-foreground font-medium">{model.title}</div>
+          <div className={styles.title}>{model.title}</div>
           <Markdown content={model.body} />
         </>
       ) : (
         <>
           {model.diff.retired ? (
-            <span className="text-foreground">
+            <span className={styles.strong}>
               This entry was retired after this was proposed; approving saves
               this version as a new entry.
             </span>
           ) : (
             model.diff.base !== null && (
-              <span className="text-foreground">
+              <span className={styles.strong}>
                 This entry changed after this was proposed; approving replaces
                 the version it has now.
               </span>
@@ -176,7 +172,7 @@ function ProposalDetail({ model }: { model: ProposalCardModel }) {
         </span>
       )}
       {model.decided !== null && (
-        <span className="text-foreground">Already {model.decided}.</span>
+        <span className={styles.strong}>Already {model.decided}.</span>
       )}
     </div>
   );
@@ -185,14 +181,9 @@ function ProposalDetail({ model }: { model: ProposalCardModel }) {
 // One labelled version of a superseded entry: its title, then its body.
 function Version({ label, version }: { label: string; version: EntryVersion }) {
   return (
-    <div
-      data-slot="memory-version"
-      className="rounded-control border-border-chip border-[0.5px] px-2.5 py-2"
-    >
-      <div className="text-muted-foreground mb-1 text-[11px] font-medium">
-        {label}
-      </div>
-      <div className="text-foreground font-medium">{version.title}</div>
+    <div data-slot="memory-version" className={styles.version}>
+      <div className={styles.caption}>{label}</div>
+      <div className={styles.title}>{version.title}</div>
       <Markdown content={version.body} />
     </div>
   );

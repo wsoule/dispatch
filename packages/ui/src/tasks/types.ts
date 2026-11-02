@@ -1023,6 +1023,10 @@ interface RegisterRowCommonProps extends DataAttributes {
   /** The row the host has open: the accent tint with a 2px accent bar
    * inside its left edge (a Highlight outline in forced colours). */
   selected?: boolean;
+  /** A hover hint over the whole row (the `<li>`'s title), for a qualifier
+   * that is not worth a column ("this machine only"). Pointer-only, so the
+   * same fact must also be in words somewhere a keyboard reaches. */
+  title?: string;
   children: ReactNode;
 }
 
@@ -1084,5 +1088,9 @@ export interface RegisterCellProps extends DataAttributes {
    * a plain detail under a coloured value stays muted. */
   toneSub?: boolean;
   align?: 'start' | 'end';
+  /** row = the cell takes the whole row (every column, in the table and
+   * in the stacked card layout), on its own line under the cells before
+   * it: an answer-in-place card inside a row. */
+  span?: 'row';
   children?: ReactNode;
 }

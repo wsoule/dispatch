@@ -52,7 +52,10 @@ test('a gate card answers a gate choice with an empty body', async () => {
 test("a wake card names the task it wakes, and Don't denies", async () => {
   const onDecide = mock((_c: 'approve' | 'deny') => Promise.resolve());
   render(<WakeCard target="task:t-46" onDecide={onDecide} />);
-  expect(screen.getByTestId('wake-card')).toBeDefined();
+  // The copy says what pressing Wake does, not that it is already happening.
+  expect(screen.getByTestId('wake-card').textContent).toContain(
+    'Waking starts t-46 again with the message that is waiting for it.'
+  );
   fireEvent.click(screen.getByRole('button', { name: 'Wake t-46' }));
   await waitFor(() => expect(onDecide).toHaveBeenCalledWith('approve'));
   fireEvent.click(screen.getByRole('button', { name: 'Don’t' }));

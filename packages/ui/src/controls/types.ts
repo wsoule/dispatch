@@ -78,9 +78,22 @@ export interface RadioOption {
   label: ReactNode;
   /** A quiet line under the label, read as the option's description. */
   hint?: ReactNode;
+  /** Inline after the label's words and inside the label, so it is part
+      of the radio's name (a "Recommended" Chip). */
+  badge?: ReactNode;
+  /** Beside the option, outside its label: buttons here stay valid
+      controls, out of the radio's name, and a press on them picks
+      nothing. */
+  aside?: ReactNode;
+  /** Shown under the option only while it is checked, outside its label
+      (a follow-up field, such as the reason for a refusal). */
+  children?: ReactNode;
   disabled?: boolean;
+  /** The radio's name when its visible label is not the whole of it. */
+  'aria-label'?: string;
 }
 
+/** A host's `data-*` hooks land on the radiogroup. */
 export interface RadioGroupProps extends DataAttributes {
   options: readonly RadioOption[];
   value: string | null;
@@ -88,8 +101,23 @@ export interface RadioGroupProps extends DataAttributes {
   /** Accessible name of the group; or name it by `aria-labelledby`. */
   label?: string;
   'aria-labelledby'?: string;
+  /** The inputs' shared `name` (a form field's key); generated when
+      omitted. */
+  name?: string;
   /** vertical (default) stacks the options; horizontal sets them in a row. */
   orientation?: 'vertical' | 'horizontal';
+  /** plain (default) = a ring and its words; cards = each option a boxed
+      row that picks as a whole, the checked one on the hover fill with an
+      accent edge (a decision card's answers). */
+  variant?: 'plain' | 'cards';
+  /** auto (default): an arrow key moves and picks, as native radios do.
+      manual: an arrow key only moves focus (the change it makes is not
+      reported and the checked option stays); Space, Enter or a click
+      picks, and on the checked option reports it again (an answer given
+      once more, as a button press would be). For choices that act the
+      moment they are picked (approve or deny a tool call), where arrowing
+      past one must not choose it. */
+  activation?: 'auto' | 'manual';
   disabled?: boolean;
 }
 

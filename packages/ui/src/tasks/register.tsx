@@ -101,7 +101,8 @@ export function Register(props: RegisterProps) {
    action says so with a tinted chip or a toned cell, never a rule (Gr8r);
    muted steps the row's subject back. A button row that is a toggle (a
    filter row) passes `pressed`, which sets aria-pressed on its stretched
-   button. The host's data-* hooks land on the <li>. */
+   button; `title` is a hover hint over the whole row. The host's data-*
+   hooks land on the <li>. */
 export function RegisterRow(props: RegisterRowProps) {
   const {
     href,
@@ -111,6 +112,7 @@ export function RegisterRow(props: RegisterRowProps) {
     pressed,
     tone = 'default',
     selected = false,
+    title,
     children,
   } = props;
   const linked = href !== undefined || onActivate !== undefined;
@@ -129,6 +131,7 @@ export function RegisterRow(props: RegisterRowProps) {
       )}
       data-tone={tone}
       aria-current={selected ? 'true' : undefined}
+      title={title}
     >
       {href !== undefined ? (
         <Link
@@ -168,7 +171,10 @@ const VARIANT_CLASS: Record<
    is historical, the face is Geist). A tone other than default and muted
    colours the value in the tone's text colour (data-tone), and the sub
    line too only when `toneSub` asks (a reason line that is the point);
-   muted greys the value. The host's data-* hooks land on the cell. */
+   muted greys the value. `span="row"` gives the cell the whole row, on its
+   own line under the cells before it (an answer-in-place card inside a
+   row); its value is a block, so block content stays valid there. The
+   host's data-* hooks land on the cell. */
 export function RegisterCell(props: RegisterCellProps) {
   const {
     label,
@@ -177,9 +183,11 @@ export function RegisterCell(props: RegisterCellProps) {
     tone = 'default',
     toneSub = false,
     align = 'start',
+    span,
     children,
   } = props;
   const toned = tone !== 'default' && tone !== 'muted';
+  const spansRow = span === 'row';
   return (
     <div
       {...dataAttributes(props)}
@@ -189,15 +197,21 @@ export function RegisterCell(props: RegisterCellProps) {
         toned ? styles.toneText : undefined,
         toned && toneSub ? styles.toneSub : undefined,
         tone === 'muted' ? styles.toneMuted : undefined,
-        align === 'end' ? styles.end : undefined
+        align === 'end' ? styles.end : undefined,
+        spansRow ? styles.spanRow : undefined
       )}
       data-tone={tone}
+      data-span={span}
     >
       {label !== undefined && label !== '' ? (
         <span className={styles.cellLabel}>{label}</span>
       ) : null}
       {children !== undefined && children !== null ? (
-        <span className={styles.cellValue}>{children}</span>
+        spansRow ? (
+          <div className={styles.cellValue}>{children}</div>
+        ) : (
+          <span className={styles.cellValue}>{children}</span>
+        )
       ) : null}
       {sub !== undefined && sub !== null ? (
         <span className={styles.cellSub}>{sub}</span>

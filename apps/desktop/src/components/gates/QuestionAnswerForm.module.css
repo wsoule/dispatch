@@ -23,8 +23,9 @@
   min-width: 0;
 }
 
+/* The send failure: its colour is the global .toneText with
+   data-tone="danger" (QuestionAnswerForm.tsx), so only the size here. */
 .error {
   font-size: var(--fs-xs);
-  color: var(--red);
   overflow-wrap: anywhere;
 }

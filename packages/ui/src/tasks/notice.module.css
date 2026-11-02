@@ -9,8 +9,22 @@
   background: var(--surface);
 }
 
-.key {
-  flex: none;
+/* The box reflows by its own width, not the viewport's: when the lead-in,
+   a 12rem body and the action do not fit on one line (a card in a narrow
+   column, such as the Overseer's inflow), the body drops under the
+   lead-in and the action onto a line of its own, instead of squeezing the
+   words to a sliver beside them. */
+.root {
+  flex-wrap: wrap;
+}
+
+/* The lead-in keeps its line while it shares one; alone on a line that is
+   narrower than it (a sentence-long lead-in in a narrow card), it wraps
+   rather than running out of the box. Doubled to win over the global
+   .key's nowrap whatever the stylesheet order. */
+.key.key {
+  flex: 0 1 auto;
+  white-space: normal;
 }
 
 /* The lead-in in the tone's text colour (4.5:1 on the tint). Two classes
@@ -20,7 +34,7 @@
 }
 
 .body {
-  flex: 1 1 auto;
+  flex: 1 1 12rem;
   min-width: 0;
 }
 
@@ -71,6 +85,12 @@
 }
 
 @media (width <= 768px) {
+  /* The global .notice turns into a column here, where a basis would be a
+     height. */
+  .body {
+    flex: 0 1 auto;
+  }
+
   .action {
     align-self: flex-start;
     margin-left: 0;

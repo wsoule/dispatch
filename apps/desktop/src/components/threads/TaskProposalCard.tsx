@@ -1,11 +1,12 @@
 import type { TaskDoc } from '@dispatch-foo/core/browser';
 import type { Message } from '@dispatch/client';
+import { Button, Chip, cx } from '@dispatch/ui';
 import { useState } from 'react';
 
 import { DECIDE_TIER_EXPLANATION } from '../../lib/daemonAuth';
 import { taskProposalOf } from '../../lib/gates';
-import { Pill } from '@/ui/ai/pill';
-import { Button } from '@/ui/button';
+import { DecisionCard } from '../gates/DecisionCard';
+import styles from './TaskProposalCard.module.css';
 
 type Choice = 'approve' | 'decline';
 
@@ -21,8 +22,10 @@ export interface TaskProposalCardProps {
   canDecide: boolean;
 }
 
-/** An A2A client's handoff awaiting the owner: the draft, its proposer, and
- *  Approve or Decline. Nothing runs until it is approved. */
+/** An A2A client's handoff awaiting the owner, on DecisionCard: the draft,
+ *  its proposer, and Approve or Decline as buttons. Nothing runs until it is
+ *  approved. The client wrote the title and the draft, so both stay plain
+ *  text. */
 export function TaskProposalCard({
   gate,
   task,
@@ -51,22 +54,46 @@ export function TaskProposalCard({
 
   const idle = canDecide && pending === null;
   return (
-    <div
+    <DecisionCard
       data-slot="task-proposal-card"
-      className="rounded-card bg-surface-quaternary shadow-card flex flex-col gap-2 p-3 text-[12px]"
-    >
-      <div className="text-foreground text-[13px] font-medium text-pretty">
-        {task?.meta.title ?? 'A task proposed over A2A'}
-      </div>
-      <div className="text-muted-foreground flex flex-wrap items-center gap-1.5">
-        <span>Proposed by</span>
-        <span className="text-foreground font-mono text-[11px] break-all">
-          {proposal.proposedBy}
+      question={task?.meta.title ?? 'A task proposed over A2A'}
+      detail={
+        <span className={styles.proposer}>
+          <span>Proposed by</span>
+          <span className={styles.id}>{proposal.proposedBy}</span>
+          <Chip>A2A</Chip>
         </span>
-        <Pill>A2A</Pill>
-      </div>
+      }
+      actions={
+        <>
+          <Button
+            variant="quiet"
+            size="sm"
+            onClick={() => onOpenTask(proposal.task)}
+          >
+            Open draft
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={!idle}
+            onClick={() => void answer('decline')}
+          >
+            {pending === 'decline' ? 'Declining…' : 'Decline'}
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={!idle || task === null}
+            onClick={() => void answer('approve')}
+          >
+            {pending === 'approve' ? 'Approving…' : 'Approve'}
+          </Button>
+        </>
+      }
+    >
       {task === null ? (
-        <p className="text-muted-foreground">
+        <p className={styles.note}>
           {loading
             ? 'Loading the draft…'
             : `The draft ${proposal.task} is not on the board.`}
@@ -76,64 +103,40 @@ export function TaskProposalCard({
           {/* The client wrote it, so it shows as typed, never as markdown. */}
           <pre
             tabIndex={0}
+            role="region"
             aria-label="Draft description"
-            className="rounded-control border-border-chip text-foreground max-h-60 overflow-y-auto border-[0.5px] px-2.5 py-2 font-mono text-[11px] break-words whitespace-pre-wrap"
+            className={styles.draft}
           >
             {task.body}
           </pre>
           <Writes writes={task.meta.writes} />
         </>
       )}
-      {!canDecide && (
-        <p className="text-muted-foreground">{DECIDE_TIER_EXPLANATION}</p>
-      )}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Button
-          size="sm"
-          disabled={!idle || task === null}
-          onClick={() => void answer('approve')}
-        >
-          {pending === 'approve' ? 'Approving…' : 'Approve'}
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={!idle}
-          onClick={() => void answer('decline')}
-        >
-          {pending === 'decline' ? 'Declining…' : 'Decline'}
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => onOpenTask(proposal.task)}
-        >
-          Open draft
-        </Button>
-      </div>
+      {!canDecide && <p className={styles.note}>{DECIDE_TIER_EXPLANATION}</p>}
       {error !== null && (
-        <p role="alert" className="text-destructive">
+        <p
+          role="alert"
+          className={cx(styles.error, 'toneText')}
+          data-tone="danger"
+        >
           {error}
         </p>
       )}
-    </div>
+    </DecisionCard>
   );
 }
 
 // The paths the draft declares it will change, wrapped so each reads in full.
 function Writes({ writes }: { writes: readonly string[] }) {
   if (writes.length === 0) {
-    return <p className="text-muted-foreground">It declares no writes.</p>;
+    return <p className={styles.note}>It declares no writes.</p>;
   }
   return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-muted-foreground">Writes</span>
-      <ul className="flex min-w-0 flex-col gap-0.5">
+    <div className={styles.writes}>
+      <span className={styles.label}>Writes</span>
+      <ul className={styles.paths}>
         {writes.map((path, i) => (
-          <li
-            key={`${path}:${i}`}
-            className="text-foreground max-w-full min-w-0 font-mono text-[11px] break-all"
-          >
+          <li key={`${path}:${i}`} className={styles.id}>
             {path}
           </li>
         ))}

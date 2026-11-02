@@ -1,4 +1,4 @@
-import { Button, TextField } from '@dispatch/ui';
+import { Button, cx, TextField } from '@dispatch/ui';
 import { useEffect, useId, useRef, useState } from 'react';
 
 import styles from './QuestionAnswerForm.module.css';
@@ -101,7 +101,11 @@ export function QuestionAnswerForm({
         </Button>
       </div>
       {error !== null && (
-        <p role="alert" className={styles.error}>
+        <p
+          role="alert"
+          className={cx(styles.error, 'toneText')}
+          data-tone="danger"
+        >
           {error}
         </p>
       )}

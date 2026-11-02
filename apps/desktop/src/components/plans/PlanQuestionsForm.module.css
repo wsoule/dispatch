@@ -1,24 +1,7 @@
-/* The planner's clarifying questions (PlanQuestionsForm.tsx): a warning-tinted card (it waits
-   on you) holding each question, its option buttons and an answer box. */
-.card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
-  padding: 10px var(--s-3);
-  border: 1px solid var(--tone-line);
-  border-radius: var(--r);
-  background: var(--tone-soft);
-}
-
-.heading {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-medium);
-  color: var(--tone-ink);
-}
-
+/* The planner's clarifying questions (PlanQuestionsForm.tsx) inside a
+   warning-toned DecisionCard, which draws the tint, its edge and the
+   heading: here only each question, its option buttons and answer box, and
+   the send error. */
 .question {
   display: flex;
   flex-direction: column;
@@ -38,11 +21,4 @@
 
 .error {
   font-size: var(--fs-xs);
-  color: var(--red);
-}
-
-.actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--s-2);
 }

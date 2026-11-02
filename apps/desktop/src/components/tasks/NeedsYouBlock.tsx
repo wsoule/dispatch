@@ -1,6 +1,16 @@
 import type { Message } from '@dispatch/client';
-import { ChevronDown, ChevronRight } from 'lucide-react';
-import { type ReactNode, useCallback, useMemo, useState } from 'react';
+import {
+  Button,
+  Chip,
+  cx,
+  Disclosure,
+  Register,
+  RegisterCell,
+  RegisterRow,
+  SectionHeader,
+} from '@dispatch/ui';
+import { ChevronDown } from 'lucide-react';
+import { type ReactNode, useCallback, useId, useMemo, useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { useThreadPaneProps } from '../../hooks/useThreadPaneProps';
@@ -28,21 +38,21 @@ import {
   WakeCard,
 } from '../gates/GateCard';
 import { QuestionAnswerForm } from '../gates/QuestionAnswerForm';
-import { cn } from '@/lib/utils';
-import { GroupHeader } from '@/ui/ai/group-header';
-import { Badge } from '@/ui/badge';
-import { Button } from '@/ui/button';
-import { SectionLabel } from '@/ui/chrome';
-import { CollapseBar } from '@/ui/chrome/collapse-bar';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/ui/collapsible';
+import styles from './NeedsYouBlock.module.css';
 
 const MAX_ROWS = 8;
 
-// The fixed-width marker leading every row: what sort of ask it is, tinted by state.
+/* The rows' grid: the kind chip, the summary (it takes the room), the
+   task button and the relative time. Every row is its own grid, so the
+   chip and time tracks are fixed widths: the summaries line up down the
+   list. Stacked (a narrow column), the chip leads, the summary wraps on
+   its own line and the task and time share the next one. */
+const ROW_COLUMNS = '80px minmax(0, 1fr) auto 56px';
+const STACKED_COLUMNS = 'minmax(0, 1fr) auto';
+
+// The marker leading every row: what sort of ask it is, as a chip. Amber
+// (the pill's dot) while it waits on you, quiet text once decided; the word
+// says the kind, so the colour is never the only cue.
 function KindBadge({
   tone = 'waiting',
   children,
@@ -51,19 +61,13 @@ function KindBadge({
   children: ReactNode;
 }) {
   return (
-    <Badge
-      variant="ghost"
-      className={cn(
-        'h-5 w-16 px-1.5 text-[11px] font-normal',
-        tone === 'waiting'
-          ? 'bg-(--state-waiting-surface) text-(--state-waiting-fg)'
-          : 'bg-surface-quaternary'
-      )}
-    >
-      {children}
-    </Badge>
+    <Chip tone={tone === 'waiting' ? 'warning' : 'muted'}>{children}</Chip>
   );
 }
+
+// The hover hint over a row whose ask is answered here: gates live on this
+// daemon only. The header says it in words too ("this machine only").
+const MACHINE_ONLY = 'this machine only';
 
 // The kind marker on a row: what sort of ask it is, in a word.
 function kindLabel(item: DecisionItem): string {
@@ -162,6 +166,7 @@ export function NeedsYouBlock({
   const gates = useOpenGates(client, port, access);
   const pane = useThreadPaneProps(data, onOpenRef);
   const actions = useThreadActions(client, port, me, access, data);
+  const bodyId = useId();
   const [foldedState, setFoldedState] = useState(false);
   const folded = foldedProp ?? foldedState;
   const setFolded = (next: boolean) => {
@@ -277,76 +282,79 @@ export function NeedsYouBlock({
       : [{ group, items, receipts }];
   });
 
+  const first = groups.find((g) => g.items.length > 0)?.items[0];
+  // With no group and no teammates there is nothing under the header, so
+  // the body (and its padding) stays out of the box.
+  const empty = groups.length === 0 && needs.teammates.length === 0;
   return (
     <section
       aria-label="Needs you"
       data-testid="needs-you"
-      className={cn(
-        'bg-background border-border rounded-card shadow-card border-[0.5px]',
-        !flush && 'mx-4 mt-3 mb-1'
-      )}
+      className={cx(styles.block, flush ? undefined : styles.spaced)}
     >
-      <Collapsible open={!folded} onOpenChange={(open) => setFolded(!open)}>
-        <GroupHeader
-          className={cn('relative', !folded && 'rounded-b-none')}
-          tint={needs.count > 0 ? 'var(--state-waiting-fg)' : undefined}
-          icon={
+      <SectionHeader
+        as="h2"
+        className={styles.header}
+        tone={needs.count > 0 ? 'warning' : undefined}
+        collapsed={folded}
+        name={
+          // The fold button's hit area stretches over the whole header row;
+          // its name is the count and the line beside it.
+          <button
+            type="button"
+            className={styles.fold}
+            aria-expanded={!folded}
+            aria-controls={bodyId}
+            onClick={() => setFolded(!folded)}
+          >
             <ChevronDown
-              aria-hidden
-              className={cn(
-                'text-muted-foreground transition-transform duration-100',
-                folded && '-rotate-90'
-              )}
+              className={styles.chevron}
+              size={14}
+              strokeWidth={1.8}
+              aria-hidden="true"
             />
-          }
-          name={
-            // The trigger's hit area stretches over the whole bar.
-            <CollapsibleTrigger className="after:rounded-card focus-visible:after:ring-ring block w-full truncate text-left outline-none after:absolute after:inset-0 focus-visible:after:ring-2">
-              <span
-                className="text-foreground font-semibold"
-                data-testid="needs-you-count"
-              >
-                {needs.count === 0
-                  ? 'Nothing needs you'
-                  : `Needs you · ${needs.count}`}
-              </span>
-              {needs.count > 0 &&
-                (folded ? (
-                  <span
-                    data-testid="needs-you-preview"
-                    className="text-muted-foreground ml-2 text-[12px] font-normal"
-                  >
-                    {groups.find((g) => g.items.length > 0)?.items[0]?.summary}
-                  </span>
-                ) : (
-                  <span className="text-muted-foreground ml-2 text-[12px] font-normal">
-                    oldest first · this machine only
-                  </span>
-                ))}
-            </CollapsibleTrigger>
-          }
-        />
-        <CollapsibleContent>
-          {groups.map(({ group, items, receipts }) => (
-            <AskGroupSection
-              key={group}
-              group={group}
-              items={items}
-              receipts={receipts}
-              restored={needs.restored}
-              gateById={gateById}
-              card={card}
-              onApproveAll={approveAll}
-              canDecide={access.canDecide}
-              onOpenDecision={onOpenDecision}
-              onOpenTask={(taskId) => onOpenRef({ kind: 'task', taskId })}
-            />
-          ))}
-          {needs.teammates.length > 0 && (
-            <TeammatesFooter items={needs.teammates} />
-          )}
-        </CollapsibleContent>
-      </Collapsible>
+            <span className={styles.count} data-testid="needs-you-count">
+              {needs.count === 0
+                ? 'Nothing needs you'
+                : `Needs you · ${needs.count}`}
+            </span>
+            {needs.count > 0 &&
+              (folded ? (
+                <span className={styles.aside} data-testid="needs-you-preview">
+                  {first?.summary}
+                </span>
+              ) : (
+                <span className={styles.aside}>
+                  oldest first · this machine only
+                </span>
+              ))}
+          </button>
+        }
+      />
+      <div id={bodyId} className={styles.body} hidden={folded || empty}>
+        {folded || empty ? null : (
+          <>
+            {groups.map(({ group, items, receipts }) => (
+              <AskGroupSection
+                key={group}
+                group={group}
+                items={items}
+                receipts={receipts}
+                restored={needs.restored}
+                gateById={gateById}
+                card={card}
+                onApproveAll={approveAll}
+                canDecide={access.canDecide}
+                onOpenDecision={onOpenDecision}
+                onOpenTask={(taskId) => onOpenRef({ kind: 'task', taskId })}
+              />
+            ))}
+            {needs.teammates.length > 0 && (
+              <TeammatesFooter items={needs.teammates} />
+            )}
+          </>
+        )}
+      </div>
     </section>
   );
 }
@@ -377,16 +385,22 @@ function AskGroupSection({
   const [all, setAll] = useState(false);
   const shown = all ? items : items.slice(0, MAX_ROWS);
   const hidden = items.length - shown.length;
+  const label = ASK_GROUP_LABEL[group];
   return (
     <div
       role="group"
-      aria-label={ASK_GROUP_LABEL[group]}
+      aria-label={label}
       data-testid={`needs-you-group-${group}`}
+      className={styles.group}
     >
-      <SectionLabel count={items.length} className="px-3 pt-2 pb-1">
-        {ASK_GROUP_LABEL[group]}
-      </SectionLabel>
-      <ul>
+      <SectionHeader as="h3" name={label} count={items.length} />
+      <Register
+        data-slot="needs-you-register"
+        label={label}
+        columns={ROW_COLUMNS}
+        stackWithin={480}
+        stackedColumns={STACKED_COLUMNS}
+      >
         {shown.map((item) =>
           restored.length > 1 && item.id === restored[0]?.id ? (
             <RestoredBatchRow
@@ -413,23 +427,33 @@ function AskGroupSection({
           )
         )}
         {receipts.map((receipt) => (
-          <li
+          <RegisterRow
             key={`receipt:${receipt.item.id}`}
+            tone="muted"
             data-testid="needs-you-receipt"
-            className="border-border text-muted-foreground flex items-center gap-2.5 border-t-[0.5px] px-3 py-1.5 text-[12px]"
+            data-row="receipt"
           >
-            <KindBadge tone="done">{kindLabel(receipt.item)}</KindBadge>
-            <span className="min-w-0 truncate">{receipt.text}</span>
-          </li>
+            <RegisterCell>
+              <KindBadge tone="done">{kindLabel(receipt.item)}</KindBadge>
+            </RegisterCell>
+            <RegisterCell data-cell="receipt">
+              <span className={styles.receipt} title={receipt.text}>
+                {receipt.text}
+              </span>
+            </RegisterCell>
+          </RegisterRow>
         ))}
-      </ul>
+      </Register>
       {items.length > MAX_ROWS && (
-        <div className="px-3 pb-2">
-          <CollapseBar
-            label={all ? 'Show fewer' : `+${hidden} more`}
-            collapsed={!all}
-            onToggle={() => setAll(!all)}
-          />
+        <div className={styles.more}>
+          <Button
+            size="sm"
+            variant="quiet"
+            aria-expanded={all}
+            onClick={() => setAll(!all)}
+          >
+            {all ? 'Show fewer' : `+${hidden} more`}
+          </Button>
         </div>
       )}
     </div>
@@ -451,45 +475,45 @@ function AskRow({
 }) {
   const { taskId } = item;
   return (
-    <li
+    // A new ask arrives from the left, where everything coming in flows
+    // from (the module's slide-in, only when motion is welcome).
+    <RegisterRow
       data-testid="needs-you-row"
-      title={gate === undefined ? undefined : 'this machine only'}
-      // A new ask arrives from the left, where everything coming in flows from.
-      // In a narrow column (Overseer's Coming in) the question takes its own
-      // line under the badge, link and time instead of truncating to a word.
-      className="border-border animate-in fade-in-0 slide-in-from-left-4 @container flex flex-col gap-2 border-t-[0.5px] px-3 py-2 duration-300 first:border-t-0 motion-reduce:animate-none"
+      data-row="ask"
+      title={gate === undefined ? undefined : MACHINE_ONLY}
     >
-      <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px]">
+      <RegisterCell>
         <KindBadge>{kindLabel(item)}</KindBadge>
-        <span
-          title={item.summary}
-          className="min-w-0 flex-1 truncate @max-md:order-last @max-md:line-clamp-2 @max-md:basis-full @max-md:whitespace-normal"
-        >
+      </RegisterCell>
+      <RegisterCell data-cell="summary">
+        <span className={styles.summary} title={item.summary}>
           {item.summary}
         </span>
+      </RegisterCell>
+      <RegisterCell>
         {taskId !== undefined && (
-          <Button size="xs" variant="ghost" onClick={() => onOpenTask(taskId)}>
-            › {taskId}
+          <Button size="sm" variant="quiet" onClick={() => onOpenTask(taskId)}>
+            › <span className="mono">{taskId}</span>
           </Button>
         )}
-        <span className="text-muted-foreground ml-auto w-14 shrink-0 text-right text-[12px]">
-          {formatRelativeTimeFromIso(item.since)}
-        </span>
-      </div>
-      <div className="pl-[74px] @max-md:pl-0">
+      </RegisterCell>
+      <RegisterCell variant="mono" align="end">
+        {formatRelativeTimeFromIso(item.since)}
+      </RegisterCell>
+      <RegisterCell span="row" data-cell="answer">
         {gate !== undefined ? (
           card(item, gate)
         ) : (
           <Button
             size="sm"
-            variant="outline"
+            variant="secondary"
             onClick={() => onOpenDecision(item)}
           >
             Open
           </Button>
         )}
-      </div>
-    </li>
+      </RegisterCell>
+    </RegisterRow>
   );
 }
 
@@ -510,44 +534,58 @@ function RestoredBatchRow({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   return (
-    <li
+    <RegisterRow
       data-testid="needs-you-row"
-      title="this machine only"
-      className="border-border flex flex-col gap-2 border-t-[0.5px] px-3 py-2 first:border-t-0"
+      data-row="ask"
+      title={MACHINE_ONLY}
     >
-      <div className="flex min-w-0 items-center gap-2.5 text-[13px]">
+      <RegisterCell>
         <KindBadge>lessons</KindBadge>
-        <span className="min-w-0 flex-1 truncate">
+      </RegisterCell>
+      <RegisterCell data-cell="summary">
+        <span className={styles.summary}>
           Review {lessons.length} restored lessons
         </span>
-        <Button
-          size="sm"
-          disabled={!canDecide || busy}
-          onClick={() => {
-            setBusy(true);
-            void onApproveAll(lessons).finally(() => setBusy(false));
-          }}
-        >
-          Approve all
-        </Button>
-        <Button size="sm" variant="ghost" onClick={() => setOpen(!open)}>
-          {open ? 'Hide' : 'Review one by one'}
-        </Button>
-      </div>
+      </RegisterCell>
+      <RegisterCell data-cell="actions">
+        <span className={styles.actions}>
+          <Button
+            size="sm"
+            variant="primary"
+            disabled={!canDecide || busy}
+            onClick={() => {
+              setBusy(true);
+              void onApproveAll(lessons).finally(() => setBusy(false));
+            }}
+          >
+            Approve all
+          </Button>
+          <Button
+            size="sm"
+            variant="quiet"
+            aria-expanded={open}
+            onClick={() => setOpen(!open)}
+          >
+            {open ? 'Hide' : 'Review one by one'}
+          </Button>
+        </span>
+      </RegisterCell>
       {open && (
-        <ul className="flex flex-col gap-2 pl-[74px]">
-          {lessons.map((lesson) => {
-            const gate =
-              lesson.messageId === undefined
-                ? undefined
-                : gateById.get(lesson.messageId);
-            return gate === undefined ? null : (
-              <li key={lesson.id}>{card(lesson, gate)}</li>
-            );
-          })}
-        </ul>
+        <RegisterCell span="row" data-cell="answer">
+          <ul className={styles.lessons}>
+            {lessons.map((lesson) => {
+              const gate =
+                lesson.messageId === undefined
+                  ? undefined
+                  : gateById.get(lesson.messageId);
+              return gate === undefined ? null : (
+                <li key={lesson.id}>{card(lesson, gate)}</li>
+              );
+            })}
+          </ul>
+        </RegisterCell>
       )}
-    </li>
+    </RegisterRow>
   );
 }
 
@@ -555,34 +593,23 @@ function RestoredBatchRow({
 function TeammatesFooter({ items }: { items: readonly DecisionItem[] }) {
   const first = items[0];
   return (
-    <Collapsible className="border-border border-t-[0.5px] px-1.5 py-1 text-[12px] text-(--text-ghost)">
-      <CollapsibleTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="xs"
-            className="group max-w-full text-(--text-ghost)"
-          />
+    <div className={styles.teammates}>
+      <Disclosure
+        summary={
+          <>
+            Teammates · {items.length} {items.length === 1 ? 'ask' : 'asks'}
+            {first !== undefined && ` · ${first.summary}`} · not counted
+          </>
         }
       >
-        <ChevronRight
-          aria-hidden
-          className="transition-transform duration-100 group-data-panel-open:rotate-90"
-        />
-        <span className="truncate">
-          Teammates · {items.length} {items.length === 1 ? 'ask' : 'asks'}
-          {first !== undefined && ` · ${first.summary}`} · not counted
-        </span>
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <ul className="flex flex-col gap-0.5 px-1.5 pt-0.5 pb-1">
+        <ul className={styles.teammateList}>
           {items.map((item) => (
             <li key={item.id}>
               {item.owner ?? 'someone'}: {item.summary}
             </li>
           ))}
         </ul>
-      </CollapsibleContent>
-    </Collapsible>
+      </Disclosure>
+    </div>
   );
 }

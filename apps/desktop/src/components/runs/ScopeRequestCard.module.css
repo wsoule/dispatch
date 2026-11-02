@@ -1,0 +1,31 @@
+/* An agent's scope request (ScopeRequestCard.tsx) inside its
+   DecisionCard: the paths the grant would cover, wrapped and never
+   truncated (each also in its title), then a failed answer's error (the
+   danger tone's ink, from the global .toneText). */
+.paths {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A path is machine-read, so it is Geist Mono. */
+.path {
+  min-width: 0;
+  max-width: 100%;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.error {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}

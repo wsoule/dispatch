@@ -509,6 +509,95 @@ describe('the data-tone hook', () => {
       expect(failing).toEqual([]);
     });
   }
+
+  /** The token a tone's hook sets `name` to (`--tone-ink: var(--red)` gives
+      `--red`), read from tokens.css. */
+  function hookToken(tone: string, name: string): string {
+    const head = `:where([data-tone='${tone}']) {`;
+    const at = flat.indexOf(head);
+    const body = flat.slice(at + head.length, flat.indexOf('}', at));
+    const token = new RegExp(`${name}: var\\((--[\\w-]+)\\);`).exec(body)?.[1];
+    expect([tone, name, token]).toEqual([
+      tone,
+      name,
+      expect.stringMatching(/^--/),
+    ]);
+    return token ?? '';
+  }
+
+  // The tinted-card rule (docs/architecture.md §8.2): the words on a toned
+  // card, notice, alert or chip (the tone's --tone-soft) are the tone's
+  // ink or --text, never --text-3 or the bare mark. Both hold 4.5:1 on
+  // each status tone's tint composited over the panel and the page, and
+  // on muted's opaque fill, in both themes.
+  for (const [theme, tokens] of THEMES) {
+    test(`${theme}: the tone ink and --text on every tone's --tone-soft, over --surface and --bg`, () => {
+      const failing: string[] = [];
+      for (const tone of ['danger', 'warning', 'success', 'info']) {
+        const ink = hookToken(tone, '--tone-ink');
+        const soft = hookToken(tone, '--tone-soft');
+        const hue =
+          /^color-mix\(in srgb, var\((--[\w-]+)\) \d+%, transparent\)$/.exec(
+            tokens.get(soft) ?? ''
+          )?.[1];
+        expect([tone, soft, hue]).toEqual([
+          tone,
+          soft,
+          expect.stringMatching(/^--/),
+        ]);
+        const share = tintShare(tokens, soft);
+        for (const base of ['--surface', '--bg']) {
+          const ground = over(hex(tokens, hue ?? ''), hex(tokens, base), share);
+          for (const text of [ink, '--text']) {
+            const ratio = contrast(hex(tokens, text), ground);
+            if (!(ratio >= 4.5)) {
+              failing.push(
+                `${tone}: ${text} on ${soft} over ${base}: ${ratio.toFixed(2)}`
+              );
+            }
+          }
+        }
+      }
+      // Muted's tint is an opaque fill of its own (--surface-2).
+      const mutedInk = hookToken('muted', '--tone-ink');
+      const mutedSoft = hookToken('muted', '--tone-soft');
+      expect(hex(tokens, mutedSoft)).toMatch(/^#[0-9a-f]{6}$/i);
+      for (const text of [mutedInk, '--text']) {
+        const ratio = contrast(hex(tokens, text), hex(tokens, mutedSoft));
+        if (!(ratio >= 4.5)) {
+          failing.push(`muted: ${text} on ${mutedSoft}: ${ratio.toFixed(2)}`);
+        }
+      }
+      expect(failing).toEqual([]);
+    });
+  }
+
+  // One cross-tone pair is in use: an error line (.toneText danger) inside
+  // a warning-toned card (the planner's questions, DecisionCard
+  // tone="warning"), so the danger ink sits on the warning tint. It holds
+  // 4.5:1 over the panel and the page in both themes; a token change that
+  // breaks it fails here rather than on screen.
+  for (const [theme, tokens] of THEMES) {
+    test(`${theme}: the danger ink on the warning --tone-soft, over --surface and --bg`, () => {
+      const ink = hookToken('danger', '--tone-ink');
+      const soft = hookToken('warning', '--tone-soft');
+      const hue =
+        /^color-mix\(in srgb, var\((--[\w-]+)\) \d+%, transparent\)$/.exec(
+          tokens.get(soft) ?? ''
+        )?.[1];
+      expect([soft, hue]).toEqual([soft, expect.stringMatching(/^--/)]);
+      const share = tintShare(tokens, soft);
+      const failing: string[] = [];
+      for (const base of ['--surface', '--bg']) {
+        const ground = over(hex(tokens, hue ?? ''), hex(tokens, base), share);
+        const ratio = contrast(hex(tokens, ink), ground);
+        if (!(ratio >= 4.5)) {
+          failing.push(`${ink} on ${soft} over ${base}: ${ratio.toFixed(2)}`);
+        }
+      }
+      expect(failing).toEqual([]);
+    });
+  }
 });
 
 describe('dark mode is a soft dark', () => {

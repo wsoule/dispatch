@@ -1,0 +1,241 @@
+/* Needs you (NeedsYouBlock.tsx): one panel on the surface with a soft
+   border and radius (no shadow: it is not floating), a header that folds
+   it (the warning tone's diamond and edge while anything waits, the words
+   saying it too), then one group per kind of ask, each a Register of rows
+   with the in-place answer card under each row. */
+.block {
+  overflow: clip;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+}
+
+/* Without `flush` the block keeps its own margins in the column. */
+.spaced {
+  margin: 12px 16px 4px;
+}
+
+.header {
+  position: relative;
+  padding: 6px 12px;
+}
+
+/* The heading takes the row, so the fold button can truncate its line. */
+.header h2 {
+  flex: 1 1 auto;
+}
+
+/* The fold button: the chevron, the count and the line beside it. Its
+   ::after stretches the hit area over the whole header row. */
+.fold {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fold::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+.fold:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+.chevron {
+  flex: none;
+  color: var(--text-2);
+}
+
+.header[data-collapsed='true'] .chevron {
+  transform: rotate(-90deg);
+}
+
+.count {
+  flex: none;
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The folded preview (the first ask) or "oldest first · this machine
+   only" while open. */
+.aside {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-regular);
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: 4px 12px 12px;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+/* Each group's register drops its own panel (edge, radius, fill and side
+   padding) inside the block: the block is the one panel and the groups are
+   lists in it, so an answer card is not a panel in a panel in a panel.
+   The rows keep their dividers. */
+.body [data-slot='needs-you-register'] {
+  --register-pad-x: 0px;
+
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+/* One line, cut with an ellipsis; the whole summary is its title. */
+.summary,
+.receipt {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.receipt {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+/* A receipt's words take every track after the chip, and the row is
+   shorter than an ask: it only says what was decided. */
+.body [data-cell='receipt'] {
+  grid-column: 2 / -1;
+}
+
+.body [data-row='receipt'] {
+  min-height: 0;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+/* The restored batch's buttons take the task and time tracks. */
+.body [data-cell='actions'] {
+  grid-column: 3 / -1;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The answer card (or Open) on its own line under the row, lined up with
+   the summary (the chip track and the register's column gap). */
+.body [data-cell='answer'] {
+  margin-top: 8px;
+  padding-left: calc(80px + 20px);
+}
+
+.body [data-cell='answer']:empty {
+  display: none;
+}
+
+.lessons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.more {
+  display: flex;
+}
+
+/* Teammates' asks: a fold under the groups, never counted. */
+.teammates {
+  padding-top: 8px;
+  border-top: 1px solid var(--divider);
+  font-size: var(--fs-xs);
+}
+
+.teammateList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 4px 0 0 20px;
+  list-style: none;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+/* A narrow column (the register stacks below 480px): the summary wraps on
+   a line of its own, at most two lines (the whole text stays its title),
+   and the answer card starts at the edge. */
+@container register (width < 480px) {
+  .body [data-cell='summary'],
+  .body [data-cell='receipt'],
+  .body [data-cell='actions'] {
+    grid-column: 1 / -1;
+  }
+
+  .summary,
+  .receipt {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .body [data-cell='answer'] {
+    margin-top: 0;
+    padding-left: 0;
+  }
+
+  /* The task button and the time share a line: centred on it. */
+  .body [data-row='ask'] {
+    align-items: center;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .chevron {
+    transition: transform var(--dur) var(--ease);
+  }
+
+  .body [data-row='ask'] {
+    animation: arrive 300ms var(--ease);
+  }
+}
+
+@keyframes arrive {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

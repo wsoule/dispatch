@@ -1,8 +1,8 @@
 import type { PlannerQuestion } from '@dispatch/client';
-import { Button, TextArea } from '@dispatch/ui';
-import { MessageCircleQuestion } from 'lucide-react';
+import { Button, cx, TextArea } from '@dispatch/ui';
 import { useState } from 'react';
 
+import { DecisionCard } from '../gates/DecisionCard';
 import { Markdown } from '../runs/Markdown';
 import styles from './PlanQuestionsForm.module.css';
 import {
@@ -20,7 +20,9 @@ interface PlanQuestionsFormProps {
 }
 
 /** The planner's batch of clarifying questions, answered together in local state and sent
- * as one composed follow-up — "Skip" sends that same composition with nothing filled in. */
+ * as one composed follow-up — "Skip" sends that same composition with nothing filled in.
+ * A warning-toned DecisionCard (it waits on you) with no radio answers: each question's
+ * option buttons and answer box sit in its children, Skip and Send in its actions. */
 export function PlanQuestionsForm({
   questions,
   disabled,
@@ -62,11 +64,36 @@ export function PlanQuestionsForm({
   const busy = disabled || sending;
 
   return (
-    <div className={styles.card} data-tone="warning">
-      <div className={styles.heading}>
-        <MessageCircleQuestion size={14} strokeWidth={1.8} aria-hidden="true" />
-        The planner is asking you
-      </div>
+    <DecisionCard
+      tone="warning"
+      question="The planner is asking you"
+      actions={
+        <>
+          <Button
+            type="button"
+            variant="quiet"
+            size="sm"
+            disabled={busy}
+            onClick={() => void send({})}
+          >
+            Skip
+          </Button>
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            disabled={busy}
+            onClick={() => void send(answers)}
+          >
+            {sending
+              ? 'Sending…'
+              : remaining > 0
+                ? `Send answers (${questions.length - remaining}/${questions.length})`
+                : 'Send answers'}
+          </Button>
+        </>
+      }
+    >
       {questions.map((q) => (
         <div key={q.id} className={styles.question}>
           <Markdown content={q.question} className={styles.prompt} />
@@ -102,34 +129,14 @@ export function PlanQuestionsForm({
         </div>
       ))}
       {error !== null && (
-        <div role="alert" className={styles.error}>
+        <div
+          role="alert"
+          className={cx(styles.error, 'toneText')}
+          data-tone="danger"
+        >
           {error}
         </div>
       )}
-      <div className={styles.actions}>
-        <Button
-          type="button"
-          variant="quiet"
-          size="sm"
-          disabled={busy}
-          onClick={() => void send({})}
-        >
-          Skip
-        </Button>
-        <Button
-          type="button"
-          variant="primary"
-          size="sm"
-          disabled={busy}
-          onClick={() => void send(answers)}
-        >
-          {sending
-            ? 'Sending…'
-            : remaining > 0
-              ? `Send answers (${questions.length - remaining}/${questions.length})`
-              : 'Send answers'}
-        </Button>
-      </div>
-    </div>
+    </DecisionCard>
   );
 }

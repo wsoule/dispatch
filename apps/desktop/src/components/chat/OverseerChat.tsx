@@ -35,6 +35,7 @@ import {
 } from '../../lib/overseerThread';
 import { slashSuggestions } from '../../lib/slashCommands';
 import { askAgentToFix, FailureNotice } from '../failure/FailureNotice';
+import { ToolApprovalCard } from '../gates/ToolApprovalCard';
 import { Markdown } from '../runs/Markdown';
 import { CardErrorBoundary } from '../shell/CardErrorBoundary';
 import { cn } from '@/lib/utils';
@@ -42,7 +43,6 @@ import { IconButton, type IconButtonProps } from '@/ui/ai/icon-button';
 import { PillButton } from '@/ui/ai/pill';
 import { PromptBar } from '@/ui/ai/prompt-bar';
 import { StreamingText } from '@/ui/ai/streaming-text';
-import { ToolApprovalCard } from '@/ui/ai/tool-approval-card';
 import { ToolChip, ToolChipGroup } from '@/ui/ai/tool-chips';
 import { Button } from '@/ui/button';
 import { ProgressGlyph } from '@/ui/chrome';

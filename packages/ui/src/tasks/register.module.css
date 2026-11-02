@@ -119,6 +119,12 @@
   text-align: right;
 }
 
+/* A cell that takes the whole row (span="row"), in the table and in every
+   stacked layout: it starts a line of its own under the cells before it. */
+.spanRow {
+  grid-column: 1 / -1;
+}
+
 /* The cell's own label, shown when there is no header row or the rows
    stack: Gr8r's column-header voice. */
 .cellLabel {
