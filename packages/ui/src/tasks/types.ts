@@ -7,6 +7,7 @@ import type {
   Ref,
 } from 'react';
 
+import type { AvatarHue } from '../components/initials-avatar';
 import type { PickerMark } from '../edit/types';
 import type { DataAttributes, UiStatus, UiTone } from '../types';
 
@@ -114,6 +115,22 @@ export interface ChipProps extends DataAttributes {
   /** Optional leading status mark; needs statusLabel for assistive tech. */
   status?: UiStatus;
   statusLabel?: string;
+  /**
+   * Default tone only (ignored for every other tone and with `status`): a
+   * 6px dot in a decorative hue before the words (a project's or a
+   * label's colour when the host has no colour of its own for it, e.g.
+   * `avatarHue(name)`). Decoration only (aria-hidden): the words carry
+   * the meaning. `mark` wins when both are given.
+   */
+  hue?: AvatarHue;
+  /**
+   * Default tone only (ignored for every other tone and with `status`): a
+   * picker mark drawn before the words through PickerMarkView, at chip
+   * size: Gr8r's label chip is `{ kind: 'swatch', color }` (the label's
+   * own colour in a small square; a colour that is not a plain hex draws
+   * the hollow square). Wins over `hue`.
+   */
+  mark?: PickerMark;
   title?: string;
   children: ReactNode;
 }
@@ -275,6 +292,70 @@ export interface NavTabsGroupsProps extends NavTabsCommonProps {
 }
 
 export type NavTabsProps = NavTabsItemsProps | NavTabsGroupsProps;
+
+/**
+ * A section or group heading row (Gr8r's group header): an optional fold
+ * chevron, a tone's status diamond, the host's icon, the name and its
+ * count inside one heading element, then the host's actions and a "+".
+ * The host's data-* hooks land on the root (a `data-slot="group-header"`).
+ */
+export interface SectionHeaderProps extends DataAttributes {
+  /** The heading's words ("Coming in", "In progress"). */
+  name: ReactNode;
+  /** Printed after the name inside the heading, in tabular figures, so
+      the heading's accessible name reads "Coming in 2". */
+  count?: number;
+  /** A 14px glyph before the heading (a state glyph, an avatar). */
+  icon?: ReactNode;
+  /** A status tone: the status diamond in the tone's shape and hue and a
+      2px edge in the hue at the left (data-tone on the root). Never the
+      only signal: the name says the status. Default (or omitted) draws
+      neither. */
+  tone?: UiTone;
+  /** The heading element. Default 'h3'; 'div' when the host's own
+      heading wraps it or the row is not a heading at all. */
+  as?: 'h2' | 'h3' | 'h4' | 'div';
+  /** Folded: the chevron turns to point right, aria-expanded is false
+      and the root carries data-collapsed. */
+  collapsed?: boolean;
+  /** Draws the fold chevron, a quiet icon button that calls this. No
+      chevron without it. */
+  onToggle?: () => void;
+  /** The chevron button's name. Default "Collapse group" / "Expand
+      group" (by `collapsed`); aria-expanded says the state either way. */
+  toggleLabel?: string;
+  /** The host's controls at the end of the row (a "…" menu, chevrons). */
+  actions?: ReactNode;
+  /** Draws a quiet "+" icon button after `actions` that calls this. */
+  onAdd?: () => void;
+  /** The "+" button's name and title. Default "New". */
+  addLabel?: string;
+  /** A --divider rule under the row. */
+  rule?: boolean;
+  /** Sticks to the top of its scroller on --bg, above the rows under it. */
+  sticky?: boolean;
+  className?: string;
+}
+
+/**
+ * Linear's progress pie: a ring and a pie filled to done / total, as the
+ * status icons draw a task in progress ("◔ 3/8" beside a count).
+ */
+export interface ProgressPieProps {
+  done: number;
+  /** 0 draws an empty pie (never NaN). */
+  total: number;
+  /** px. Default 12. */
+  size?: 12 | 14 | 16 | 20;
+  /** The pie in the tone's hue and the ring in its tinted line (data-tone);
+      default the secondary ink in the strong border. */
+  tone?: UiTone;
+  /** What it says ("3 of 8 done"): the svg is role="img" named by it.
+      '' makes it decorative (aria-hidden) for a host that prints the
+      count beside it. */
+  label: string;
+  className?: string;
+}
 
 export interface ProgressRuleProps {
   done: number;

@@ -137,7 +137,6 @@ catalog:
   'astro': '7.2.10'
   'class-variance-authority': '0.7.1'
   'clsx': '2.1.1'
-  'cmdk': '1.1.1'
   'commander': '13.1.0'
   'cspell': '10.0.1'
   'dependency-cruiser': '18.1.1'

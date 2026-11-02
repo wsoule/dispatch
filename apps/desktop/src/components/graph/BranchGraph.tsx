@@ -1,5 +1,6 @@
 import type { StatusModel } from '@dispatch-foo/core/browser';
 import { isDoneStatus, isStartedStatus } from '@dispatch-foo/core/browser';
+import { cx } from '@dispatch/ui';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 
@@ -11,8 +12,9 @@ import {
 } from '../../lib/branchLayout';
 import type { DagTask } from '../../lib/dagLayout';
 import { useActiveStatusModel } from '../../lib/statusModel';
-import { statusColor, StatusIcon } from '../tasks/StatusIcon';
-import { cn } from '@/lib/utils';
+import { statusTone } from '../../lib/statusTone';
+import { StatusIcon } from '../tasks/StatusIcon';
+import styles from './BranchGraph.module.css';
 
 // Fixed geometry: every line is 28px (the compact answer to the 36px list row) so the
 // gutter's dots and the titles share one grid; lanes sit 16px apart from a 12px left edge.
@@ -26,7 +28,7 @@ const HALO_RADIUS = 6.5;
 const PATH_STROKE = 2;
 const MUTED_STROKE = 1;
 const STRONG = 'var(--border-strong)';
-const MUTED = 'var(--border-default)';
+const MUTED = 'var(--border)';
 // A cycle's back-edge sits this far right of its lane so it is not lost under the forward edge.
 const BACK_EDGE_OFFSET = 2;
 
@@ -62,42 +64,38 @@ interface BranchDotProps {
 }
 
 /** One commit dot: filled for a finished task, a ring for an open one, filled plus a halo
- * ring for a live one — all in the status's own colour from `StatusIcon`'s map, so the
- * gutter and the glyph beside it always agree. On-path dots are the full radius, off-path
- * a size down. */
+ * ring for a live one — all in the status's tone (`statusTone` through `data-tone`, the
+ * neutral mark for done), the same tone as the `StatusIcon` beside it. On-path dots are
+ * the full radius, off-path a size down. */
 function BranchDot({ row, status, model, onOpen }: BranchDotProps) {
   const kind = dotKind(status, model);
-  const color = statusColor(status, model);
-  const cx = laneX(row.lane);
-  const cy = rowY(row.row);
+  const tone = statusTone(status, model) ?? undefined;
+  const x = laneX(row.lane);
+  const y = rowY(row.row);
   const r = row.onPath ? DOT_RADIUS : MUTED_DOT_RADIUS;
   return (
     <g data-slot="branch-dot-group">
       {kind === 'live' && (
         <circle
           data-slot="branch-dot-halo"
-          cx={cx}
-          cy={cy}
+          data-tone={tone}
+          className={styles.halo}
+          cx={x}
+          cy={y}
           r={HALO_RADIUS}
-          fill="none"
-          stroke={color}
           strokeWidth={1}
-          strokeOpacity={0.45}
         />
       )}
       <circle
         data-slot="branch-dot"
         data-dot={kind}
         data-path={row.onPath || undefined}
-        cx={cx}
-        cy={cy}
+        data-tone={tone}
+        cx={x}
+        cy={y}
         r={r}
-        fill={kind === 'open' ? 'var(--surface-page)' : color}
-        stroke={color}
         strokeWidth={1.5}
-        className={cn(
-          onOpen !== undefined && 'pointer-events-auto cursor-pointer'
-        )}
+        className={cx(styles.dot, onOpen !== undefined && styles.dotClickable)}
         onClick={onOpen}
       />
     </g>
@@ -210,11 +208,12 @@ interface BranchLineProps {
   onOpen?: () => void;
 }
 
-/** One 28px line: status glyph, sans id in the id tracking, one-line title, trailing slot.
- * On-path lines carry `data-path` and the full foreground; off-path lines read in the
- * secondary text. The focused line is marked with the neutral active surface — never the
- * accent — and keyboard focus on the button itself takes the same wash. The line spans the gutter too (the SVG floats over it without pointer events) so
- * clicking a dot's whitespace opens the task and the focus wash covers the whole row. */
+/** One 28px line: status glyph, mono id, one-line title, trailing slot. On-path lines
+ * carry `data-path` and the full text colour; off-path lines read in the secondary text.
+ * The focused line is marked with the neutral pressed surface — never the accent — and
+ * keyboard focus on the button itself takes the same wash under the focus ring. The line
+ * spans the gutter too (the SVG floats over it without pointer events) so clicking a
+ * dot's whitespace opens the task and the wash covers the whole row. */
 function BranchLine({
   task,
   row,
@@ -226,39 +225,22 @@ function BranchLine({
 }: BranchLineProps) {
   const content = (
     <>
-      <StatusIcon status={task.status} className="size-3.5 shrink-0" />
-      <span
-        data-slot="branch-line-id"
-        className="font-book shrink-0 tracking-(--id-tracking) text-(--text-muted) tabular-nums"
-      >
+      <StatusIcon status={task.status} />
+      <span data-slot="branch-line-id" className={styles.id}>
         {refLabel}
       </span>
-      <span
-        data-slot="branch-line-title"
-        className={cn(
-          'min-w-0 flex-1 truncate text-left font-medium',
-          row.onPath ? 'text-foreground' : 'text-(--text-secondary)'
-        )}
-      >
+      <span data-slot="branch-line-title" className={styles.title}>
         {task.title}
       </span>
       {accessory !== undefined && (
-        <span
-          data-slot="branch-line-trailing"
-          className="ml-auto flex shrink-0 items-center gap-1.5"
-        >
+        <span data-slot="branch-line-trailing" className={styles.trailing}>
           {accessory}
         </span>
       )}
     </>
   );
 
-  const className = cn(
-    'flex w-full items-center gap-2 rounded-control pr-3 text-[13px] leading-4 outline-none transition-colors duration-100',
-    onOpen !== undefined &&
-      'hover:bg-surface-hover focus-visible:bg-surface-active cursor-pointer',
-    focused && 'bg-surface-active'
-  );
+  const className = cx(styles.line, onOpen !== undefined && styles.interactive);
   const style = { height: BRANCH_LINE_HEIGHT, paddingLeft: gutter };
   const data = {
     'data-slot': 'branch-line',
@@ -292,7 +274,7 @@ export interface BranchGraphProps {
   /** One milestone's tasks — `branchLayout` derives rows, lanes and edges from `blockedBy`
    * links inside just this set (a blocker filtered out is simply not an edge). */
   tasks: DagTask[];
-  /** Short sans id per row (defaults to the task id). */
+  /** Short mono id per row (defaults to the task id). */
   refFor?: (id: string) => string | undefined;
   /** The trailing slot per row — the live-run mark, an assignee avatar. */
   accessoryFor?: (id: string) => ReactNode;
@@ -347,10 +329,7 @@ export function BranchGraph({
     return (
       <div
         data-slot="branch-graph-empty"
-        className={cn(
-          'font-book flex items-center px-3 text-[13px] text-(--text-muted)',
-          className
-        )}
+        className={cx(styles.empty, className)}
         style={{ height: BRANCH_LINE_HEIGHT }}
       >
         No tasks
@@ -374,7 +353,7 @@ export function BranchGraph({
       role="group"
       aria-label={ariaLabel}
       data-slot="branch-graph"
-      className={cn('relative', className)}
+      className={cx(styles.graph, className)}
     >
       {layout.rows.map((row) => {
         const task = tasksById.get(row.id);
@@ -400,7 +379,7 @@ export function BranchGraph({
         height={height}
         viewBox={`0 ${first * BRANCH_LINE_HEIGHT} ${gutter} ${height}`}
         aria-hidden
-        className="pointer-events-none absolute top-0 left-0"
+        className={styles.gutter}
       >
         {trunk.map((segment) =>
           crosses(segment.fromRow, segment.toRow) ? (

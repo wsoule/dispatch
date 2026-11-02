@@ -141,9 +141,7 @@ const GR8R_SCOPE: readonly string[] = [
   'components/failure/FailureNotice.tsx',
   'components/failure/FailureNotice.module.css',
   'components/failure/FailureNotice.test.tsx',
-  'components/milestones/FanoutControls.tsx',
-  'components/milestones/FanoutControls.module.css',
-  'components/milestones/FanoutControls.test.tsx',
+  'components/milestones',
   'components/files/QuickOpenDialog.tsx',
   'components/files/QuickOpenDialog.module.css',
   'components/impact/ImpactPanel.tsx',
@@ -179,7 +177,53 @@ const GR8R_SCOPE: readonly string[] = [
   'lib/runState.ts',
   'lib/runState.test.ts',
   'lib/agentSessions.ts',
+  'components/tasks/TaskBoard.tsx',
+  'components/tasks/TaskBoard.module.css',
+  'components/tasks/TaskBoard.test.tsx',
+  'components/tasks/BoardPane.tsx',
+  'components/tasks/BoardPane.module.css',
+  'components/tasks/boardWindow.ts',
+  'components/tasks/boardWindow.test.ts',
+  'components/tasks/TaskCardTile.tsx',
+  'components/tasks/TaskCardTile.module.css',
+  'components/tasks/TaskCardTile.test.tsx',
+  'components/tasks/LaneHeader.tsx',
+  'components/tasks/LaneHeader.module.css',
+  'components/tasks/MilestoneLaneHeader.tsx',
+  'components/tasks/MilestoneLaneHeader.module.css',
+  'components/tasks/AssigneeAvatar.tsx',
+  'components/tasks/AssigneeAvatar.module.css',
+  'components/tasks/AssigneeAvatar.test.tsx',
+  'components/tasks/LandingBadge.tsx',
+  'components/tasks/LandingBadge.module.css',
+  'components/tasks/StatusIcon.tsx',
+  'components/tasks/StatusIcon.module.css',
+  'components/tasks/StatusIcon.test.tsx',
+  'components/tasks/DispatchDialog.tsx',
+  'components/tasks/DispatchDialog.module.css',
+  'components/tasks/DispatchDialog.test.tsx',
+  'components/graph/BranchGraph.tsx',
+  'components/graph/BranchGraph.module.css',
+  'components/graph/BranchGraph.test.tsx',
+  'lib/statusTone.ts',
+  'lib/statusTone.test.ts',
+  'lib/listGrouping.ts',
+  'lib/listGrouping.test.ts',
+  'lib/labelColor.ts',
+  'lib/labelColor.test.ts',
+  'lib/statusTypeSurfaces.test.tsx',
+  'views/IssuesView.test.tsx',
 ];
+
+/** Test files whose hex literals are Linear-supplied data, not colours of their own: a
+    workflow state's or a label's configured `color` fed in as a fixture, which the code under
+    test must carry through (the label registry, a swatch mark) or ignore (statusTone). Only
+    a scoped test file may be listed; every other check still applies to it. */
+const HEX_FIXTURE_EXEMPT: ReadonlySet<string> = new Set([
+  'components/tasks/TaskCardTile.test.tsx',
+  'lib/labelColor.test.ts',
+  'lib/statusTone.test.ts',
+]);
 
 /** GR8R_SCOPE directory entries allowed to be absent. Every other directory entry must exist
     and hold at least one scanned file, so a misspelt or renamed entry fails instead of
@@ -454,7 +498,20 @@ describe('the Gr8r code and the transitional sheets follow the design system', (
   });
 
   test('no file writes a hex colour of its own', () => {
-    expect(findings(all, /#[0-9a-f]{3,8}\b/gi)).toEqual([]);
+    expect(
+      findings(
+        all.filter(({ file }) => !HEX_FIXTURE_EXEMPT.has(file)),
+        /#[0-9a-f]{3,8}\b/gi
+      )
+    ).toEqual([]);
+  });
+
+  test('only scoped test files may hold hex fixtures', () => {
+    expect(
+      [...HEX_FIXTURE_EXEMPT].filter(
+        (file) => !/\.test\.tsx?$/.test(file) || !GR8R_SCOPE.includes(file)
+      )
+    ).toEqual([]);
   });
 
   test('no file reads or sets a retired token name', () => {

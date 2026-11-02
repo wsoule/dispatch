@@ -32,17 +32,23 @@ export {
 } from './components/theme-toggle';
 
 // ---- tasks family (src/tasks): primitives (the disclosure, the search
-// field and the copy value among them), the grouped task table, deadlines,
-// stats strip and registers. Props are typed in ./tasks/types.
+// field, the copy value, the section header and the progress pie among
+// them), the grouped task table and its row windows (useRowWindows, for a
+// host's own grouped lists), deadlines, stats strip and registers. Props
+// are typed in ./tasks/types.
 export { Button } from './tasks/button';
 export { Checkbox } from './tasks/checkbox';
 export { cx } from './tasks/class-names';
 export { Checklist } from './tasks/checklist';
 export { Chip, ChipButton } from './tasks/chip';
 export {
+  type CollapsedStorage,
   parseCollapsed,
+  readCollapsedRaw,
   serializeCollapsed,
+  subscribeCollapsed,
   toggleCollapsed,
+  writeCollapsed,
 } from './tasks/collapsed-groups';
 export { CopyValue } from './tasks/copy-value';
 export { DeadlineList } from './tasks/deadline-list';
@@ -52,10 +58,17 @@ export { EmptyState, Notice } from './tasks/notice';
 export { ProgressRule } from './tasks/progress-rule';
 export { Register, RegisterCell, RegisterRow } from './tasks/register';
 export { SearchField } from './tasks/search-field';
+export { SectionHeader } from './tasks/section-header';
 export { SegmentedControl } from './tasks/segmented-control';
 export { StatsStrip } from './tasks/stats-strip';
 export { Switch } from './tasks/switch';
-export { PriorityGlyph, StateGlyph } from './tasks/task-glyphs';
+export {
+  PIE_DASH,
+  pieDashOffset,
+  PriorityGlyph,
+  ProgressPie,
+  StateGlyph,
+} from './tasks/task-glyphs';
 export {
   initialSegments,
   mountedCount,
@@ -63,6 +76,12 @@ export {
   sameSegments,
   windowSegments,
 } from './tasks/row-window';
+export {
+  type RowWindowGroup,
+  type RowWindows,
+  type RowWindowsOptions,
+  useRowWindows,
+} from './tasks/use-row-windows';
 export { TaskGroupTable } from './tasks/task-group-table';
 export {
   pruneSelection,
@@ -102,6 +121,7 @@ export type {
   NavTabsItemsProps,
   NavTabsProps,
   NoticeProps,
+  ProgressPieProps,
   ProgressRuleProps,
   RegisterCellProps,
   RegisterButtonRowProps,
@@ -111,6 +131,7 @@ export type {
   RegisterProps,
   RegisterRowProps,
   SearchFieldProps,
+  SectionHeaderProps,
   SegmentedControlProps,
   SegmentedOption,
   StatCell,

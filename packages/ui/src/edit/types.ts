@@ -101,7 +101,11 @@ export interface PickerOption {
  * brand row (AppShell's workspace switcher, Gr8r's .ws): a row as wide as
  * its container, padded like the brand link, the --surface-3 fill on hover
  * and while open, with the host's face (pass `trigger`); field = a form
- * select, Gr8r's bordered field with a trailing chevron (Select).
+ * select, Gr8r's bordered field with a trailing chevron (Select); mark = a
+ * glyph-only trigger (a board card's state, priority, assignee or labels):
+ * the chosen option's mark with no text (the `trigger` face if given) in
+ * a 24px hit target, the --surface-2 fill on hover and while open, named
+ * "Label: Value" (or `triggerLabel`) since it prints no words.
  */
 export type PickerAppearance =
   | 'value'
@@ -110,7 +114,8 @@ export type PickerAppearance =
   | 'cell'
   | 'bar'
   | 'brand'
-  | 'field';
+  | 'field'
+  | 'mark';
 
 /** Wording of every built-in label in the edit family. */
 export interface EditLabels {
@@ -290,6 +295,11 @@ export interface StateChoice {
   id: string;
   name: string;
   kind: TaskStateKind;
+  /** The row's mark; the state glyph of `kind` by default. A host that
+      draws a status with its own glyph on the trigger (a board card's
+      status face) passes the same glyph here, so the menu and the face
+      agree. */
+  mark?: PickerMark;
 }
 
 export interface StatePickerProps extends PickerPresetBaseProps {

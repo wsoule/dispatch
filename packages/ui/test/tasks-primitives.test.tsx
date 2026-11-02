@@ -315,6 +315,85 @@ describe('Chip', () => {
     expect(getByText('Overdue · 2 days')).toBeTruthy();
     expect(container.querySelector('[data-tone="accent"]')).not.toBeNull();
   });
+
+  // L23: a default chip may lead with a decorative hue dot (a label or a
+  // project with no colour of its own) or a picker mark (a label's colour
+  // square). Both are decoration beside the words, and only the neutral
+  // badge takes them: a status tone keeps its own dot or tint.
+  test('the hue dot appears only for the default tone', () => {
+    const { container, rerender } = render(<Chip hue="teal">Frontend</Chip>);
+    const dot = container.querySelector('[data-hue]');
+    expect(dot?.getAttribute('data-hue')).toBe('teal');
+    expect(dot?.getAttribute('aria-hidden')).toBe('true');
+    expect(container.textContent).toBe('Frontend');
+    for (const tone of ['muted', 'accent', 'danger', 'info'] as const) {
+      rerender(
+        <Chip tone={tone} hue="teal">
+          Frontend
+        </Chip>
+      );
+      expect([tone, container.querySelector('[data-hue]')]).toEqual([
+        tone,
+        null,
+      ]);
+    }
+    // A status mark takes the lead's place.
+    rerender(
+      <Chip hue="teal" status="on_track" statusLabel="On track">
+        Frontend
+      </Chip>
+    );
+    expect(container.querySelector('[data-hue]')).toBeNull();
+  });
+
+  test('the mark appears only for the default tone, and wins over the hue', () => {
+    const { container, rerender } = render(
+      <Chip mark={{ kind: 'swatch', color: '#4ea7fc' }} hue="rose">
+        Bug
+      </Chip>
+    );
+    const swatch = container.querySelector('[data-mark="swatch"]');
+    expect(swatch).not.toBeNull();
+    expect(swatch?.hasAttribute('data-empty')).toBe(false);
+    expect((swatch as HTMLElement | null)?.style.backgroundColor).not.toBe('');
+    expect(container.querySelector('[data-hue]')).toBeNull();
+    expect(container.textContent).toBe('Bug');
+    rerender(
+      <Chip tone="warning" mark={{ kind: 'swatch', color: '#4ea7fc' }}>
+        Bug
+      </Chip>
+    );
+    expect(container.querySelector('[data-mark]')).toBeNull();
+    // A state glyph is a mark too.
+    rerender(<Chip mark={{ kind: 'state', state: 'started' }}>Doing</Chip>);
+    expect(container.querySelector('[data-chip-mark] svg')).not.toBeNull();
+  });
+
+  test('a swatch that is not a plain hex draws the hollow square', () => {
+    const { container } = render(
+      <Chip mark={{ kind: 'swatch', color: 'var(--label-color-x, red)' }}>
+        Docs
+      </Chip>
+    );
+    const swatch = container.querySelector<HTMLElement>('[data-mark="swatch"]');
+    expect(swatch?.getAttribute('data-empty')).toBe('true');
+    expect(swatch?.style.backgroundColor).toBe('');
+  });
+
+  test('the hues are one module rule each, never a built variable name', () => {
+    const css = readFileSync(
+      path.join(import.meta.dir, '..', 'src', 'tasks', 'chip.module.css'),
+      'utf8'
+    ).replace(/\s+/g, ' ');
+    for (const hue of ['violet', 'teal', 'rose', 'orange']) {
+      expect(css).toContain(
+        `.hueDot[data-hue='${hue}'] { background: var(--${hue}); }`
+      );
+    }
+    // Forced colours keep the dot as a ring.
+    const forced = css.slice(css.indexOf('@media (forced-colors: active)'));
+    expect(forced).toContain('.hueDot { border: 1px solid CanvasText; }');
+  });
 });
 
 describe('ChipButton', () => {
@@ -401,6 +480,27 @@ describe('ChipButton', () => {
     );
     const hover = css.slice(css.indexOf('@media (hover: hover)'));
     expect(hover).toContain('background: var(--surface-3);');
+  });
+
+  test('forwards the hue and the mark, for the default tone only', () => {
+    const { getByRole } = render(
+      <>
+        <ChipButton hue="orange">Platform</ChipButton>
+        <ChipButton mark={{ kind: 'swatch', color: '#e5484d' }}>Bug</ChipButton>
+        <ChipButton tone="info" hue="orange">
+          Live
+        </ChipButton>
+      </>
+    );
+    const hued = getByRole('button', { name: 'Platform' });
+    expect(hued.querySelector('[data-hue]')?.getAttribute('data-hue')).toBe(
+      'orange'
+    );
+    const marked = getByRole('button', { name: 'Bug' });
+    expect(marked.querySelector('[data-mark="swatch"]')).not.toBeNull();
+    expect(
+      getByRole('button', { name: 'Live' }).querySelector('[data-hue]')
+    ).toBeNull();
   });
 
   test('renders on the server as a button or a link', () => {

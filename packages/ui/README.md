@@ -331,6 +331,21 @@ The other shared vocabularies:
 - `TaskPriority`: `0` none, `1` urgent, `2` high, `3` medium, `4` low, drawn by
   `PriorityGlyph` (urgent a red rounded square with a "!", none three dashes,
   the rest `--text-2` bars).
+- Progress: `ProgressPie` (`done`, `total`, `label`; `size` 12, 14, 16 or 20px,
+  default 12; `tone`) is Linear's progress pie, the "◔ 3/8" beside a sub-issues
+  count or a milestone's landed work: an r=6 ring (stroke 1.5) and an r=2 pie
+  stroked 4 wide in a 14-unit viewBox, the pie drawn from twelve o'clock by its
+  dashoffset. The ring is the tone's tinted line (`--tone-line`) and the pie its
+  hue (`--tone`), from `data-tone`; with no tone, the 3:1 control edge
+  (`--control-border`, so an empty pie's ring stays visible) and the secondary
+  ink. `done / total` is clamped to 0..1, and a `total` of 0 draws an empty pie
+  (never NaN). It is `role="img"` named by `label` ("3 of 8 done"); `label=""`
+  makes it decorative (`aria-hidden`, no role) for a host that prints the count
+  beside it, as `Spinner` does. Forced colours keep both strokes in CanvasText.
+  `PIE_DASH` (12.189379495928398, the arc's length) and
+  `pieDashOffset(fraction)` (`PIE_DASH * (1 - fraction)`) are exported for a
+  host's own status icons, so a half-done milestone pie matches a task in
+  progress.
 - `ChipTone`: any `UiTone` (default the neutral badge, muted plain quiet text,
   or with `dot` the status pill with a grey dot for an inactive lifecycle
   status, accent the tinted purple badge; a status tone is Gr8r's status pill,
@@ -400,6 +415,8 @@ the types for the rest.
 |          | `Notice` (`role` status, alert or note), `EmptyState` (a centred icon, optional `label` title, the sentence, an action)           | see `tasks/types.ts`                                                |
 |          | `NavTabs` (`items`, or `groups` for a grouped vertical sub-nav; below), `Checklist`                                               | `label` and `items` or `groups`; `items`                            |
 |          | `Disclosure` (a fold: a trigger and the panel it shows or hides; below)                                                           | `children`                                                          |
+|          | `SectionHeader` (a heading row over a band of rows: fold chevron, tone, count, actions, "+"; Lists below)                         | `name`                                                              |
+|          | `ProgressPie` (Linear's ring and pie, done of total; Status vocabulary above)                                                     | `done`, `total`, `label`                                            |
 | shell    | `AppShell` (sidebar, topbar, phone tab bar; `workspaceSwitcher` makes the brand row a workspace menu, below)                      | `appName`, `brandHref`, `nav`                                       |
 |          | `CommandPaletteProvider` + `CommandPalette`                                                                                       | none; pass `navigate` (the default is `window.location.assign`)     |
 |          | `ToastProvider` + `useToast()` (`useOptionalToast()`: null without a provider)                                                    | none                                                                |
@@ -430,9 +447,10 @@ Pure helpers are exported too: the timeline's date scale (`createScale`,
 `xForDate`, …), the graph layout (`layoutGraph`, `upstreamChain`, …), the
 graph's path walks (`pathContext`, `nodePaths`, `longestChains`, `longestChain`,
 `describePaths`, …), the palette's `fuzzyMatch`, the collapsed-group storage
-helpers, and the selection helpers (`toggleId`, `rangeIds`, `setIds`,
-`pruneSelection`: pure, never mutating, and returning the same set when nothing
-changes).
+helpers, the row-window arithmetic and `useRowWindows` (Lists below), the
+progress pie's `PIE_DASH` and `pieDashOffset`, and the selection helpers
+(`toggleId`, `rangeIds`, `setIds`, `pruneSelection`: pure, never mutating, and
+returning the same set when nothing changes).
 
 **Helpers.** `cx(...names)` joins class names and drops `undefined`, `null`,
 `false` and `''` (a CSS-module lookup can be undefined, and "undefined" never
@@ -445,22 +463,22 @@ helper.
 host's `data-testid` and `data-slot` hooks. `Button` (as a button and as a
 link), `Popover`, `Dialog`, `ConfirmDialog`, `PickerPopover`, `SlideOver`,
 `Disclosure`, `Menu`, `Select`, `RadioGroup`, `Chip`, `ChipButton`, `Switch`,
-`Checkbox`, `Notice`, `SearchField`, `CopyValue`, `Register`, `RegisterRow` and
-`RegisterCell` take them and spread them, untouched, on their root element: the
-`<button>` or the link, the popover's and the picker's `role="dialog"` layer
-(not the trigger), the dialog's and the slide-over's panel (the `role="dialog"`
-or `role="alertdialog"` element), the disclosure's wrapper, the open menu's root
-layer (not the trigger; its submenus sit inside it), the open `Select` list's
-layer (not the trigger), the `role="radiogroup"` element, the chip (or the chip
-button's `<button>` or link), the switch's `role="switch"` button, the
-checkbox's `<label>` (which holds the input), the notice's box, the search
-field's wrapper (which holds the input), the copy value's `<code>` element
-(whose text is exactly the value, so `data-testid="issued-token"` reads it), the
-register's root, the row's `<li>` and the cell. The component's own `data-*`
-attributes (`data-variant`, `data-picker-popup`, `data-popover`, `data-state`,
-`data-open`, `data-tone`, `data-stack`, `data-disabled`) win over a host's of
-the same name. A host's link component receives them in `UiLinkProps` and
-spreads them onto its anchor.
+`Checkbox`, `Notice`, `SearchField`, `CopyValue`, `Register`, `RegisterRow`,
+`RegisterCell` and `SectionHeader` take them and spread them, untouched, on
+their root element: the `<button>` or the link, the popover's and the picker's
+`role="dialog"` layer (not the trigger), the dialog's and the slide-over's panel
+(the `role="dialog"` or `role="alertdialog"` element), the disclosure's wrapper,
+the open menu's root layer (not the trigger; its submenus sit inside it), the
+open `Select` list's layer (not the trigger), the `role="radiogroup"` element,
+the chip (or the chip button's `<button>` or link), the switch's `role="switch"`
+button, the checkbox's `<label>` (which holds the input), the notice's box, the
+search field's wrapper (which holds the input), the copy value's `<code>`
+element (whose text is exactly the value, so `data-testid="issued-token"` reads
+it), the register's root, the row's `<li>`, the cell and the section header's
+row. The component's own `data-*` attributes (`data-variant`,
+`data-picker-popup`, `data-popover`, `data-state`, `data-open`, `data-tone`,
+`data-stack`, `data-disabled`) win over a host's of the same name. A host's link
+component receives them in `UiLinkProps` and spreads them onto its anchor.
 
 **Switch, Checkbox and Notice.** `Switch` with `hideLabel` keeps its label for
 assistive tech only (a `.srOnly` span) and draws just the track, for a settings
@@ -532,15 +550,30 @@ From a shadcn-style button (Dispatch's `ui-legacy`):
 | `IconButton`           | a quiet sm icon Button; `filled` becomes secondary, `active` becomes aria-pressed |
 | `PillButton`           | a secondary sm Button, or a `ChipButton` where it is chip-shaped                  |
 
-### ChipButton
+### Chip and ChipButton
 
-`ChipButton` takes every `Chip` prop (tone, `filled`, `dot`, `status`) and draws
-the same chip as a `<button type="button">`, or through the host's link with
-`href` (a door to a place, a reference to open). Its accessible name is its
-visible text (with a status mark's label). It adds a hover fill one surface
-darker (a tinted chip shows its tinted edge instead, so its text stays on its
-tint; the inverse slab keeps its fill), the 2px `--focus-ring` outline, and a
-ButtonText edge in forced colours. `selected` makes the button a toggle
+A default-tone `Chip` may lead with a decorative mark before its words (amended
+2026-11-02, B5, L23). `hue` (an `AvatarHue`: `violet`, `teal`, `rose` or
+`orange`) draws a 6px dot in that hue (`aria-hidden`, `data-hue`; one module
+rule per hue, never a built variable name), for a label or project with no
+colour of its own (`avatarHue(name)` picks one from the name, as the avatars
+do). `mark` (a `PickerMark`) draws `PickerMarkView` at chip size (glyphs 12px,
+an avatar 16px, a status diamond 10px, so the chip keeps its 20px height):
+Gr8r's label chip is `mark={{ kind: 'swatch', color }}`, a neutral chip with the
+label's colour in a small square, and a colour that is not a plain hex (a
+`var(...)` string) draws the hollow square instead of nothing. `mark` wins when
+both are given. Both are ignored for every other tone (a status tone keeps its
+own dot or tint) and when `status` is set (the status mark takes the lead's
+place). They are decoration: the words say what the chip is. Forced colours keep
+the hue dot as a CanvasText ring. `ChipButton` draws both the same way.
+
+`ChipButton` takes every `Chip` prop (tone, `filled`, `dot`, `status`, `hue`,
+`mark`) and draws the same chip as a `<button type="button">`, or through the
+host's link with `href` (a door to a place, a reference to open). Its accessible
+name is its visible text (with a status mark's label). It adds a hover fill one
+surface darker (a tinted chip shows its tinted edge instead, so its text stays
+on its tint; the inverse slab keeps its fill), the 2px `--focus-ring` outline,
+and a ButtonText edge in forced colours. `selected` makes the button a toggle
 (`aria-pressed`, `true` or `false`; omit it for a plain action), drawn in the
 accent's selection tint (`--accent-soft` in an `--accent-line` edge,
 `--accent-ink` text); a link never carries it. `disabled` disables the button,
@@ -757,6 +790,75 @@ its progressive mount.
   as `UiTone` rules: "in progress, running, live" are blue), so the table's
   sheet has no animation and reduced motion has nothing to switch off beyond its
   transitions.
+
+`SectionHeader` is Gr8r's group header, the one heading row over a band of rows
+(a board lane or column, a list group, a column of a host's page): an optional
+fold chevron, a tone's status diamond, the host's `icon`, then one heading
+element (`as`: `h3` by default, `h2`, `h4`, or `div` when the host's own heading
+wraps it) holding the sentence-case name at 12.5px / 500 in the secondary ink
+and its `count` in tabular figures (`--text-3`), separated by a space, so the
+heading's accessible name reads "Coming in 2"; then the host's `actions` and,
+with `onAdd`, a quiet "+" icon button named and titled `addLabel` (default
+"New") after them. With `onToggle` the chevron is a quiet icon button (a 14px
+lucide chevron, down while open and turned right while `collapsed`, the turn
+only under `prefers-reduced-motion: no-preference`) named `toggleLabel`, or
+"Collapse group" / "Expand group", with `aria-expanded`; without `onToggle`
+there is no chevron. `tone` (a status tone) draws StatusMark's diamond in the
+tone's shape (danger the solid one, warning the half-filled one, success, info,
+muted and accent the open one) and hue (`--tone`), hidden from assistive tech,
+and a 2px edge in the hue at the row's left (a border, so forced colours keep
+it); the name must say the status too. `rule` draws a `--divider` rule under the
+row; `sticky` pins it to the top of its scroll container on `--bg` (z-index 2).
+The row has no padding of its own (it lines up with the column it heads; the
+host pads it), carries `data-tone`, `data-collapsed="true"` while folded and the
+host's `data-*` hooks, and its parts carry `data-part` (`toggle`, `icon`,
+`name`, `count`, `actions`); a host that needs its legacy `data-slot` names on
+the icon or the name wraps its own node in them
+(`icon={<span data-slot="group-header-icon">…</span>}`).
+
+**Row windows for a host's own lists.** `useRowWindows` is the windowing
+`TaskGroupTable` uses, exported for a host's grouped lists (Dispatch's board
+columns). Pass `rootRef` (the element holding the lists), `headRef` (a sticky
+header over them, or a ref holding null), `enabled`, `scrollParent` (as the
+table's), `groups` (`RowWindowGroup[]`: `{ id, rowIds, offscreen? }`, the shown
+groups in reading order), `dragging` (row ids kept mounted) and `estimate` (the
+px of a row before any is measured; default 55, a list row; a board passes its
+card's height plus the space between cards) and `overscan` (rows kept mounted
+past each edge of the viewport; default 8, sized for list rows, so a board of
+tall cards passes fewer). It returns `RowWindows`: each group's `<ul>` registers
+itself with `registerList(id, el)` (a ref callback), and `segmentsOf(id)` gives
+that group's window as `RowSegment[]`, `rows` runs to draw and `gap` runs of
+`px` the host renders as spacer elements (or null while `enabled` is off: draw
+every row); `revealElement`, `revealRow` and `setFocusedRow` (the focused row
+stays mounted) serve a host's keyboard. `focusUnmountedRow` expects the table's
+row hooks (`data-nav-item="row"` with a `data-nav-target` inside), so a host
+with its own rows uses `revealRow`. The hook measures every drawn
+`li[data-row-id]` of a registered list (its border box, so keep the space
+between rows inside the `li`, as padding, not as a flex `gap` or a margin) and
+uses each row's own height; rows never drawn take the running mean of the
+measured ones (`estimate` before the first), so cards of different heights need
+no separate mode. A group with `offscreen: true` (a column scrolled off
+sideways) mounts no rows but its pinned ones (the focused row, the rows being
+dragged) and is otherwise one gap of its full height, so it costs nothing until
+it scrolls back; the first render spends none of its first ~60 rows on it. A
+group whose window a measurement leaves as it was keeps the same `segmentsOf`
+array, so a host can memoize each list on it and redraw only the lists a scroll
+moved. `flushOnScroll: true` renders a scroll's new windows inside the scroll
+event (`flushSync`), so the frame that scroll paints already holds the rows it
+brought in; a board of tall cards turns it on, the table leaves it off. Without
+`estimate`, `overscan`, `offscreen` and `flushOnScroll` the table's path is
+unchanged.
+
+**Folded groups in storage.** `readCollapsedRaw(key, kind)` (the stored string,
+or null; a string so `useSyncExternalStore` gets a stable snapshot),
+`writeCollapsed(key, kind, ids)` (sorted, then every subscriber in the page is
+told), `subscribeCollapsed(onChange)` (this page's writes and other tabs'
+`storage` events; it returns the unsubscribe), `parseCollapsed`,
+`serializeCollapsed` and `toggleCollapsed` keep a set of folded ids under a key
+in `localStorage` (`'local'`) or `sessionStorage` (`'session'`, the
+`CollapsedStorage` kinds), the way `TaskGroupTable` persists its folds. The
+stored set is the folded ids, so a group that appears later starts open, and a
+missing or blocked store never throws.
 
 `SearchField` is the search box: a native `type="search"` input named by `label`
 (`aria-label`; `autoComplete` off, `spellCheck` false, `enterKeyHint` search), a
@@ -1128,6 +1230,9 @@ or middle click still opens the link.
   "Agents"; ungrouped people list first) and a `mark` of their own (a
   `PickerMark`, e.g. `{ kind: 'node', node }` for an agent's glyph) in place of
   the initials avatar.
+- `StatePicker` states (`StateChoice`) may carry a `mark` of their own in place
+  of the state glyph of their `kind`, for a host whose trigger face draws a
+  status with its own glyph (a board card's), so the menu matches the face.
 - `Tooltip` (`content`, one child, `side` top / bottom / left / right, `delay`,
   `defaultOpen`, `disabled`) is a hint that also shows on keyboard focus and is
   announced, where the shell's own CSS `data-tip` hints (the rail, hover only)
@@ -1333,7 +1438,10 @@ Every edit control is controlled and saves through one contract: `onChange` /
 shows the new value with a "Saving" note; when it resolves the value stays; when
 it rejects the control rolls back and prints the error beside itself
 (`formatError` turns the rejection into that sentence, `saveErrorMessage` is the
-default). Returning nothing means "saved".
+default). Returning nothing means "saved". A picker's polite "Saving" region
+mounts the first time it opens (every save starts from its open list) and then
+stays, so a resting picker is only its root and trigger: a board of cards with
+four pickers each pays no live region per card.
 
 `PickerPopover` is also the family's menu: `searchable={false}` drops the search
 row (the list takes focus; ↑/↓, Home / End, ↵ and Space pick, Esc closes,
@@ -1355,29 +1463,42 @@ inverted pill: `--text-inv` at 0.85 opacity, with a faint light wash on hover
 and while its popover is open) and `brand` (the app shell's brand row, the
 workspace switcher above: a row as wide as its container with the brand link's
 padding, the `--surface-3` fill on hover and while open, an outline in forced
-colours while open, no outset, a 280px menu; pass the face as `trigger`) and
+colours while open, no outset, a 280px menu; pass the face as `trigger`),
 `field` (a form select, as `Select` draws it: the trigger is a global `.input`,
 so it has a text input's edge, hover, ring, disabled fill and `aria-invalid`
-edge, as wide as its host, with a trailing chevron). A `PickerOption.href` makes
-a row a link out: picking it closes the popover and loads the URL
-(`window.location.assign`) instead of choosing it, so it is never ticked, never
-calls `onChange` and shows no pending note. `groupTitleHidden` on a group's
-first option draws that group under Gr8r's bare divider (its title still names
-the group for assistive tech). A multiple picker whose groups each hold one
-choice (Sort, Group) takes `marks="tick"`: the single picker's trailing tick
-instead of checkbox squares. A `PickerOption.tone` colours the trigger's face
-text (from the `data-tone` hook) while that option is the value shown, a pending
-one included; `PriorityPicker` takes it per level as `priorityTones` (a list
-cell's `{ 1: 'danger' }`: "Urgent" red the moment it is picked, a pending "High"
-never red). `anchorPoint={{ x, y }}` opens the popover at a viewport point
-instead of under its trigger (a context menu at the pointer; a phone keeps its
-sheet). `returnFocus={() => element}` sends focus there instead of to the
-trigger when the picker closes on Esc, a choice or a close button (a picker a
-host's single-key shortcut opened from a row's title goes back to that title);
-Tab and an outside click are unchanged. A disabled option wraps, so a menu's
-note or a reason can be a whole sentence. `useModKeyLabel()` is "⌘" on Apple
-platforms and "Ctrl" elsewhere (the server renders "Ctrl"), for a host's own
-shortcut rows.
+edge, as wide as its host, with a trailing chevron) and `mark` (a glyph-only
+trigger, a board card's state, priority, assignee or labels: the `trigger` face
+if given, else the chosen option's mark with no words, the chosen marks side by
+side for a multiple picker, the none mark when nothing is chosen, else a dashed
+empty ring; a 24px hit target whose 20px frame takes the `--surface-3` fill on
+hover and while open, one step deeper than `value` because the card under it
+hovers `--surface-2` itself, `--r-chip` corners, the focus ring hugging the
+frame, a ButtonText edge in forced colours, no outset; named `triggerLabel`,
+else "Label: Value" as usual, since it prints no words; a pending save dims the
+face and prints no "Saving" beside it, the announcement still says it). A `mark`
+trigger opens on Enter and Space itself and stops those keys there, so a card
+around it that a keyboard drag picks up with Space, or that opens on Enter,
+never sees them; the other appearances leave both keys to the button.
+`StatePicker`, `PriorityPicker`, `AssigneePicker` and `LabelPicker` take it
+through their props like any picker. A `PickerOption.href` makes a row a link
+out: picking it closes the popover and loads the URL (`window.location.assign`)
+instead of choosing it, so it is never ticked, never calls `onChange` and shows
+no pending note. `groupTitleHidden` on a group's first option draws that group
+under Gr8r's bare divider (its title still names the group for assistive tech).
+A multiple picker whose groups each hold one choice (Sort, Group) takes
+`marks="tick"`: the single picker's trailing tick instead of checkbox squares. A
+`PickerOption.tone` colours the trigger's face text (from the `data-tone` hook)
+while that option is the value shown, a pending one included; `PriorityPicker`
+takes it per level as `priorityTones` (a list cell's `{ 1: 'danger' }`: "Urgent"
+red the moment it is picked, a pending "High" never red).
+`anchorPoint={{ x, y }}` opens the popover at a viewport point instead of under
+its trigger (a context menu at the pointer; a phone keeps its sheet).
+`returnFocus={() => element}` sends focus there instead of to the trigger when
+the picker closes on Esc, a choice or a close button (a picker a host's
+single-key shortcut opened from a row's title goes back to that title); Tab and
+an outside click are unchanged. A disabled option wraps, so a menu's note or a
+reason can be a whole sentence. `useModKeyLabel()` is "⌘" on Apple platforms and
+"Ctrl" elsewhere (the server renders "Ctrl"), for a host's own shortcut rows.
 
 A `PickerOption.keepOpen` option is a step, not a value (a filter menu's facet,
 "Back to filters"): picking it calls `onChange` with its value in single mode,

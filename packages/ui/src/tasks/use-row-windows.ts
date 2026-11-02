@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { flushSync } from 'react-dom';
 
 import { useLatest } from '../edit/save-state';
 import {
@@ -18,12 +19,16 @@ import {
 } from './row-window';
 import type { TaskScrollParent } from './types';
 
-// The DOM half of TaskGroupTable's row windowing. One measurement pass
+// The DOM half of TaskGroupTable's row windowing, exported for a host's
+// own grouped lists too (Dispatch's board columns). One measurement pass
 // serves every group: on each scroll (and resize, fold, data change) it
 // reads the scroll viewport, the sticky column header, each group's list
 // position and the heights of the rows that are drawn, then asks
-// row-window.ts which rows of each group to mount. Rows that have never
-// been drawn take the running mean of the measured ones, so a gap's size
+// row-window.ts which rows of each group to mount. Every drawn row keeps
+// its own measured height (a list's `li[data-row-id]` children, border
+// box), so cards of different heights need no separate mode; rows that
+// have never been drawn take the running mean of the measured ones (the
+// `estimate` option before the first measurement), so a gap's size
 // settles as the list is scrolled.
 //
 // Why not one @tanstack/react-virtual instance per group: each would need
@@ -41,7 +46,8 @@ const useClientLayoutEffect =
 /** A row before any is measured: --row-h 40 + 7px padding above and below
     + the 1px divider. */
 export const DEFAULT_ROW_PX = 55;
-/** Rows kept mounted past each edge of the viewport, in row heights. */
+/** Rows kept mounted past each edge of the viewport, in row heights, unless
+    the host passes `overscan`. */
 const OVERSCAN_ROWS = 8;
 /** Rows the first render draws before the first measurement: the first
     groups in order, whole, until this many rows are drawn. */
@@ -51,6 +57,11 @@ const INITIAL_ROWS = 60;
 export interface RowWindowGroup {
   id: string;
   rowIds: readonly string[];
+  /** Scrolled out of view on the other axis (a board column off to the
+      side): the group mounts none of its rows but the pinned ones (the
+      focused row, the rows being dragged) and stands as gaps of its full
+      height otherwise, so it costs nothing until it scrolls back. */
+  offscreen?: boolean;
 }
 
 export interface RowWindows {
@@ -73,8 +84,13 @@ export interface RowWindows {
   setFocusedRow: (rowId: string | null) => void;
 }
 
-interface Options {
+export interface RowWindowsOptions {
+  /** The element that holds every list (the scroller is searched for from
+      it when `scrollParent` is not given, and a row waiting for focus is
+      found under it). */
   rootRef: { readonly current: HTMLElement | null };
+  /** A sticky header over the lists, whose cover the band and the reveals
+      keep clear of; a ref holding null when there is none. */
   headRef: { readonly current: HTMLElement | null };
   /** Off below the windowAbove threshold: every row is drawn. */
   enabled: boolean;
@@ -83,6 +99,22 @@ interface Options {
   groups: readonly RowWindowGroup[];
   /** Rows being dragged: kept mounted so the drag survives a scroll. */
   dragging: ReadonlySet<string>;
+  /** The px a row takes before any row has been measured: the first
+      render's gaps, and the gaps of rows never drawn until the first
+      measurement. Default DEFAULT_ROW_PX (a list row); a board passes its
+      card's height plus the space between cards. */
+  estimate?: number;
+  /** Rows kept mounted past each edge of the viewport, in row heights.
+      Default 8 (OVERSCAN_ROWS), sized for 55px list rows; a host with tall
+      rows (a board's cards) passes fewer so the band stays about as many
+      pixels deep. */
+  overscan?: number;
+  /** Renders a scroll's new windows inside the scroll event (flushSync),
+      so the frame that scroll paints already holds the rows it brought
+      into the band. Off by default: the windows render a task later, which
+      a band of short rows hides. A host whose rows are tall and few per
+      band (a board's cards, all its columns in one commit) turns it on. */
+  flushOnScroll?: boolean;
 }
 
 /** What the table scrolls in: an element, or the document (the window). */
@@ -144,7 +176,10 @@ export function useRowWindows({
   scrollParent,
   groups,
   dragging,
-}: Options): RowWindows {
+  estimate: firstEstimate = DEFAULT_ROW_PX,
+  overscan: overscanRows = OVERSCAN_ROWS,
+  flushOnScroll = false,
+}: RowWindowsOptions): RowWindows {
   // Group id → its window; null until the first measurement (the server and
   // the first client render draw initialSegments instead).
   const [windows, setWindows] = useState<ReadonlyMap<
@@ -159,11 +194,17 @@ export function useRowWindows({
   const measured = useRef({ sum: 0, n: 0 }).current;
   const focusedRow = useRef<string | null>(null);
   const pendingFocus = useRef<string | null>(null);
-  const latest = useLatest({ groups, dragging, windows, enabled });
+  const latest = useLatest({
+    groups,
+    dragging,
+    windows,
+    enabled,
+    flushOnScroll,
+  });
 
   const estimate = useCallback(
-    () => (measured.n > 0 ? measured.sum / measured.n : DEFAULT_ROW_PX),
-    [measured]
+    () => (measured.n > 0 ? measured.sum / measured.n : firstEstimate),
+    [measured, firstEstimate]
   );
 
   // The row heights of one group's list: measured, else the estimate.
@@ -200,7 +241,7 @@ export function useRowWindows({
       }
     }
     const fallback = estimate();
-    const overscan = OVERSCAN_ROWS * fallback;
+    const overscan = overscanRows * fallback;
     const bandTop = view.top + cover - overscan;
     const bandBottom = view.bottom + overscan;
     const pinnedIds = new Set(current.dragging);
@@ -216,17 +257,26 @@ export function useRowWindows({
           if (pinnedIds.has(id)) pinned.push(index);
         });
       }
+      // An offscreen group meets no band (an empty one: no row's box can
+      // reach it), so only its pinned rows are drawn.
+      const offscreen = group.offscreen === true;
       const segments = windowSegments({
         count: group.rowIds.length,
         heightAt: heightAtOf(group.rowIds, fallback),
         listTop: ul.getBoundingClientRect().top,
-        bandTop,
-        bandBottom,
+        bandTop: offscreen ? Number.POSITIVE_INFINITY : bandTop,
+        bandBottom: offscreen ? Number.NEGATIVE_INFINITY : bandBottom,
         pinned,
       });
+      // An unchanged window keeps its array, so a host can memoize a
+      // group's list on it and skip the groups a scroll did not move.
       const prev = current.windows?.get(group.id);
-      if (prev === undefined || !sameSegments(prev, segments)) changed = true;
-      next.set(group.id, segments);
+      if (prev !== undefined && sameSegments(prev, segments)) {
+        next.set(group.id, prev);
+      } else {
+        changed = true;
+        next.set(group.id, segments);
+      }
     }
     if (
       changed ||
@@ -235,7 +285,16 @@ export function useRowWindows({
     ) {
       setWindows(next);
     }
-  }, [latest, headRef, lists, heights, measured, estimate, heightAtOf]);
+  }, [
+    latest,
+    headRef,
+    lists,
+    heights,
+    measured,
+    estimate,
+    heightAtOf,
+    overscanRows,
+  ]);
 
   // Finds the scroller and listens to it while windowing is on, before the
   // first paint (a layout effect) so the first frame shows the right rows;
@@ -251,17 +310,21 @@ export function useRowWindows({
     if (current !== null && current.el === scroller.el) return;
     unsubscribe.current?.();
     scrollerRef.current = scroller;
-    const onScroll = () => measure();
+    const onScroll = () => {
+      if (latest.current.flushOnScroll) flushSync(measure);
+      else measure();
+    };
+    const onResize = () => measure();
     const target: EventTarget = scroller.el ?? window;
     target.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', onScroll);
+    window.addEventListener('resize', onResize);
     unsubscribe.current = () => {
       target.removeEventListener('scroll', onScroll);
-      window.removeEventListener('resize', onScroll);
+      window.removeEventListener('resize', onResize);
       unsubscribe.current = null;
     };
     measure();
-  }, [rootRef, scrollParent, measure]);
+  }, [rootRef, scrollParent, measure, latest]);
   useClientLayoutEffect(() => {
     if (!enabled) {
       unsubscribe.current?.();
@@ -282,7 +345,13 @@ export function useRowWindows({
   // The rows changed (a fold, a refresh) or a drag started: the windows are
   // measured again before paint.
   const groupsKey = useMemo(
-    () => groups.map((g) => `${g.id}:${g.rowIds.length}`).join('\n'),
+    () =>
+      groups
+        .map(
+          (g) =>
+            `${g.id}:${g.rowIds.length}${g.offscreen === true ? ':off' : ''}`
+        )
+        .join('\n'),
     [groups]
   );
   useClientLayoutEffect(() => {
@@ -306,18 +375,28 @@ export function useRowWindows({
   // the first client render) the first INITIAL_ROWS rows of the first
   // groups and an estimated gap for the rest; a group that appears after
   // the first measurement draws as one gap for the one commit before its
-  // own measurement.
+  // own measurement. An offscreen group spends none of the first rows: it
+  // is one estimated gap from the start.
   const initial = useMemo(() => {
     const map = new Map<string, RowSegment[]>();
-    const counts = groups.map((g) => g.rowIds.length);
-    initialSegments(counts, INITIAL_ROWS, DEFAULT_ROW_PX).forEach(
+    const counts = groups.map((g) =>
+      g.offscreen === true ? 0 : g.rowIds.length
+    );
+    initialSegments(counts, INITIAL_ROWS, firstEstimate).forEach(
       (segments, i) => {
         const group = groups[i];
-        if (group !== undefined) map.set(group.id, segments);
+        if (group === undefined) return;
+        const count = group.rowIds.length;
+        map.set(
+          group.id,
+          group.offscreen === true && count > 0
+            ? [{ kind: 'gap', start: 0, end: count, px: count * firstEstimate }]
+            : segments
+        );
       }
     );
     return map;
-  }, [groups]);
+  }, [groups, firstEstimate]);
 
   const segmentsOf = useCallback(
     (groupId: string): RowSegment[] | null => {

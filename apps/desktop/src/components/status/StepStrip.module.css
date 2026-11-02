@@ -1,0 +1,60 @@
+/* The step strip (StepStrip.tsx): equal 2px segments in a row, each filled with its tone's
+   hue from the data-tone hook; pending is the plain strong-border track. */
+.strip {
+  display: flex;
+  gap: var(--s-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  flex: 1 1 0;
+  height: 2px;
+  border-radius: var(--r-full);
+  background: var(--tone);
+}
+
+.step[data-status='pending'] {
+  background: var(--border-strong);
+}
+
+/* The active step dims on a 2s loop, only for people who have not asked for less motion;
+   the steady segment is the fallback. */
+@media (prefers-reduced-motion: no-preference) {
+  .step[data-status='active'] {
+    animation: step-pulse 2s ease-in-out infinite;
+  }
+}
+
+@keyframes step-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* Forced colours drop the hues: every segment keeps a CanvasText edge, passed and failed
+   fill with it, the active step takes Highlight and pending stays hollow, so the run of
+   steps still reads. */
+@media (forced-colors: active) {
+  .step {
+    height: 4px;
+    border: 1px solid CanvasText;
+    background: Canvas;
+    forced-color-adjust: none;
+  }
+
+  .step[data-status='passed'],
+  .step[data-status='failed'] {
+    background: CanvasText;
+  }
+
+  .step[data-status='active'] {
+    border-color: Highlight;
+    background: Highlight;
+  }
+
+  .step[data-status='pending'] {
+    background: Canvas;
+  }
+}

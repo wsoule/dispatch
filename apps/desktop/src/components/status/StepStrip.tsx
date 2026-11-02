@@ -1,4 +1,4 @@
-import { cx } from '@dispatch/ui';
+import { cx, type UiTone } from '@dispatch/ui';
 
 import styles from './StepStrip.module.css';
 
@@ -10,9 +10,9 @@ export interface Step {
   status: StepStatus;
 }
 
-// A step's tone hook: passed and active in the info hue (active pulses), failed in danger,
-// pending a plain grey track.
-const TONE: Record<StepStatus, string> = {
+// A step's tone hook (AGENTS.md status table): passed green, active blue (it pulses where
+// motion is allowed), failed red, pending grey.
+const TONE: Record<StepStatus, UiTone> = {
   passed: 'success',
   active: 'info',
   failed: 'danger',
@@ -21,8 +21,8 @@ const TONE: Record<StepStatus, string> = {
 
 /**
  * A row of equal 2px segments, one per reported step (the waves of a fan-out). It never
- * invents a step or advances on a timer; each segment is named for screen readers, since the
- * name is the information and the colour only ranks it.
+ * invents a step or advances on a timer; each segment is named for screen readers and in its
+ * hover title, since the name is the information and the colour only ranks it.
  */
 export function StepStrip({
   steps,

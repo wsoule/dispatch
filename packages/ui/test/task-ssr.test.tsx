@@ -15,6 +15,7 @@ interface SsrResult {
   windowedList: string;
   disclosures: string;
   primitives: string;
+  board: string;
 }
 
 function serverRender(): SsrResult {
@@ -176,5 +177,34 @@ describe('task family server render', () => {
     expect(html).toContain('data-stack="container-600"');
     // A segmented option's count is read after its label with a separator.
     expect(html).toContain('aria-label="Live, 2"');
+  });
+
+  test('the board parts render: section header, progress pie, label chips, a mark picker', () => {
+    const html = result.board;
+    // SectionHeader: the host hook and the state on the root, the count
+    // inside the heading, the fold chevron and the + named.
+    expect(html).toMatch(
+      /<div data-slot="group-header" class="[^"]*" data-tone="info" data-collapsed="true">/
+    );
+    expect(html).toMatch(
+      /<h3[^>]*><span[^>]*data-part="name">In progress<\/span> <span[^>]*data-part="count">4<\/span><\/h3>/
+    );
+    expect(html).toContain('aria-label="Expand group"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('aria-label="New task in In progress"');
+    expect(html).toContain('data-testid="lane-menu"');
+    // ProgressPie: named, then decorative, with no NaN.
+    expect(html).toContain('role="img" aria-label="3 of 8 done"');
+    expect(html).toContain('data-tone="success"');
+    expect(html).not.toContain('NaN');
+    expect(html).toMatch(/<svg[^>]*width="14"[^>]*aria-hidden="true"/);
+    // Chips: the colour square and the hue dot.
+    expect(html).toContain('data-mark="swatch"');
+    expect(html).toContain('background-color:#e5484d');
+    expect(html).toContain('data-hue="violet"');
+    // The mark picker: no words in the trigger, named by its value.
+    expect(html).toMatch(
+      /<button[^>]*aria-label="Status: In Progress"[^>]*data-appearance="mark"[^>]*><span[^>]*><span[^>]*><svg/
+    );
   });
 });

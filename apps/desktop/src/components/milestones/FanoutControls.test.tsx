@@ -146,6 +146,10 @@ test('no session: ◔ done/total, the caller’s pills, Send agents… and Open'
   const progress = document.querySelector('[data-slot=milestone-progress]');
   expect(progress?.textContent).toBe('1/2');
   expect(progress?.getAttribute('aria-label')).toBe('1 of 2 landed');
+  // The library pie is decorative here: the span's label and the printed count say it.
+  const pie = progress?.querySelector('svg[data-progress-pie]');
+  expect(pie?.getAttribute('aria-hidden')).toBe('true');
+  expect(pie?.getAttribute('role')).toBeNull();
   expect(screen.getByText('At risk')).not.toBeNull();
   expect(buttonNames()).toEqual(['Send agents…', '']);
   fireEvent.click(screen.getByRole('button', { name: 'Send agents…' }));

@@ -13,7 +13,7 @@ import type {
   ServerEvent,
 } from '@dispatch/client';
 
-import type { Step } from '../components/gr8r/StepStrip';
+import type { Step } from '../components/status/StepStrip';
 import type { TaskTab } from './appNav';
 
 /** What the fan-out dialog hands `handleWorkMilestone`/`handleResumeMilestone`. `null`

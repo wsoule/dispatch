@@ -1,6 +1,6 @@
 import { cx } from './class-names';
 import styles from './task-glyphs.module.css';
-import type { TaskPriority, TaskStateKind } from './types';
+import type { ProgressPieProps, TaskPriority, TaskStateKind } from './types';
 
 /* Issue-state glyphs in the Gr8r/Linear shapes, each in its workflow
    colour (--st-*, docs/architecture.md §8.2): triage, backlog and canceled
@@ -131,6 +131,77 @@ export function PriorityGlyph({
           />
         ))
       )}
+    </svg>
+  );
+}
+
+/** The pie's full arc: Linear's dash length for its r=2, 4-wide status
+    pie. A host's own status icons share it, so a half-filled milestone
+    pie matches a task in progress. */
+export const PIE_DASH = 12.189379495928398;
+const PIE_DASHARRAY = `${PIE_DASH} ${PIE_DASH * 2}`;
+
+/** The dashoffset that leaves `fraction` (0..1) of the pie drawn: 0 hides
+    it (the offset is the whole arc), 1 draws all of it (0). */
+export function pieDashOffset(fraction: number): number {
+  return PIE_DASH * (1 - fraction);
+}
+
+/* done / total as 0..1: 0 for an empty or broken total (never NaN), and
+   clamped, so a count past the total draws a full pie. */
+function pieFraction(done: number, total: number): number {
+  if (!(total > 0) || !Number.isFinite(done)) return 0;
+  return Math.min(1, Math.max(0, done / total));
+}
+
+/* Linear's progress pie at 12 to 20px: an r=6 ring and an r=2 pie stroked
+   4 wide, the pie drawn to done / total by its dashoffset from twelve
+   o'clock ("◔ 3/8" beside a sub-issues count, a milestone's progress).
+   The ring is the tone's tinted line and the pie its hue (data-tone;
+   without a tone the strong border and the secondary ink). role="img"
+   named by `label` ("3 of 8 done"); an empty label makes it decorative
+   for a host that prints the count beside it. Forced colours keep both
+   strokes. */
+export function ProgressPie({
+  done,
+  total,
+  size = 12,
+  tone,
+  label,
+  className,
+}: ProgressPieProps) {
+  const decorative = label === '';
+  return (
+    <svg
+      className={cx(styles.glyph, styles.pie, className)}
+      width={size}
+      height={size}
+      viewBox="0 0 14 14"
+      fill="none"
+      role={decorative ? undefined : 'img'}
+      aria-label={decorative ? undefined : label}
+      aria-hidden={decorative ? 'true' : undefined}
+      focusable="false"
+      data-tone={tone}
+      data-progress-pie=""
+    >
+      <circle
+        className={styles.pieRing}
+        cx="7"
+        cy="7"
+        r="6"
+        strokeWidth="1.5"
+      />
+      <circle
+        className={styles.pieArc}
+        cx="7"
+        cy="7"
+        r="2"
+        strokeWidth="4"
+        strokeDasharray={PIE_DASHARRAY}
+        strokeDashoffset={pieDashOffset(pieFraction(done, total))}
+        transform="rotate(-90 7 7)"
+      />
     </svg>
   );
 }

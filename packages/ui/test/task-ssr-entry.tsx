@@ -11,11 +11,14 @@ import {
   NavTabs,
   Notice,
   PickerPopover,
+  ProgressPie,
   Register,
   RegisterCell,
   RegisterRow,
   SearchField,
+  SectionHeader,
   SegmentedControl,
+  StatePicker,
   Switch,
   TaskDetail,
   type TaskDetailProps,
@@ -296,6 +299,38 @@ const primitives = (
   </>
 );
 
+// The board's building blocks (B5): a lane header with its fold, tone,
+// count, actions and host hooks; a progress pie, named and decorative;
+// label chips with a colour square and with a hue dot; a card's
+// glyph-only property picker.
+const board = (
+  <>
+    <SectionHeader
+      name="In progress"
+      count={4}
+      tone="info"
+      collapsed
+      onToggle={() => undefined}
+      onAdd={() => undefined}
+      addLabel="New task in In progress"
+      actions={<span data-testid="lane-menu" />}
+      sticky
+      rule
+      data-slot="group-header"
+    />
+    <ProgressPie done={3} total={8} label="3 of 8 done" tone="success" />
+    <ProgressPie done={0} total={0} size={14} label="" />
+    <Chip mark={{ kind: 'swatch', color: '#e5484d' }}>Bug</Chip>
+    <Chip hue="violet">Frontend</Chip>
+    <StatePicker
+      states={[{ id: 's-doing', name: 'In Progress', kind: 'started' }]}
+      value="s-doing"
+      appearance="mark"
+      onChange={() => undefined}
+    />
+  </>
+);
+
 console.log(
   JSON.stringify({
     hasWindow: typeof window !== 'undefined',
@@ -309,5 +344,6 @@ console.log(
     windowedList: renderToString(windowedList),
     disclosures: renderToString(disclosures),
     primitives: renderToString(primitives),
+    board: renderToString(board),
   })
 );

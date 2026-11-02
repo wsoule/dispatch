@@ -147,6 +147,10 @@ describe('the issue list modules are scoped', () => {
     'tasks/nav-tabs.module.css',
     'tasks/notice.module.css',
     'tasks/register.module.css',
+    // The board's building blocks (B5): the section header and the glyphs
+    // (the progress pie among them).
+    'tasks/section-header.module.css',
+    'tasks/task-glyphs.module.css',
     'edit/picker-popover.module.css',
     // The overlays: they sit in the browser's top layer, so nothing in
     // them may reach a host element either.

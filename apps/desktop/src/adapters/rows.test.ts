@@ -107,7 +107,6 @@ function group(
 ): ListGroup {
   return {
     label: '',
-    tint: null,
     icon: null,
     rows: [],
     preset: {},

@@ -9,8 +9,8 @@ import {
 
 // Placeholder coverage for the vendored lib helpers (R1 vendor slice). Exercises the pure
 // display-name, time and token-count helpers so `bun test` has a non-empty desktop suite;
-// richer coverage of the Tauri-backed views lands with R2's Tasks work. colorForProject is
-// covered in projectColor.test.ts.
+// richer coverage of the Tauri-backed views lands with R2's Tasks work. Avatar and label hues
+// come from the library's avatarHue (packages/ui) and lib/labelColor, each tested there.
 describe('sessionDisplayName', () => {
   test('prefers the session title', () => {
     expect(sessionDisplayName('My session', 'A summary')).toBe('My session');

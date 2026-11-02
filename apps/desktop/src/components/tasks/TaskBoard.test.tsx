@@ -6,11 +6,13 @@ import type {
   MilestoneSession,
   ReadinessReading,
 } from '@dispatch/client';
+import { toggleCollapsed } from '@dispatch/ui';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Profiler, type ReactNode, useState } from 'react';
 
-import { toggleCollapsedGroup } from '../../lib/collapsedMilestones';
 import type { WorkMilestoneOptions } from '../../lib/milestoneSession';
 import { priorityLabel } from '../../lib/taskDisplay';
 import {
@@ -23,7 +25,6 @@ import {
   ShellActionsProvider,
 } from '../shell/ShellActionsContext';
 import { TaskBoard } from './TaskBoard';
-import { TooltipProvider } from '@/ui/tooltip';
 
 function task(
   id: string,
@@ -182,28 +183,26 @@ function Harness({
   const Shell = shellWith(presets, opened);
   return (
     <Shell>
-      <TooltipProvider>
-        <TaskBoard
-          tasks={TASKS}
-          statuses={STATUSES}
-          milestones={MILESTONES}
-          readyIds={new Set()}
-          blockedIds={new Set()}
-          liveRunStateByTaskId={new Map()}
-          latestRunByTaskId={new Map()}
-          milestoneProgressById={new Map()}
-          milestoneConcurrencyDefault={3}
-          display={display('parent')}
-          collapsedLaneKeys={collapsed}
-          onToggleLane={(key) =>
-            setCollapsed((prev) => toggleCollapsedGroup(prev, key))
-          }
-          onSelect={() => {}}
-          onWorkMilestone={async () => {}}
-          onStopMilestone={async () => {}}
-          {...props}
-        />
-      </TooltipProvider>
+      <TaskBoard
+        tasks={TASKS}
+        statuses={STATUSES}
+        milestones={MILESTONES}
+        readyIds={new Set()}
+        blockedIds={new Set()}
+        liveRunStateByTaskId={new Map()}
+        latestRunByTaskId={new Map()}
+        milestoneProgressById={new Map()}
+        milestoneConcurrencyDefault={3}
+        display={display('parent')}
+        collapsedLaneKeys={collapsed}
+        onToggleLane={(key) =>
+          setCollapsed((prev) => toggleCollapsed(prev, key))
+        }
+        onSelect={() => {}}
+        onWorkMilestone={async () => {}}
+        onStopMilestone={async () => {}}
+        {...props}
+      />
     </Shell>
   );
 }
@@ -319,7 +318,7 @@ test('an archived card is not draggable', () => {
   expect(titles.some((t) => t.includes('Card two'))).toBe(true);
 });
 
-test('the milestone header carries the milestone dispatch and flight plan controls as pills', () => {
+test('the milestone header carries the milestone dispatch and flight plan controls', () => {
   const opened: [string, string | undefined][] = [];
   render(<Harness opened={opened} />);
   // The id chip is the one open affordance; the shared controls' Open button stays off.
@@ -337,7 +336,8 @@ test('the milestone header carries the milestone dispatch and flight plan contro
   );
   expect(concurrency.tagName).toBe('BUTTON');
   expect(concurrency.textContent).toBe('3×');
-  expect(concurrency.className).toContain('rounded-pill');
+  // The library Menu's trigger: it says it opens a menu.
+  expect(concurrency.getAttribute('aria-haspopup')).toBe('menu');
   // The "No milestone" lane has nothing to dispatch, so it gets none of them.
   const work = screen.getAllByRole('button', { name: 'Send agents…' });
   expect(work).toHaveLength(2);
@@ -562,27 +562,65 @@ test('no Land button renders without land wiring or finished progress', () => {
   expect(screen.queryByRole('button', { name: 'Land' })).toBeNull();
 });
 
-test('columns are 348px with 12px side padding, headers 44px, cards 322px', () => {
+// Bun resolves a CSS module to an empty object, so the board's geometry is read from the
+// module's text: one top-level rule's body by its selector.
+const boardCss = readFileSync(
+  join(import.meta.dir, 'TaskBoard.module.css'),
+  'utf8'
+);
+function boardRule(selector: string): string {
+  const at = boardCss.indexOf(`\n${selector} {`);
+  if (at === -1) throw new Error(`no rule ${selector}`);
+  return boardCss.slice(at, boardCss.indexOf('}', at));
+}
+
+test('the board module keeps its geometry: 348px columns, 44px headers and strips, sticky headers', () => {
+  // A 348px column with 12px either side, so the 322px card sits on its inner width.
+  expect(boardRule('.column')).toContain('width: 348px');
+  expect(boardRule('.column')).toContain('padding-inline: var(--s-3)');
+  expect(boardRule('.collapsedColumn')).toContain('width: 44px');
+  expect(boardRule('.columnHeader')).toContain('height: 44px');
+  // The column-header row pins to the top, a lane header to the left edge.
+  expect(boardRule('.columnHeaderRow')).toContain('position: sticky');
+  expect(boardRule('.columnHeaderRow')).toContain('top: 0');
+  expect(boardRule('.laneHeader')).toContain('position: sticky');
+  expect(boardRule('.laneHeader')).toContain('left: 0');
+  expect(boardRule('.placeholder')).toContain('width: 322px');
+  expect(boardRule('.dragOverlay')).toContain('width: 322px');
+  // Only the lifted copy floats, so it alone casts a shadow.
+  expect(boardRule('.dragOverlay')).toContain('box-shadow: var(--shadow-pop)');
+  expect(boardCss.match(/box-shadow/g)).toHaveLength(1);
+});
+
+// The geometry (348px columns, 44px headers, 322px cards) is the CSS modules' (above); what
+// the markup owes is the hooks they hang on and no Tailwind words left behind.
+const TAILWIND_WORD =
+  /(?:^|\s)(?:w-\[|h-\d|px-\d|bg-|text-\[|rounded-|shadow-|flex-1|items-start|sticky|left-0)/;
+
+test('columns, headers and cards keep their hooks and carry no Tailwind words', () => {
   render(<Harness />);
   const headers = columnHeaders();
   expect(headers).toHaveLength(3);
   for (const header of headers) {
-    expect(header.className).toContain('w-[348px]');
-    expect(header.className).toContain('px-3');
-    expect(header.className).toContain('h-11');
+    expect(header.className).not.toMatch(TAILWIND_WORD);
+    expect(header.dataset['collapsed']).toBeUndefined();
   }
-  // Glyph, 12px muted name, plain count — nothing mono, no pill around the name.
+  // Glyph, name, plain count: the status glyph is the one status mark.
   const todo = headers[0];
   expect(todo.querySelector('svg[aria-label="Status: todo"]')).not.toBeNull();
-  expect(todo.querySelector('.text-\\[12px\\]')?.textContent).toBe('Todo');
-  expect(todo.className).not.toContain('font-mono');
+  expect(todo.textContent).toContain('Todo');
+  expect(todo.textContent).toContain('3');
   const card = screen.getByText('Card one').closest('[data-slot=task-card]');
-  expect(card?.className).toContain('w-[322px]');
-  expect(card?.className).toContain('bg-surface-quaternary');
-  expect(card?.className).toContain('shadow-card');
-  // Column stacks carry no background of their own — cards sit on the panel.
+  expect(card).not.toBeNull();
+  // Each card sits in its own list item inside the cell's list.
+  const item = card?.closest('li[data-row-id]');
+  expect(item?.getAttribute('data-row-id')).toBe('t-1');
   const column = document.querySelector('[data-slot=board-column]');
-  expect(column?.className).not.toMatch(/\bbg-(?!surface-hover)/);
+  expect(column?.tagName).toBe('UL');
+  expect(column?.className).not.toMatch(TAILWIND_WORD);
+  expect(
+    document.querySelector('[data-slot=task-board]')?.className
+  ).not.toMatch(TAILWIND_WORD);
 });
 
 test('the column ··· menu offers collapse, hide and dispatch-all', async () => {
@@ -654,7 +692,11 @@ test('a collapsed column folds to a strip that expands on click', () => {
   );
   const strip = columnHeaders()[1];
   expect(strip.dataset['collapsed']).toBe('true');
-  expect(strip.className).toContain('w-11');
+  // The strip still names its status and count, the name and count as text.
+  expect(strip.textContent).toContain('In Progress');
+  // A collapsed column mounts no card list of its own.
+  const lane = document.querySelector('[data-lane-key="e-1"]');
+  expect(lane?.querySelectorAll('[data-slot=board-column]')).toHaveLength(2);
   fireEvent.click(
     screen.getByRole('button', { name: 'Expand In Progress column' })
   );
@@ -714,14 +756,20 @@ test('assignee lanes put agents first and Unassigned last, avatar on every heade
     'wyat',
     'Unassigned',
   ]);
-  // An initials avatar for the agent and the people, the dashed ring for Unassigned.
+  // The assignee's own avatar on every header: the agent's, the people's, and the empty
+  // ring for Unassigned.
   expect(headers.map((h) => h.icon?.getAttribute('data-slot'))).toEqual([
-    'initials-avatar',
-    'initials-avatar',
-    'initials-avatar',
+    'assignee-avatar',
+    'assignee-avatar',
+    'assignee-avatar',
     'assignee-avatar',
   ]);
-  expect(headers[0]?.icon?.getAttribute('data-kind')).toBe('agent');
+  expect(headers.map((h) => h.icon?.getAttribute('data-kind'))).toEqual([
+    'agent',
+    'human',
+    'human',
+    'none',
+  ]);
   expect(
     Array.from(document.querySelectorAll('[data-lane-key]')).map((s) =>
       s.getAttribute('data-lane-key')
@@ -761,17 +809,19 @@ test('priority lanes follow PRIORITY_ORDER with the glyph on each header', () =>
     .filter((p) => ['urgent', 'medium', 'low', 'none'].includes(p))
     .map(priorityLabel);
   expect(headers.map((h) => h.title)).toEqual(present);
+  // The library PriorityGlyph, by Linear's number: 1 urgent, 3 medium, 4 low, 0 none.
   expect(headers.map((h) => h.icon?.getAttribute('data-priority'))).toEqual([
-    'urgent',
-    'medium',
-    'low',
-    'none',
+    '1',
+    '3',
+    '4',
+    '0',
   ]);
   for (const header of Array.from(
-    document.querySelectorAll('[data-slot=group-header]')
+    document.querySelectorAll<HTMLElement>('[data-slot=group-header]')
   )) {
-    expect(header.className).toContain('h-9');
-    expect(header.className).not.toContain('status-tint');
+    // No tone: a priority lane says nothing about status.
+    expect(header.dataset['tone']).toBeUndefined();
+    expect(header.className).not.toMatch(TAILWIND_WORD);
   }
   // Every lane is a full row of the status columns.
   const lane = document.querySelector('[data-lane-key="priority:urgent"]');
@@ -845,7 +895,7 @@ test('a drop in a priority lane column still moves status', async () => {
   expect(moved).toEqual([['t-2', 'done']]);
 });
 
-/** Every lane header's sticky wrapper — the `px-3` div around a milestone, assignee or priority
+/** Every lane header's sticky wrapper — the div around a milestone, assignee or priority
  * lane's header — in lane order. */
 function laneHeaderWrappers(): HTMLElement[] {
   return Array.from(
@@ -856,26 +906,23 @@ function laneHeaderWrappers(): HTMLElement[] {
 // The header pins to the scroll container's left edge so its actions stay on-screen while
 // the (wider) column strip below scrolls sideways. Nothing measures in happy-dom, so the
 // unmeasured board sets no inline width — the header just spans its lane.
-test('lane headers are sticky to the left with no inline width before a measure', () => {
+test('lane headers have no inline width before a measure', () => {
   const { unmount } = render(<Harness />);
   const wrappers = laneHeaderWrappers();
   expect(wrappers).toHaveLength(3);
   for (const wrapper of wrappers) {
-    expect(wrapper.className).toContain('sticky');
-    expect(wrapper.className).toContain('left-0');
-    expect(wrapper.className).toContain('px-3');
+    expect(wrapper.className).not.toMatch(TAILWIND_WORD);
     expect(wrapper.style.width).toBe('');
+    expect(wrapper.querySelector('[data-slot=group-header]')).not.toBeNull();
   }
   unmount();
   render(<Harness display={display('priority')} />);
-  for (const wrapper of laneHeaderWrappers()) {
-    expect(wrapper.className).toContain('sticky left-0');
-  }
+  expect(laneHeaderWrappers()).toHaveLength(4);
 });
 
 // A `ResizeObserver` stand-in that records each observer's callback and the elements it
 // watches, so a test can play the board's measurement without a layout engine. (The lane
-// stack has an observer of its own, for the virtual columns' offsets.)
+// stack has an observer of its own, for the near-column spans.)
 test('a measured board sizes every lane header to its visible width', () => {
   const Original = globalThis.ResizeObserver;
   const observers: { callback: ResizeObserverCallback; targets: Element[] }[] =
@@ -904,7 +951,7 @@ test('a measured board sizes every lane header to its visible width', () => {
     const board = document.querySelector<HTMLElement>('[data-slot=task-board]');
     if (board === null) throw new Error('no board');
     // Compared by identity: a deep `toEqual` on DOM nodes walks the whole document. The
-    // virtual columns watch the board as their viewport too, so every watcher replays.
+    // near-column hook watches the board too, so every watcher replays.
     const boardCallbacks = observers
       .filter((o) => o.targets.some((t) => t === board))
       .map((o) => o.callback);
@@ -932,8 +979,7 @@ test('a measured board sizes every lane header to its visible width', () => {
     act(measureBoard);
     expect(laneHeaderWrappers()[0]?.style.width).toBe('900px');
     expect(
-      document.querySelector<HTMLElement>('[data-lane-key] .flex.items-start')
-        ?.style.width
+      document.querySelector<HTMLElement>('[data-lane-columns]')?.style.width
     ).toBe('');
     unmount();
     expect(boardDisconnected).toBe(true);
@@ -969,7 +1015,40 @@ function cardIds(): string[] {
   ).map((meta) => meta.textContent ?? '');
 }
 
-test('a long column mounts only the cards near the viewport', () => {
+/** A rect at `top` of `height` px, `width` wide from `left`. */
+function rectAt(top: number, height: number, left = 0, width = 0): DOMRect {
+  return {
+    x: left,
+    y: top,
+    top,
+    left,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
+
+/**
+ * Lays the flat board out by hand, since happy-dom lays nothing out: an 800px-tall viewport,
+ * and each cell's list starting under the 44px column header, moved up by the board's
+ * `scrollTop` the way a real scroll moves it. Cards measure 0 (nothing is laid out), so every card takes
+ * the board's row estimate.
+ */
+function layOutFlatBoard(): HTMLElement {
+  const board = document.querySelector<HTMLElement>('[data-slot=task-board]');
+  if (board === null) throw new Error('no board');
+  board.getBoundingClientRect = () => rectAt(0, 800);
+  for (const list of Array.from(
+    document.querySelectorAll<HTMLElement>('[data-slot=board-column]')
+  )) {
+    list.getBoundingClientRect = () => rectAt(44 - board.scrollTop, 0);
+  }
+  return board;
+}
+
+test('a long column mounts only the cards near the viewport, the rest as one spacer', () => {
   render(
     <Harness tasks={LONG_COLUMN} milestones={[]} display={display('none')} />
   );
@@ -977,6 +1056,15 @@ test('a long column mounts only the cards near the viewport', () => {
   expect(mounted.length).toBeGreaterThan(0);
   expect(mounted.length).toBeLessThan(40);
   expect(mounted[0]).toContain('t-000');
+  // The cards not mounted stand as a spacer item of their estimated height, hidden from
+  // assistive tech, so the column keeps its full scroll height.
+  const spacer = document.querySelector<HTMLElement>(
+    '[data-slot=board-column] > li[aria-hidden="true"]'
+  );
+  expect(spacer).not.toBeNull();
+  expect(Number.parseFloat(spacer?.style.height ?? '0')).toBeGreaterThan(
+    100 * 104
+  );
 });
 
 test('the keyboard cursor keeps its card mounted far down a column', () => {
@@ -997,6 +1085,7 @@ test('a dragged card stays mounted when the board scrolls it out of view', async
   render(
     <Harness tasks={LONG_COLUMN} milestones={[]} display={display('none')} />
   );
+  const board = layOutFlatBoard();
   const card = document.querySelector<HTMLElement>('[data-slot=task-card]');
   const handle = card?.querySelector<HTMLElement>('[data-task-card-open]');
   if (card == null || handle == null) throw new Error('no card');
@@ -1006,8 +1095,6 @@ test('a dragged card stays mounted when the board scrolls it out of view', async
     handle.focus();
     fireEvent.keyDown(handle, { key: ' ', code: 'Space' });
   });
-  const board = document.querySelector<HTMLElement>('[data-slot=task-board]');
-  if (board === null) throw new Error('no board');
   await settle(() => {
     board.scrollTop = 200 * 112;
     fireEvent.scroll(board);
@@ -1020,10 +1107,11 @@ test('a dragged card stays mounted when the board scrolls it out of view', async
   expect(mounted.some((id) => id.includes('t-000'))).toBe(true);
 });
 
-// Each column is its own virtualizer on the board's one scroller. A scroll renders them all
-// in one commit (not one layout per column), and inside the scroll event itself: a render
-// left for later paints that frame with the columns' new rows missing.
-test('a scroll renders every column in one commit, before its event returns', () => {
+// One `useRowWindows` serves every column: a scroll measures them all in one pass and
+// moves every column's window in a single commit (not one per column), inside the scroll
+// event itself (`flushOnScroll`): a render left for later paints that frame with the
+// columns' new cards missing.
+test('a scroll moves every column window in one commit, before its event returns', async () => {
   const tall = STATUSES.flatMap((status) =>
     Array.from({ length: 60 }, (_, i) =>
       task(`t-${status}-${i}`, `Card ${status} ${i}`, status)
@@ -1035,13 +1123,13 @@ test('a scroll renders every column in one commit, before its event returns', ()
       <Harness tasks={tall} milestones={[]} display={display('none')} />
     </Profiler>
   );
-  const board = document.querySelector<HTMLElement>('[data-slot=task-board]');
-  if (board === null) throw new Error('no board');
+  const board = layOutFlatBoard();
+  await settle(() => {});
   commits = 0;
   let atEvent = { commits: -1, cards: [] as string[] };
   // act holds back anything not rendered synchronously until it returns.
   act(() => {
-    // Far past the three cards of overscan.
+    // Far past the two cards of overscan.
     board.scrollTop = 30 * 112;
     fireEvent.scroll(board);
     atEvent = { commits, cards: cardIds() };
@@ -1051,6 +1139,53 @@ test('a scroll renders every column in one commit, before its event returns', ()
     expect(atEvent.cards.some((id) => id.includes(`t-${status}-30`))).toBe(
       true
     );
+    expect(atEvent.cards.some((id) => id === `t-${status}-0`)).toBe(false);
+  }
+});
+
+// A column scrolled away sideways is an offscreen window group: it keeps its height but
+// mounts no cards, until it comes back near the viewport.
+test('a column far off to the side mounts no cards', async () => {
+  const Original = globalThis.ResizeObserver;
+  const callbacks: ResizeObserverCallback[] = [];
+  globalThis.ResizeObserver = class {
+    constructor(cb: ResizeObserverCallback) {
+      callbacks.push(cb);
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+  try {
+    const tall = STATUSES.flatMap((status) =>
+      Array.from({ length: 20 }, (_, i) =>
+        task(`t-${status}-${i}`, `Card ${status} ${i}`, status)
+      )
+    );
+    render(<Harness tasks={tall} milestones={[]} display={display('none')} />);
+    const board = layOutFlatBoard();
+    // A 400px-wide board over three 348px columns: the third starts at 696px, past the
+    // half-width margin (600px), so it is the one column away from the viewport.
+    Object.defineProperty(board, 'clientWidth', {
+      configurable: true,
+      get: () => 400,
+    });
+    const columns = document.querySelector<HTMLElement>('[data-lane-columns]');
+    Array.from(columns?.children ?? []).forEach((column, i) => {
+      column.getBoundingClientRect = () => rectAt(44, 0, i * 348, 348);
+    });
+    await settle(() => {
+      for (const callback of callbacks) callback([], {} as ResizeObserver);
+    });
+    const cards = cardIds();
+    expect(cards.some((id) => id.startsWith('t-todo-'))).toBe(true);
+    expect(cards.some((id) => id.startsWith('t-in-progress-'))).toBe(true);
+    expect(cards.some((id) => id.startsWith('t-done-'))).toBe(false);
+    const done = document.querySelectorAll('[data-slot=board-column]')[2];
+    expect(done?.children).toHaveLength(1);
+    expect(done?.children[0]?.getAttribute('aria-hidden')).toBe('true');
+  } finally {
+    globalThis.ResizeObserver = Original;
   }
 });
 
@@ -1085,27 +1220,25 @@ test('moving the cursor redraws only the two cards it moves between', () => {
   const onSelect = () => {};
   const onMilestone = async () => {};
   const board = (focusedTaskId: string) => (
-    <TooltipProvider>
-      <TaskBoard
-        tasks={TASKS}
-        statuses={STATUSES}
-        milestones={MILESTONES}
-        readyIds={readyIds}
-        blockedIds={blockedIds}
-        liveRunStateByTaskId={runs}
-        latestRunByTaskId={runs}
-        readinessById={readinessById}
-        milestoneProgressById={progress}
-        milestoneConcurrencyDefault={3}
-        display={DEFAULT_TASKS_DISPLAY}
-        collapsedLaneKeys={NO_KEYS}
-        onToggleLane={onToggleLane}
-        onSelect={onSelect}
-        onWorkMilestone={onMilestone}
-        onStopMilestone={onMilestone}
-        focusedTaskId={focusedTaskId}
-      />
-    </TooltipProvider>
+    <TaskBoard
+      tasks={TASKS}
+      statuses={STATUSES}
+      milestones={MILESTONES}
+      readyIds={readyIds}
+      blockedIds={blockedIds}
+      liveRunStateByTaskId={runs}
+      latestRunByTaskId={runs}
+      readinessById={readinessById}
+      milestoneProgressById={progress}
+      milestoneConcurrencyDefault={3}
+      display={DEFAULT_TASKS_DISPLAY}
+      collapsedLaneKeys={NO_KEYS}
+      onToggleLane={onToggleLane}
+      onSelect={onSelect}
+      onWorkMilestone={onMilestone}
+      onStopMilestone={onMilestone}
+      focusedTaskId={focusedTaskId}
+    />
   );
   const { rerender } = render(board('t-1'), { wrapper: shell });
   expect([...renders.keys()].sort()).toEqual(

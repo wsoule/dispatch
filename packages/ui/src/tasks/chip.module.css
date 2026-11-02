@@ -72,6 +72,57 @@
   background: var(--tone);
 }
 
+/* A default chip's decorative lead (Chip `hue`): a 6px dot in one of the
+   decorative hues, one rule per hue (never a status hue: the label's or
+   project's words say what it is). */
+.hueDot {
+  flex: none;
+  box-sizing: border-box;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.hueDot[data-hue='violet'] {
+  background: var(--violet);
+}
+
+.hueDot[data-hue='teal'] {
+  background: var(--teal);
+}
+
+.hueDot[data-hue='rose'] {
+  background: var(--rose);
+}
+
+.hueDot[data-hue='orange'] {
+  background: var(--orange);
+}
+
+/* A default chip's picker mark (Chip `mark`: a label's colour square, a
+   state glyph, an avatar), at chip size: glyphs 12px, an avatar 16px, a
+   status diamond 10px, so the chip keeps its 20px height. */
+.leadMark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+.leadMark :global(svg) {
+  width: 12px;
+  height: 12px;
+}
+
+.leadMark :global([data-mark='avatar']) {
+  --sz: 16px;
+}
+
+.leadMark :global(span[role='img']) {
+  width: 10px;
+  height: 10px;
+  flex-basis: 10px;
+}
+
 /* The dark slab, kept for old callers (prefer a status tone). */
 .inverse {
   --chip-fill: var(--text);
@@ -178,13 +229,18 @@
 }
 
 /* Forced colours drop backgrounds: the dot keeps a fill so the pill still
-   shows its mark (the words say the status). A chip button keeps a
-   ButtonText edge (a chip with no border of its own would lose its
-   shape), and a selected one the Highlight edge, twice as thick. */
+   shows its mark (the words say the status), the hue dot a ring. A chip
+   button keeps a ButtonText edge (a chip with no border of its own would
+   lose its shape), and a selected one the Highlight edge, twice as
+   thick. */
 @media (forced-colors: active) {
   .dot {
     forced-color-adjust: none;
     background: CanvasText;
+  }
+
+  .hueDot {
+    border: 1px solid CanvasText;
   }
 
   .button {

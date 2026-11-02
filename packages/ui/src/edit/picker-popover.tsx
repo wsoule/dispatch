@@ -41,6 +41,7 @@ import {
 } from './shared';
 import type {
   PickerAppearance,
+  PickerMark,
   PickerOption,
   PickerPopoverProps,
 } from './types';
@@ -84,7 +85,34 @@ const OUTSETS: Record<PickerAppearance, Outset> = {
   bar: { x: 0, y: 0 },
   brand: { x: 0, y: 0 },
   field: { x: 0, y: 0 },
+  mark: { x: 0, y: 0 },
 };
+
+/* The face of a glyph-only trigger (appearance 'mark'): the chosen
+   options' marks side by side, else (nothing chosen) the none mark, else
+   a dashed empty ring, so the trigger always shows something to press.
+   No words: the trigger's aria-label names it. */
+function markFace(
+  chosen: readonly PickerOption[],
+  noneMark: PickerMark | undefined
+): ReactNode {
+  const shown = chosen.flatMap((option) =>
+    option.mark === undefined
+      ? []
+      : [{ key: `o:${option.value}`, mark: option.mark }]
+  );
+  if (chosen.length === 0 && noneMark !== undefined) {
+    shown.push({ key: 'none', mark: noneMark });
+  }
+  if (shown.length === 0) {
+    return <span className={styles.markEmpty} aria-hidden="true" />;
+  }
+  return shown.map(({ key, mark }) => (
+    <span key={key} className={styles.faceMark}>
+      <PickerMarkView mark={mark} />
+    </span>
+  ));
+}
 
 function isList(value: PickerValue): value is readonly string[] {
   return Array.isArray(value);
@@ -240,6 +268,12 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
     false
   );
   const pending = control.pending || createControl.pending;
+  // The "Saving" live region mounts the first time the picker opens (every
+  // save starts from the open list, so it is in the DOM before its words
+  // change) and then stays: a resting picker adds no node of its own, which
+  // a board of cards with four pickers each would otherwise pay per card.
+  const [announcing, setAnnouncing] = useState(false);
+  if (!announcing && (isOpen || pending)) setAnnouncing(true);
   // Each kind of save clears the other's error when it starts.
   const saveError = createControl.error ?? control.error;
 
@@ -620,6 +654,17 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       if (!isOpen) setOpen(true);
+      return;
+    }
+    // A glyph-only trigger sits inside a host's own key target (a board
+    // card that a keyboard drag picks up with Space, a card that opens on
+    // Enter): it opens itself and keeps the key from the card. The
+    // default is prevented so the button's own click does not toggle it
+    // a second time.
+    if (appearance === 'mark' && (event.key === 'Enter' || event.key === ' ')) {
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(!isOpen);
     }
   }
 
@@ -670,6 +715,12 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
   let face: ReactNode;
   if (trigger !== undefined && trigger !== null && trigger !== false) {
     face = trigger;
+  } else if (appearance === 'mark') {
+    face = markFace(
+      multiple ? chosenOptions : current !== undefined ? [current] : [],
+      // A value the options do not hold yet is not "nobody".
+      multiple || shownSingle === null ? noneMark : undefined
+    );
   } else if (multiple) {
     face =
       chosenOptions.length > 0 ? (
@@ -1051,6 +1102,47 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
     </div>
   ) : null;
 
+  // The trigger button. A glyph-only (mark) trigger sits straight in the
+  // root: it prints no "Saving" note beside it (its dimmed face shows the
+  // save, and the announcement says it), so it needs no row around it.
+  const triggerButton = (
+    <button
+      ref={triggerRef}
+      id={id}
+      type="button"
+      // A field select is a global .input (TextField's box and ring);
+      // the other appearances draw their own trigger.
+      className={
+        appearance === 'field'
+          ? cx('input', styles.field)
+          : cx(styles.trigger, styles[appearance])
+      }
+      aria-label={accessibleName}
+      aria-haspopup="dialog"
+      aria-expanded={isOpen}
+      aria-controls={isOpen ? popupId : undefined}
+      aria-describedby={!isOpen && saveError !== null ? errorId : undefined}
+      aria-keyshortcuts={
+        shortcut !== undefined && shortcut !== '' ? shortcut : undefined
+      }
+      disabled={disabled}
+      data-appearance={appearance}
+      data-pending={pending ? 'true' : undefined}
+      onClick={() => setOpen(!isOpen)}
+      onKeyDown={onTriggerKeyDown}
+    >
+      <span className={styles.face}>{face}</span>
+      {appearance === 'field' ? (
+        <ChevronDown
+          className={styles.fieldChevron}
+          size={14}
+          strokeWidth={1.8}
+          aria-hidden="true"
+        />
+      ) : null}
+    </button>
+  );
+
   return (
     <span
       ref={rootRef}
@@ -1063,48 +1155,20 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
       data-picker=""
       data-open={isOpen ? 'true' : undefined}
     >
-      <span className={styles.triggerRow}>
-        <button
-          ref={triggerRef}
-          id={id}
-          type="button"
-          // A field select is a global .input (TextField's box and ring);
-          // the other appearances draw their own trigger.
-          className={
-            appearance === 'field'
-              ? cx('input', styles.field)
-              : cx(styles.trigger, styles[appearance])
-          }
-          aria-label={accessibleName}
-          aria-haspopup="dialog"
-          aria-expanded={isOpen}
-          aria-controls={isOpen ? popupId : undefined}
-          aria-describedby={!isOpen && saveError !== null ? errorId : undefined}
-          aria-keyshortcuts={
-            shortcut !== undefined && shortcut !== '' ? shortcut : undefined
-          }
-          disabled={disabled}
-          data-appearance={appearance}
-          data-pending={pending ? 'true' : undefined}
-          onClick={() => setOpen(!isOpen)}
-          onKeyDown={onTriggerKeyDown}
-        >
-          <span className={styles.face}>{face}</span>
-          {appearance === 'field' ? (
-            <ChevronDown
-              className={styles.fieldChevron}
-              size={14}
-              strokeWidth={1.8}
-              aria-hidden="true"
-            />
-          ) : null}
-        </button>
-        {pending ? <PendingNote text={labels.saving} /> : null}
-      </span>
-      <SavingAnnouncement
-        pending={pending}
-        text={`${labels.saving} ${label}`}
-      />
+      {appearance === 'mark' ? (
+        triggerButton
+      ) : (
+        <span className={styles.triggerRow}>
+          {triggerButton}
+          {pending ? <PendingNote text={labels.saving} /> : null}
+        </span>
+      )}
+      {announcing ? (
+        <SavingAnnouncement
+          pending={pending}
+          text={`${labels.saving} ${label}`}
+        />
+      ) : null}
       {popup}
       {!isOpen && saveError !== null ? (
         <SaveErrorLine

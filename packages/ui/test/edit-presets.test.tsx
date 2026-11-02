@@ -71,6 +71,29 @@ describe('StatePicker', () => {
     await pick('Done');
     expect(onChange).toHaveBeenCalledWith('s-done');
   });
+
+  test("a state's own mark replaces the state glyph in its row", () => {
+    render(
+      <StatePicker
+        states={[
+          ...STATES.slice(0, 2),
+          {
+            ...STATES[2],
+            mark: { kind: 'node', node: <i data-own-glyph aria-hidden /> },
+          },
+        ]}
+        value="s-todo"
+        onChange={() => undefined}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Status: Todo' }));
+    const done = screen.getByRole('option', { name: 'Done' });
+    expect(done.querySelector('[data-own-glyph]')).not.toBeNull();
+    expect(done.querySelector('[data-kind="completed"]')).toBeNull();
+    // The others keep the state glyph of their kind.
+    const todo = screen.getByRole('option', { name: 'Todo' });
+    expect(todo.querySelector('[data-kind="unstarted"]')).not.toBeNull();
+  });
 });
 
 describe('AssigneePicker', () => {

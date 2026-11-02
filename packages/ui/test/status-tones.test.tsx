@@ -8,10 +8,12 @@ import {
   Chip,
   Notice,
   PriorityGlyph,
+  ProgressPie,
   ProgressRule,
   Register,
   RegisterCell,
   RegisterRow,
+  SectionHeader,
   type SemanticTone,
   Spinner,
   StateGlyph,
@@ -437,6 +439,47 @@ describe('Glyphs', () => {
     for (const svg of view.container.querySelectorAll('svg')) {
       expect(svg.getAttribute('aria-hidden')).toBe('true');
     }
+  });
+});
+
+describe('SectionHeader', () => {
+  test('a status tone is data-tone on the row, its edge and diamond in --tone', () => {
+    for (const tone of SEMANTIC) {
+      const view = render(<SectionHeader name={tone} tone={tone} />);
+      const root = view.container.firstElementChild;
+      expect(root?.getAttribute('data-tone')).toBe(tone);
+      // The diamond is beside the words, never instead of them.
+      expect(root?.querySelector('[data-status]')).not.toBeNull();
+      expect(root?.textContent).toBe(tone);
+      view.unmount();
+    }
+    const sheet = css('tasks/section-header.module.css');
+    expect(rule(sheet, '.root[data-tone]')).toContain(
+      'border-left: 2px solid var(--tone);'
+    );
+    expect(rule(sheet, ".toneMark :global(span[role='img'])")).toBe(
+      'color: var(--tone);'
+    );
+    expect(sheet).not.toContain('--accent');
+  });
+});
+
+describe('ProgressPie', () => {
+  test('a tone is data-tone; the pie takes --tone and the ring --tone-line', () => {
+    for (const tone of SEMANTIC) {
+      const view = render(
+        <ProgressPie done={1} total={2} tone={tone} label="1 of 2 done" />
+      );
+      expect(
+        view.container.querySelector('svg')?.getAttribute('data-tone')
+      ).toBe(tone);
+      view.unmount();
+    }
+    const sheet = css('tasks/task-glyphs.module.css');
+    expect(rule(sheet, '.pie[data-tone] .pieArc')).toBe('stroke: var(--tone);');
+    expect(rule(sheet, '.pie[data-tone] .pieRing')).toBe(
+      'stroke: var(--tone-line);'
+    );
   });
 });
 

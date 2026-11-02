@@ -1,0 +1,109 @@
+/* Gr8r's group header: one row, the sentence-case name in the secondary
+   ink at 12.5px / 500 and its count in tabular figures after it, inside
+   one heading element. No padding of its own: it lines up with the
+   column it heads, and the host pads it where the column does. A tone
+   (data-tone) adds a 2px edge in the hue at the left and the status
+   diamond; the name always says the status too. */
+.root {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 28px;
+}
+
+.root[data-tone] {
+  padding-left: 8px;
+  border-left: 2px solid var(--tone);
+}
+
+.heading {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  line-height: 1.35;
+  color: var(--text-2);
+}
+
+.name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.count {
+  flex: none;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The host's 14px glyph (a state glyph, an avatar). */
+.icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+/* The tone's status diamond, in StatusMark's shape for the tone and the
+   tone's hue (the hook's --tone), so info is blue and accent purple. */
+.toneMark {
+  display: inline-flex;
+  flex: none;
+}
+
+.toneMark :global(span[role='img']) {
+  color: var(--tone);
+}
+
+/* The fold chevron points down while open and right while folded. */
+.toggle {
+  flex: none;
+}
+
+.chevron {
+  flex: none;
+}
+
+.root[data-collapsed='true'] .chevron {
+  transform: rotate(-90deg);
+}
+
+.actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+/* rule: a soft rule under the row. */
+.rule {
+  border-bottom: 1px solid var(--divider);
+}
+
+/* sticky: pinned to the top of its scroller, over the rows under it. */
+.sticky {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .chevron {
+    transition: transform var(--dur) var(--ease);
+  }
+}
+
+/* Forced colours: the edge is a border, so it stays (in the system
+   colour); the diamond keeps its shape in CanvasText. */
+@media (forced-colors: active) {
+  .toneMark :global(span[role='img']) {
+    color: CanvasText;
+  }
+}

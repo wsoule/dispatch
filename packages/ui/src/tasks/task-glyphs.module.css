@@ -58,3 +58,38 @@
 .bangDot {
   fill: var(--on-danger);
 }
+
+/* ProgressPie: the ring in the control edge and the pie in the secondary
+   ink, both 3:1 marks on every surface (the strong border is decoration,
+   about 1.4:1, and would hide an empty pie's ring); a tone (data-tone)
+   takes its tinted line for the ring and its hue for the pie. */
+.pieRing {
+  stroke: var(--control-border);
+}
+
+.pieArc {
+  stroke: var(--text-2);
+}
+
+.pie[data-tone] .pieRing {
+  stroke: var(--tone-line);
+}
+
+.pie[data-tone] .pieArc {
+  stroke: var(--tone);
+}
+
+/* Forced colours: both strokes in the system text colour, so the ring and
+   the drawn part of the pie keep their shapes. */
+@media (forced-colors: active) {
+  .pie {
+    forced-color-adjust: none;
+  }
+
+  .pie .pieRing,
+  .pie .pieArc,
+  .pie[data-tone] .pieRing,
+  .pie[data-tone] .pieArc {
+    stroke: CanvasText;
+  }
+}

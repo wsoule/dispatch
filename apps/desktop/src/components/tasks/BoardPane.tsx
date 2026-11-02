@@ -1,6 +1,12 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
 import { isContainerKind } from '@dispatch-foo/core/browser';
 import {
+  parseCollapsed,
+  readCollapsedRaw,
+  toggleCollapsed,
+  writeCollapsed,
+} from '@dispatch/ui';
+import {
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -18,31 +24,39 @@ import {
   visibleBoardColumns,
   visibleLaneTaskIds,
 } from '../../lib/boardGrouping';
-import {
-  COLLAPSED_LANES_STORAGE_KEY,
-  readCollapsedGroups,
-  toggleCollapsedGroup,
-  writeCollapsedGroups,
-} from '../../lib/collapsedMilestones';
 import { resolveListKeyCommand } from '../../lib/keyboard';
 import { landingStateByTaskId } from '../../lib/landingBadge';
 import { sortTasks } from '../../lib/listGrouping';
 import type { WorkMilestoneOptions } from '../../lib/milestoneSession';
 import { useStatusModelOf } from '../../lib/statusModel';
 import type { TasksDisplayPrefs } from '../../lib/tasksPrefs';
+import styles from './BoardPane.module.css';
 import { DispatchDialog } from './DispatchDialog';
 import { TaskBoard } from './TaskBoard';
 import { liveClaimsFrom } from '@/lib/dispatchPreview';
 
+/**
+ * The board's folded swim lanes, whatever kind they are. Keys are namespaced by lane kind
+ * (`e-…` / `__no-milestone__` for milestone lanes, `assignee:…`, `priority:…`) so a fold on
+ * one sub-grouping never hides a lane of another. The storage key predates the generalized
+ * lanes (it was milestone lanes only), and stays so sessions folded before them survive.
+ */
+const COLLAPSED_LANES_STORAGE_KEY = 'dispatch:board-collapsed-milestones';
 /** Session keys for the columns folded to a strip or hidden from a column's `···` menu —
- * the same "out of my way for now" lifetime as collapsed milestone lanes. */
+ * the same "out of my way for now" lifetime as collapsed lanes. */
 const COLLAPSED_COLUMNS_STORAGE_KEY = 'dispatch:board-collapsed-columns';
 const HIDDEN_COLUMNS_STORAGE_KEY = 'dispatch:board-hidden-columns';
 
-// Reads a session-scoped collapsed set without touching storage during SSR/tests that
-// stub `window` away.
+/**
+ * Reads one of the board's session-scoped sets (folded lanes, collapsed or hidden columns)
+ * through the library's fold storage, without touching storage during SSR or tests that stub
+ * `window` away. Session-scoped on purpose: folding is a "get this out of my way for now"
+ * gesture, so it survives a view switch but not a restart. A corrupt value reads as empty.
+ */
 function readSessionSet(key: string): Set<string> {
-  return typeof window === 'undefined' ? new Set() : readCollapsedGroups(key);
+  return typeof window === 'undefined'
+    ? new Set()
+    : parseCollapsed(readCollapsedRaw(key, 'session'));
 }
 
 interface BoardPaneProps {
@@ -93,15 +107,15 @@ export function BoardPane({
   } | null>(null);
 
   useEffect(() => {
-    writeCollapsedGroups(COLLAPSED_LANES_STORAGE_KEY, collapsedLaneKeys);
+    writeCollapsed(COLLAPSED_LANES_STORAGE_KEY, 'session', collapsedLaneKeys);
   }, [collapsedLaneKeys]);
 
   useEffect(() => {
-    writeCollapsedGroups(COLLAPSED_COLUMNS_STORAGE_KEY, collapsedColumns);
+    writeCollapsed(COLLAPSED_COLUMNS_STORAGE_KEY, 'session', collapsedColumns);
   }, [collapsedColumns]);
 
   useEffect(() => {
-    writeCollapsedGroups(HIDDEN_COLUMNS_STORAGE_KEY, hiddenColumns);
+    writeCollapsed(HIDDEN_COLUMNS_STORAGE_KEY, 'session', hiddenColumns);
   }, [hiddenColumns]);
 
   const laneBy = display.subGrouping;
@@ -302,18 +316,18 @@ export function BoardPane({
           remain the real roving-focus targets once `focusedTaskId` moves onto one of them. */}
       <div
         data-testid="board-pane"
-        className="min-h-0 flex-1 px-4 py-3 outline-none"
+        className={styles.track}
         tabIndex={0}
         onKeyDown={handleBoardKeyDown}
       >
         <TaskBoard
           collapsedLaneKeys={collapsedLaneKeys}
           onToggleLane={(key) =>
-            setCollapsedLaneKeys((prev) => toggleCollapsedGroup(prev, key))
+            setCollapsedLaneKeys((prev) => toggleCollapsed(prev, key))
           }
           collapsedColumns={collapsedColumns}
           onToggleColumnCollapsed={(status) =>
-            setCollapsedColumns((prev) => toggleCollapsedGroup(prev, status))
+            setCollapsedColumns((prev) => toggleCollapsed(prev, status))
           }
           onHideColumn={(status) =>
             setHiddenColumns((prev) => new Set([...prev, status]))

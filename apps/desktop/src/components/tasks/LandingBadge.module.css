@@ -1,0 +1,14 @@
+/* The inline Landing badge on a Flight Plan node's header line: the plane
+   glyph and the word in the info tone's ink (data-tone="info"). The pill
+   variant is the library Chip and has no styles here. */
+
+.inline {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  color: var(--tone-ink);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 16px;
+}

@@ -1,0 +1,183 @@
+/* The Kanban board (components/tasks/TaskBoard.tsx) on Gr8r: status
+   columns 348px wide (12px padding either side, so the 322px card sits
+   on the 324px inner width) straight on the page's --bg, one sticky 44px
+   column-header row, swim lanes whose headers pin to the left edge, and
+   cards stacked 8px apart. Nothing here casts a shadow but the lifted
+   drag copy, which floats. */
+
+/* The one scroller, both ways: every column's row window reads it. */
+.board {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding-bottom: var(--s-2);
+  overflow: auto;
+  background: var(--bg);
+}
+
+/* The column-header row: as wide as the columns, pinned to the top over
+   the cards scrolling under it. */
+.columnHeaderRow {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: flex-start;
+  width: max-content;
+  background: var(--bg);
+}
+
+.column {
+  flex: none;
+  box-sizing: border-box;
+  width: 348px;
+  padding-inline: var(--s-3);
+}
+
+/* A collapsed column: a 44px strip with the glyph, the rotated name and
+   the count. */
+.collapsedColumn {
+  flex: none;
+  box-sizing: border-box;
+  width: 44px;
+  padding-inline: var(--s-1);
+}
+
+.columnHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 44px;
+  min-width: 0;
+}
+
+.columnHeader.collapsedColumn {
+  flex-direction: column;
+  height: auto;
+  padding-top: var(--s-2);
+}
+
+.columnName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+
+/* The strip's name, read top to bottom. */
+.stripName {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+  white-space: nowrap;
+  writing-mode: vertical-rl;
+}
+
+.count {
+  flex: none;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.hiddenColumns {
+  display: flex;
+  align-items: center;
+  height: 44px;
+  padding-inline: var(--s-3);
+}
+
+.laneStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  width: max-content;
+}
+
+/* A lane header pins to the scroller's left edge and is sized to its
+   visible width from script, so the title on the left and the actions on
+   the right stay on screen however far the columns below scroll. */
+.laneHeader {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  box-sizing: border-box;
+  padding: 0 var(--s-3) var(--s-2);
+  background: var(--bg);
+}
+
+.laneColumns {
+  display: flex;
+  align-items: flex-start;
+}
+
+/* One lane+status cell: the droppable list of cards. Empty cells keep a
+   64px drop target. The hover wash is the only drag-over cue. */
+.cell {
+  display: flex;
+  flex-direction: column;
+  min-height: 64px;
+  margin: 0;
+  padding: 0;
+  border-radius: var(--r-lg);
+  list-style: none;
+}
+
+.cell[data-over='true'] {
+  background: var(--surface-2);
+}
+
+.collapsedCell {
+  min-height: 64px;
+}
+
+/* A card's row. The space under the card is padding, inside the box the
+   row window measures. */
+.cardItem {
+  padding-bottom: var(--s-2);
+}
+
+/* The cards a window skips, at their height. */
+.gap {
+  flex: none;
+}
+
+/* A fling's stand-in for a card. */
+.placeholder {
+  box-sizing: border-box;
+  width: 322px;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  opacity: 0.6;
+}
+
+/* The lifted copy under the pointer: the one floating thing. */
+.dragOverlay {
+  width: 322px;
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+  cursor: grabbing;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cell {
+    transition: background-color var(--dur) var(--ease);
+  }
+}
+
+/* Forced colours: the drag-over wash becomes an edge. */
+@media (forced-colors: active) {
+  .cell[data-over='true'] {
+    outline: 1px solid Highlight;
+  }
+}

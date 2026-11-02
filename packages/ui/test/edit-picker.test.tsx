@@ -12,12 +12,15 @@ import path from 'node:path';
 import { useState } from 'react';
 
 import {
+  AssigneePicker,
   type LabelChoice,
   LabelPicker,
   PickerMarkView,
   type PickerOption,
   PickerPopover,
+  PriorityPicker,
   type SaveResult,
+  StatePicker,
   TaskSlideOver,
 } from '../src/index';
 
@@ -1133,6 +1136,255 @@ describe('PickerPopover appearances for lists', () => {
     // A cell trigger takes the cell's voice instead of its own.
     const cell = /^\.cell \{[^}]*\}/m.exec(css)?.[0] ?? '';
     expect(cell).toContain('font: inherit;');
+  });
+});
+
+// appearance="mark": a glyph-only trigger (a board card's properties). It
+// prints no words, so its name carries the value; it opens itself on Enter
+// and Space and keeps those keys from the card around it.
+describe('PickerPopover appearance="mark"', () => {
+  const STATES = [
+    { id: 's-todo', name: 'Todo', kind: 'unstarted' as const },
+    { id: 's-doing', name: 'In Progress', kind: 'started' as const },
+  ];
+
+  test('draws the chosen mark and no text, named "Label: Value"', () => {
+    render(
+      <StatePicker
+        states={STATES}
+        value="s-doing"
+        appearance="mark"
+        onChange={() => undefined}
+      />
+    );
+    const button = screen.getByRole('button', { name: 'Status: In Progress' });
+    expect(button.getAttribute('data-appearance')).toBe('mark');
+    expect(button.textContent).toBe('');
+    expect(button.querySelector('svg[data-kind="started"]')).not.toBeNull();
+  });
+
+  test('triggerLabel names it; a trigger face replaces the mark', () => {
+    render(
+      <>
+        <PriorityPicker
+          value={2}
+          appearance="mark"
+          triggerLabel="Priority of ENG-12: High"
+          onChange={() => undefined}
+        />
+        <PickerPopover
+          label="Labels"
+          multiple
+          options={[{ value: 'bug', label: 'Bug' }]}
+          value={[]}
+          appearance="mark"
+          trigger={<span data-testid="host-face" />}
+          onChange={() => undefined}
+        />
+      </>
+    );
+    const priority = screen.getByRole('button', {
+      name: 'Priority of ENG-12: High',
+    });
+    expect(priority.textContent).toBe('');
+    expect(priority.querySelector('svg[data-priority="2"]')).not.toBeNull();
+    const labels = screen.getByRole('button', { name: /^Labels/ });
+    expect(labels.querySelector('[data-testid="host-face"]')).not.toBeNull();
+  });
+
+  test('nobody is the none mark; several values draw their marks side by side', () => {
+    render(
+      <>
+        <AssigneePicker
+          people={[{ id: 'ana', name: 'Ana Moreno' }]}
+          value={null}
+          appearance="mark"
+          onChange={() => undefined}
+        />
+        <LabelPicker
+          labelOptions={[
+            { id: 'bug', name: 'Bug', color: '#e5484d' },
+            { id: 'ui', name: 'UI', color: '#4ea7fc' },
+          ]}
+          value={['bug', 'ui']}
+          appearance="mark"
+          onChange={() => undefined}
+        />
+      </>
+    );
+    const assignee = screen.getByRole('button', {
+      name: 'Assignee: Unassigned',
+    });
+    expect(assignee.textContent).toBe('');
+    expect(
+      assignee.querySelector('[data-mark="avatar"]')?.getAttribute('data-empty')
+    ).toBe('true');
+    const labels = screen.getByRole('button', { name: 'Labels: Bug, UI' });
+    expect(labels.textContent).toBe('');
+    expect(labels.querySelectorAll('[data-mark="swatch"]').length).toBe(2);
+  });
+
+  test('with nothing to draw it shows the empty ring, still named', () => {
+    render(
+      <PickerPopover
+        label="Estimate"
+        options={[{ value: '1', label: '1 point' }]}
+        value={null}
+        placeholder="No estimate"
+        appearance="mark"
+        onChange={() => undefined}
+      />
+    );
+    const button = screen.getByRole('button', {
+      name: 'Estimate: No estimate',
+    });
+    expect(button.textContent).toBe('');
+    expect(button.querySelector('[aria-hidden="true"]')).not.toBeNull();
+  });
+
+  test('opens on a click, and Escape returns focus to it', () => {
+    render(
+      <StatePicker
+        states={STATES}
+        value="s-todo"
+        appearance="mark"
+        onChange={() => undefined}
+      />
+    );
+    const button = screen.getByRole('button', { name: 'Status: Todo' });
+    fireEvent.click(button);
+    expect(screen.getByRole('dialog', { name: 'Status' })).toBeTruthy();
+    fireEvent.keyDown(combobox(), { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(button);
+  });
+
+  test('at rest it is the root and its button alone; the live region mounts on first open', () => {
+    render(
+      <StatePicker
+        states={STATES}
+        value="s-todo"
+        appearance="mark"
+        onChange={() => undefined}
+      />
+    );
+    const button = screen.getByRole('button', { name: 'Status: Todo' });
+    const root = button.parentElement;
+    // No row around a glyph-only trigger, and no "Saving" region until used:
+    // a board pays for these per card.
+    expect(root?.hasAttribute('data-picker')).toBe(true);
+    expect(root?.children).toHaveLength(1);
+    expect(screen.queryAllByRole('status', { hidden: true })).toHaveLength(0);
+    fireEvent.click(button);
+    fireEvent.keyDown(combobox(), { key: 'Escape' });
+    // Once opened it stays, so a save that outlives the popover is spoken.
+    const region = Array.from(root?.children ?? []).find(
+      (el) => el.getAttribute('role') === 'status'
+    );
+    expect(region).toBeDefined();
+    expect(region?.textContent).toBe('');
+  });
+
+  test('Enter and Space open it and never reach the card around it', () => {
+    const cardKeys = mock((_key: string) => undefined);
+    render(
+      // A board card picks itself up on Space (a keyboard drag) and opens
+      // on Enter; a picker inside it must keep both keys.
+      <div onKeyDown={(event) => cardKeys(event.key)}>
+        <StatePicker
+          states={STATES}
+          value="s-todo"
+          appearance="mark"
+          onChange={() => undefined}
+        />
+      </div>
+    );
+    const button = screen.getByRole('button', { name: 'Status: Todo' });
+    for (const key of ['Enter', ' ']) {
+      const event = new KeyboardEvent('keydown', {
+        key,
+        bubbles: true,
+        cancelable: true,
+      });
+      act(() => {
+        button.dispatchEvent(event);
+      });
+      // The default is prevented, so the button's own click does not
+      // toggle it shut again.
+      expect([key, event.defaultPrevented]).toEqual([key, true]);
+      expect([key, screen.queryByRole('dialog') !== null]).toEqual([key, true]);
+      fireEvent.keyDown(combobox(), { key: 'Escape' });
+      expect(document.activeElement).toBe(button);
+    }
+    expect(cardKeys).not.toHaveBeenCalled();
+  });
+
+  test('another appearance leaves Enter and Space to the button', () => {
+    const cardKeys = mock((_key: string) => undefined);
+    render(
+      <div onKeyDown={(event) => cardKeys(event.key)}>
+        <StatePicker
+          states={STATES}
+          value="s-todo"
+          onChange={() => undefined}
+        />
+      </div>
+    );
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Status: Todo' }), {
+      key: 'Enter',
+    });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(cardKeys).toHaveBeenCalledWith('Enter');
+  });
+
+  test('a pending save dims the face and prints no words beside it', async () => {
+    const save = deferred();
+    render(
+      <StatePicker
+        states={STATES}
+        value="s-todo"
+        appearance="mark"
+        onChange={() => save.promise}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Status: Todo' }));
+    fireEvent.click(screen.getByRole('option', { name: /In Progress/ }));
+    const button = screen.getByRole('button', { name: 'Status: In Progress' });
+    expect(button.getAttribute('data-pending')).toBe('true');
+    expect(
+      button.parentElement?.querySelector('[data-edit-pending]')
+    ).toBeNull();
+    await act(async () => {
+      save.resolve();
+      await save.promise;
+    });
+  });
+
+  test('the module draws a 24px target, the fill, the ring and a forced-colours edge', () => {
+    const css = readFileSync(
+      path.join(
+        import.meta.dir,
+        '..',
+        'src',
+        'edit',
+        'picker-popover.module.css'
+      ),
+      'utf8'
+    ).replace(/\s+/g, ' ');
+    expect(css).toContain(
+      '.mark { justify-content: center; min-width: 24px; min-height: 24px;'
+    );
+    expect(css).toContain('inset: 2px;');
+    expect(css).toContain(
+      ".mark[aria-expanded='true']::before { background: var(--surface-3); }"
+    );
+    expect(css).toContain(
+      '.mark:not(:disabled):hover::before { background: var(--surface-3); }'
+    );
+    expect(css).toContain(
+      '.mark:focus-visible { outline: 2px solid var(--focus-ring);'
+    );
+    expect(css).toContain('.mark::before { border-color: ButtonText; }');
   });
 });
 

@@ -11,6 +11,16 @@ import type {
   RunState,
 } from '@dispatch/client';
 import {
+  Button,
+  cx,
+  Menu,
+  type MenuEntry,
+  type RowSegment,
+  type RowWindowGroup,
+  type RowWindows,
+  useRowWindows,
+} from '@dispatch/ui';
+import {
   DndContext,
   type DragEndEvent,
   DragOverlay,
@@ -65,22 +75,13 @@ import {
   DEFAULT_TASKS_DISPLAY,
   type TasksDisplayPrefs,
 } from '../../lib/tasksPrefs';
-import { nearColumnIndexes, sameColumnIndexes } from '../../lib/virtualRows';
 import { useShellActions } from '../shell/ShellActionsContext';
-import { VirtualRows, type VirtualRowsHandle } from '../virtual/VirtualRows';
+import { nearColumnIndexes, sameColumnIndexes } from './boardWindow';
 import { LaneHeader } from './LaneHeader';
 import { MilestoneLaneHeader } from './MilestoneLaneHeader';
 import { StatusIcon } from './StatusIcon';
+import styles from './TaskBoard.module.css';
 import { TaskCardTile } from './TaskCardTile';
-import { cn } from '@/lib/utils';
-import { IconButton } from '@/ui/ai/icon-button';
-import { PillButton } from '@/ui/ai/pill';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/ui/dropdown-menu';
 
 interface TaskBoardProps {
   /** The cards, already in the order a column shows them (`BoardPane` sorts once with
@@ -175,15 +176,10 @@ const noop = () => {};
 // card new drag listeners, so each board render (a cursor move, a dispatch) redrew them all.
 const POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 6 } };
 
-// Linear's column: 348px including 12px of padding either side, so the 322px card sits on
-// the 324px inner width. Shared by the sticky header row and every lane's columns.
-const COLUMN_CLASS = 'w-[348px] shrink-0 px-3';
-// A collapsed column folds to a 44px strip carrying the glyph, a rotated name and the count.
-const COLLAPSED_COLUMN_CLASS = 'w-11 shrink-0 px-1';
-// A lane header pins to the scroll container's left edge and is sized to its visible width
-// (see `useBoardViewportWidth`), so the title on the left and the actions on the right both
-// stay on-screen however far the column strip below scrolls sideways.
-const LANE_HEADER_CLASS = 'sticky left-0 px-3';
+// The column geometry (348px columns with 12px of padding either side so the 322px card sits
+// on the 324px inner width, the 44px collapsed strip, the sticky lane headers) lives in
+// TaskBoard.module.css.
+const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
 
 // The board's visible width — the scroll container's `clientWidth`, which excludes its own
 // scrollbar — kept current by one `ResizeObserver`. `null` until the observer's first
@@ -202,65 +198,19 @@ function useBoardViewportWidth(board: HTMLDivElement | null) {
   return viewportWidth;
 }
 
-// The sticky column-header row's height (`h-11`): what a scrolled-to card must clear.
-const COLUMN_HEADER_HEIGHT = 44;
 // A card before it is measured — the skeleton's 104px tile.
 const CARD_ESTIMATE = 104;
-// `gap-2` between stacked cards.
+// The space under each card: padding inside its `<li>`, so the height `useRowWindows`
+// measures (the li's border box) includes it.
 const CARD_GAP = 8;
-// Cards past the viewport kept mounted per side — a card is three list rows tall, so a
-// few cover a flick without mounting a second screenful per column.
-const CARD_OVERSCAN = 3;
-
-const cardHeight = () => CARD_ESTIMATE;
-const cardKey = (doc: TaskListItem) => doc.meta.id;
-
-/**
- * Where each lane's columns start inside the board's scrolled content, by lane key — the
- * `scrollMargin` its virtual columns window against, since every column shares the board's
- * one vertical scroller. Re-measured whenever the lanes' stack changes height (a lane
- * folding, a card measuring taller than its estimate), which is the only thing that moves
- * a lane below it.
- */
-function useLaneOffsets(
-  board: HTMLDivElement | null,
-  stack: HTMLDivElement | null,
-  laneSignature: string
-): ReadonlyMap<string, number> {
-  const [offsets, setOffsets] = useState<ReadonlyMap<string, number>>(
-    () => new Map()
-  );
-  useLayoutEffect(() => {
-    if (board === null || stack === null) return;
-    const measure = () => {
-      const contentTop = board.getBoundingClientRect().top - board.scrollTop;
-      const next = new Map<string, number>();
-      for (const row of Array.from(
-        stack.querySelectorAll<HTMLElement>('[data-lane-columns]')
-      )) {
-        next.set(
-          row.dataset.laneColumns ?? '',
-          Math.round(row.getBoundingClientRect().top - contentTop)
-        );
-      }
-      setOffsets((prev) => (sameOffsets(prev, next) ? prev : next));
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(stack);
-    return () => observer.disconnect();
-  }, [board, stack, laneSignature]);
-  return offsets;
-}
-
-function sameOffsets(
-  a: ReadonlyMap<string, number>,
-  b: ReadonlyMap<string, number>
-): boolean {
-  if (a.size !== b.size) return false;
-  for (const [key, value] of a) if (b.get(key) !== value) return false;
-  return true;
-}
+// What one card's row takes before any is measured: the card plus the space under it.
+const ROW_ESTIMATE = CARD_ESTIMATE + CARD_GAP;
+// Cards kept mounted past each edge of the board's viewport. The library default (8) is
+// sized for 55px list rows and would keep about 1,100px of ~138px cards on each side of
+// every column. Two is enough (VirtualRows kept three): a scroll renders its new cards
+// inside the scroll event (`flushOnScroll`), so the overscan is not what keeps a column
+// from painting blank, and the 2,000-task board stays under VirtualRows' DOM size.
+const CARD_OVERSCAN = 2;
 
 // How far past each side of the board's visible width a column still counts as near, as a
 // share of that width: a column's cards mount this far before it scrolls into view.
@@ -268,10 +218,10 @@ const NEAR_COLUMN_MARGIN = 0.5;
 
 /**
  * The board's columns near its horizontal viewport, by index (`nearColumnIndexes`). A column
- * off to the side keeps its virtual track (its height, its pinned cards) but mounts no cards,
- * so a vertical scroll mounts cards only in the columns in and beside the window (five of
- * seven on a 1440px window). A column comes near in a transition, so a sideways scroll
- * mounts its cards without holding up a frame.
+ * off to the side is an `offscreen` row-window group: it keeps its height and its pinned
+ * cards but mounts no others, so a vertical scroll mounts cards only in the columns in and
+ * beside the window (five of seven on a 1440px window). A column comes near in a
+ * transition, so a sideways scroll mounts its cards without holding up a frame.
  */
 function useNearColumns(
   board: HTMLDivElement | null,
@@ -348,7 +298,7 @@ function CardPlaceholder({ height }: { height: number }) {
     <div
       aria-hidden
       data-slot="task-card-placeholder"
-      className="bg-surface-quaternary rounded-card shadow-card w-[322px] max-w-full opacity-60"
+      className={styles.placeholder}
       style={{ height }}
     />
   );
@@ -357,8 +307,9 @@ function CardPlaceholder({ height }: { height: number }) {
 /**
  * A card that mounts as a placeholder while the board flings and turns real once the fling
  * settles, in a transition so a new fling can interrupt it. A card that mounted real stays
- * real, and the cursor's or the dragged card (`eager`) never waits. Real cards record their
- * height so a placeholder for one seen before keeps its size.
+ * real, and the cursor's or the dragged card (`eager`) never waits. A real card records its
+ * height (`DraggableCard`, on its own node: no wrapper element per card) so a placeholder
+ * for one seen before keeps its size.
  */
 function LazyCard({
   id,
@@ -384,93 +335,10 @@ function LazyCard({
     }
     return fling.onSettle(fill);
   }, [show, fling]);
-  const record = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (node !== null) heights.set(id, node.offsetHeight);
-    },
-    [heights, id]
-  );
   if (!show) {
     return <CardPlaceholder height={heights.get(id) ?? CARD_ESTIMATE} />;
   }
-  return <div ref={record}>{children}</div>;
-}
-
-/**
- * One lane+status cell's cards, virtualized against the board's shared scroller: only the
- * cards near the viewport mount, each measured for its real height. The dragged card and
- * the j/k cursor's card are pinned so they never unmount — dnd-kit drops a drag whose
- * source node goes away — and a keyboard move scrolls the focused card into view here,
- * where its index is known, so it mounts and takes DOM focus. Cards entering during a
- * fling mount as placeholders (`LazyCard`).
- */
-function VirtualColumn({
-  id,
-  tasks,
-  scrollElement,
-  scrollMargin,
-  offscreen,
-  activeTaskId,
-  focusedTaskId,
-  fling,
-  heights,
-  renderCard,
-}: {
-  id: string;
-  tasks: readonly TaskListItem[];
-  scrollElement: HTMLDivElement | null;
-  scrollMargin: number;
-  /** Scrolled off to the side: no cards mount but the pinned ones. */
-  offscreen: boolean;
-  activeTaskId: string | null;
-  focusedTaskId: string | null;
-  fling: FlingTracker;
-  heights: Map<string, number>;
-  renderCard: (doc: TaskListItem) => ReactNode;
-}) {
-  const handle = useRef<VirtualRowsHandle>(null);
-  const pinnedKeys = useMemo(
-    () =>
-      [activeTaskId, focusedTaskId].filter(
-        (key): key is string => key !== null
-      ),
-    [activeTaskId, focusedTaskId]
-  );
-  // A key this column does not hold is a no-op in `scrollToKey`.
-  useEffect(() => {
-    if (focusedTaskId !== null) handle.current?.scrollToKey(focusedTaskId);
-  }, [focusedTaskId]);
-  const renderLazyCard = (doc: TaskListItem) => (
-    <LazyCard
-      id={doc.meta.id}
-      fling={fling}
-      eager={pinnedKeys.includes(doc.meta.id)}
-      heights={heights}
-    >
-      {renderCard(doc)}
-    </LazyCard>
-  );
-  return (
-    <DroppableColumn id={id}>
-      <VirtualRows
-        rows={tasks}
-        rowKey={cardKey}
-        estimateSize={cardHeight}
-        measure
-        gap={CARD_GAP}
-        overscan={CARD_OVERSCAN}
-        scrollElement={scrollElement}
-        scrollMargin={scrollMargin}
-        scrollPaddingStart={COLUMN_HEADER_HEIGHT}
-        pinnedKeys={pinnedKeys}
-        // Every column rides the board's one scroller: one commit per scroll, not one each.
-        sharedScroller
-        offscreen={offscreen}
-        handleRef={handle}
-        renderRow={renderLazyCard}
-      />
-    </DroppableColumn>
-  );
+  return children;
 }
 
 // A card's draggable id doubles as its task id — plain `useDraggable`, not `useSortable`,
@@ -480,11 +348,14 @@ function VirtualColumn({
 function DraggableCard({
   id,
   disabled = false,
+  heights,
   children,
 }: {
   id: string;
   /** True for an archived card — `useDraggable`'s own `disabled`, so it never lifts. */
   disabled?: boolean;
+  /** Each card's last measured height by task id: this card's goes in when it mounts. */
+  heights: Map<string, number>;
   children: (drag: {
     setNodeRef: (node: HTMLElement | null) => void;
     style: React.CSSProperties | undefined;
@@ -495,10 +366,18 @@ function DraggableCard({
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({ id, disabled });
+  // The card's node goes to dnd-kit and its height to the fling placeholders.
+  const setCardNode = useCallback(
+    (node: HTMLElement | null) => {
+      setNodeRef(node);
+      if (node !== null) heights.set(id, node.offsetHeight);
+    },
+    [setNodeRef, heights, id]
+  );
   // Memoized so an idle card's `drag` prop keeps its identity and the memo'd tile skips.
   const drag = useMemo(
     () => ({
-      setNodeRef,
+      setNodeRef: setCardNode,
       style: transform
         ? { transform: CSS.Translate.toString(transform) }
         : undefined,
@@ -506,48 +385,97 @@ function DraggableCard({
       listeners,
       isDragging,
     }),
-    [setNodeRef, transform, attributes, listeners, isDragging]
+    [setCardNode, transform, attributes, listeners, isDragging]
   );
   return children(drag);
 }
 
-// A draggable card as one memoized unit, so a scroll that re-renders its column skips every
+// A draggable card as one memoized unit, so a scroll that re-renders the board skips every
 // card whose props did not change (the tile alone is memoized, not its drag wrapper).
 const BoardCard = memo(function BoardCard({
   disabled,
+  heights,
   ...tile
-}: Omit<ComponentProps<typeof TaskCardTile>, 'drag'> & { disabled: boolean }) {
+}: Omit<ComponentProps<typeof TaskCardTile>, 'drag'> & {
+  disabled: boolean;
+  heights: Map<string, number>;
+}) {
   return (
-    <DraggableCard id={tile.doc.meta.id} disabled={disabled}>
+    <DraggableCard id={tile.doc.meta.id} disabled={disabled} heights={heights}>
       {(drag) => <TaskCardTile {...tile} drag={drag} />}
     </DraggableCard>
   );
 });
 
-// One lane+status cell's card stack, droppable by the composite id `dropZoneId` builds (never
-// the bare status — see that helper for why). No background and no ring: the only drag-over
-// cue is the panel's hover wash.
-function DroppableColumn({
+/**
+ * One lane+status cell's card list, droppable by the composite id `dropZoneId` builds (never
+ * the bare status — see that helper for why) and registered with the board's one
+ * `useRowWindows` under the same id. Only the cards its window holds mount, each in an
+ * `<li data-row-id>` whose padding is the space under the card (so the measured height
+ * includes it); the cards it skips stand as spacer items of their height. No background and
+ * no ring: the only drag-over cue is the hover wash.
+ */
+const BoardCell = memo(function BoardCell({
   id,
-  children,
+  tasks,
+  segments,
+  registerList,
+  parentLane,
+  renderCard,
 }: {
   id: string;
-  children: React.ReactNode;
+  tasks: readonly TaskListItem[];
+  /** The cell's window; `null` mounts every card (windowing off). The same array while the
+   * window stands, so a scroll redraws only the cells it moved (the cell is memoized). */
+  segments: RowSegment[] | null;
+  registerList: RowWindows['registerList'];
+  /** True in a milestone lane, whose heading already names the milestone (no crumb). */
+  parentLane: boolean;
+  renderCard: (doc: TaskListItem, parentLane: boolean) => ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id });
+  const ref = useCallback(
+    (el: HTMLUListElement | null) => {
+      setNodeRef(el);
+      registerList(id, el);
+    },
+    [setNodeRef, registerList, id]
+  );
+  const drawCard = (doc: TaskListItem) => (
+    <li key={doc.meta.id} data-row-id={doc.meta.id} className={styles.cardItem}>
+      {renderCard(doc, parentLane)}
+    </li>
+  );
   return (
-    <div
-      ref={setNodeRef}
+    <ul
+      ref={ref}
       data-over={isOver}
       data-slot="board-column"
-      className="rounded-card data-[over=true]:bg-surface-hover flex min-h-16 flex-1 flex-col gap-2 transition-colors duration-100"
+      className={styles.cell}
     >
-      {children}
-    </div>
+      {segments === null
+        ? tasks.map(drawCard)
+        : segments.flatMap((segment) =>
+            segment.kind === 'gap'
+              ? [
+                  // The cards not mounted: their height, so the scroll range and every
+                  // mounted card's place are as if they were.
+                  <li
+                    key={`gap-${segment.start}`}
+                    role="presentation"
+                    aria-hidden="true"
+                    className={styles.gap}
+                    style={{ height: segment.px }}
+                  />,
+                ]
+              : tasks.slice(segment.start, segment.end).map(drawCard)
+          )}
+    </ul>
   );
-}
+});
 
-// A column's 44px header: 14px glyph, 12px muted name, plain count, then `···` and `+`.
+// A column's 44px header: 14px glyph, the name in the secondary ink, plain count, then the
+// options menu and `+`.
 function ColumnHeader({
   status,
   count,
@@ -572,70 +500,74 @@ function ColumnHeader({
     return (
       <div
         data-slot="board-column-header"
-        data-collapsed
-        className={cn(
-          'flex flex-col items-center gap-2 pt-2',
-          COLLAPSED_COLUMN_CLASS
-        )}
+        data-collapsed="true"
+        className={cx(styles.columnHeader, styles.collapsedColumn)}
       >
-        <IconButton
-          label={`Expand ${label} column`}
+        <Button
+          variant="quiet"
+          size="sm"
+          aria-label={`Expand ${label} column`}
           onClick={onToggleCollapsed}
-        >
-          <StatusIcon status={status} />
-        </IconButton>
-        <span className="text-muted-foreground text-[12px] font-medium whitespace-nowrap [writing-mode:vertical-rl]">
-          {label}
-        </span>
-        <span className="font-book text-muted-foreground text-[13px] tabular-nums">
-          {count}
-        </span>
+          icon={<StatusIcon status={status} />}
+        />
+        <span className={styles.stripName}>{label}</span>
+        <span className={styles.count}>{count}</span>
       </div>
     );
   }
+  const items: MenuEntry[] = [
+    {
+      id: 'collapse',
+      label: 'Collapse column',
+      icon: <ChevronsRightLeft {...ICON} />,
+      disabled: onToggleCollapsed === undefined,
+      onSelect: () => onToggleCollapsed?.(),
+    },
+    {
+      id: 'hide',
+      label: 'Hide column',
+      icon: <EyeOff {...ICON} />,
+      disabled: onHide === undefined,
+      onSelect: () => onHide?.(),
+    },
+    {
+      id: 'dispatch-all',
+      label: `Dispatch all ready${readyCount > 0 ? ` (${readyCount})` : ''}`,
+      icon: <Play {...ICON} />,
+      disabled: onDispatchAll === undefined || readyCount === 0,
+      onSelect: () => onDispatchAll?.(),
+    },
+  ];
   return (
     <div
       data-slot="board-column-header"
-      className={cn('flex h-11 items-center gap-2', COLUMN_CLASS)}
+      className={cx(styles.columnHeader, styles.column)}
     >
       <StatusIcon status={status} />
-      <span className="text-muted-foreground min-w-0 truncate text-[12px] font-medium">
-        {label}
-      </span>
-      <span className="font-book text-muted-foreground text-[13px] tabular-nums">
-        {count}
-      </span>
-      <span className="flex-1" />
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={<IconButton label={`${label} column options`} />}
-        >
-          <Ellipsis aria-hidden />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-[180px]">
-          <DropdownMenuItem
-            disabled={onToggleCollapsed === undefined}
-            onClick={onToggleCollapsed}
-          >
-            <ChevronsRightLeft />
-            Collapse column
-          </DropdownMenuItem>
-          <DropdownMenuItem disabled={onHide === undefined} onClick={onHide}>
-            <EyeOff />
-            Hide column
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            disabled={onDispatchAll === undefined || readyCount === 0}
-            onClick={onDispatchAll}
-          >
-            <Play />
-            Dispatch all ready{readyCount > 0 ? ` (${readyCount})` : ''}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <IconButton label={`New task in ${status}`} onClick={onAdd}>
-        <Plus aria-hidden />
-      </IconButton>
+      <span className={styles.columnName}>{label}</span>
+      <span className={styles.count}>{count}</span>
+      <span className={styles.spacer} />
+      <Menu
+        label={`${label} column`}
+        items={items}
+        align="end"
+        trigger={(props) => (
+          <Button
+            {...props}
+            variant="quiet"
+            size="sm"
+            aria-label={`${label} column options`}
+            icon={<Ellipsis {...ICON} />}
+          />
+        )}
+      />
+      <Button
+        variant="quiet"
+        size="sm"
+        aria-label={`New task in ${status}`}
+        onClick={onAdd}
+        icon={<Plus {...ICON} />}
+      />
     </div>
   );
 }
@@ -695,9 +627,16 @@ export function TaskBoard({
   const activeModel = useActiveStatusModel();
   const model = statusModel ?? activeModel;
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
-  // The scroller and the lanes' stack as state: the virtual columns need the scroller
-  // once it exists, and the lane offsets are measured off both.
+  // The scroller as a ref (the row windows read it from their first layout effect) and as
+  // state (the width, fling and near-column hooks subscribe once it exists); the lanes'
+  // stack as state, for the near-column spans.
+  const boardRef = useRef<HTMLDivElement | null>(null);
   const [board, setBoard] = useState<HTMLDivElement | null>(null);
+  const attachBoard = useCallback((node: HTMLDivElement | null) => {
+    boardRef.current = node;
+    setBoard(node);
+  }, []);
+  const columnHeadRef = useRef<HTMLDivElement | null>(null);
   const [laneStack, setLaneStack] = useState<HTMLDivElement | null>(null);
   const viewportWidth = useBoardViewportWidth(board);
   const fling = useBoardFling(board);
@@ -714,11 +653,6 @@ export function TaskBoard({
   const statusCounts = useMemo(
     () => countLaneStatuses(lanes, statuses),
     [lanes, statuses]
-  );
-  const laneOffsets = useLaneOffsets(
-    board,
-    laneStack,
-    lanes.map((lane) => lane.key).join('\0')
   );
   const nearColumns = useNearColumns(
     board,
@@ -788,6 +722,82 @@ export function TaskBoard({
     return map;
   }, [tasks]);
 
+  // ---- row windows ------------------------------------------------------
+  // One `useRowWindows` for the whole board: every shown lane+status cell is a group (its
+  // droppable id, its cards' ids), so one measurement pass on the board's one scroller
+  // windows every column at once. A column scrolled away sideways is `offscreen`.
+  const windowGroups = useMemo<RowWindowGroup[]>(() => {
+    const groups: RowWindowGroup[] = [];
+    lanes.forEach((lane, laneIndex) => {
+      if (lane.kind !== 'none' && collapsedLaneKeys.has(lane.key)) return;
+      lane.columns.forEach(({ status, tasks: laneTasks }, index) => {
+        if (collapsedColumns.has(status)) return;
+        groups.push({
+          id: dropZoneId(laneIndex, status),
+          rowIds: laneTasks.map((doc) => doc.meta.id),
+          offscreen: nearColumns !== null && !nearColumns.has(index),
+        });
+      });
+    });
+    return groups;
+  }, [lanes, collapsedLaneKeys, collapsedColumns, nearColumns]);
+  // Each shown card's cell and place in it, for revealing the cursor's card.
+  const cellOfTask = useMemo(() => {
+    const map = new Map<string, { groupId: string; index: number }>();
+    for (const group of windowGroups) {
+      group.rowIds.forEach((id, index) => {
+        map.set(id, { groupId: group.id, index });
+      });
+    }
+    return map;
+  }, [windowGroups]);
+  // The card in hand stays mounted however far the board scrolls: dnd-kit drops a drag
+  // whose source node goes away.
+  const dragging = useMemo<ReadonlySet<string>>(
+    () => (activeTaskId === null ? NO_IDS : new Set([activeTaskId])),
+    [activeTaskId]
+  );
+  const scrollParent = useCallback(() => boardRef.current, []);
+  const rowWindows = useRowWindows({
+    rootRef: boardRef,
+    headRef: columnHeadRef,
+    enabled: true,
+    scrollParent,
+    groups: windowGroups,
+    dragging,
+    estimate: ROW_ESTIMATE,
+    overscan: CARD_OVERSCAN,
+    // VirtualRows' guarantee: a scroll renders every column's new cards in one commit
+    // inside the scroll event, so the frame it paints never shows a column short of cards.
+    flushOnScroll: true,
+  });
+
+  // The j/k cursor's card: kept mounted while the board scrolls away from it, and brought
+  // into view (under the sticky column header) when the cursor moves, mounting it first if
+  // its window does not hold it. A mounted `TaskCardTile` takes DOM focus itself from its
+  // `focused` prop. Only a cursor move reveals: the cells and the windows (whose identity
+  // changes on every scroll) are read from a ref, so a scroll or a refresh never drags the
+  // board back to the cursor.
+  const revealing = useRef({ cellOfTask, rowWindows });
+  useLayoutEffect(() => {
+    revealing.current = { cellOfTask, rowWindows };
+  });
+  useLayoutEffect(() => {
+    const { cellOfTask: cells, rowWindows: windows } = revealing.current;
+    windows.setFocusedRow(focusedTaskId);
+    if (focusedTaskId === null) return;
+    const cell = cells.get(focusedTaskId);
+    if (cell === undefined) return;
+    const mounted = boardRef.current?.querySelector<HTMLElement>(
+      `li[data-row-id="${escapeAttribute(focusedTaskId)}"]`
+    );
+    if (mounted !== null && mounted !== undefined) {
+      windows.revealElement(mounted);
+    } else {
+      windows.revealRow(cell.groupId, cell.index);
+    }
+  }, [focusedTaskId]);
+
   const sensors = useSensors(
     useSensor(PointerSensor, POINTER_SENSOR_OPTIONS),
     useSensor(KeyboardSensor)
@@ -809,17 +819,239 @@ export function TaskBoard({
     void onMoveStatus(taskId, targetStatus);
   }
 
-  function dispatchAll(status: string) {
-    if (onDispatch === undefined) return;
-    for (const id of readyByStatus.get(status) ?? []) void onDispatch(id);
-  }
-
   const activeDoc =
     activeTaskId !== null ? taskById.get(activeTaskId) : undefined;
-  const columnClass = (status: string) =>
-    collapsedColumns.has(status) ? COLLAPSED_COLUMN_CLASS : COLUMN_CLASS;
-  const laneHeaderStyle =
-    viewportWidth !== null ? { width: viewportWidth } : undefined;
+  const laneHeaderStyle = useMemo(
+    () => (viewportWidth !== null ? { width: viewportWidth } : undefined),
+    [viewportWidth]
+  );
+
+  // The header row and the lane headers as memoized elements: a scroll that moves a window
+  // re-renders the board, and an unchanged element is skipped outright, so neither the
+  // column menus nor a milestone lane's fan-out controls redraw on a scroll.
+  const columnHeaderRow = useMemo(
+    () => (
+      // One column header row for the whole board rather than a set per lane: the lanes
+      // already repeat the same statuses in the same order, and a header that sticks to the
+      // top stays useful however far down the milestones you scroll.
+      <div ref={columnHeadRef} className={styles.columnHeaderRow}>
+        {statuses.map((status) => (
+          <ColumnHeader
+            key={status}
+            status={status}
+            count={statusCounts.get(status) ?? 0}
+            readyCount={readyByStatus.get(status)?.length ?? 0}
+            collapsed={collapsedColumns.has(status)}
+            onToggleCollapsed={
+              onToggleColumnCollapsed !== undefined
+                ? () => onToggleColumnCollapsed(status)
+                : undefined
+            }
+            onHide={
+              onHideColumn !== undefined
+                ? () => onHideColumn(status)
+                : undefined
+            }
+            onDispatchAll={
+              onDispatch !== undefined
+                ? () => {
+                    for (const id of readyByStatus.get(status) ?? []) {
+                      void onDispatch(id);
+                    }
+                  }
+                : undefined
+            }
+            onAdd={() => shell.openCreateTask({ status })}
+          />
+        ))}
+        {hiddenColumnCount > 0 && onShowHiddenColumns !== undefined && (
+          <div className={styles.hiddenColumns}>
+            <Button
+              variant="quiet"
+              size="sm"
+              title="Show hidden columns"
+              onClick={onShowHiddenColumns}
+              icon={<ChevronsLeftRight {...ICON} />}
+            >
+              {hiddenColumnCount} hidden{' '}
+              {hiddenColumnCount === 1 ? 'column' : 'columns'}
+            </Button>
+          </div>
+        )}
+      </div>
+    ),
+    [
+      statuses,
+      statusCounts,
+      readyByStatus,
+      collapsedColumns,
+      onToggleColumnCollapsed,
+      onHideColumn,
+      onDispatch,
+      shell,
+      hiddenColumnCount,
+      onShowHiddenColumns,
+    ]
+  );
+
+  const laneHeaders = useMemo(() => {
+    const map = new Map<string, ReactNode>();
+    for (const lane of lanes) {
+      const key = lane.key;
+      const expanded = lane.kind === 'none' || !collapsedLaneKeys.has(key);
+      if (lane.kind === 'parent') {
+        const milestone =
+          lane.milestoneId !== null
+            ? (milestoneById.get(lane.milestoneId) ?? null)
+            : null;
+        map.set(
+          key,
+          <div
+            data-slot="board-lane-header"
+            className={styles.laneHeader}
+            style={laneHeaderStyle}
+          >
+            <MilestoneLaneHeader
+              milestone={milestone}
+              title={lane.title}
+              total={lane.total}
+              expanded={expanded}
+              onToggle={() => onToggleLane(key)}
+              progress={
+                milestone !== null
+                  ? milestoneProgressById.get(milestone.meta.id)
+                  : undefined
+              }
+              concurrencyDefault={milestoneConcurrencyDefault}
+              childTasks={
+                milestone !== null
+                  ? (childrenByMilestoneId.get(milestone.meta.id) ?? [])
+                  : []
+              }
+              model={model}
+              onOpenTask={onSelect}
+              onWork={onWorkMilestone}
+              onRequestWork={onRequestWorkMilestone}
+              onPause={onPauseMilestone}
+              onResume={onResumeMilestone}
+              onRaiseCeiling={onRaiseCeilingMilestone}
+              onStop={onStopMilestone}
+              onLand={onLandMilestone}
+              onAdd={() =>
+                shell.openCreateTask(
+                  milestone !== null
+                    ? { milestone: milestone.meta.id }
+                    : undefined
+                )
+              }
+            />
+          </div>
+        );
+      } else if (lane.kind === 'assignee' || lane.kind === 'priority') {
+        map.set(
+          key,
+          <div
+            data-slot="board-lane-header"
+            className={styles.laneHeader}
+            style={laneHeaderStyle}
+          >
+            <LaneHeader
+              lane={lane}
+              expanded={expanded}
+              onToggle={() => onToggleLane(key)}
+            />
+          </div>
+        );
+      }
+    }
+    return map;
+  }, [
+    lanes,
+    collapsedLaneKeys,
+    milestoneById,
+    laneHeaderStyle,
+    onToggleLane,
+    milestoneProgressById,
+    milestoneConcurrencyDefault,
+    childrenByMilestoneId,
+    model,
+    onSelect,
+    onWorkMilestone,
+    onRequestWorkMilestone,
+    onPauseMilestone,
+    onResumeMilestone,
+    onRaiseCeilingMilestone,
+    onStopMilestone,
+    onLandMilestone,
+    shell,
+  ]);
+
+  // One card of a cell, as a stable function: it changes only with the data a card shows
+  // (never on a scroll), so the memoized cells a scroll did not move skip their render.
+  const renderCard = useCallback(
+    (doc: TaskListItem, parentLane: boolean) => (
+      <LazyCard
+        id={doc.meta.id}
+        fling={fling}
+        eager={doc.meta.id === activeTaskId || doc.meta.id === focusedTaskId}
+        heights={cardHeights}
+      >
+        <BoardCard
+          doc={doc}
+          heights={cardHeights}
+          disabled={archivedTaskIds.has(doc.meta.id)}
+          ready={readyIds.has(doc.meta.id)}
+          blocked={blockedIds.has(doc.meta.id)}
+          liveRunState={liveRunStateByTaskId.get(doc.meta.id)}
+          run={latestRunByTaskId.get(doc.meta.id)}
+          readiness={readinessById?.get(doc.meta.id)}
+          // Milestone lanes: the lane heading already names the milestone, so the card
+          // skips the crumb. Every other board: the crumb is how a card keeps its milestone.
+          milestoneTitle={
+            parentLane || doc.meta.parent === null
+              ? undefined
+              : (milestoneById.get(doc.meta.parent)?.meta.title ??
+                doc.meta.parent)
+          }
+          statuses={statuses}
+          properties={display.properties}
+          labelCatalogue={labelCatalogue}
+          onStatusChange={moveCardStatus}
+          onEditTask={editCard}
+          onClick={onSelect}
+          onDispatch={readyIds.has(doc.meta.id) ? onDispatch : undefined}
+          focused={doc.meta.id === focusedTaskId}
+          onFocus={onCardFocus}
+          archived={archivedTaskIds.has(doc.meta.id)}
+          needsAttention={attentionByTaskId?.has(doc.meta.id) === true}
+          landing={landingByTaskId?.get(doc.meta.id)}
+        />
+      </LazyCard>
+    ),
+    [
+      fling,
+      activeTaskId,
+      focusedTaskId,
+      cardHeights,
+      archivedTaskIds,
+      readyIds,
+      blockedIds,
+      liveRunStateByTaskId,
+      latestRunByTaskId,
+      readinessById,
+      milestoneById,
+      statuses,
+      display.properties,
+      labelCatalogue,
+      moveCardStatus,
+      editCard,
+      onSelect,
+      onDispatch,
+      onCardFocus,
+      attentionByTaskId,
+      landingByTaskId,
+    ]
+  );
 
   return (
     <DndContext
@@ -829,183 +1061,45 @@ export function TaskBoard({
       onDragEnd={handleDragEnd}
       onDragCancel={() => setActiveTaskId(null)}
     >
-      <div
-        ref={setBoard}
-        data-slot="task-board"
-        className="flex h-full min-h-0 flex-col overflow-auto pb-2"
-      >
-        {/* One column header row for the whole board rather than a set per lane: the lanes
-            already repeat the same statuses in the same order, and a header that sticks to
-            the top stays useful however far down the milestones you scroll. */}
-        <div className="bg-background sticky top-0 z-10 flex w-max items-start">
-          {statuses.map((status) => (
-            <ColumnHeader
-              key={status}
-              status={status}
-              count={statusCounts.get(status) ?? 0}
-              readyCount={readyByStatus.get(status)?.length ?? 0}
-              collapsed={collapsedColumns.has(status)}
-              onToggleCollapsed={
-                onToggleColumnCollapsed !== undefined
-                  ? () => onToggleColumnCollapsed(status)
-                  : undefined
-              }
-              onHide={
-                onHideColumn !== undefined
-                  ? () => onHideColumn(status)
-                  : undefined
-              }
-              onDispatchAll={
-                onDispatch !== undefined ? () => dispatchAll(status) : undefined
-              }
-              onAdd={() => shell.openCreateTask({ status })}
-            />
-          ))}
-          {hiddenColumnCount > 0 && onShowHiddenColumns !== undefined && (
-            <div className="flex h-11 items-center px-3">
-              <PillButton onClick={onShowHiddenColumns}>
-                <ChevronsLeftRight />
-                {hiddenColumnCount} hidden{' '}
-                {hiddenColumnCount === 1 ? 'column' : 'columns'}
-              </PillButton>
-            </div>
-          )}
-        </div>
+      <div ref={attachBoard} data-slot="task-board" className={styles.board}>
+        {columnHeaderRow}
 
-        <div ref={setLaneStack} className="flex w-max flex-col gap-4">
+        <div ref={setLaneStack} className={styles.laneStack}>
           {lanes.map((lane, laneIndex) => {
             const key = lane.key;
             // The flat board's single lane has no header to collapse from — always open.
             const expanded =
               lane.kind === 'none' || !collapsedLaneKeys.has(key);
-            const milestone =
-              lane.milestoneId !== null
-                ? (milestoneById.get(lane.milestoneId) ?? null)
-                : null;
             return (
               <section key={key} data-lane-key={key}>
-                {lane.kind === 'parent' && (
-                  <div
-                    data-slot="board-lane-header"
-                    className={LANE_HEADER_CLASS}
-                    style={laneHeaderStyle}
-                  >
-                    <MilestoneLaneHeader
-                      milestone={milestone}
-                      title={lane.title}
-                      total={lane.total}
-                      expanded={expanded}
-                      onToggle={() => onToggleLane(key)}
-                      progress={
-                        milestone !== null
-                          ? milestoneProgressById.get(milestone.meta.id)
-                          : undefined
-                      }
-                      concurrencyDefault={milestoneConcurrencyDefault}
-                      childTasks={
-                        milestone !== null
-                          ? (childrenByMilestoneId.get(milestone.meta.id) ?? [])
-                          : []
-                      }
-                      model={model}
-                      onOpenTask={onSelect}
-                      onWork={onWorkMilestone}
-                      onRequestWork={onRequestWorkMilestone}
-                      onPause={onPauseMilestone}
-                      onResume={onResumeMilestone}
-                      onRaiseCeiling={onRaiseCeilingMilestone}
-                      onStop={onStopMilestone}
-                      onLand={onLandMilestone}
-                      onAdd={() =>
-                        shell.openCreateTask(
-                          milestone !== null
-                            ? { milestone: milestone.meta.id }
-                            : undefined
-                        )
-                      }
-                    />
-                  </div>
-                )}
-                {(lane.kind === 'assignee' || lane.kind === 'priority') && (
-                  <div
-                    data-slot="board-lane-header"
-                    className={LANE_HEADER_CLASS}
-                    style={laneHeaderStyle}
-                  >
-                    <LaneHeader
-                      lane={lane}
-                      expanded={expanded}
-                      onToggle={() => onToggleLane(key)}
-                    />
-                  </div>
-                )}
+                {laneHeaders.get(key)}
                 {expanded && (
-                  <div data-lane-columns={key} className="flex items-start">
-                    {lane.columns.map(({ status, tasks: laneTasks }, index) => (
-                      <div
-                        key={status}
-                        className={cn('flex flex-col', columnClass(status))}
-                      >
-                        {collapsedColumns.has(status) ? (
-                          <div className="min-h-16" />
-                        ) : (
-                          <VirtualColumn
-                            id={dropZoneId(laneIndex, status)}
-                            tasks={laneTasks}
-                            scrollElement={board}
-                            scrollMargin={laneOffsets.get(key) ?? 0}
-                            offscreen={
-                              nearColumns !== null && !nearColumns.has(index)
-                            }
-                            activeTaskId={activeTaskId}
-                            focusedTaskId={focusedTaskId}
-                            fling={fling}
-                            heights={cardHeights}
-                            renderCard={(doc) => (
-                              <BoardCard
-                                doc={doc}
-                                disabled={archivedTaskIds.has(doc.meta.id)}
-                                ready={readyIds.has(doc.meta.id)}
-                                blocked={blockedIds.has(doc.meta.id)}
-                                liveRunState={liveRunStateByTaskId.get(
-                                  doc.meta.id
-                                )}
-                                run={latestRunByTaskId.get(doc.meta.id)}
-                                readiness={readinessById?.get(doc.meta.id)}
-                                // Milestone lanes: the lane heading already names the
-                                // milestone, so the card skips the crumb. Every other
-                                // board: the crumb is how a card keeps its milestone.
-                                milestoneTitle={
-                                  lane.kind === 'parent' ||
-                                  doc.meta.parent === null
-                                    ? undefined
-                                    : (milestoneById.get(doc.meta.parent)?.meta
-                                        .title ?? doc.meta.parent)
-                                }
-                                statuses={statuses}
-                                properties={display.properties}
-                                labelCatalogue={labelCatalogue}
-                                onStatusChange={moveCardStatus}
-                                onEditTask={editCard}
-                                onClick={onSelect}
-                                onDispatch={
-                                  readyIds.has(doc.meta.id)
-                                    ? onDispatch
-                                    : undefined
-                                }
-                                focused={doc.meta.id === focusedTaskId}
-                                onFocus={onCardFocus}
-                                archived={archivedTaskIds.has(doc.meta.id)}
-                                needsAttention={
-                                  attentionByTaskId?.has(doc.meta.id) === true
-                                }
-                                landing={landingByTaskId?.get(doc.meta.id)}
-                              />
-                            )}
-                          />
-                        )}
-                      </div>
-                    ))}
+                  <div data-lane-columns={key} className={styles.laneColumns}>
+                    {lane.columns.map(({ status, tasks: laneTasks }) => {
+                      const collapsed = collapsedColumns.has(status);
+                      const cellId = dropZoneId(laneIndex, status);
+                      return (
+                        <div
+                          key={status}
+                          className={
+                            collapsed ? styles.collapsedColumn : styles.column
+                          }
+                        >
+                          {collapsed ? (
+                            <div className={styles.collapsedCell} />
+                          ) : (
+                            <BoardCell
+                              id={cellId}
+                              tasks={laneTasks}
+                              segments={rowWindows.segmentsOf(cellId)}
+                              registerList={rowWindows.registerList}
+                              parentLane={lane.kind === 'parent'}
+                              renderCard={renderCard}
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </section>
@@ -1016,7 +1110,7 @@ export function TaskBoard({
       <DragOverlay>
         {/* Only plain tasks are draggable, so the lifted ghost is always a task card. */}
         {activeDoc !== undefined && (
-          <div className="rounded-card shadow-raised w-[322px] cursor-grabbing">
+          <div className={styles.dragOverlay}>
             <TaskCardTile
               doc={activeDoc}
               ready={readyIds.has(activeDoc.meta.id)}
@@ -1035,4 +1129,12 @@ export function TaskBoard({
       </DragOverlay>
     </DndContext>
   );
+}
+
+// `CSS.escape` where the DOM has it (the global, which dnd-kit's `CSS` import shadows here);
+// a task id is a plain slug, so it is already safe in a quoted attribute selector without.
+function escapeAttribute(value: string): string {
+  return typeof globalThis.CSS?.escape === 'function'
+    ? globalThis.CSS.escape(value)
+    : value;
 }

@@ -337,6 +337,75 @@
   }
 }
 
+/* mark: a glyph-only trigger (a board card's state, priority, assignee
+   or labels). The chosen option's mark and no words, in a 24px hit
+   target whose 20px frame (::before, 2px inside) takes the --surface-3
+   fill on hover and while open: one step deeper than .value's, because
+   the card it sits on hovers --surface-2 itself (as a list row under a
+   .cell does); several marks (labels) sit side by side and widen it. The
+   focus ring hugs the frame. */
+.mark {
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0 4px;
+  border-radius: var(--r-chip);
+  color: var(--text-2);
+  line-height: 1;
+}
+
+.mark::before {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  z-index: -1;
+  border: 1px solid transparent;
+  border-radius: var(--r-chip);
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .mark::before {
+    transition: background-color var(--dur) ease;
+  }
+}
+
+.mark .face {
+  gap: 2px;
+}
+
+.mark[aria-expanded='true']::before {
+  background: var(--surface-3);
+}
+
+.mark:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* Nothing to draw (no value, no none mark): a dashed empty ring. */
+.markEmpty {
+  display: inline-block;
+  flex: none;
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  border: 1px dashed var(--control-border);
+  border-radius: 50%;
+}
+
+/* Forced colours drop the fill: the frame keeps a ButtonText edge, and
+   the open one the Highlight edge. */
+@media (forced-colors: active) {
+  .mark::before {
+    border-color: ButtonText;
+  }
+
+  .mark[aria-expanded='true']::before {
+    border-color: Highlight;
+  }
+}
+
 @media (hover: hover) and (width >= 901px) {
   .value:not(:disabled):hover::before {
     background: var(--surface-2);
@@ -362,6 +431,10 @@
   }
 
   .brand:not(:disabled):hover {
+    background: var(--surface-3);
+  }
+
+  .mark:not(:disabled):hover::before {
     background: var(--surface-3);
   }
 }

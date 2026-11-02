@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 
-import { applyLabelColors, colorForLabel } from './labelColor';
+import {
+  applyLabelColors,
+  colorForLabel,
+  labelColors,
+  labelHex,
+  subscribeLabelColors,
+} from './labelColor';
 
 // The custom property colorForLabel reads, pulled out of its `var(...)`.
 function propertyOf(label: string): string {
@@ -17,10 +23,10 @@ describe('colorForLabel', () => {
     expect(propertyOf('Type/Bug')).toBe(propertyOf('type/bug'));
   });
 
-  test('falls back to one of the eight categorical tokens', () => {
+  test('falls back to one of the four decorative hues', () => {
     for (const label of ['ui', 'kanban', 'dispatchd', 'merge-queue', '']) {
       expect(colorForLabel(label)).toMatch(
-        /^var\(--label-color-[0-9a-z]+, var\(--project-color-[1-8]\)\)$/
+        /^var\(--label-color-[0-9a-z]+, var\(--(violet|teal|rose|orange)\)\)$/
       );
     }
   });
@@ -43,5 +49,39 @@ describe('applyLabelColors', () => {
 
     applyLabelColors(null);
     expect(root.style.getPropertyValue(propertyOf('web'))).toBe('');
+  });
+});
+
+describe('labelHex', () => {
+  test('returns the registry hex, case-insensitively, and undefined otherwise', () => {
+    expect(labelHex('Type/Bug')).toBeUndefined();
+    applyLabelColors([
+      { name: 'Bug', group: 'Type', color: '#eb5757' },
+      { name: 'web', color: null },
+    ]);
+    expect(labelHex('Type/Bug')).toBe('#eb5757');
+    expect(labelHex('type/bug')).toBe('#eb5757');
+    expect(labelHex('web')).toBeUndefined();
+    expect(labelHex('docs')).toBeUndefined();
+    applyLabelColors(null);
+    expect(labelHex('Type/Bug')).toBeUndefined();
+  });
+});
+
+describe('subscribeLabelColors', () => {
+  test('fires on every apply until unsubscribed, with a new snapshot', () => {
+    let calls = 0;
+    const before = labelColors();
+    const unsubscribe = subscribeLabelColors(() => {
+      calls += 1;
+    });
+    applyLabelColors([{ name: 'web', color: '#5e6ad2' }]);
+    expect(calls).toBe(1);
+    expect(labelColors()).not.toBe(before);
+    expect(labelColors().hex('WEB')).toBe('#5e6ad2');
+    expect(before.hex('web')).toBeUndefined();
+    unsubscribe();
+    applyLabelColors(null);
+    expect(calls).toBe(1);
   });
 });

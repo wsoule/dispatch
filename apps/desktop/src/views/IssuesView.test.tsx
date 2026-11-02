@@ -41,7 +41,6 @@ import { taskDoc } from '../lib/taskDoc.test-helper';
 import type { TasksPreset } from '../lib/tasksPresets';
 import type { TaskStatusCounts } from '../lib/taskStatus';
 import { IssuesView } from './IssuesView';
-import { TooltipProvider } from '@/ui/tooltip';
 
 // The Issues hub end to end in happy-dom: the grouped table, its pickers, the
 // row menu, the selection and bulk bar, the keys, the presets, the chips, the
@@ -323,10 +322,8 @@ function mount(options: MountOptions = {}) {
     <QueryClientProvider client={new QueryClient()}>
       <ShellActionsProvider value={shellWith(log)}>
         <SavedViewsHost>
-          <TooltipProvider>
-            <Capture />
-            {view}
-          </TooltipProvider>
+          <Capture />
+          {view}
         </SavedViewsHost>
       </ShellActionsProvider>
     </QueryClientProvider>

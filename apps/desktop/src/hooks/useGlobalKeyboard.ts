@@ -50,11 +50,11 @@ const MODAL_SURFACES =
  * library's modal surfaces (slide-over, command palette, phone drawer) are not Base UI dialogs:
  * each sets `aria-modal="true"` on its panel while open and unmounts on close, so a bare
  * `[aria-modal="true"]` match covers them (Base UI never sets that attribute itself). The
- * Usage page's SessionDetailModal is one of these, a modal `@dispatch/ui` SlideOver, and the
- * DiffModal stacked over it a `@dispatch/ui` Dialog; a closing SlideOver drops aria-modal for
- * its exit slide, so an exiting panel is not caught. The Base UI dialogs that remain
- * (NewDocDialog, PublishDialog, DispatchDialog, and the alert dialogs in FirstTaskGuide and
- * LiveView) are the `data-slot` matches above. Checked
+ * Usage page's SessionDetailModal and the DispatchDialog form are among these, modal
+ * `@dispatch/ui` SlideOvers, and the DiffModal stacked over SessionDetailModal a
+ * `@dispatch/ui` Dialog; a closing SlideOver drops aria-modal for its exit slide, so an
+ * exiting panel is not caught. The Base UI dialogs that remain (NewDocDialog, PublishDialog,
+ * and the alert dialogs in FirstTaskGuide and LiveView) are the `data-slot` matches above. Checked
  * live via a DOM query at the moment a keydown fires, rather than threaded through as
  * reactive React state — every dialog instance
  * (TaskComposerSlideOver, SessionDetailModal, DiffModal, CommandPalette, …) only renders into the DOM

@@ -1,8 +1,15 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, mock, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import type { DagTask } from '../../lib/dagLayout';
 import { BRANCH_LINE_HEIGHT, BranchGraph } from './BranchGraph';
+
+const css = readFileSync(
+  join(import.meta.dir, 'BranchGraph.module.css'),
+  'utf8'
+);
 
 function task(
   id: string,
@@ -132,17 +139,13 @@ describe('BranchGraph', () => {
       lines(container).map((line) => [line.dataset['taskId'], line])
     );
     for (const id of ['t-a', 't-b', 't-d']) {
-      const line = byId.get(id);
-      expect(line?.dataset['path']).toBe('true');
-      expect(
-        line?.querySelector('[data-slot="branch-line-title"]')?.className
-      ).toContain('text-foreground');
+      expect(byId.get(id)?.dataset['path']).toBe('true');
     }
     const off = byId.get('t-c');
     expect(off?.dataset['path']).toBeUndefined();
-    expect(
-      off?.querySelector('[data-slot="branch-line-title"]')?.className
-    ).toContain('text-(--text-secondary)');
+    // Lines read in the secondary text; an on-path line in the full text colour.
+    expect(css).toMatch(/\.line\s*\{[^}]*color:\s*var\(--text-2\)/);
+    expect(css).toMatch(/\.line\[data-path\]\s*\{[^}]*color:\s*var\(--text\)/);
 
     // The dots and edges mirror the lines: strong on the path, muted off it.
     const dots = all<SVGCircleElement>(container, '[data-slot="branch-dot"]');
@@ -168,7 +171,7 @@ describe('BranchGraph', () => {
       expect(edge.getAttribute('stroke-width')).toBe('2');
     }
     for (const edge of muted) {
-      expect(edge.getAttribute('stroke')).toBe('var(--border-default)');
+      expect(edge.getAttribute('stroke')).toBe('var(--border)');
       expect(edge.getAttribute('stroke-width')).toBe('1');
     }
   });
@@ -271,7 +274,7 @@ describe('BranchGraph', () => {
     expect(upward).toEqual(['M 14 38 L 14 18']);
   });
 
-  test('done, open and live dots render distinctly via the status tokens', () => {
+  test('done, open and live dots render distinctly in the status tones', () => {
     const { container } = render(
       <BranchGraph
         tasks={[
@@ -287,15 +290,29 @@ describe('BranchGraph', () => {
       'live',
       'open',
     ]);
-    // Done fills in its status colour, open is a ring on the page surface, live fills and
-    // grows a halo.
-    expect(dots[0]?.getAttribute('fill')).toBe('var(--status-done)');
-    expect(dots[1]?.getAttribute('fill')).toBe('var(--status-progress)');
-    expect(dots[2]?.getAttribute('fill')).toBe('var(--surface-page)');
-    expect(dots[2]?.getAttribute('stroke')).toBe('var(--status-todo)');
-    expect(
-      container.querySelectorAll('[data-slot="branch-dot-halo"]')
-    ).toHaveLength(1);
+    // Done has no tone (the neutral filled mark), live is info and grows an info halo,
+    // open is a muted ring on the surface.
+    expect(dots.map((dot) => dot.dataset['tone'])).toEqual([
+      undefined,
+      'info',
+      'muted',
+    ]);
+    const halos = container.querySelectorAll<SVGCircleElement>(
+      '[data-slot="branch-dot-halo"]'
+    );
+    expect(halos).toHaveLength(1);
+    expect(halos[0]?.dataset['tone']).toBe('info');
+    expect(css).toMatch(
+      /\.dot\s*\{[^}]*fill:\s*var\(--dot\);[^}]*stroke:\s*var\(--dot\)/
+    );
+    expect(css).toMatch(
+      /\.dot\[data-tone\],\s*\.halo\[data-tone\]\s*\{[^}]*--dot:\s*var\(--tone\)/
+    );
+    expect(css).toMatch(
+      /\.dot\[data-dot='open'\]\s*\{[^}]*fill:\s*var\(--surface\)/
+    );
+    // No status colour is painted from an attribute any more.
+    for (const dot of dots) expect(dot.getAttribute('fill')).toBeNull();
   });
 
   test('a flat milestone joins its trunk with lane segments', () => {
@@ -332,17 +349,15 @@ describe('BranchGraph', () => {
     expect(line?.tagName).toBe('BUTTON');
     line?.focus();
     expect(document.activeElement).toBe(line ?? null);
-    expect(line?.className).toContain('focus-visible:bg-surface-active');
-    expect(line?.className).not.toContain('accent');
+    expect(css).toMatch(
+      /\.line\[data-focused\],\s*\.interactive:focus-visible\s*\{[^}]*background:\s*var\(--surface-3\)/
+    );
+    expect(css).not.toContain('var(--accent');
+    expect(css).not.toMatch(/outline:\s*none/);
   });
 
   test('the row wash is rounded like the list rows', () => {
-    const { container } = render(
-      <BranchGraph tasks={diamond} onOpenNode={() => {}} />
-    );
-    for (const line of lines(container)) {
-      expect(line.className).toContain('rounded-control');
-    }
+    expect(css).toMatch(/\.line\s*\{[^}]*border-radius:\s*var\(--r-sm\)/);
   });
 
   test('renders plain lines without onOpenNode', () => {
@@ -350,8 +365,10 @@ describe('BranchGraph', () => {
     expect(screen.queryAllByRole('button')).toHaveLength(0);
     for (const line of lines(container)) {
       expect(line.tagName).toBe('DIV');
-      expect(line.className).not.toContain('cursor-pointer');
     }
+    // Only an interactive line (and dot) takes the pointer cursor.
+    expect(css).toMatch(/\.interactive\s*\{[^}]*cursor:\s*pointer/);
+    expect(css).not.toMatch(/\.line\s*\{[^}]*cursor/);
   });
 
   test('the focused row is marked with the active surface, no accent', () => {
@@ -363,13 +380,10 @@ describe('BranchGraph', () => {
     );
     expect(focused).toHaveLength(1);
     expect(focused[0]?.dataset['taskId']).toBe('t-b');
-    expect(focused[0]?.classList.contains('bg-surface-active')).toBe(true);
-    expect(focused[0]?.className).not.toContain('accent');
-    // Only the roving cursor's line carries the unconditional wash (the focus-visible variant
-    // on every button is a different class token).
+    // The wash keys off data-focused, which only the roving cursor's line carries.
     for (const line of lines(container)) {
       if (line.dataset['taskId'] !== 't-b') {
-        expect(line.classList.contains('bg-surface-active')).toBe(false);
+        expect(line.dataset['focused']).toBeUndefined();
       }
     }
   });

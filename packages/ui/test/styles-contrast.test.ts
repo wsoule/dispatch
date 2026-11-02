@@ -226,6 +226,19 @@ describe('non-text marks meet 3:1 in both themes', () => {
     });
   }
 
+  // An empty ProgressPie is its ring alone ('0 of 18' before anything
+  // lands), so the untoned ring and arc are marks from the 3:1 list above,
+  // never the soft --border-strong line.
+  test('the untoned ProgressPie ring and arc are 3:1 marks', () => {
+    const marks = new Set(NON_TEXT.map(([mark]) => mark));
+    const ring = cssRule('tasks/task-glyphs.module.css', '.pieRing');
+    const arc = cssRule('tasks/task-glyphs.module.css', '.pieArc');
+    expect(ring).toBe('stroke: var(--control-border);');
+    expect(arc).toBe('stroke: var(--text-2);');
+    expect(marks.has('--control-border')).toBe(true);
+    expect(marks.has('--text-2')).toBe(true);
+  });
+
   test('fields use the control edge, not the soft line', () => {
     expect(readCss('styles/primitives.css')).toContain(
       'border: 1px solid var(--control-border);'

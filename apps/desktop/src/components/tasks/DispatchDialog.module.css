@@ -1,0 +1,106 @@
+/* The dispatch form (DispatchDialog.tsx) inside the library's modal SlideOver: the summary
+   sentence, the concurrency and ceiling fields on one row, the plain hints, the claimed-files
+   warning, the task list with each task's disposition, and the error. Colours and type come
+   from the Gr8r tokens; the library controls draw themselves. */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  padding-top: var(--s-2);
+}
+
+/* The arithmetic sentence; amber (the tone's text ink) once even the low estimate clears
+   the spend ceiling, and the words "above the ceiling" say so without the colour. */
+.summary {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--lh-long);
+}
+
+.summary[data-tone] {
+  color: var(--tone-ink);
+}
+
+.fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--s-3) var(--s-4);
+}
+
+.concurrency {
+  min-width: 72px;
+}
+
+.number {
+  width: 120px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Quiet notes about how the fan-out will run: one line each in the secondary ink. */
+.hints {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  margin: 0;
+  padding: 0;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  list-style: none;
+}
+
+.overlap {
+  margin: 0;
+}
+
+/* Every selected task, one row each, so nothing is ever silently dropped. The SlideOver
+   body scrolls the list, and its footer keeps the confirm in view. */
+.tasks {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  list-style: none;
+}
+
+.task {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 36px;
+  padding: var(--s-1) var(--s-3);
+  font-size: var(--fs-sm);
+}
+
+.task + .task {
+  border-top: 1px solid var(--divider);
+}
+
+.taskTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A task that will not start this minute reads quieter than one that will. */
+.task:not([data-disposition='starts-now']) .taskTitle {
+  color: var(--text-2);
+}
+
+/* The task id: a machine-read string, so the one place Geist Mono appears. */
+.taskId {
+  flex: none;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}

@@ -1,12 +1,13 @@
 import type { MergeQueueEntryState } from '@dispatch/client';
+import { Chip } from '@dispatch/ui';
 import { PlaneLanding } from 'lucide-react';
 
 import { landingBadgeTitle } from '../../lib/landingBadge';
-import { LabelPill } from '@/ui/ai/pill';
+import styles from './LandingBadge.module.css';
 
 /** The compact `Landing` badge for a task whose run is in the merge queue, with the queue
- * step as its tooltip. `pill` sits among a row's or card's pills; `inline` fits a Flight
- * Plan node's 16px header line. */
+ * step as its tooltip. `pill` is an info Chip among a row's or card's pills; `inline` fits
+ * a Flight Plan node's 16px header line as the plane glyph and the word in the info ink. */
 export function LandingBadge({
   state,
   variant = 'pill',
@@ -20,22 +21,23 @@ export function LandingBadge({
       <span
         data-slot="landing-badge"
         data-queue-state={state}
+        data-tone="info"
         title={title}
-        className="text-state-landing inline-flex shrink-0 items-center gap-1 text-[12px] font-medium"
+        className={styles.inline}
       >
-        <PlaneLanding aria-hidden className="size-3" />
+        <PlaneLanding size={14} strokeWidth={1.8} aria-hidden />
         Landing
       </span>
     );
   }
   return (
-    <LabelPill
-      color="var(--state-landing-fg)"
+    <Chip
+      tone="info"
       data-slot="landing-badge"
       data-queue-state={state}
       title={title}
     >
       Landing
-    </LabelPill>
+    </Chip>
   );
 }

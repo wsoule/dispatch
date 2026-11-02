@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 import { Pill, PillButton } from '@/ui/ai/pill';
 
 // A check's pass/fail as the 14px status glyph: the done disk for a pass, the
-// cancelled disk in the blocked red for a failure. The glyph is decorative;
+// cancelled disk in the danger red for a failure. The glyph is decorative;
 // the visually hidden word carries the meaning for a screen reader.
 function CheckGlyph({ pass }: { pass: boolean }) {
   return (
@@ -22,7 +22,7 @@ function CheckGlyph({ pass }: { pass: boolean }) {
         {pass ? (
           <StatusIcon status="landed" />
         ) : (
-          <StatusIcon status="dropped" blocked />
+          <StatusIcon status="dropped" tone="danger" />
         )}
       </span>
       <span className="sr-only">{pass ? 'Passed' : 'Failed'}</span>

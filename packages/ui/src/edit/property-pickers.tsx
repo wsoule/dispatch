@@ -56,7 +56,7 @@ export function StatePicker({
   const options: PickerOption[] = states.map((state) => ({
     value: state.id,
     label: state.name,
-    mark: { kind: 'state', state: state.kind },
+    mark: state.mark ?? { kind: 'state', state: state.kind },
   }));
   return (
     <PickerPopover

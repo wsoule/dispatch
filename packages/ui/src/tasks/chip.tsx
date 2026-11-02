@@ -1,6 +1,9 @@
 import type { ReactNode } from 'react';
 
+import type { AvatarHue } from '../components/initials-avatar';
 import StatusMark from '../components/status-mark';
+import { PickerMarkView } from '../edit/picker-mark';
+import type { PickerMark } from '../edit/types';
 import { dataAttributes } from '../lib/data-attributes';
 import { Link } from '../lib/link';
 import type { UiStatus } from '../types';
@@ -28,7 +31,9 @@ const SEMANTIC: ReadonlySet<ChipTone> = new Set<ChipTone>([
    `dot` is that pill with a grey dot (an inactive project's Linear
    status). A leading status mark replaces the dot (its shape and hue say
    the status), so the colour is never the only cue: the words always say
-   it too. The host's data-* hooks land on the chip. */
+   it too. A default chip may lead with a decorative `hue` dot or a picker
+   `mark` (a label's colour square); both are decoration, the words say
+   what the chip is. The host's data-* hooks land on the chip. */
 export function Chip(props: ChipProps) {
   const { tone = 'default', filled = false, dot = false, title } = props;
   const look = chipLook(tone, filled, dot);
@@ -44,6 +49,8 @@ export function Chip(props: ChipProps) {
         pill={look.pill}
         status={props.status}
         statusLabel={props.statusLabel}
+        hue={tone === 'default' ? props.hue : undefined}
+        mark={tone === 'default' ? props.mark : undefined}
       >
         {props.children}
       </ChipBody>
@@ -70,18 +77,25 @@ function chipLook(
 }
 
 /* The inside of a chip: the pill's 6px dot (unless a status mark takes
-   its place), the optional status mark, then the words. */
+   its place), the optional status mark, a default chip's decorative lead
+   (its picker mark, else its hue dot; the callers pass neither for any
+   other tone, and a status mark replaces both), then the words. */
 function ChipBody({
   pill,
   status,
   statusLabel,
+  hue,
+  mark,
   children,
 }: {
   pill: boolean;
   status: UiStatus | undefined;
   statusLabel: string | undefined;
+  hue: AvatarHue | undefined;
+  mark: PickerMark | undefined;
   children: ReactNode;
 }) {
+  const lead = status === undefined;
   return (
     <>
       {pill && status === undefined ? (
@@ -91,6 +105,14 @@ function ChipBody({
         <span className={styles.mark}>
           <StatusMark status={status} label={statusLabel ?? status} />
         </span>
+      ) : null}
+      {lead && mark !== undefined ? (
+        <span className={styles.leadMark} data-chip-mark="">
+          <PickerMarkView mark={mark} />
+        </span>
+      ) : null}
+      {lead && mark === undefined && hue !== undefined ? (
+        <span className={styles.hueDot} data-hue={hue} aria-hidden="true" />
       ) : null}
       <span className={styles.text}>{children}</span>
     </>
@@ -103,8 +125,8 @@ function ChipBody({
    is its visible text (and a status mark's label). `selected` makes a
    button a toggle (aria-pressed), drawn in the accent's selection tint;
    `disabled` disables the button, or turns a link into its text
-   marked aria-disabled. The host's data-* hooks land on the button or
-   the link. */
+   marked aria-disabled. A default chip button draws `hue` and `mark` as
+   Chip does. The host's data-* hooks land on the button or the link. */
 export function ChipButton(props: ChipButtonProps) {
   const {
     tone = 'default',
@@ -130,6 +152,8 @@ export function ChipButton(props: ChipButtonProps) {
       pill={look.pill}
       status={props.status}
       statusLabel={props.statusLabel}
+      hue={tone === 'default' ? props.hue : undefined}
+      mark={tone === 'default' ? props.mark : undefined}
     >
       {props.children}
     </ChipBody>

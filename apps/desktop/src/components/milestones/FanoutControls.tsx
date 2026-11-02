@@ -1,7 +1,7 @@
 import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
 import { isCompletedStatus } from '@dispatch-foo/core/browser';
 import type { MilestoneProgress, MilestoneSession } from '@dispatch/client';
-import { Button, Chip } from '@dispatch/ui';
+import { Button, Chip, ProgressPie } from '@dispatch/ui';
 import {
   ChevronsUp,
   GitMerge,
@@ -26,8 +26,7 @@ import {
   spendTone,
   waveSteps,
 } from '../../lib/milestoneSession';
-import { ProgressPie } from '../gr8r/ProgressPie';
-import { StepStrip } from '../gr8r/StepStrip';
+import { StepStrip } from '../status/StepStrip';
 import styles from './FanoutControls.module.css';
 
 const ICON = { size: 12, strokeWidth: 1.8 } as const;
@@ -336,9 +335,8 @@ export function FanoutControls({
           aria-label={`${count.done} of ${count.total} landed`}
           className={styles.progress}
         >
-          <ProgressPie
-            fraction={count.total === 0 ? 0 : count.done / count.total}
-          />
+          {/* Decorative: the span's label and the printed count say it. */}
+          <ProgressPie done={count.done} total={count.total} label="" />
           {count.done}/{count.total}
         </span>
       )}
