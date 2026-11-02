@@ -262,6 +262,83 @@ describe('Dialog over a SlideOver on a phone (modal there)', () => {
   });
 });
 
+describe('modal SlideOver ⊃ Dialog (a session panel with its diff)', () => {
+  /** A modal SlideOver holding a button that opens a Dialog over it. */
+  function Stacked({ onPanelClose }: { onPanelClose: () => void }) {
+    const [panel, setPanel] = useState(false);
+    const [dialog, setDialog] = useState(false);
+    return (
+      <>
+        <button type="button" onClick={() => setPanel(true)}>
+          Open session
+        </button>
+        <SlideOver
+          open={panel}
+          onClose={() => {
+            onPanelClose();
+            setPanel(false);
+          }}
+          title="Session"
+          modal
+        >
+          <button type="button" onClick={() => setDialog(true)}>
+            View diff
+          </button>
+          <Dialog
+            open={dialog}
+            onClose={() => setDialog(false)}
+            title="src/app.ts"
+            size="lg"
+          >
+            <p>Diff lines</p>
+          </Dialog>
+        </SlideOver>
+      </>
+    );
+  }
+
+  // The stack closes the Dialog on pointerdown and React unmounts it before
+  // the click, so the click can land on whatever is now under the pointer:
+  // the panel's own scrim. That click must not close the panel too.
+  test('a press on the dialog’s scrim closes the dialog only, even if the click lands on the panel’s scrim', () => {
+    let panelCloses = 0;
+    render(<Stacked onPanelClose={() => (panelCloses += 1)} />);
+    press('Open session');
+    press('View diff');
+    const dialogScrim =
+      dialogNamed('src/app.ts')?.parentElement?.firstElementChild;
+    const panelScrim = dialogNamed('Session')?.previousElementSibling;
+    if (!(dialogScrim instanceof HTMLElement)) throw new Error('no scrim');
+    if (!(panelScrim instanceof HTMLElement)) throw new Error('no scrim');
+    fireEvent.pointerDown(dialogScrim);
+    expect(dialogNamed('src/app.ts')).toBeNull();
+    fireEvent.click(panelScrim);
+    expect(dialogNamed('Session')).not.toBeNull();
+    expect(panelCloses).toBe(0);
+    // With the dialog gone, a press on the panel's scrim closes the panel.
+    fireEvent.pointerDown(panelScrim);
+    fireEvent.click(panelScrim);
+    expect(dialogNamed('Session')).toBeNull();
+    expect(panelCloses).toBe(1);
+  });
+
+  test('Escape closes the dialog, then the panel', () => {
+    let panelCloses = 0;
+    render(<Stacked onPanelClose={() => (panelCloses += 1)} />);
+    press('Open session');
+    press('View diff');
+    escape();
+    expect(dialogNamed('src/app.ts')).toBeNull();
+    expect(dialogNamed('Session')).not.toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'View diff' })
+    );
+    escape();
+    expect(dialogNamed('Session')).toBeNull();
+    expect(panelCloses).toBe(1);
+  });
+});
+
 describe('A modal surface outside the stack (the command palette)', () => {
   /** A stand-in for Dispatch's command palette: an aria-modal dialog that
       is not a stack layer, takes focus when it opens and owns Escape in

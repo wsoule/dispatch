@@ -123,6 +123,18 @@
   box-shadow: none;
 }
 
+/* Forced colours replace the pressed fill with the page's own Canvas, so
+   a pressed toggle would look like an unpressed one: it takes the system
+   highlight instead. */
+@media (forced-colors: active) {
+  .button[aria-pressed='true'] {
+    forced-color-adjust: none;
+    border-color: Highlight;
+    background: Highlight;
+    color: HighlightText;
+  }
+}
+
 @media (hover: hover) and (width >= 901px) {
   .primary:not(:disabled):hover {
     background: var(--accent-hover);

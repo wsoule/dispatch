@@ -1,0 +1,77 @@
+/* The feed-state mark (StateMark.tsx). The hue comes from the data-tone hook (--tone,
+   set from feedStateTone): amber your move or blocked, red broken, blue the machine's
+   move, grey resting. `done` and `closed` carry no tone: a filled neutral disc with a
+   check (landed) or a bar (closed without landing) cut out of it, so finished work never
+   reads green next to a red failure. */
+
+.mark {
+  flex: none;
+  color: var(--tone);
+}
+
+/* Done and closed: the disc filled in the quiet text colour with no outer stroke (an edge
+   in the surface colour showed as a light ring on a hovered, selected or muted row), and
+   the check or bar stroked in the surface colour on top of it. */
+.discFill {
+  fill: var(--text-2);
+  stroke: none;
+}
+
+.discCut {
+  stroke: var(--surface);
+}
+
+/* The dot: the tone alone as a 9px disc (8px small) for dense rails. */
+.dot {
+  display: inline-block;
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--tone);
+}
+
+.dotSm {
+  width: 8px;
+  height: 8px;
+}
+
+.dotDone {
+  background: var(--text-2);
+}
+
+/* In flight: a stepped dim on a 2s loop, only for people who have not asked for less
+   motion. The static mark is the fallback. */
+@media (prefers-reduced-motion: no-preference) {
+  .mark[data-pulse='true'],
+  .dot[data-pulse='true'] {
+    animation: state-pulse 2s steps(2, jump-none) infinite;
+  }
+}
+
+@keyframes state-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* Forced colours replace the hue: the glyph keeps its shape in CanvasText, the done and
+   closed discs stay filled with their check or bar in Canvas, and the dot (whose fill is
+   forced away) keeps a CanvasText ring. */
+@media (forced-colors: active) {
+  .mark {
+    color: CanvasText;
+  }
+
+  .discFill {
+    fill: CanvasText;
+  }
+
+  .discCut {
+    stroke: Canvas;
+  }
+
+  .dot {
+    border: 1px solid CanvasText;
+  }
+}

@@ -424,8 +424,6 @@ export interface ModalSurfaceOptions {
   /** The panel: the role="dialog" element (aria-modal="true" while
       modal, tabIndex -1 so it can take focus itself). */
   panelRef: { readonly current: HTMLElement | null };
-  /** The --overlay scrim, behind the panel or wrapped around it. */
-  scrimRef: { readonly current: HTMLElement | null };
   /** Receives focus on open instead of the panel itself. */
   initialFocusRef?: { readonly current: HTMLElement | null };
   /** Default true. false: a panel beside a usable page (a desktop

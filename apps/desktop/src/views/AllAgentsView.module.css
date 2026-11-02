@@ -1,0 +1,122 @@
+/* Layout of Settings › Runs (views/AllAgentsView.tsx). Settings hosts the view in a body
+   that does not scroll (SettingsLayout.module.css .hostedBody), so the view owns its
+   scroller: the toolbar stays put and the list scrolls under it. The gutters match the
+   hosted page head above it (.hosted .head): 40px, and 16px at 900px and below. Colours
+   and type come from @dispatch/ui's components and tokens; this sheet only places them. */
+
+.root {
+  --view-toolbar-gutter: 40px;
+
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-height: 0;
+  padding: var(--s-4) 40px 32px;
+  overflow-y: auto;
+}
+
+/* The subject cell: the state mark, then the title and the agent chip on one wrapping
+   line. The chip follows the title while both fit and drops under it, aligned with the
+   title, when the column is narrow. */
+.subject {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.subjectText {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px var(--s-2);
+  min-width: 0;
+}
+
+/* A stacked card has the room: the title wraps inside itself, never pushing the row wider. */
+.title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* While the register is a table (600px and wider, its stackWithin step) a run is one dense
+   row, as the old list's were: the title keeps to one line and ends in an ellipsis (the
+   row button's name carries it whole). It may shrink to 8em before the chip wraps under
+   it, and grows no wider than its text, so the chip sits right after a short title. */
+@container register (width >= 600px) {
+  .title {
+    flex: 1 1 8em;
+    max-width: max-content;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.agent {
+  display: inline-flex;
+  flex: none;
+}
+
+/* The empty states fill the list area and sit in its middle. */
+.empty {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+
+/* The archive button, like the old row actions, shows on the row's hover or when the row or
+   the button has focus (Tab reaches it), on pointers that can hover. Touch screens have no
+   hover to reveal it, and a pressed (archived) button is state worth seeing, so both keep it
+   shown. The wrapper sits above the row's stretched button itself: an opacity under 1 makes
+   it a stacking context, which would otherwise put the button under the row's overlay while
+   it fades in (a click then would open the run instead of archiving it). */
+.rowAction {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .rowAction:not([data-pressed='true']) {
+    opacity: 0;
+  }
+
+  [data-row]:hover .rowAction,
+  [data-row]:focus-within .rowAction {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .rowAction {
+    transition: opacity var(--dur) ease;
+  }
+}
+
+/* "Show all N" under the list, at its left edge. */
+.more {
+  align-self: flex-start;
+}
+
+@media (width <= 900px) {
+  .root {
+    --view-toolbar-gutter: 16px;
+  }
+
+  .body {
+    padding: var(--s-4) 16px 32px;
+  }
+}

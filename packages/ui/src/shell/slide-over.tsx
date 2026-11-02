@@ -61,7 +61,6 @@ export default function SlideOver(props: SlideOverProps): ReactNode {
   } = props;
   const panelRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
-  const scrimRef = useRef<HTMLDivElement>(null);
   const shownKey = useRef<string | undefined>(undefined);
   const titleId = useId();
   const isPhone = useMediaQuery(PHONE_QUERY);
@@ -95,7 +94,6 @@ export default function SlideOver(props: SlideOverProps): ReactNode {
     open,
     modal: isModal,
     panelRef,
-    scrimRef,
     initialFocusRef,
     onClose: () => latest.current.onClose(),
   });
@@ -140,7 +138,6 @@ export default function SlideOver(props: SlideOverProps): ReactNode {
     <>
       {isModal ? (
         <div
-          ref={scrimRef}
           className={styles.scrim}
           data-state={closing ? 'closing' : 'open'}
           aria-hidden="true"

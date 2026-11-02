@@ -13,7 +13,12 @@ import type {
 } from './types';
 
 /* Container-query classes per stackWithin threshold. */
-const WITHIN_CLASS: Record<700 | 900 | 1000, string | undefined> = {
+const WITHIN_CLASS: Record<
+  NonNullable<RegisterProps['stackWithin']>,
+  string | undefined
+> = {
+  480: styles.within480,
+  600: styles.within600,
   700: styles.within700,
   900: styles.within900,
   1000: styles.within1000,

@@ -236,6 +236,32 @@ describe('Register', () => {
     );
   });
 
+  // The small steps keep a short register (three to five narrow columns in a settings
+  // page) a table at the app's default window size; each is its own container query.
+  test('stackWithin takes the small steps 480 and 600 too', () => {
+    for (const step of [480, 600] as const) {
+      const view = render(
+        <Register
+          label={`Within ${String(step)}`}
+          columns="1fr 96px"
+          stackWithin={step}
+        >
+          <RegisterRow>
+            <RegisterCell>Atlas</RegisterCell>
+            <RegisterCell align="end">$4</RegisterCell>
+          </RegisterRow>
+        </Register>
+      );
+      expect(view.container.firstElementChild?.getAttribute('data-stack')).toBe(
+        `container-${String(step)}`
+      );
+      expect(
+        view.getByRole('list', { name: `Within ${String(step)}` })
+      ).toBeTruthy();
+      cleanup();
+    }
+  });
+
   test('callback rows are buttons; selected rows are marked current', () => {
     const onActivate = mock(() => {});
     const view = render(

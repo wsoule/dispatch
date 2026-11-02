@@ -437,6 +437,16 @@ describe('SegmentedControl', () => {
     expect(radios.map((r) => r.tabIndex)).toEqual([0, -1, -1]);
   });
 
+  // The count is visible beside the label, and the radio's name keeps the
+  // two apart ("Months, 3", not "Months3").
+  test('an option with a count is named label, count', () => {
+    const { getByRole } = render(
+      <SegmentedControl label="Zoom" options={options} defaultValue="weeks" />
+    );
+    expect(getByRole('radio', { name: 'Months, 3' })).toBeTruthy();
+    expect(getByRole('radio', { name: 'Weeks' })).toBeTruthy();
+  });
+
   test('arrows select the next enabled option and move focus', () => {
     const onChange = mock((_id: string) => {});
     const { getAllByRole } = render(

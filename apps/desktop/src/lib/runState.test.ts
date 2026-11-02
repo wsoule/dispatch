@@ -11,6 +11,7 @@ import {
   liveReviewAgentFor,
   postFailWorkLabel,
   runDispositionLabel,
+  runStateLabel,
   runSurveyNotice,
   tasksWithFinishedRun,
 } from './runState';
@@ -45,6 +46,23 @@ function run(over: Partial<RunMeta> = {}): RunMeta {
     ...over,
   } as RunMeta;
 }
+
+// The whose-move words: an approval gate reads as the ask, a finished run as the review it
+// is waiting for, and a dependency-blocked task borrows the same vocabulary.
+describe('runStateLabel', () => {
+  test.each([
+    ['provisioning', 'Provisioning'],
+    ['running', 'Working'],
+    ['awaiting-approval', 'Approve'],
+    ['failed', 'Failed'],
+    ['interrupted-dirty', 'Interrupted'],
+    ['blocked', 'Blocked'],
+    ['finished', 'Review'],
+    ['cancelled', 'Cancelled'],
+  ] as [RunState | 'blocked', string][])('%s -> %s', (state, expected) => {
+    expect(runStateLabel(state)).toBe(expected);
+  });
+});
 
 describe('deriveRunDisposition', () => {
   test.each([

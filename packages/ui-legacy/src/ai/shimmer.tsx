@@ -3,9 +3,10 @@ import type { ReactNode } from 'react';
 import { cn } from '../lib/utils';
 
 /** Shimmering gradient-text sweep for in-progress labels — the one shared treatment behind
- * task-rows, tool-chips, thinking, and loading-state. Reduced motion drops the sweep and
- * renders plain foreground text instead. `className` layers the caller's sizing/truncation
- * (e.g. `block truncate`, `text-[13px] font-medium`) over the shared base. */
+ * tool-chips, loading-state and the run feed's live work fold (the desktop's `WorkFold`).
+ * Reduced motion drops the sweep and renders plain foreground text instead. `className`
+ * layers the caller's sizing/truncation (e.g. `block truncate`, `text-[13px] font-medium`)
+ * over the shared base. */
 export function ShimmerLabel({
   children,
   className,

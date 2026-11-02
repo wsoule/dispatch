@@ -1,5 +1,5 @@
 /* The skeleton's slow opacity pulse: four `--dur-slow` beats (1.4s) per cycle, off
-   under reduced motion. Lives beside the component, like StatTile.css. */
+   under reduced motion. Lives beside the component (`skeleton.tsx`), which imports it. */
 @keyframes skeleton-pulse {
   0%,
   100% {

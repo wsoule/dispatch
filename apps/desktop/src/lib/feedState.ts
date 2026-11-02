@@ -3,6 +3,7 @@ import type {
   MergeQueueEntryState,
   RunMeta,
 } from '@dispatch/client';
+import type { UiTone } from '@dispatch/ui';
 
 import { deriveRunDisposition } from './runState';
 
@@ -10,21 +11,16 @@ import { deriveRunDisposition } from './runState';
  * The one vocabulary every dense surface in the app groups and colors by, and the
  * app-domain derivation that turns runs and merge-queue entries into it. Both halves
  * live here now, and `@/lib/feedState` is the one import path app code uses. The
- * legacy copy in @dispatch/ui-legacy (`ui-legacy/src/lib/feedState.ts`) stays only
- * for its `StateMark` and `TaskRow` until those components go.
+ * copy in @dispatch/ui-legacy (`ui-legacy/src/lib/feedState.ts`) stays only for the
+ * legacy `chrome/state-mark` its remaining callers still draw, until they move to
+ * `components/status/StateMark`.
  *
  * The organizing rule: a state names whose move it is AND what the move is.
- * Color comes from the tier (amber = your move, red = broken, blue = the
- * machine's move, gray = resting); the glyph names the specific move — see
- * `StateMark`.
+ * The tone comes from the tier (`feedStateTone`: warning = your move, danger =
+ * broken, info = the machine's move, muted = resting), except that `blocked`
+ * is amber like every other blocked surface; the glyph names the specific
+ * move — see `components/status/StateMark`.
  */
-
-/**
- * `TaskRow`'s own five states. Mirrors the union in ui-legacy's `ai/task-rows.tsx`, which
- * AllAgentsView still feeds into the legacy `TaskRow`; B4 removes this together with
- * `feedStateToTaskRowState`.
- */
-type TaskRowState = 'running' | 'waiting' | 'failed' | 'done' | 'queued';
 
 export type FeedState =
   // Your move — each one is a different ask with a different cost.
@@ -113,33 +109,22 @@ export function isInFlightState(state: FeedState): boolean {
   return feedTier(state) === 'machine';
 }
 
-/**
- * Maps the feed vocabulary onto `TaskRow`'s own five states (`ui/ai/task-rows.tsx`) — the
- * dense-list surfaces (AllAgentsView, SessionsHubView, SessionRow) render rows through
- * `TaskRow`. Both vocabularies key off the same design tokens, so this is mostly a
- * re-bucketing by tier: your-move states read as `waiting`, machine states as `running`,
- * except where TaskRow has a closer word (`done` for review/landing, `failed` for failed).
- */
-export function feedStateToTaskRowState(state: FeedState): TaskRowState {
-  switch (state) {
-    case 'answer':
-    case 'approve':
-    case 'ruling':
-    case 'unblock':
-      return 'waiting';
-    case 'failed':
-      return 'failed';
-    case 'working':
-    case 'fixing':
-    case 'checking':
-      return 'running';
-    case 'review':
-    case 'landing':
-      return 'done';
-    case 'ready':
-    case 'blocked':
-      return 'queued';
-  }
+const TIER_TONE: Record<FeedTier, UiTone> = {
+  you: 'warning',
+  broken: 'danger',
+  machine: 'info',
+  resting: 'muted',
+};
+
+/** The status tone a state is drawn in (`data-tone`), from its tier rather than the state:
+ * amber means your move whatever the move is, red broken, blue the machine's move and grey
+ * resting. The one exception is `blocked`: the app-wide hue table (AGENTS.md) makes blocked
+ * amber wherever it shows, so a task waiting on a dependency is amber too, though it stays
+ * in the resting tier for urgency (`isUrgentState`) and grouping. The glyph, not the hue,
+ * tells two states of one tone apart. */
+export function feedStateTone(state: FeedState): UiTone {
+  if (state === 'blocked') return 'warning';
+  return TIER_TONE[feedTier(state)];
 }
 
 /** Queue states that have come to rest — the entry is out of the pipeline either way. */

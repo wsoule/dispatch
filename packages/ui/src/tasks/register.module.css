@@ -199,8 +199,8 @@
 /* ---- stacked: one card layout per row ---------------------------------
    The header goes, each row lays its cells out on --register-stacked-cols
    under the subject, and every cell shows its own label again. The same
-   rules four times: by the viewport (stackBelow 700 / 900) and by the
-   register's own width (stackWithin, a container query). */
+   rules for each step: by the viewport (stackBelow 700 / 900) and by the
+   register's own width (stackWithin 480 to 1000, a container query). */
 
 @media (width <= 900px) {
   .stack900 .header {
@@ -299,6 +299,92 @@
 
 .container {
   container: register / inline-size;
+}
+
+@container register (width < 480px) {
+  .within480 .header {
+    display: none;
+  }
+
+  .within480 .row {
+    grid-template-columns: var(--register-stacked-cols);
+    gap: 10px 16px;
+    align-items: start;
+    padding: 12px var(--register-pad-x);
+  }
+
+  .within480 .row > .cell:first-of-type {
+    grid-column: 1 / -1;
+  }
+
+  .within480 .end {
+    align-items: flex-start;
+    justify-self: start;
+    text-align: left;
+  }
+
+  .within480.hasHeader .cellLabel {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+  }
+
+  .within480 .row > .cell:first-of-type .cellLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+@container register (width < 600px) {
+  .within600 .header {
+    display: none;
+  }
+
+  .within600 .row {
+    grid-template-columns: var(--register-stacked-cols);
+    gap: 10px 16px;
+    align-items: start;
+    padding: 12px var(--register-pad-x);
+  }
+
+  .within600 .row > .cell:first-of-type {
+    grid-column: 1 / -1;
+  }
+
+  .within600 .end {
+    align-items: flex-start;
+    justify-self: start;
+    text-align: left;
+  }
+
+  .within600.hasHeader .cellLabel {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+  }
+
+  .within600 .row > .cell:first-of-type .cellLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
 
 @container register (width < 700px) {

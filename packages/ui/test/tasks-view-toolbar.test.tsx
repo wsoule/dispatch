@@ -89,6 +89,72 @@ describe('ViewToolbar', () => {
     ).toBe(1);
   });
 
+  // A toolbar of controls only (Runs, Usage): no field of any kind, the
+  // host controls and the end actions in order, the group still named.
+  test('without search there is no field: the controls and end render alone', () => {
+    const view = render(
+      <ViewToolbar
+        controls={
+          <div role="radiogroup" aria-label="State">
+            <button type="button" role="radio" aria-checked="true">
+              All
+            </button>
+            <button type="button" role="radio" aria-checked="false">
+              Live
+            </button>
+          </div>
+        }
+        end={<button type="button">Show archived (2)</button>}
+      />
+    );
+    const bar = view.getByRole('group', { name: 'View options' });
+    expect(view.queryByRole('searchbox')).toBeNull();
+    expect(view.queryByRole('textbox')).toBeNull();
+    expect(bar.querySelector('input')).toBeNull();
+    expect(view.getByRole('radiogroup', { name: 'State' })).not.toBeNull();
+    const names = [...bar.querySelectorAll('button')].map((b) => b.textContent);
+    expect(names).toEqual(['All', 'Live', 'Show archived (2)']);
+    // The controls are the bar's first child: nothing stands before them.
+    expect(bar.firstElementChild?.contains(view.getByText('All'))).toBe(true);
+    expect(bar.hasAttribute('aria-busy')).toBe(false);
+    // The end actions are the bar's own second cell, outside the controls'
+    // sideways scroller, so on a phone they take a row of their own instead
+    // of sitting off-screen in a scroller that draws no scrollbar.
+    const end = view.getByRole('button', { name: 'Show archived (2)' });
+    expect(bar.children).toHaveLength(2);
+    expect(bar.children[1]?.contains(end)).toBe(true);
+    expect(bar.firstElementChild?.contains(end)).toBe(false);
+  });
+
+  // With a search the end actions stay inside the controls cell, scrolling
+  // sideways with them on a phone, as before.
+  test('with search the end actions sit inside the controls cell', () => {
+    const { view } = renderToolbar();
+    const bar = view.getByRole('group', { name: 'View options' });
+    const end = view.getByRole('button', { name: 'Copy link' });
+    const controls = view.getByRole('button', {
+      name: 'Sort: Weight',
+    }).parentElement;
+    expect(controls?.contains(end)).toBe(true);
+    expect(bar.children).toHaveLength(2);
+  });
+
+  test('without search the label and busy rule still apply', () => {
+    const view = render(
+      <ViewToolbar
+        busy
+        label="Run filters"
+        controls={<button type="button">All</button>}
+      />
+    );
+    const bar = view.getByRole('group', { name: 'Run filters' });
+    expect(bar.getAttribute('aria-busy')).toBe('true');
+    expect(
+      bar.querySelectorAll(':scope > span[aria-hidden="true"]').length
+    ).toBe(1);
+    expect(bar.querySelector('input')).toBeNull();
+  });
+
   test('inputRef hands the field to a host shortcut', () => {
     const ref = createRef<HTMLInputElement>();
     const { view } = renderToolbar({

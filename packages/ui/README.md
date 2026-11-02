@@ -392,7 +392,7 @@ the types for the rest.
 |          | `SearchField` (a search box with a clear button; Escape clears; below)                                                            | `value`, `onChange`, `label`                                        |
 |          | `CopyValue` (a value in a code well with a Copy button; below)                                                                    | `value`, `label`                                                    |
 |          | `TaskGroupTable` (grouped issue list; selection, drag and slots below)                                                            | `sections`                                                          |
-|          | `ViewToolbar` (list toolbar: search, the host's Filter / Sort / Group, end actions), `ToolbarBadge`                               | `search`, `controls`                                                |
+|          | `ViewToolbar` (list toolbar: an optional search, the host's Filter / Sort / Group, end actions), `ToolbarBadge`                   | `controls` (`search` optional)                                      |
 |          | `FilterChips` ("Project is …" chips joined by "and", + Filter, Clear all)                                                         | `chips`                                                             |
 |          | `BulkBar` (the floating bar of a selection; confirm strip, busy, note), `useBulkBarHeight()` (its height while up)                | `count`, `onClear`, `children`                                      |
 |          | `DeadlineList`, `StatsStrip`, `ProgressRule`                                                                                      | `groups`; `cells`; `done`/`total`                                   |
@@ -405,7 +405,7 @@ the types for the rest.
 |          | `ToastProvider` + `useToast()` (`useOptionalToast()`: null without a provider)                                                    | none                                                                |
 |          | `SlideOver` (`contentKey`: a swap in place moves focus; `modal`, `size`, `footer` for a form surface)                             | `open`, `onClose`, `title`                                          |
 |          | `Dialog` (a centred modal: sm / md / lg; `titleHidden`, `placement`), `ConfirmDialog` (an alertdialog before a destructive write) | `open`, `onClose`, `title`; `confirmLabel`, `onConfirm`, `onCancel` |
-|          | `useModalSurface` (a host's own panel over a scrim, out of the top layer; below)                                                  | `open`, `onClose`, `panelRef`, `scrimRef`                           |
+|          | `useModalSurface` (a host's own panel over a scrim, out of the top layer; below)                                                  | `open`, `onClose`, `panelRef`                                       |
 |          | `Tooltip` (hover and keyboard focus, no provider), `Spinner` (in-flight agent or network work only)                               | `content`, `children`; none                                         |
 |          | `SignedOutFrame`, `PropertyList`, `AlertStrip`                                                                                    | see `shell/types.ts`                                                |
 |          | `Skeleton*`, `Kbd`, `KbdKeys`                                                                                                     | see `shell/types.ts`                                                |
@@ -501,7 +501,10 @@ chevron (`currentColor`) and the face's button edge.
 secondary (the default), quiet (the toolbar ghost) or danger (a destructive
 write); `size` sm 26px, md 30px or lg 36px; `block` stretches it; `icon` and
 `iconAfter` are 14px lucide icons; no children makes it a square icon button,
-which needs an `aria-label`. With `href` it renders through the host's link.
+which needs an `aria-label`. With `href` it renders through the host's link. A
+toggle passes `aria-pressed`: pressed, it takes the pressed fill
+(`--surface-3`), and in forced colours the system Highlight, since the fill
+would turn into Canvas there and read as unpressed.
 
 It passes through what a host's own button needed: `ref` (the element, for a
 Popover's or Tooltip's anchor and focus return), `id`, `tabIndex`, `form`,
@@ -584,6 +587,13 @@ take the host's `data-*` hooks on their roots (the register's wrapper, the row's
 `data-roster-title`) on Register rows. A button row that is a toggle (a project
 filter) passes `pressed`, which sets `aria-pressed` on its stretched button
 only; link and plain rows take no `pressed`, and the `<li>` never carries it.
+
+`stackWithin` (the register's own width, a container query) takes 480, 600, 700,
+900 or 1000. Pick the smallest step the columns' minimum widths fit in (the
+tracks, a 20px gap between each and 28px of padding): a short register in a
+settings page (three to five narrow columns) stays a table at the app's default
+window size on 480 or 600, where 700 would turn every row into a card (amended
+2026-11-02, B4, as an L35 follow-up: the steps started at 700).
 
 ### Lists: selection, drag, slots, toolbar, chips, bulk bar
 
@@ -775,8 +785,20 @@ fields' focus ring), as the timeline and projects toolbars draw theirs
 (`onChange` per keystroke, `onCommit` on Enter and on leaving the field, so it
 may fire twice for one value; `inputRef` for a `/` shortcut), the host's
 triggers (pickers with `appearance="quiet"`), and `end` actions at the right
-edge. `busy` sets `aria-busy` and runs a 2px accent rule along the bottom.
-Phones put the search on its own row and scroll the controls sideways.
+edge. `busy` sets `aria-busy` and runs a 2px accent rule along the bottom. In a
+host's flex column it never shrinks, so a wrapped row of end actions stays
+inside it. Phones put the search on its own row and scroll the controls
+sideways. Leave `search` out for a toolbar of controls only, on a page people
+scan down a column rather than search (Runs, Usage: a `SegmentedControl` and end
+actions): no field renders, the controls start at the left edge, and `end` is
+the bar's own cell after them, at the right edge of their row or wrapped under
+them when the row is too narrow for both. On a phone the controls take a row of
+their own and scroll sideways, and `end` always takes the row under them, from
+the left edge, so its actions are never hidden in a sideways scroll that draws
+no scrollbar (amended 2026-11-02, B4, as an L35 follow-up: `search` was
+required). A `SegmentedControl` option's `count` shows after its label, and the
+option is named "Live, 2" (an `aria-label`), not "Live2".
+
 `ToolbarBadge` is the small accent count badge of a Filter trigger.
 `FilterChips` is a second row the toolbar's height under its own soft rule: one
 chip per filter (26px, an `--accent-soft` tint in an `--accent-line` edge;
@@ -1189,8 +1211,8 @@ or middle click still opens the link.
   cover a phone. `footer` is an action row (Cancel, Create) under a `--divider`
   rule, outside the scrolling body, so it stays in view while the body scrolls.
   A host's `data-*` hooks go on the panel.
-- `useModalSurface({ open, onClose, panelRef, scrimRef, initialFocusRef })` is a
-  modal `SlideOver`'s behaviour for a host's own panel over a scrim (Dispatch's
+- `useModalSurface({ open, onClose, panelRef, initialFocusRef })` is a modal
+  `SlideOver`'s behaviour for a host's own panel over a scrim (Dispatch's
   Settings), which has to stay out of the browser's top layer (a fixed overlay
   with its own z-index, so a host's legacy dialogs can still stack above it).
   The host renders the scrim and the `role="dialog"` panel (`aria-modal="true"`,
@@ -1198,12 +1220,13 @@ or middle click still opens the link.
   `onKeyDown` on the panel. The hook moves focus in on open and back on close,
   keeps Tab inside, locks `<html>` scrolling, makes the panel a modal layer of
   the overlay stack (Escape and presses go to a picker, popover, menu, tooltip
-  or `Dialog` open in it first, one layer per press; a press on the scrim with
-  one open closes only that), closes it on Escape from inside or a click on the
-  scrim, and takes focus back when it falls to `<body>`. Keys that reach the
-  panel from a React portal outside its DOM are left to their own surface.
-  `modal: false` keeps only the focus moves and the Tab trap (a desktop
-  `SlideOver` beside the page).
+  or `Dialog` open in it first, one layer per press; a press made while one is
+  open closes only that, even when its click then lands on the panel's own scrim
+  because a `Dialog` unmounted under the pointer), closes it on Escape from
+  inside or a click on the scrim, and takes focus back when it falls to
+  `<body>`. Keys that reach the panel from a React portal outside its DOM are
+  left to their own surface. `modal: false` keeps only the focus moves and the
+  Tab trap (a desktop `SlideOver` beside the page).
 
 ### Task detail slots for a desktop host
 

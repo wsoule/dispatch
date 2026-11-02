@@ -1,0 +1,40 @@
+/* The transcript family's shared motion (ShimmerLabel.tsx). Tokens only. */
+
+/* ShimmerLabel: the static words are the fallback; the sweep is a gradient
+   between the quiet and the full text colour, clipped to the glyphs and
+   slid across them, only under no-preference motion. Both stops are text
+   colours (4.5:1), so every frame of the sweep stays readable. */
+@media (prefers-reduced-motion: no-preference) {
+  .shimmer {
+    background-image: linear-gradient(
+      90deg,
+      var(--text-2) 35%,
+      var(--text) 50%,
+      var(--text-2) 65%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: shimmer-text 1.4s linear infinite;
+  }
+}
+
+@keyframes shimmer-text {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: -100% 0;
+  }
+}
+
+/* Forced colours: plain system text, no sweep. */
+@media (forced-colors: active) {
+  .shimmer {
+    background: none;
+    color: CanvasText;
+    animation: none;
+  }
+}

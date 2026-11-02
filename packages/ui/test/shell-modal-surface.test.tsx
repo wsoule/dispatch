@@ -36,16 +36,14 @@ function Panel({
   children?: ReactNode;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
-  const scrimRef = useRef<HTMLDivElement>(null);
   const surface = useModalSurface({
     open: true,
     modal,
     panelRef,
-    scrimRef,
     onClose,
   });
   return (
-    <div ref={scrimRef} data-testid="scrim" {...surface.scrimProps}>
+    <div data-testid="scrim" {...surface.scrimProps}>
       <div
         ref={panelRef}
         role="dialog"

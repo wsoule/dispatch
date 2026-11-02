@@ -165,6 +165,20 @@ const GR8R_SCOPE: readonly string[] = [
   'lib/keyboard.ts',
   'lib/keyboard.test.ts',
   'lib/shellRoutes.test.ts',
+  'components/sessions',
+  'components/status',
+  'components/transcript',
+  'views/AllAgentsView.tsx',
+  'views/AllAgentsView.module.css',
+  'views/AllAgentsView.test.tsx',
+  'views/SessionsHubView.tsx',
+  'views/SessionsHubView.module.css',
+  'views/SessionsHubView.test.tsx',
+  'views/DiffModal.tsx',
+  'views/DiffModal.module.css',
+  'lib/runState.ts',
+  'lib/runState.test.ts',
+  'lib/agentSessions.ts',
 ];
 
 /** GR8R_SCOPE directory entries allowed to be absent. Every other directory entry must exist

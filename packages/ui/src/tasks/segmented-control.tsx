@@ -10,7 +10,9 @@ import type { SegmentedControlProps } from './types';
    track whose selected option is a raised white thumb ringed in the
    accent. Semantics are a radio group with a
    roving tabindex: Tab enters on the selected option, arrows move AND
-   select (radio behaviour), Home/End jump, disabled options are skipped. */
+   select (radio behaviour), Home/End jump, disabled options are skipped.
+   An option's `count` sits after its label in a quieter voice, and the
+   option is named "Label, count". */
 export function SegmentedControl({
   options,
   value,
@@ -91,6 +93,13 @@ export function SegmentedControl({
             type="button"
             role="radio"
             aria-checked={checked}
+            // Named "Live, 2" rather than "Live2": the count sits flush beside
+            // the label, so the name puts a separator between them.
+            aria-label={
+              option.count === undefined
+                ? undefined
+                : `${option.label}, ${String(option.count)}`
+            }
             disabled={option.disabled}
             tabIndex={i === tabIndexOwner ? 0 : -1}
             className={styles.option}

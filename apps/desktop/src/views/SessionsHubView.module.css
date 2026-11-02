@@ -1,0 +1,84 @@
+/* Settings › Usage (SessionsHubView.tsx). The Tauri body owns its scroller inside
+   SettingsHostedBody (which hides overflow): the window toolbar stays put at the top and
+   everything under it scrolls. Side padding matches the hosted title above it, 40px and
+   16px at 900px and below. Colours and type come from @dispatch/ui's components and
+   tokens; this sheet only places them. */
+
+.root {
+  --usage-gutter: var(--s-10);
+  --view-toolbar-gutter: var(--usage-gutter);
+
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Everything under the toolbar: headline, the two spend tables, the session list. */
+.scroller {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--s-6);
+  min-height: 0;
+  padding: var(--s-5) var(--usage-gutter) 56px;
+  overflow-y: auto;
+}
+
+/* Each block keeps its own height and the scroller scrolls. A flex item that clips its
+   overflow (the StatsStrip hides it) has no content-based minimum height, so in a column
+   taller than the scroller it would otherwise shrink to nothing. */
+.scroller > * {
+  flex: none;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+/* A section's title row: the heading, and on Sessions the project filter chip. */
+.sectionHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 26px;
+}
+
+/* The section heading voice the session detail panel's "Files changed" uses too
+   (SessionDetailModal.module.css .heading), so the Usage page's two surfaces title their
+   sections alike; both move to the library SectionHeader (L24) when it lands in B5. */
+.heading {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-section);
+  color: var(--text);
+}
+
+/* The project filter: a chip with the project's name, then its clear button. */
+.filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* The browser build: the desktop-app message, centred in the hosted body. */
+.browser {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: var(--s-6) var(--s-4);
+}
+
+@media (width <= 900px) {
+  .root {
+    --usage-gutter: var(--s-4);
+  }
+}

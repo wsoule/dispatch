@@ -49,10 +49,14 @@ const MODAL_SURFACES =
  * swallow the app's shortcuts exactly like any other modal does. The incoming `@dispatch/ui`
  * library's modal surfaces (slide-over, command palette, phone drawer) are not Base UI dialogs:
  * each sets `aria-modal="true"` on its panel while open and unmounts on close, so a bare
- * `[aria-modal="true"]` match covers them (Base UI never sets that attribute itself, and the
- * two legacy dialogs that set it for the overlay stack, SessionDetailModal and DiffModal, do
- * so only while open, so an exiting dialog is not caught twice). Checked live via a DOM query at the moment a keydown fires,
- * rather than threaded through as reactive React state — every dialog instance
+ * `[aria-modal="true"]` match covers them (Base UI never sets that attribute itself). The
+ * Usage page's SessionDetailModal is one of these, a modal `@dispatch/ui` SlideOver, and the
+ * DiffModal stacked over it a `@dispatch/ui` Dialog; a closing SlideOver drops aria-modal for
+ * its exit slide, so an exiting panel is not caught. The Base UI dialogs that remain
+ * (NewDocDialog, PublishDialog, DispatchDialog, and the alert dialogs in FirstTaskGuide and
+ * LiveView) are the `data-slot` matches above. Checked
+ * live via a DOM query at the moment a keydown fires, rather than threaded through as
+ * reactive React state — every dialog instance
  * (TaskComposerSlideOver, SessionDetailModal, DiffModal, CommandPalette, …) only renders into the DOM
  * while open, so the query is always exactly as current as the state would be, without App.tsx
  * needing to know about every modal that exists anywhere in the component tree (including ones

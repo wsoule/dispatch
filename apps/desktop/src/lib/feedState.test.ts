@@ -11,7 +11,7 @@ import {
   deriveTaskFeedState,
   FEED_STATE_LABEL,
   FEED_STATE_ORDER,
-  feedStateToTaskRowState,
+  feedStateTone,
   isInFlightState,
   isUrgentState,
 } from './feedState';
@@ -209,27 +209,36 @@ describe('state metadata', () => {
   });
 });
 
-describe('feedStateToTaskRowState', () => {
-  // AllAgentsView draws its rows through the legacy TaskRow, which has five states of its
-  // own; this is the re-bucketing those rows' marks come from.
-  test('maps every feed state onto the TaskRow state its row shows', () => {
+describe('feedStateTone', () => {
+  // The hue comes from the tier: amber your move, red broken, blue the machine's move, grey
+  // resting, except blocked, which is amber like every blocked surface (the AGENTS.md hue
+  // table). Every state is covered, so a new state cannot slip in untoned.
+  test('maps every feed state onto its tier tone, blocked amber', () => {
     expect(
       Object.fromEntries(
-        FEED_STATE_ORDER.map((state) => [state, feedStateToTaskRowState(state)])
+        FEED_STATE_ORDER.map((state) => [state, feedStateTone(state)])
       )
     ).toEqual({
-      answer: 'waiting',
-      approve: 'waiting',
-      review: 'done',
-      ruling: 'waiting',
-      unblock: 'waiting',
-      failed: 'failed',
-      working: 'running',
-      fixing: 'running',
-      checking: 'running',
-      landing: 'done',
-      ready: 'queued',
-      blocked: 'queued',
+      answer: 'warning',
+      approve: 'warning',
+      review: 'warning',
+      ruling: 'warning',
+      unblock: 'warning',
+      failed: 'danger',
+      working: 'info',
+      fixing: 'info',
+      checking: 'info',
+      landing: 'info',
+      ready: 'muted',
+      blocked: 'warning',
     });
+  });
+
+  // Blocked takes the amber tone but stays a resting state: it is not your move, so it
+  // earns no urgency and no pulse.
+  test('blocked is amber but neither urgent nor in flight', () => {
+    expect(feedStateTone('blocked')).toBe('warning');
+    expect(isUrgentState('blocked')).toBe(false);
+    expect(isInFlightState('blocked')).toBe(false);
   });
 });

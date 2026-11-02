@@ -1,0 +1,78 @@
+/* The Sessions hub's shared pieces (ExportControl, SessionRow, SpendTable): the export
+   control's saved and error lines, and a session row's status dot. Colours and type come
+   from @dispatch/ui's components and tokens; this sheet only places them. */
+
+/* ExportControl: the saved or error line, an optional Reveal in Finder, then the button.
+   Spacing is margins rather than a gap, so the always-mounted live region adds no room
+   while it is empty. */
+.export {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* The polite live region the saved and error lines appear in. */
+.exportStatus {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 320px;
+}
+
+.exportStatus:not(:empty),
+.exportReveal {
+  margin-inline-end: var(--s-2);
+}
+
+.exportSaved,
+.exportError {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exportSaved {
+  color: var(--text-2);
+}
+
+.exportReveal {
+  flex: none;
+}
+
+/* SessionRow's session cell: while the session list is a table (600px and wider, its
+   stackWithin step) the project name and the session's title each keep to one line and end
+   in an ellipsis, so a session is one dense row (the row button's name carries both whole);
+   a stacked card has the room and wraps them. */
+@container register (width >= 600px) {
+  .clip {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+/* SessionRow's status cell: a 6px dot in the session's tone beside the status word, so
+   the colour is never the only cue. */
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.statusDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tone);
+}
+
+/* Forced colours drop backgrounds: the dot keeps a fill so its shape stays. */
+@media (forced-colors: active) {
+  .statusDot {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+}

@@ -35,7 +35,7 @@ import type { ModalSurface, ModalSurfaceOptions } from './types';
  * inside it, such as a host's legacy dialog) are left to their own surface.
  */
 export function useModalSurface(options: ModalSurfaceOptions): ModalSurface {
-  const { open, panelRef, scrimRef, initialFocusRef, modal = true } = options;
+  const { open, panelRef, initialFocusRef, modal = true } = options;
   const latest = useLatest({ onClose: options.onClose, modal });
   const active = open && modal;
 
@@ -52,21 +52,23 @@ export function useModalSurface(options: ModalSurfaceOptions): ModalSurface {
     onDismiss: () => latest.current.onClose(),
   });
 
-  // A press that starts on the scrim while another layer sits over the
-  // panel (a picker open in it) closes only that layer: the stack does
-  // that on pointerdown, so the scrim's click must not close the panel
-  // too. Read on `window` in the capture phase, which runs before the
-  // stack's document listener, while that layer is still open.
+  // A press that starts while another layer sits over the panel (a picker
+  // open in it, or a Dialog with its own scrim) closes only that layer:
+  // the stack does that on pointerdown, so the click that follows must not
+  // close the panel too. That holds wherever the press started, not only
+  // on this scrim: a Dialog unmounts between pointerdown and click, and a
+  // browser may then send the click to whatever is under the pointer now,
+  // which is this scrim. Read on `window` in the capture phase, which runs
+  // before the stack's document listener, while that layer is still open.
   const scrimPressCovered = useRef(false);
   useEffect(() => {
     if (!active) return undefined;
-    function onPress(event: PointerEvent): void {
-      scrimPressCovered.current =
-        event.target === scrimRef.current && !layer.isTop(true);
+    function onPress(): void {
+      scrimPressCovered.current = !layer.isTop(true);
     }
     window.addEventListener('pointerdown', onPress, true);
     return () => window.removeEventListener('pointerdown', onPress, true);
-  }, [active, layer, scrimRef]);
+  }, [active, layer]);
 
   // Focus never rests on <body> behind the panel. A focused control that
   // unmounts or turns disabled (a busy submit, a removed row) drops focus

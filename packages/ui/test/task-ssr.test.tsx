@@ -11,6 +11,7 @@ interface SsrResult {
   page: string;
   drawer: string;
   issueList: string;
+  controlsToolbar: string;
   windowedList: string;
   disclosures: string;
   primitives: string;
@@ -84,6 +85,22 @@ describe('task family server render', () => {
     expect(html).not.toContain('role="listbox"');
   });
 
+  test('a toolbar of controls only renders no search field', () => {
+    const html = result.controlsToolbar;
+    expect(html).toContain('role="group"');
+    expect(html).toContain('aria-label="Run filters"');
+    expect(html).toContain('All runs');
+    expect(html).toContain('Show archived (2)');
+    expect(html).not.toContain('<input');
+    expect(html).not.toContain('type="search"');
+    expect(html).not.toContain('aria-busy');
+    // The end actions are the bar's own cell after the controls, not inside
+    // their scroller.
+    expect(html).toMatch(
+      /All runs<\/button><\/div><div[^>]*><button type="button">Show archived \(2\)/
+    );
+  });
+
   test('a list over the windowing threshold renders its first rows and estimated gaps', () => {
     const html = result.windowedList;
     // The first 60 rows of the first group are drawn, with their place.
@@ -155,5 +172,9 @@ describe('task family server render', () => {
     }
     expect(html).toContain('role="note"');
     expect(html).toContain('data-slot="cost"');
+    // Register's small container step.
+    expect(html).toContain('data-stack="container-600"');
+    // A segmented option's count is read after its label with a separator.
+    expect(html).toContain('aria-label="Live, 2"');
   });
 });

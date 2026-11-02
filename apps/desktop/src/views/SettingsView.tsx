@@ -594,7 +594,7 @@ export function SettingsView({
         hosted={showHosted}
       >
         {showHosted ? (
-          // Titled like every other page; the hosted view keeps only its tabs row.
+          // Titled like every other page; the hosted view keeps only its toolbar row.
           <>
             <SettingsPageHead title={hosted.label} intro={hosted.intro} />
             <SettingsHostedBody>{hosted.render()}</SettingsHostedBody>

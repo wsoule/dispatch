@@ -777,7 +777,10 @@ export interface ViewToolbarSearch {
 }
 
 export interface ViewToolbarProps {
-  search: ViewToolbarSearch;
+  /** The search field at the left edge. Omit it for a toolbar of controls
+      only, on a page people scan down a column rather than search (Runs,
+      Usage): the controls then start at the left edge. */
+  search?: ViewToolbarSearch;
   /** Filter / Sort / Group triggers (host pickers), left to right. */
   controls: ReactNode;
   /** Trailing actions at the right edge ("Open as graph", "Copy link"). */
@@ -919,9 +922,12 @@ export interface RegisterProps extends DataAttributes {
   /** Stack by the register's own width instead of the viewport's: rows
    * become cards while the register is narrower than this (px). Use it
    * inside a sidebar shell, where the content column is far narrower than
-   * the window, or for a wide (many-column) register. Overrides
-   * stackBelow. */
-  stackWithin?: 700 | 900 | 1000;
+   * the window, or for a wide (many-column) register. Pick the smallest
+   * step the columns' minimum widths fit in (tracks, 20px gaps and 28px of
+   * padding), so a narrow register (three or four short columns in a
+   * settings page) stays a table at the app's default window size: 480
+   * and 600 for those, 700 to 1000 for wide ones. Overrides stackBelow. */
+  stackWithin?: 480 | 600 | 700 | 900 | 1000;
   /** grid-template-columns of a stacked card; the first cell (the row's
    * subject) spans the full width. Default two equal columns. */
   stackedColumns?: string;

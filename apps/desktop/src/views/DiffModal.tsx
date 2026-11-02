@@ -1,44 +1,35 @@
+import { Dialog, Skeleton, SkeletonText, type UiTone } from '@dispatch/ui';
 import { useQuery } from '@tanstack/react-query';
 import { AlertCircle, FileX, Info } from 'lucide-react';
 
 import { getFileDiffForSessionFile } from '../lib/tauri';
-import {
-  Dialog,
-  DialogBody,
-  DialogChrome,
-  DialogContent,
-  DialogTitle,
-} from '@/ui/dialog';
-import { Skeleton } from '@/ui/skeleton';
+import type { FileDiff } from '../lib/types';
+import styles from './DiffModal.module.css';
+
+type DiffTag = FileDiff['lines'][number]['tag'];
 
 interface DiffModalProps {
   sessionId: string;
-  /** Human-readable session identity for the meta line, e.g. "claude-opus-4-8 · a1b2c3d4". */
+  /** Human-readable session identity for the description line, e.g. "Claude · a1b2c3d4". */
   sessionLabel: string;
-  /** The file to show, or `null` when no diff is being viewed (modal closed). */
+  /** The file to show, or `null` when no diff is being viewed (dialog closed). */
   filePath: string | null;
   onClose: () => void;
 }
 
-const TAG_PREFIX: Record<string, string> = {
+const TAG_PREFIX: Record<DiffTag, string> = {
   insert: '+',
   delete: '-',
   equal: ' ',
 };
 
-// Added and removed rows get a wash of the green/red background tokens rather than the
-// run-state palette, since these lines are a literal insert/delete diff, not a run's
-// health.
-const TAG_LINE_CLASS: Record<string, string> = {
-  insert: 'bg-[var(--green-bg)]',
-  delete: 'bg-[var(--red-bg)]',
-  equal: '',
-};
-
-const TAG_PREFIX_CLASS: Record<string, string> = {
-  insert: 'text-green',
-  delete: 'text-red',
-  equal: 'text-muted-foreground/40',
+// Added and removed rows take the success and danger tones' soft tint (the module paints
+// `--tone-soft` behind the line and `--tone-ink` on the +/- glyph); unchanged rows carry no
+// tone. The glyph stays, so colour is never the only cue that a line was added or removed.
+const TAG_TONE: Record<DiffTag, UiTone | undefined> = {
+  insert: 'success',
+  delete: 'danger',
+  equal: undefined,
 };
 
 /**
@@ -49,9 +40,9 @@ const TAG_PREFIX_CLASS: Record<string, string> = {
  * *current* on-disk state, which may have changed since; this shows exactly what this
  * session's edits did.
  *
- * Renders its own `Dialog` (rather than being plain content inside `SessionDetailModal`'s
- * dialog) so it keeps stacking as an independent overlay on top of the session detail dialog,
- * matching the original two-modals-deep behavior.
+ * A size-lg `@dispatch/ui` Dialog rendered inside `SessionDetailModal`'s modal slide-over, so
+ * it stacks over the panel as the top layer: its Escape closes the dialog alone, and focus
+ * returns to the "View diff" button that opened it.
  */
 export function DiffModal({
   sessionId,
@@ -67,98 +58,84 @@ export function DiffModal({
 
   return (
     <Dialog
+      size="lg"
       open={filePath !== null}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
+      onClose={onClose}
+      // The file is a path, a machine-read string: Geist Mono, one line, full path in the title.
+      title={
+        <span className={styles.path} title={filePath ?? undefined}>
+          {filePath}
+        </span>
+      }
+      description={sessionLabel}
     >
-      <DialogContent
-        showCloseButton={false}
-        className="flex max-h-[85vh] flex-col sm:max-w-4xl"
-        // A modal surface outside @dispatch/ui's overlay stack, as SessionDetailModal (which
-        // opens it, inside Settings) explains: its Escape stays its own.
-        aria-modal={filePath !== null ? true : undefined}
-      >
-        {/* The crumb row names the session, then the file — a path, so it keeps mono. */}
-        <DialogChrome>
-          <span className="shrink-0">{sessionLabel}</span>
-          <span aria-hidden className="text-muted-foreground">
-            ›
-          </span>
-          <DialogTitle
-            className="text-foreground truncate font-mono text-[12px] leading-4 font-medium"
-            title={filePath ?? undefined}
-          >
-            {filePath}
-          </DialogTitle>
-        </DialogChrome>
-        <DialogBody className="min-h-0 flex-1 gap-3 overflow-y-auto pb-4">
-          {isLoading && (
-            <div className="flex flex-col gap-1.5">
-              <Skeleton className="h-4 w-1/3" />
-              <Skeleton className="h-40 w-full" />
-            </div>
-          )}
-          {isError && (
-            <div className="flex flex-col items-center gap-2 py-6 text-center">
-              <AlertCircle className="text-state-failed size-5" />
-              <p className="text-muted-foreground text-[13px]">
-                Couldn&rsquo;t load this diff.
-              </p>
-            </div>
-          )}
-          {!isLoading && !isError && data === null && (
-            <div className="flex flex-col items-center gap-2 py-6 text-center">
-              <FileX className="text-muted-foreground size-5" />
-              <p className="text-muted-foreground text-[13px]">
-                This file change no longer exists.
-              </p>
-            </div>
-          )}
-          {!isLoading && !isError && data && (
-            <>
-              <p className="text-muted-foreground font-book text-[12px] tabular-nums">
-                {data.edit_count} edit
-                {data.edit_count === 1 ? '' : 's'} ·{' '}
-                {new Date(data.occurred_at * 1000).toLocaleString()}
-              </p>
+      <div className={styles.body}>
+        {/* One labelled skeleton announces the load; the block shape is decorative. */}
+        {isLoading && (
+          <>
+            <SkeletonText lines={1} label="Loading diff" />
+            <Skeleton height={160} className={styles.skeletonBlock} />
+          </>
+        )}
+        {isError && (
+          <div className={styles.state}>
+            <span className="toneText" data-tone="danger">
+              <AlertCircle size={20} strokeWidth={1.8} aria-hidden />
+            </span>
+            <p className={styles.stateText}>Couldn&rsquo;t load this diff.</p>
+          </div>
+        )}
+        {!isLoading && !isError && data === null && (
+          <div className={styles.state}>
+            <span className={styles.stateIcon}>
+              <FileX size={20} strokeWidth={1.8} aria-hidden />
+            </span>
+            <p className={styles.stateText}>
+              This file change no longer exists.
+            </p>
+          </div>
+        )}
+        {!isLoading && !isError && data && (
+          <>
+            <p className={styles.meta}>
+              {data.edit_count} edit
+              {data.edit_count === 1 ? '' : 's'} ·{' '}
+              {new Date(data.occurred_at * 1000).toLocaleString()}
+            </p>
 
-              {data.lines.length === 0 ? (
-                <p className="text-muted-foreground text-[13px]">
-                  No diff content captured for this change — it was recorded
-                  before Dispatch started storing before/after text.
-                </p>
-              ) : (
-                <div className="bg-surface-quaternary rounded-card border-border flex flex-col overflow-hidden border-[0.5px]">
-                  <div className="py-1 font-mono text-[12px] leading-relaxed">
-                    {data.lines.map((line, i) => (
-                      <div
-                        key={i}
-                        className={`flex ${TAG_LINE_CLASS[line.tag]}`}
-                      >
-                        <span
-                          className={`w-6 flex-shrink-0 text-center select-none ${TAG_PREFIX_CLASS[line.tag]}`}
-                        >
-                          {TAG_PREFIX[line.tag]}
-                        </span>
-                        <span className="min-w-0 flex-1 px-6 break-words whitespace-pre-wrap">
-                          {line.content}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                  {data.truncated && (
-                    <p className="text-muted-foreground shadow-hairline-top font-book flex items-center gap-1.5 px-6 py-2 text-[12px]">
-                      <Info className="size-3.5" />
-                      Diff truncated — this change is too large to show in full.
-                    </p>
-                  )}
+            {data.lines.length === 0 ? (
+              <p className={styles.stateText}>
+                No diff content captured for this change — it was recorded
+                before Dispatch started storing before/after text.
+              </p>
+            ) : (
+              <div className={styles.diff}>
+                <div className={styles.lines}>
+                  {data.lines.map((line, i) => (
+                    <div
+                      key={i}
+                      className={styles.line}
+                      data-tone={TAG_TONE[line.tag]}
+                      data-tag={line.tag}
+                    >
+                      <span className={styles.prefix}>
+                        {TAG_PREFIX[line.tag]}
+                      </span>
+                      <span className={styles.content}>{line.content}</span>
+                    </div>
+                  ))}
                 </div>
-              )}
-            </>
-          )}
-        </DialogBody>
-      </DialogContent>
+                {data.truncated && (
+                  <p className={styles.truncated}>
+                    <Info size={14} strokeWidth={1.8} aria-hidden />
+                    Diff truncated — this change is too large to show in full.
+                  </p>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </Dialog>
   );
 }

@@ -15,6 +15,7 @@ import {
   RegisterCell,
   RegisterRow,
   SearchField,
+  SegmentedControl,
   Switch,
   TaskDetail,
   type TaskDetailProps,
@@ -171,6 +172,16 @@ const issueList = (
   </>
 );
 
+// A toolbar of controls only (Runs, Usage): no search field, the host's
+// control and an end action.
+const controlsToolbar = (
+  <ViewToolbar
+    label="Run filters"
+    controls={<button type="button">All runs</button>}
+    end={<button type="button">Show archived (2)</button>}
+  />
+);
+
 // A list over the windowing threshold: the server draws the first rows of
 // the first groups and an estimated gap for the rest, reading no layout.
 const windowedList = (
@@ -264,7 +275,15 @@ const primitives = (
     <Notice role="note" tone="default" data-testid="read-only">
       Read only.
     </Notice>
-    <Register columns="1fr" label="Spend" data-testid="spend">
+    <SegmentedControl
+      label="Agent state"
+      options={[
+        { id: 'all', label: 'All', count: 5 },
+        { id: 'live', label: 'Live', count: 2 },
+      ]}
+      value="all"
+    />
+    <Register columns="1fr" label="Spend" data-testid="spend" stackWithin={600}>
       <RegisterRow
         rowLabel="Filter by Atlas"
         onActivate={() => undefined}
@@ -286,6 +305,7 @@ console.log(
       <TaskSlideOver {...props} open onClose={() => undefined} />
     ),
     issueList: renderToString(issueList),
+    controlsToolbar: renderToString(controlsToolbar),
     windowedList: renderToString(windowedList),
     disclosures: renderToString(disclosures),
     primitives: renderToString(primitives),

@@ -226,7 +226,6 @@ import { TerminalsView } from './views/TerminalsView';
 import { ThreadsView } from './views/ThreadsView';
 import { TimelineView } from './views/TimelineView';
 import { type OverseerFocus, TwoViewOverseer } from './views/TwoViewOverseer';
-import { PageHeaderEmbeddedContext } from '@/ui/ai/page-header';
 // The legacy views' tooltips share its zero delay until they move onto Gr8r's Tooltip.
 import { TooltipProvider } from '@/ui/tooltip';
 
@@ -1019,9 +1018,11 @@ function App() {
   );
 
   useGlobalKeyboard({
-    // `modalOpen` is computed inside the hook itself, via a live DOM check for any open
-    // dialog — so SessionDetailModal/DiffModal mounted deep inside the Sessions hub also
-    // suppress the global commands while open, the same as TaskComposerSlideOver does.
+    // `modalOpen` is computed inside the hook itself, via a live DOM check for
+    // any open `aria-modal` dialog. SessionDetailModal (@dispatch/ui's modal
+    // SlideOver) and DiffModal (its Dialog) set aria-modal through the
+    // library, so while either is open inside Settings › Usage the global
+    // commands stay suppressed, the same as TaskComposerSlideOver does.
     onCommand: (command) => {
       // The `goto-*` keys resolve through `keyAction`.
       const action = keyAction(command);
@@ -2009,12 +2010,9 @@ function App() {
       label: 'Usage',
       icon: Coins,
       intro: 'Every agent session and what it cost.',
-      // Embedded: the hosted view keeps only its tabs row under Settings' own title.
-      render: () => (
-        <PageHeaderEmbeddedContext.Provider value>
-          <SessionsHubView />
-        </PageHeaderEmbeddedContext.Provider>
-      ),
+      // The hosted view draws no page header of its own: Settings' title sits
+      // above it, and the view starts at its own toolbar row.
+      render: () => <SessionsHubView />,
     },
     {
       id: 'runs',
@@ -2022,28 +2020,26 @@ function App() {
       icon: Bot,
       intro: 'Every run, including archived ones.',
       render: () => (
-        <PageHeaderEmbeddedContext.Provider value>
-          <AllAgentsView
-            runs={data.visibleRuns}
-            sessions={data.agentSessions}
-            archivedRunCount={archivedRunCount}
-            showArchived={data.showArchived}
-            onSetShowArchived={data.setShowArchived}
-            onArchiveRun={(runId, archived) =>
-              void data.handleArchiveRun(runId, archived)
-            }
-            portLoading={data.portLoading}
-            portError={data.portError}
-            portErrorDetail={data.portErrorDetail}
-            client={data.client}
-            onRetry={data.retryEnsureDispatchd}
-            onJumpToRun={jumpToRun}
-            // The Live page under Tasks; any navigation closes Settings.
-            onOpenLive={() =>
-              dispatchNav({ type: 'setProjectView', view: 'live' })
-            }
-          />
-        </PageHeaderEmbeddedContext.Provider>
+        <AllAgentsView
+          runs={data.visibleRuns}
+          sessions={data.agentSessions}
+          archivedRunCount={archivedRunCount}
+          showArchived={data.showArchived}
+          onSetShowArchived={data.setShowArchived}
+          onArchiveRun={(runId, archived) =>
+            void data.handleArchiveRun(runId, archived)
+          }
+          portLoading={data.portLoading}
+          portError={data.portError}
+          portErrorDetail={data.portErrorDetail}
+          client={data.client}
+          onRetry={data.retryEnsureDispatchd}
+          onJumpToRun={jumpToRun}
+          // The Live page under Tasks; any navigation closes Settings.
+          onOpenLive={() =>
+            dispatchNav({ type: 'setProjectView', view: 'live' })
+          }
+        />
       ),
     },
   ];

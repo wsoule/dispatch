@@ -1,0 +1,107 @@
+/* DiffModal: the body of the size-lg Dialog that shows one file's
+   cumulative before/after diff. Tokens only; added and removed lines are
+   coloured through data-tone (success, danger) and keep their +/- glyph. */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+/* The title: a path, so Geist Mono on one line, the full path in the
+   title attribute. */
+.path {
+  display: block;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--fs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The loading state's decorative block shape, rounded like SkeletonBlock's. */
+.skeletonBlock {
+  border-radius: var(--r);
+}
+
+/* The error and gone states: a centred icon over a sentence. */
+.state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-6) 0;
+  text-align: center;
+}
+
+.stateIcon {
+  color: var(--text-3);
+}
+
+.stateText {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+}
+
+.meta {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.diff {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+}
+
+.lines {
+  padding: var(--s-1) 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: var(--lh-long);
+}
+
+.line {
+  display: flex;
+}
+
+/* An added or removed line: the tone's soft tint behind it. */
+.line[data-tone] {
+  background: var(--tone-soft);
+}
+
+.prefix {
+  flex: none;
+  width: var(--s-6);
+  color: var(--text-3);
+  text-align: center;
+  user-select: none;
+}
+
+.line[data-tone] .prefix {
+  color: var(--tone-ink);
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  padding: 0 var(--s-6);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.truncated {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+  padding: var(--s-2) var(--s-6);
+  border-top: 1px solid var(--divider);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}

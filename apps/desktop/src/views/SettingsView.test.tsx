@@ -1339,8 +1339,10 @@ test('letters typed in an open picker never reach the app’s shortcuts', () => 
   expect(commands).toEqual(['new-task']);
 });
 
-// The Usage page's session detail is a legacy Base UI dialog portalled to
-// <body>, aria-modal while open: its Escape closes it and leaves Settings open.
+// The Usage page's session detail is a modal SlideOver rendered in place, so it
+// sits inside the Settings page, aria-modal while open and a layer of the
+// overlay stack: its Escape closes it alone, the app's keyboard stays quiet and
+// Settings stays open.
 test('the Usage page’s session detail takes its own Escape, not Settings’', async () => {
   const commands: GlobalKeyCommand[] = [];
   function Usage() {
@@ -1374,7 +1376,7 @@ test('the Usage page’s session detail takes its own Escape, not Settings’', 
   );
   const page = screen.getByTestId('settings-panel');
   const detail = await screen.findByRole('dialog', { name: /session/i });
-  expect(page.contains(detail)).toBe(false);
+  expect(page.contains(detail)).toBe(true);
   expect(detail.getAttribute('aria-modal')).toBe('true');
   fireEvent.keyDown(detail, { key: 'Escape' });
   await waitFor(() =>
