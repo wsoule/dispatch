@@ -28,6 +28,58 @@ function tip(): HTMLElement | null {
   return screen.queryByRole('tooltip', { hidden: true });
 }
 
+interface Box {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+// happy-dom lays nothing out: every box is empty at 0,0. A test that
+// scrolls gives the trigger and its pane boxes of their own, and moves
+// the trigger's box to stand for the scroll.
+function setBox(element: Element, box: Box): void {
+  element.getBoundingClientRect = () =>
+    ({
+      ...box,
+      x: box.left,
+      y: box.top,
+      width: box.right - box.left,
+      height: box.bottom - box.top,
+      toJSON: () => box,
+    }) as DOMRect;
+}
+
+// A trigger 40px wide at `top` in the pane's column.
+function row(top: number): Box {
+  return { top, bottom: top + 20, left: 10, right: 50 };
+}
+
+/** Where the tip was placed: its top edge, px. */
+function tipTop(): string {
+  return tip()?.style.getPropertyValue('--tooltip-top') ?? 'none';
+}
+
+// The re-place after a scroll waits for the next animation frame.
+function frame(): Promise<void> {
+  return wait(30);
+}
+
+/** A scroll pane from 100px to 400px holding one tooltip, placed below
+    its trigger (a tip of no size lands 6px under the trigger's bottom). */
+function renderInPane(): { pane: HTMLElement; button: HTMLElement } {
+  render(
+    <div data-testid="pane" style={{ overflow: 'auto' }}>
+      <Tooltip content="Scanner caveat" side="bottom" delay={0}>
+        <button type="button">Caveat</button>
+      </Tooltip>
+    </div>
+  );
+  const pane = screen.getByTestId('pane');
+  setBox(pane, { top: 100, bottom: 400, left: 0, right: 600 });
+  return { pane, button: screen.getByRole('button', { name: 'Caveat' }) };
+}
+
 describe('Tooltip', () => {
   test('renders nothing while hidden, and no description', () => {
     render(
@@ -163,10 +215,10 @@ describe('Tooltip', () => {
     expect(tip()).toBeNull();
   });
 
-  test('a press elsewhere and a scroll hide it', () => {
+  test('a press elsewhere hides it, and a scroll hides a hover tip', () => {
     render(
       <>
-        <Tooltip content="Star" defaultOpen>
+        <Tooltip content="Star" delay={0} defaultOpen>
           <button type="button">S</button>
         </Tooltip>
         <p>Elsewhere</p>
@@ -175,13 +227,169 @@ describe('Tooltip', () => {
     expect(tip()).not.toBeNull();
     fireEvent.pointerDown(screen.getByText('Elsewhere'));
     expect(tip()).toBeNull();
-    act(() => screen.getByRole('button', { name: 'S' }).focus());
+    const button = screen.getByRole('button', { name: 'S' });
+    fireEvent.pointerEnter(button, { pointerType: 'mouse' });
     expect(tip()).not.toBeNull();
     fireEvent.scroll(document);
     expect(tip()).toBeNull();
   });
 
-  test('a scroll in a pane holding the trigger hides it; one elsewhere does not', () => {
+  test('keyboard focus keeps it through a scroll, re-placed beside its trigger', async () => {
+    const { pane, button } = renderInPane();
+    setBox(button, row(200));
+    act(() => button.focus());
+    expect(tipTop()).toBe('226px');
+    // The pane scrolls, then the page: the trigger moves, the tip follows.
+    setBox(button, row(300));
+    fireEvent.scroll(pane);
+    await frame();
+    expect(tipTop()).toBe('326px');
+    setBox(button, row(150));
+    fireEvent.scroll(document);
+    await frame();
+    expect(tipTop()).toBe('176px');
+    expect(button.getAttribute('aria-describedby')).toBe(tip()?.id ?? 'none');
+    act(() => button.blur());
+    expect(tip()).toBeNull();
+  });
+
+  test("the browser's scroll to a trigger just focused keeps it, placed where the trigger lands", async () => {
+    const { pane, button } = renderInPane();
+    // Below the pane's view: Tab focuses it, and the tip opens before the
+    // browser scrolls the pane to it.
+    setBox(button, row(600));
+    act(() => button.focus());
+    expect(tip()).not.toBeNull();
+    // A smooth scroll's first frame: still short of the pane's view.
+    setBox(button, row(450));
+    fireEvent.scroll(pane);
+    await frame();
+    expect(tip()).not.toBeNull();
+    setBox(button, row(360));
+    fireEvent.scroll(pane);
+    await frame();
+    expect(tip()?.textContent).toBe('Scanner caveat');
+    expect(tipTop()).toBe('386px');
+    expect(button.getAttribute('aria-describedby')).toBe(tip()?.id ?? 'none');
+    expect(screen.getByRole('button', { description: 'Scanner caveat' })).toBe(
+      button
+    );
+  });
+
+  test('a smooth scroll longer than the settle window still lands with the tip kept', async () => {
+    const { pane, button } = renderInPane();
+    setBox(button, row(900));
+    act(() => button.focus());
+    // Frames 200ms apart, 600ms in all: each one restarts the wait.
+    for (const top of [700, 520]) {
+      await wait(200);
+      setBox(button, row(top));
+      fireEvent.scroll(pane);
+    }
+    await wait(200);
+    setBox(button, row(360));
+    fireEvent.scroll(pane);
+    await frame();
+    expect(tipTop()).toBe('386px');
+  });
+
+  // Focus handed back without a scroll (a popover's preventScroll return)
+  // to a trigger the page was scrolled away from: once scrolling has been
+  // quiet a moment the tip hides rather than float clamped at an edge.
+  test('a focused trigger that never comes into view hides it once scrolling settles', async () => {
+    const { pane, button } = renderInPane();
+    setBox(button, row(600));
+    act(() => button.focus());
+    expect(tip()).not.toBeNull();
+    await wait(350);
+    expect(tip()).toBeNull();
+    expect(document.activeElement).toBe(button);
+    // A later scroll that still leaves it out of view does not bring it back.
+    fireEvent.scroll(pane);
+    await frame();
+    expect(tip()).toBeNull();
+  });
+
+  test('the pointer passing over and off a focused trigger leaves its tip', async () => {
+    await wait(450);
+    render(
+      <Tooltip content="Archive" delay={0}>
+        <button type="button">A</button>
+      </Tooltip>
+    );
+    const button = screen.getByRole('button', { name: 'A' });
+    act(() => button.focus());
+    fireEvent.pointerEnter(button, { pointerType: 'mouse' });
+    fireEvent.pointerLeave(button, { pointerType: 'mouse' });
+    await wait(200);
+    expect(tip()?.textContent).toBe('Archive');
+    // Off the tip too.
+    const shown = tip();
+    if (shown === null) throw new Error('no tip');
+    fireEvent.pointerEnter(shown, { pointerType: 'mouse' });
+    fireEvent.pointerLeave(shown, { pointerType: 'mouse' });
+    await wait(200);
+    expect(tip()).not.toBeNull();
+    // Without the focus the pointer rule is back: leaving hides it.
+    act(() => button.blur());
+    fireEvent.pointerEnter(button, { pointerType: 'mouse' });
+    expect(tip()).not.toBeNull();
+    fireEvent.pointerLeave(button, { pointerType: 'mouse' });
+    await wait(200);
+    expect(tip()).toBeNull();
+  });
+
+  test('a focused trigger hides it once scrolled fully out of its pane, not while part of it shows', async () => {
+    const { pane, button } = renderInPane();
+    setBox(button, row(200));
+    act(() => button.focus());
+    // Half above the pane's top edge: still in view.
+    setBox(button, row(90));
+    fireEvent.scroll(pane);
+    await frame();
+    expect(tip()).not.toBeNull();
+    setBox(button, row(60));
+    fireEvent.scroll(pane);
+    await frame();
+    expect(tip()).toBeNull();
+    expect(document.activeElement).toBe(button);
+    expect(button.hasAttribute('aria-describedby')).toBe(false);
+  });
+
+  test('a focused trigger hides it once scrolled out of the viewport', async () => {
+    render(
+      <Tooltip content="Star">
+        <button type="button">S</button>
+      </Tooltip>
+    );
+    const button = screen.getByRole('button', { name: 'S' });
+    setBox(button, row(300));
+    act(() => button.focus());
+    setBox(button, row(-30));
+    fireEvent.scroll(document);
+    await frame();
+    expect(tip()).toBeNull();
+  });
+
+  test('a hover tip is kept through a scroll once its trigger takes keyboard focus, until a press', async () => {
+    const { pane, button } = renderInPane();
+    setBox(button, row(200));
+    fireEvent.pointerEnter(button, { pointerType: 'mouse' });
+    expect(tip()).not.toBeNull();
+    act(() => button.focus());
+    fireEvent.scroll(pane);
+    await frame();
+    expect(tip()).not.toBeNull();
+    // A press on it: the pointer drives it now, and a scroll hides it.
+    fireEvent.pointerDown(button);
+    expect(tip()).toBeNull();
+    fireEvent.pointerEnter(button, { pointerType: 'mouse' });
+    expect(tip()).not.toBeNull();
+    fireEvent.scroll(pane);
+    expect(tip()).toBeNull();
+  });
+
+  test('without keyboard focus, a scroll in a pane holding the trigger hides it; one elsewhere does not', () => {
     render(
       <>
         <div data-testid="column">

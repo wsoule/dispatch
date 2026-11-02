@@ -1406,18 +1406,25 @@ or middle click still opens the link.
   closed under 400ms ago, so moving along a toolbar shows each hint at once. It
   shows on hover (never on a touch screen's) and at once on keyboard focus
   (never for a press), and hides on leave (after a short grace, so the pointer
-  can move onto the tip and rest there), blur, a press, a scroll that moves its
-  trigger (a scroll in another pane only re-places it) and Escape from its
+  can move onto the tip and rest there), blur, a press and Escape from its
   trigger (an Escape typed elsewhere hides it and still reaches its own target).
-  While shown the child carries `aria-describedby` to the `role="tooltip"`
-  element, which is `aria-hidden` so it never joins the text of a heading or
-  sentence it renders in; nothing renders while hidden. The child is cloned with
-  a `ref` and pointer and focus handlers, so a component must forward them
-  (`Button` does); a child that cannot take focus (a span, a term, a disabled
-  button) is wrapped in a `span` with `tabIndex={0}`. Gr8r's inverted chip:
-  `--text` fill, `--text-inv` words, 12px, at most 256px wide. It never holds
-  interactive content, nor the only copy of a fact. `defaultOpen` shows it from
-  the first render (a persistent hint, or a test without timers).
+  A scroll that moves its trigger (the page, or a pane holding it) hides a tip
+  shown by hover, and a scroll in another pane only re-places it. While the
+  trigger holds keyboard focus the tip stays (WCAG 1.4.13, persistent): the
+  pointer passing over and off the trigger leaves it, every scroll re-places it
+  beside the trigger (the browser's own scroll to a trigger just reached by Tab
+  included), and it hides only once the trigger is fully out of the viewport or
+  of a pane holding it, scrolled out after showing or still out of view once
+  scrolling has been quiet for 300ms (focus returned without a scroll to a
+  trigger scrolled away). While shown the child carries `aria-describedby` to
+  the `role="tooltip"` element, which is `aria-hidden` so it never joins the
+  text of a heading or sentence it renders in; nothing renders while hidden. The
+  child is cloned with a `ref` and pointer and focus handlers, so a component
+  must forward them (`Button` does); a child that cannot take focus (a span, a
+  term, a disabled button) is wrapped in a `span` with `tabIndex={0}`. Gr8r's
+  inverted chip: `--text` fill, `--text-inv` words, 12px, at most 256px wide. It
+  never holds interactive content, nor the only copy of a fact. `defaultOpen`
+  shows it from the first render (a persistent hint, or a test without timers).
 - `Dialog` is the centred modal for a short focused form or a reading view (a
   diff over a session): `title`, `description`, `size` sm 360px / md 520px / lg
   880px (a full-width sheet at 640px and below), `titleAction` (a Back button

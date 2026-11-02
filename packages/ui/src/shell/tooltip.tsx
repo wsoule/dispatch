@@ -17,7 +17,12 @@ import {
 import { placePopover } from '../edit/position';
 import { useMergedRef } from '../lib/refs';
 import { useMediaQuery } from './dom';
-import { hideFromTopLayer, showInTopLayer, useLayer } from './layer';
+import {
+  followAnchor,
+  hideFromTopLayer,
+  showInTopLayer,
+  useLayer,
+} from './layer';
 import styles from './tooltip.module.css';
 import type { TooltipProps } from './types';
 
@@ -33,6 +38,12 @@ const WARM_MS = 400;
 /** How long a hover tip stays after the pointer leaves its trigger, so the
     pointer can cross the gap onto the tip (WCAG 1.4.13, hoverable). */
 const GRACE_MS = 120;
+/** How long scrolling must stay quiet before a tip shown by keyboard
+    focus stops waiting for its trigger to come into view: by then the
+    browser's own scroll to a just-focused trigger, smooth or instant, has
+    ended, so a trigger still out of view is not coming (focus returned
+    with preventScroll, or a pane that cannot reveal it). */
+const SETTLE_MS = 300;
 const GAP = 6;
 const MARGIN = 8;
 
@@ -80,6 +91,60 @@ function focusIsVisible(element: Element): boolean {
   } catch {
     return true;
   }
+}
+
+/** An overflow that clips what its box holds: a scroll pane, a column
+    with overflow hidden. happy-dom computes only the shorthand. */
+const CLIPPING = /\b(?:auto|scroll|hidden|clip|overlay)\b/;
+
+/**
+ * The anchor's ancestors that clip it, nearest first: each one whose
+ * overflow is not visible, up to the first fixed one (an overlay in the
+ * top layer, which nothing above it clips) and short of `<body>`, whose
+ * overflow is the viewport's. Measured once per shown tip: the panes a
+ * trigger sits in do not change while its hint shows.
+ */
+function clippingAncestors(anchor: Element): Element[] {
+  const clips: Element[] = [];
+  const body = anchor.ownerDocument.body;
+  for (
+    let node = anchor.parentElement;
+    node !== null && node !== body;
+    node = node.parentElement
+  ) {
+    const style = getComputedStyle(node);
+    const overflow = `${style.overflowX} ${style.overflowY} ${style.overflow}`;
+    if (style.display !== 'contents' && CLIPPING.test(overflow)) {
+      clips.push(node);
+    }
+    if (style.position === 'fixed') break;
+  }
+  return clips;
+}
+
+/** Whether any of the anchor's box shows: inside the viewport and every
+    ancestor that clips it. A box touching an edge still counts, so a box
+    of no size (happy-dom's) is in view. */
+function inView(anchor: Element, clips: readonly Element[]): boolean {
+  const clientWidth = document.documentElement.clientWidth;
+  let top = 0;
+  let left = 0;
+  let bottom = window.innerHeight;
+  let right = clientWidth > 0 ? clientWidth : window.innerWidth;
+  for (const clip of clips) {
+    const box = clip.getBoundingClientRect();
+    top = Math.max(top, box.top);
+    left = Math.max(left, box.left);
+    bottom = Math.min(bottom, box.bottom);
+    right = Math.min(right, box.right);
+  }
+  const box = anchor.getBoundingClientRect();
+  return (
+    box.bottom >= top &&
+    box.top <= bottom &&
+    box.right >= left &&
+    box.left <= right
+  );
 }
 
 /**
@@ -146,9 +211,15 @@ function placeTip(
  * It shows on hover after `delay` (300ms; at once while another tooltip
  * closed under 400ms ago) and at once on keyboard focus, never on a
  * touch screen's hover or a press, and hides on leave (after a short
- * grace, so the pointer can move onto the tip), blur, a press, a scroll
- * that moves its trigger, and Escape from its trigger (an Escape typed
- * elsewhere hides it and goes on to its own target). While shown the
+ * grace, so the pointer can move onto the tip), blur, a press, and Escape
+ * from its trigger (an Escape typed elsewhere hides it and goes on to its
+ * own target). A scroll that moves its trigger hides a tip shown by
+ * hover; while the trigger holds keyboard focus the tip stays (WCAG
+ * 1.4.13): the pointer passing over and off the trigger leaves it, and it
+ * follows the trigger through every scroll (the browser's own scroll to a
+ * trigger just focused included), hiding only once the trigger is fully
+ * out of view: scrolled out after showing, or never shown once scrolling
+ * settles. While shown the
  * child carries `aria-describedby` to the `role="tooltip"` element, which
  * is aria-hidden so it never joins the text of a heading or sentence it
  * sits in; nothing is rendered while hidden.
@@ -167,6 +238,9 @@ export function Tooltip({
   const anchorRef = useRef<HTMLElement | null>(null);
   const tipRef = useRef<HTMLSpanElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** The trigger holds keyboard focus: set by a visible focus, cleared by
+      blur or a press on it. A scroll never hides the tip while it is. */
+  const heldByFocus = useRef(false);
   const coarse = useMediaQuery(COARSE_QUERY);
   const child = children as ReactElement<ChildProps>;
   const wrapped = !takesFocus(child);
@@ -201,11 +275,24 @@ export function Tooltip({
     setOpen(false);
   }
 
+  /** The trigger holds keyboard focus right now: a visible focus set
+      `heldByFocus` and focus has not left it since. */
+  function focusHeld(): boolean {
+    const anchor = anchorRef.current;
+    return (
+      heldByFocus.current &&
+      anchor !== null &&
+      anchor.contains(document.activeElement)
+    );
+  }
+
   // The pointer left the trigger or the tip: hide after a short grace,
-  // which the tip (or the trigger) cancels when the pointer reaches it.
+  // which the tip (or the trigger) cancels when the pointer reaches it. A
+  // tip the trigger's keyboard focus holds stays: the pointer passing by
+  // does not take away a hint the keyboard asked for.
   function hideSoon(): void {
     clearTimer();
-    if (!open) return;
+    if (!open || focusHeld()) return;
     timer.current = setTimeout(() => {
       timer.current = null;
       setOpen(false);
@@ -232,36 +319,69 @@ export function Tooltip({
     onDismiss: () => hide(),
   });
 
-  // Into the top layer, placed beside the anchor. A scroll that moves the
-  // anchor (the page, or a pane holding it) hides it; any other scroll
-  // (a streaming chat beside it following its bottom) only re-places it.
+  // Into the top layer, placed beside the anchor and kept there as the
+  // window resizes and anything scrolls (followAnchor). A scroll that
+  // moves the anchor (the page, or a pane holding it) hides a tip shown by
+  // hover; any other scroll (a streaming chat beside it following its
+  // bottom) only re-places it. While the trigger holds keyboard focus
+  // every scroll re-places it, and it hides once the trigger is fully out
+  // of the viewport or a pane holding it: scrolled out after being in
+  // view, or still out of view once scrolling has been quiet for
+  // SETTLE_MS. A trigger the browser is still scrolling into view (just
+  // focused by Tab, opening the tip before that scroll) is waited for;
+  // one that never comes (focus returned with preventScroll to a trigger
+  // scrolled away) is not, so the tip never floats clamped at an edge.
   useClientLayoutEffect(() => {
     const tip = tipRef.current;
     const anchor = anchorRef.current;
     if (!shown || tip === null) return undefined;
     showInTopLayer(tip);
-    if (anchor !== null) placeTip(tip, anchor, side);
-    else tip.dataset.placed = 'true';
-    let frame = 0;
+    let clips: readonly Element[] | null = null;
+    // The trigger has shown in view since the tip opened.
+    let seen = false;
+    // Still waiting out the browser's scroll to the trigger: true until
+    // scrolling has been quiet for SETTLE_MS (restarted by every scroll
+    // while the trigger has not shown).
+    let settling = true;
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    const place = (): void => {
+      if (anchor === null) {
+        tip.dataset.placed = 'true';
+        return;
+      }
+      clips ??= clippingAncestors(anchor);
+      const visible = inView(anchor, clips);
+      if (!visible && (seen || !settling) && focusHeld()) {
+        hide();
+        return;
+      }
+      seen ||= visible;
+      placeTip(tip, anchor, side);
+    };
+    const waitToSettle = (): void => {
+      if (settleTimer !== null) clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => {
+        settleTimer = null;
+        settling = false;
+        if (!seen) place();
+      }, SETTLE_MS);
+    };
     const onScroll = (event: Event): void => {
+      if (settling && !seen) waitToSettle();
+      if (focusHeld()) return;
       const scrolled = event.target;
       const movesAnchor =
         anchor === null ||
         scrolled === document ||
         (scrolled instanceof Node && scrolled.contains(anchor));
-      if (movesAnchor) {
-        hide();
-        return;
-      }
-      if (frame !== 0) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        placeTip(tip, anchor, side);
-      });
+      if (movesAnchor) hide();
     };
     document.addEventListener('scroll', onScroll, true);
+    const stop = followAnchor(tip, anchor, place);
+    if (!seen) waitToSettle();
     return () => {
-      if (frame !== 0) cancelAnimationFrame(frame);
+      stop();
+      if (settleTimer !== null) clearTimeout(settleTimer);
       document.removeEventListener('scroll', onScroll, true);
       hideFromTopLayer(tip);
     };
@@ -279,14 +399,18 @@ export function Tooltip({
     },
     onPointerDown: (event: PointerEvent<HTMLElement>) => {
       child.props.onPointerDown?.(event);
+      heldByFocus.current = false;
       hide();
     },
     onFocus: (event: FocusEvent<HTMLElement>) => {
       child.props.onFocus?.(event);
-      if (focusIsVisible(event.currentTarget)) show(true);
+      if (!focusIsVisible(event.currentTarget)) return;
+      heldByFocus.current = true;
+      show(true);
     },
     onBlur: (event: FocusEvent<HTMLElement>) => {
       child.props.onBlur?.(event);
+      heldByFocus.current = false;
       hide();
     },
   };
