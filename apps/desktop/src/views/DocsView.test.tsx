@@ -66,6 +66,38 @@ const read = {
   proposal: null,
 } as unknown as DocRead;
 
+// The page as App mounts it: a back chip that goes nowhere and an All docs crumb.
+const PAGE = { onBack: () => {}, onOpenAllDocs: () => {} };
+
+// Opens a doc from the All docs list: each row is a button named by its title.
+async function openDoc(title: string): Promise<void> {
+  fireEvent.click(await screen.findByRole('button', { name: title }));
+}
+
+// Matches the one paragraph whose whole text is `text`, across the Geist Mono
+// spans (a slug, a repo path) it holds.
+function lineText(text: string) {
+  return (_content: string, el: Element | null): boolean =>
+    el?.tagName === 'P' && el.textContent === text;
+}
+
+// The page head the crumb and actions sit in.
+function pageHeader(): HTMLElement {
+  const header = document.querySelector<HTMLElement>(
+    '[data-slot="page-header"]'
+  );
+  if (header === null) throw new Error('no page header');
+  return header;
+}
+
+// Walks back to the list through the "All docs" crumb, then opens `title`.
+async function switchTo(title: string): Promise<void> {
+  fireEvent.click(
+    within(pageHeader()).getByRole('button', { name: 'All docs' })
+  );
+  await openDoc(title);
+}
+
 function renderView(opts: {
   canDecide: boolean;
   save?: ApiClient['saveDocBody'];
@@ -78,6 +110,8 @@ function renderView(opts: {
   promoteDoc?: ApiClient['promoteDoc'];
   tasksPage?: { onBack: () => void; onOpenAllDocs: () => void };
   initialDoc?: string;
+  discussion?: (docId: string) => ReactNode;
+  canMessage?: boolean;
 }) {
   const calls: string[] = [];
   const doc = opts.doc ?? summary;
@@ -124,16 +158,18 @@ function renderView(opts: {
     port: 1,
     messageAccess: {
       canDecide: opts.canDecide,
-      canMessage: true,
-      explanation: null,
+      canMessage: opts.canMessage ?? true,
+      explanation:
+        opts.canMessage === false ? 'Docs need a teammate token.' : null,
     },
   } as unknown as DispatchProjectData;
   render(
     <QueryClientProvider client={new QueryClient()}>
       <DocsView
         data={data}
-        tasksPage={opts.tasksPage}
+        tasksPage={opts.tasksPage ?? PAGE}
         initialDoc={opts.initialDoc}
+        discussion={opts.discussion}
       />
     </QueryClientProvider>
   );
@@ -142,7 +178,7 @@ function renderView(opts: {
 
 test('lists docs, opens one in the source editor, and previews it', async () => {
   renderView({ canDecide: true });
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   const editor =
     await screen.findByLabelText<HTMLTextAreaElement>('Editing auth');
   expect(editor.value).toBe('# Auth\nbody\n');
@@ -154,7 +190,7 @@ test('lists docs, opens one in the source editor, and previews it', async () => 
 
 test('shows Mark reviewed to decide-tier humans only, listing what it covers first', async () => {
   const calls = renderView({ canDecide: true });
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   fireEvent.click(await screen.findByRole('button', { name: 'Mark reviewed' }));
   expect(await screen.findByText('rev 1 · run:r-1 · created')).toBeDefined();
   expect(calls).toEqual([]);
@@ -176,7 +212,7 @@ test('Confirm reviewed refreshes the list rather than review revisions it never 
     return Promise.resolve({ revisions: lists === 1 ? first : moved });
   }) as unknown as ApiClient['listDocRevisions'];
   const calls = renderView({ canDecide: true, revisions });
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   fireEvent.click(await screen.findByRole('button', { name: 'Mark reviewed' }));
   await screen.findByText('rev 1 · run:r-1 · created');
   fireEvent.click(screen.getByRole('button', { name: 'Confirm reviewed' }));
@@ -191,7 +227,7 @@ test('Confirm reviewed refreshes the list rather than review revisions it never 
 
 test('hides Mark reviewed below decide tier', async () => {
   renderView({ canDecide: false });
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   await screen.findByLabelText('Editing auth');
   expect(screen.queryByRole('button', { name: 'Mark reviewed' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull();
@@ -199,7 +235,7 @@ test('hides Mark reviewed below decide tier', async () => {
 
 test('archives a doc for decide-tier humans', async () => {
   const calls = renderView({ canDecide: true });
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   fireEvent.click(await screen.findByRole('button', { name: 'Archive' }));
   await waitFor(() => expect(calls).toEqual(['status archived']));
 });
@@ -212,7 +248,7 @@ test('an archived doc opens read-only with Restore, back to the status it left',
   } as DocSummary;
   const calls = renderView({ canDecide: true, doc: archived });
   fireEvent.click(await screen.findByRole('button', { name: 'Archived' }));
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   const editor =
     await screen.findByLabelText<HTMLTextAreaElement>('Editing auth');
   expect(editor.readOnly).toBe(true);
@@ -272,6 +308,7 @@ function renderTwoDocs(
   const view = (c: ApiClient) => (
     <QueryClientProvider client={queryClient}>
       <DocsView
+        tasksPage={PAGE}
         data={
           {
             client: c,
@@ -341,10 +378,10 @@ const wait = (ms: number) =>
 
 test('switching docs saves typing the debounce still held', async () => {
   const { saves } = renderTwoDocs(() => Promise.resolve(amended('h2')));
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   const editor = await screen.findByLabelText('Editing auth');
   fireEvent.change(editor, { target: { value: '# Auth\nmine\n' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Plan' }));
+  await switchTo('Plan');
   await screen.findByLabelText('Editing plan');
   await waitFor(() =>
     expect(saves).toEqual([
@@ -367,12 +404,12 @@ test('switching docs mid-save still saves what was typed after it', async () => 
         })
       : Promise.resolve(amended('h3'))
   );
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   const editor = await screen.findByLabelText('Editing auth');
   fireEvent.change(editor, { target: { value: 'first\n' } });
   await waitFor(() => expect(saves.length).toBe(1), { timeout: 3000 });
   fireEvent.change(editor, { target: { value: 'first\nsecond\n' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Plan' }));
+  await switchTo('Plan');
   await screen.findByLabelText('Editing plan');
   land();
   await waitFor(() =>
@@ -390,11 +427,11 @@ test('switching docs mid-save still saves what was typed after it', async () => 
 
 test('review focus 1: switching docs under the conflict banner saves the marked text', async () => {
   const { saves } = renderTwoDocs(conflictThenAmend);
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   const editor = await screen.findByLabelText('Editing auth');
   fireEvent.change(editor, { target: { value: '# Auth\nmine\n' } });
   await screen.findByText(BANNER, {}, { timeout: 3000 });
-  fireEvent.click(screen.getByRole('button', { name: 'Plan' }));
+  await switchTo('Plan');
   await screen.findByLabelText('Editing plan');
   await waitFor(() =>
     expect(saves).toEqual([
@@ -413,7 +450,7 @@ test(
   'review focus 1: the marked text saves after a few idle seconds, with the banner still up',
   async () => {
     const { saves } = renderTwoDocs(conflictThenAmend);
-    fireEvent.click(await screen.findByText('Auth refactor'));
+    await openDoc('Auth refactor');
     const editor =
       await screen.findByLabelText<HTMLTextAreaElement>('Editing auth');
     fireEvent.change(editor, { target: { value: '# Auth\nmine\n' } });
@@ -441,7 +478,7 @@ test(
 
 test('a changed daemon connection leaves the conflict hold in place', async () => {
   const { saves, reconnect } = renderTwoDocs(conflictThenAmend);
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   const editor = await screen.findByLabelText('Editing auth');
   fireEvent.change(editor, { target: { value: '# Auth\nmine\n' } });
   await screen.findByText(BANNER, {}, { timeout: 3000 });
@@ -462,7 +499,7 @@ test('Save version waits out a save in flight, then seals what was typed', async
         : Promise.resolve(amended('h3')),
     unsealed
   );
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   const editor = await screen.findByLabelText('Editing auth');
   fireEvent.change(editor, { target: { value: 'first\n' } });
   await waitFor(() => expect(saves.length).toBe(1), { timeout: 3000 });
@@ -482,7 +519,7 @@ test('Save version waits out a save in flight, then seals what was typed', async
 
 test('Save version under the conflict banner saves the marked text but seals nothing', async () => {
   const { saves, seals } = renderTwoDocs(conflictThenAmend, unsealed);
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   const editor = await screen.findByLabelText('Editing auth');
   fireEvent.change(editor, { target: { value: '# Auth\nmine\n' } });
   await screen.findByText(BANNER, {}, { timeout: 3000 });
@@ -511,7 +548,7 @@ test('a newer head that arrives mid-save shows once the save lands', async () =>
       }),
     () => Promise.resolve(head)
   );
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   const editor =
     await screen.findByLabelText<HTMLTextAreaElement>('Editing auth');
   fireEvent.change(editor, { target: { value: '# Auth\nmine\n' } });
@@ -522,13 +559,23 @@ test('a newer head that arrives mid-save shows once the save lands', async () =>
       ...summary,
       title: 'Auth refactor v2',
       head: { ...summary.head, id: 'rev-2', n: 2, hash: 'h3' },
+      published: {
+        path: 'docs/spec.md',
+        rev: 'rev-1',
+        n: 1,
+        task: 't-pub-1',
+        commit: 'abc123',
+      },
     },
     rev: { ...read.rev, id: 'rev-2', n: 2, hash: 'h3' },
     text: '# Auth\nmine\nagent\n',
   } as DocRead;
   await queryClient.invalidateQueries();
-  // The newer head renders while the save is still out.
-  await screen.findByRole('heading', { name: 'Auth refactor v2' });
+  // The newer head renders while the save is still out (the crumb names the
+  // doc from the list, so the head shows through its published line).
+  await screen.findByText(
+    lineText('published rev 1 to docs/spec.md; head is rev 2')
+  );
   expect(editor.value).toBe('# Auth\nmine\n');
   land();
   await waitFor(() => expect(editor.value).toBe('# Auth\nmine\nagent\n'));
@@ -539,7 +586,7 @@ test('a refused save waits for the next keystroke instead of retrying', async ()
   const { saves } = renderTwoDocs(() =>
     Promise.reject(new ApiError('archived; restore it first', 409))
   );
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   const editor = await screen.findByLabelText('Editing auth');
   fireEvent.change(editor, { target: { value: '# Auth\nmine\n' } });
   await screen.findByText('archived; restore it first', {}, { timeout: 3000 });
@@ -563,7 +610,7 @@ test('a 409 loads the marked text under the banner', async () => {
       },
     })) as ApiClient['saveDocBody'];
   renderView({ canDecide: true, save });
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   const editor =
     await screen.findByLabelText<HTMLTextAreaElement>('Editing auth');
   fireEvent.change(editor, { target: { value: '# Auth\nmine\n' } });
@@ -615,7 +662,7 @@ test('the merge view resolves a 409 block by block and saves the text without ma
     );
   }) as unknown as ApiClient['saveDocBody'];
   renderView({ canDecide: true, save });
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   const editor =
     await screen.findByLabelText<HTMLTextAreaElement>('Editing auth');
   fireEvent.change(editor, { target: { value: '# Auth\nmine\n' } });
@@ -662,7 +709,7 @@ test('a stored merge offers the merge view, naming each side by revision', async
       ],
     })) as unknown as ApiClient['listDocRevisions'];
   renderView({ canDecide: true, text, revisions });
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   fireEvent.click(await screen.findByRole('button', { name: 'Merge' }));
   expect(await screen.findByText('head · rev 7 by run:r-1')).toBeDefined();
   expect(screen.getByText('yours · rev 8 by human:wyat')).toBeDefined();
@@ -692,7 +739,7 @@ test('Mark reviewed shows the diff from the last review to the newest revision',
     })) as unknown as ApiClient['listDocRevisions'];
   const doc = { ...summary, reviewedRev: 'rev-1' } as unknown as DocSummary;
   renderView({ canDecide: true, doc, revisions, diff });
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   fireEvent.click(await screen.findByRole('button', { name: 'Mark reviewed' }));
   expect(await screen.findByText('rev 2 · run:r-1 · edited')).toBeDefined();
   expect(screen.queryByText('rev 1 · human:wyat · created')).toBeNull();
@@ -743,6 +790,7 @@ function renderNamed(initialDoc: string | null, initialAnchor: string | null) {
     <QueryClientProvider client={queryClient}>
       <DocsView
         data={data}
+        tasksPage={PAGE}
         initialDoc={doc}
         initialAnchor={anchor}
         onSelectDoc={(id) => picked.push(id)}
@@ -772,7 +820,7 @@ test('a doc named later replaces the open one, and a list pick is reported', asy
   await screen.findByLabelText('Editing auth');
   rename('doc-2', null);
   expect(await screen.findByLabelText('Editing plan')).toBeDefined();
-  fireEvent.click(screen.getByText('Auth refactor'));
+  await switchTo('Auth refactor');
   expect(await screen.findByLabelText('Editing auth')).toBeDefined();
   expect(picked).toEqual(['doc-1']);
 });
@@ -795,17 +843,23 @@ const publishedDoc = (headN: number) =>
 
 test('says how far the head is past the published revision', async () => {
   renderView({ canDecide: true, doc: publishedDoc(2) });
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   expect(
-    await screen.findByText('published rev 1 to docs/spec.md; head is rev 2')
+    await screen.findByText(
+      lineText('published rev 1 to docs/spec.md; head is rev 2')
+    )
   ).toBeDefined();
 });
 
 test('shows no behind line while the head is the published revision', async () => {
   renderView({ canDecide: true, doc: publishedDoc(1) });
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   await screen.findByLabelText('Editing auth');
-  expect(screen.queryByText(/^published rev/)).toBeNull();
+  expect(
+    screen.queryByText((_content, el) =>
+      (el?.textContent ?? '').startsWith('published rev')
+    )
+  ).toBeNull();
 });
 
 test('opens Publish with the remembered path and sends what the human typed', async () => {
@@ -820,7 +874,7 @@ test('opens Publish with the remembered path and sends what the human typed', as
     });
   }) as unknown as ApiClient['publishDoc'];
   renderView({ canDecide: false, doc: publishedDoc(2), publish });
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   fireEvent.click(
     await screen.findByRole('button', { name: 'Publish to repo' })
   );
@@ -837,7 +891,7 @@ test('opens Publish with the remembered path and sends what the human typed', as
 
 test('offers no Publish on an unreviewed draft', async () => {
   renderView({ canDecide: true });
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   await screen.findByLabelText('Editing auth');
   expect(screen.queryByRole('button', { name: 'Publish to repo' })).toBeNull();
 });
@@ -867,7 +921,12 @@ test('a named proposal opens the doc on its marked merge', async () => {
   } as unknown as DispatchProjectData;
   render(
     <QueryClientProvider client={new QueryClient()}>
-      <DocsView data={data} initialDoc="doc-1" initialMerge="rev-p" />
+      <DocsView
+        data={data}
+        tasksPage={PAGE}
+        initialDoc="doc-1"
+        initialMerge="rev-p"
+      />
     </QueryClientProvider>
   );
   expect(
@@ -894,11 +953,16 @@ test('creates a team doc by default, and a personal one with the toggle', async 
   });
   fireEvent.click(screen.getByRole('button', { name: 'Create' }));
   await waitFor(() => expect(made).toHaveLength(1));
+  // The new doc opens in place of the list; the crumb walks back to it.
+  fireEvent.click(await screen.findByRole('button', { name: 'All docs' }));
   fireEvent.click(await screen.findByRole('button', { name: 'New doc' }));
   fireEvent.change(await screen.findByLabelText('Title'), {
     target: { value: 'My notes' },
   });
-  fireEvent.click(screen.getByRole('radio', { name: 'Personal' }));
+  // The list's Scope filter has a Personal radio too; this is the dialog's.
+  fireEvent.click(
+    within(screen.getByRole('dialog')).getByRole('radio', { name: 'Personal' })
+  );
   fireEvent.click(screen.getByRole('button', { name: 'Create' }));
   await waitFor(() =>
     expect(made).toEqual([
@@ -924,7 +988,7 @@ test('offers Promote to team on a personal doc only, and sends it', async () => 
     promoteDoc,
     doc: { ...summary, scope: 'personal' } as unknown as DocSummary,
   });
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   fireEvent.click(
     await screen.findByRole('button', { name: 'Promote to team' })
   );
@@ -933,7 +997,7 @@ test('offers Promote to team on a personal doc only, and sends it', async () => 
 
 test('shows no Promote on a team doc', async () => {
   renderView({ canDecide: true });
-  fireEvent.click(await screen.findByText('Auth refactor'));
+  await openDoc('Auth refactor');
   await screen.findByLabelText('Editing auth');
   expect(screen.queryByRole('button', { name: 'Promote to team' })).toBeNull();
 });
@@ -958,7 +1022,7 @@ function renderList(
   } as unknown as DispatchProjectData;
   render(
     <QueryClientProvider client={new QueryClient()}>
-      <DocsView data={data} />
+      <DocsView data={data} tasksPage={PAGE} />
     </QueryClientProvider>
   );
 }
@@ -966,7 +1030,7 @@ function renderList(
 test('says the list is loading until it arrives', async () => {
   renderList((() => new Promise(() => undefined)) as never);
   expect(await screen.findByText('Loading docs…')).toBeDefined();
-  expect(screen.queryByText('No docs yet.')).toBeNull();
+  expect(screen.queryByText('No docs yet')).toBeNull();
 });
 
 test('search finds a doc by its text through the daemon, not only its title', async () => {
@@ -989,19 +1053,49 @@ test('search finds a doc by its text through the daemon, not only its title', as
   expect(asked).toContain('rollout');
 });
 
-test('j and k move through the list', async () => {
+test('j and k open the next and previous doc, carrying on from the one last opened', async () => {
   renderList((() =>
     Promise.resolve({ docs: [summary, other], total: 2 })) as never);
-  const first = await screen.findByRole('button', { name: 'Auth refactor' });
-  fireEvent.click(first);
+  await screen.findByRole('button', { name: 'Auth refactor' });
+  // The list is one tab stop holding list "Docs"; keys go to what has focus.
+  const focusList = (): Element => {
+    const region = screen.getByRole('region', { name: 'All docs' });
+    expect(region.getAttribute('tabindex')).toBe('0');
+    expect(within(region).getByRole('list', { name: 'Docs' })).toBeDefined();
+    region.focus();
+    expect(document.activeElement).toBe(region);
+    return region;
+  };
+  // Nothing opened yet: j opens the first doc.
+  fireEvent.keyDown(focusList(), { key: 'j' });
   await screen.findByLabelText('Editing auth');
-  fireEvent.keyDown(screen.getByRole('list', { name: 'Docs' }), { key: 'j' });
+  fireEvent.click(
+    within(pageHeader()).getByRole('button', { name: 'All docs' })
+  );
+  // Back on the list the doc last opened stays marked, and j goes on from it.
+  const auth = await screen.findByRole('button', { name: 'Auth refactor' });
+  expect(auth.closest('li')?.getAttribute('aria-current')).toBe('true');
+  fireEvent.keyDown(focusList(), { key: 'j' });
   expect(await screen.findByLabelText('Editing plan')).toBeDefined();
-  fireEvent.keyDown(screen.getByRole('list', { name: 'Docs' }), { key: 'k' });
+  fireEvent.click(
+    within(pageHeader()).getByRole('button', { name: 'All docs' })
+  );
+  await screen.findByRole('button', { name: 'Plan' });
+  fireEvent.keyDown(focusList(), { key: 'k' });
   expect(await screen.findByLabelText('Editing auth')).toBeDefined();
 });
 
-test('in Two views the All docs page leads with the Tasks back chip and lists docs full width', async () => {
+test('j and k start from the focused row', async () => {
+  renderList((() =>
+    Promise.resolve({ docs: [summary, other], total: 2 })) as never);
+  const plan = await screen.findByRole('button', { name: 'Plan' });
+  plan.focus();
+  expect(document.activeElement).toBe(plan);
+  fireEvent.keyDown(plan, { key: 'k' });
+  expect(await screen.findByLabelText('Editing auth')).toBeDefined();
+});
+
+test('the All docs page leads with the Tasks back chip, the section toggle and New doc', async () => {
   const calls: string[] = [];
   renderView({
     canDecide: true,
@@ -1010,22 +1104,31 @@ test('in Two views the All docs page leads with the Tasks back chip and lists do
       onOpenAllDocs: () => calls.push('all docs'),
     },
   });
-  const header = document.querySelector<HTMLElement>(
-    '[data-slot="page-header"]'
+  const header = pageHeader();
+  expect(header.querySelector('[aria-current="page"]')?.textContent).toBe(
+    'All docs'
   );
-  expect(header).not.toBeNull();
-  expect(within(header).getByText('All docs')).toBeDefined();
-  // No classic rail chrome: no "Docs" heading, no "Pick a doc." placeholder.
-  expect(screen.queryByRole('heading', { name: 'Docs' })).toBeNull();
-  expect(screen.queryByText('Pick a doc.')).toBeNull();
+  const section = within(header).getByRole('radiogroup', {
+    name: 'Docs or memory',
+  });
+  expect(
+    within(section)
+      .getByRole('radio', { name: 'Docs' })
+      .getAttribute('aria-checked')
+  ).toBe('true');
+  expect(within(header).getByRole('button', { name: 'New doc' })).toBeDefined();
+  // The page is the list itself: no doc is open beside it.
+  expect(screen.queryByLabelText('Editing auth')).toBeNull();
   expect(
     await screen.findByRole('button', { name: 'Auth refactor' })
   ).toBeDefined();
+  expect(screen.getByRole('list', { name: 'Docs' })).toBeDefined();
+  expect(screen.getByTestId('docs-page')).toBeDefined();
   fireEvent.click(screen.getByTestId('tasks-back'));
   expect(calls).toEqual(['back']);
 });
 
-test('in Two views an open doc sits under All docs › its title, and the crumb walks back', async () => {
+test('an open doc sits under All docs › its title, and the crumb walks back', async () => {
   const calls: string[] = [];
   renderView({
     canDecide: true,
@@ -1036,14 +1139,13 @@ test('in Two views an open doc sits under All docs › its title, and the crumb 
     },
   });
   await screen.findByLabelText('Editing auth');
-  const header = document.querySelector<HTMLElement>(
-    '[data-slot="page-header"]'
-  );
+  const header = pageHeader();
   await waitFor(() =>
     expect(within(header).getByText('Auth refactor')).toBeDefined()
   );
   // The crumb names the doc, so the doc's own toolbar does not repeat it.
   expect(screen.getAllByText('Auth refactor')).toHaveLength(1);
+  expect(screen.queryByRole('list', { name: 'Docs' })).toBeNull();
   fireEvent.click(within(header).getByRole('button', { name: 'All docs' }));
   expect(calls).toEqual(['all docs']);
   expect(
@@ -1051,19 +1153,45 @@ test('in Two views an open doc sits under All docs › its title, and the crumb 
   ).toBeDefined();
 });
 
-test('in Two views the Docs page switches to the memory runs read', async () => {
+test('an open doc shows its discussion under it', async () => {
   renderView({
     canDecide: true,
-    tasksPage: { onBack: () => {}, onOpenAllDocs: () => {} },
+    initialDoc: 'doc-1',
+    discussion: (docId) => <p>{`Talk about ${docId}`}</p>,
   });
+  await screen.findByLabelText('Editing auth');
+  const discussion = screen.getByRole('region', { name: 'Discussion' });
+  expect(within(discussion).getByText('Talk about doc-1')).toBeDefined();
+});
+
+test('without a token the page says why under its head', () => {
+  renderView({ canDecide: false, canMessage: false });
+  expect(
+    within(screen.getByTestId('docs-page')).getByText(
+      'Docs need a teammate token.'
+    )
+  ).toBeDefined();
+  expect(pageHeader().textContent).toContain('All docs');
+  expect(screen.queryByRole('list', { name: 'Docs' })).toBeNull();
+});
+
+test('the Docs or memory toggle switches the page to the memory runs read and back', async () => {
+  renderView({ canDecide: true });
   await screen.findByRole('button', { name: 'Auth refactor' });
-  fireEvent.click(screen.getByRole('button', { name: 'Memory' }));
+  fireEvent.click(screen.getByRole('radio', { name: 'Memory' }));
   expect(await screen.findByTestId('memory-browser')).toBeDefined();
-  const header = document.querySelector<HTMLElement>(
-    '[data-slot="page-header"]'
-  );
-  expect(header?.querySelector('[aria-current="page"]')?.textContent).toBe(
+  const header = pageHeader();
+  expect(header.querySelector('[aria-current="page"]')?.textContent).toBe(
     'Memory'
   );
+  expect(
+    screen.getByRole('radio', { name: 'Memory' }).getAttribute('aria-checked')
+  ).toBe('true');
   expect(screen.queryByRole('button', { name: 'Auth refactor' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'New doc' })).toBeNull();
+  fireEvent.click(screen.getByRole('radio', { name: 'Docs' }));
+  expect(
+    await screen.findByRole('button', { name: 'Auth refactor' })
+  ).toBeDefined();
+  expect(screen.queryByTestId('memory-browser')).toBeNull();
 });

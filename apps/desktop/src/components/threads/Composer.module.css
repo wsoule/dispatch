@@ -1,0 +1,94 @@
+/* A new message (Composer.tsx): the @-completion's Recipients list and its
+   no-match hint above the PromptBar, then the Kind control, the Urgent and
+   Wake switches and Cancel, then the problem line. The list takes the
+   picker's option look (the active option on --surface-2 with a 2px accent
+   bar inside its edge); addresses are machine-read, so Geist Mono. */
+
+.compose {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recipients {
+  max-height: 192px;
+  margin: 0;
+  padding: var(--s-1);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  list-style: none;
+}
+
+.recipient {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: var(--h-md);
+  padding: 4px var(--s-2);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-size: var(--fs);
+  cursor: pointer;
+}
+
+.recipient[aria-selected='true'] {
+  background: var(--surface-2);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.recipientLabel {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.address {
+  flex: none;
+  max-width: 50%;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "No match": a quiet box where the list would be. */
+.hint {
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--text-2);
+  font-size: var(--fs);
+}
+
+.options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.cancel {
+  margin-left: auto;
+}
+
+.problem {
+  margin: 0;
+  font-size: var(--fs-xs);
+}
+
+/* Forced colours drop the fill and the bar: the active option keeps a
+   Highlight ring. */
+@media (forced-colors: active) {
+  .recipient[aria-selected='true'] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}

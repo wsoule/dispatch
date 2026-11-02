@@ -91,9 +91,11 @@
   color: var(--text-3);
 }
 
-/* A line that warns: an outside agent's terms, in the warning tone's text. */
+/* A line that warns: an outside agent's terms. The global toneText class
+   with data-tone="warning" colours it in the warning tone's ink; this only
+   lets a long line wrap. */
 .caution {
-  color: var(--amber);
+  overflow-wrap: anywhere;
 }
 
 .chips {

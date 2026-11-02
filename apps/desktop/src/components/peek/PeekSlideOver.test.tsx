@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   cleanup,
   fireEvent,
@@ -8,6 +9,8 @@ import {
 } from '@testing-library/react';
 import { afterEach, expect, mock, test } from 'bun:test';
 
+import type { DispatchProjectData } from '../../hooks/useDispatchProject';
+import { OutsidePeek } from './OutsidePeek';
 import { PeekSlideOver, PeekTitle, PresenceLine } from './PeekSlideOver';
 
 afterEach(cleanup);
@@ -83,4 +86,36 @@ test('without a summary the body follows the title directly, and actions sit in 
   expect(
     screen.getByRole('button', { name: 'Open in its home →' })
   ).toBeTruthy();
+});
+
+// A project with no daemon yet: nothing is fetched, and the peek still draws
+// its summary and an empty timeline.
+const OFFLINE = {
+  client: null,
+  port: undefined,
+  me: null,
+  tasks: [],
+  runs: [],
+  presence: [],
+  scopeDecide: { enabled: false, notice: null, explanation: null },
+  messageAccess: { canDecide: false, canMessage: false, explanation: null },
+} as unknown as DispatchProjectData;
+
+test("an outside agent's terms line is warning-toned text, never a raw hue", () => {
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <OutsidePeek
+        data={OFFLINE}
+        address="a2a:acme"
+        onOpenRef={() => {}}
+        onOpenA2ASettings={() => {}}
+        onClose={() => {}}
+      />
+    </QueryClientProvider>
+  );
+  const peek = screen.getByTestId('outside-peek');
+  const terms = within(peek).getByText('plain text only · this machine only');
+  expect(terms.getAttribute('data-tone')).toBe('warning');
+  expect(terms.classList.contains('toneText')).toBe(true);
+  expect(terms.getAttribute('style')).toBeNull();
 });

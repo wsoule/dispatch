@@ -86,7 +86,9 @@ test('a new name drops the old image and its failure, and shows the new one', as
         alt="pic"
       />
     );
-    expect(await screen.findByText(/could not load/)).toBeDefined();
+    const failed = await screen.findByText(/could not load/);
+    expect(failed.textContent).toBe('[image pic could not load]');
+    expect(failed.tagName).toBe('SPAN');
     view.rerender(
       <AssetImage
         client={{ fetchDocAsset }}

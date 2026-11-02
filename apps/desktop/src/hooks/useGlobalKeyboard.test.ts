@@ -33,11 +33,11 @@ function mount(prefixTimeoutMs?: number) {
   return { commands, rerender };
 }
 
-// Stands in for an open Base UI `Dialog.Popup`: `@/ui/dialog` stamps `data-slot`, Base UI
-// stamps the bare `data-open` while it is open.
-function mountOpenDialog(slot = 'dialog-content') {
+// Stands in for an open Base UI alert dialog popup (ui-legacy's `AlertDialogContent`, the one
+// Base UI dialog left): it stamps `data-slot`, Base UI the bare `data-open` while it is open.
+function mountOpenDialog() {
   const el = document.createElement('div');
-  el.setAttribute('data-slot', slot);
+  el.setAttribute('data-slot', 'alert-dialog-content');
   el.setAttribute('data-open', '');
   document.body.appendChild(el);
   return el;
@@ -135,7 +135,7 @@ describe('useGlobalKeyboard', () => {
     expect(second).toEqual(['new-task']);
   });
 
-  test('an open Base UI dialog swallows the bare-key shortcuts', () => {
+  test('an open Base UI alert dialog swallows the bare-key shortcuts', () => {
     const { commands } = mount();
     mountOpenDialog();
     for (const key of ['c', '[', '?']) {
@@ -146,13 +146,6 @@ describe('useGlobalKeyboard', () => {
     dispatchKeydown('s');
     // Escape is the dialog's own to dismiss; the global layer stays out of it too.
     dispatchKeydown('Escape');
-    expect(commands).toEqual([]);
-  });
-
-  test('an open alert dialog swallows the shortcuts the same way', () => {
-    const { commands } = mount();
-    mountOpenDialog('alert-dialog-content');
-    dispatchKeydown('c');
     expect(commands).toEqual([]);
   });
 

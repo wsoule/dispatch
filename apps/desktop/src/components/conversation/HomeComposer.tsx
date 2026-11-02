@@ -1,4 +1,5 @@
 import type { ApiClient } from '@dispatch/client';
+import { Button, Notice, SegmentedControl, TextArea } from '@dispatch/ui';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 
@@ -9,9 +10,7 @@ import {
   sendProblem,
   toSendInput,
 } from '../../lib/composer';
-import { InlineSegmented } from '@/ui/ai/inline-segmented';
-import { Button } from '@/ui/button';
-import { Textarea } from '@/ui/textarea';
+import styles from './HomeComposer.module.css';
 
 /** How long a send waits for Undo: a sent message cannot be recalled. */
 export const UNDO_MS = 4000;
@@ -137,67 +136,68 @@ export function HomeComposer({
   };
 
   return (
-    <div
-      data-testid="home-composer"
-      className="border-border flex flex-col gap-2 border-t-[0.5px] p-2"
-    >
+    <div data-testid="home-composer" className={styles.root}>
       {held !== null && (
-        <div
+        <Notice
+          tone="info"
           role="status"
           data-testid="undo-send"
-          className="bg-surface-secondary rounded-control flex items-center gap-2 px-3 py-1.5 text-[12px]"
+          action={
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setBody(held.body);
+                setKind(held.kind);
+                setHeld(null);
+              }}
+            >
+              Undo
+            </Button>
+          }
         >
-          <span className="flex-1">
-            {held.kind === 'comment' ? 'Commenting on' : 'Sending to'} {label}…
-          </span>
-          <Button
-            size="xs"
-            variant="outline"
-            onClick={() => {
-              setBody(held.body);
-              setKind(held.kind);
-              setHeld(null);
-            }}
-          >
-            Undo
-          </Button>
-        </div>
+          {held.kind === 'comment' ? 'Commenting on' : 'Sending to'} {label}…
+        </Notice>
       )}
       {askOutside && (
-        <div
+        <Notice
+          tone="warning"
           role="alert"
-          className="rounded-control flex items-center gap-2 bg-(--state-waiting-surface) px-3 py-1.5 text-[12px] text-(--state-waiting-fg)"
+          action={
+            <span className={styles.actions}>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => {
+                  confirmOutside(to);
+                  setAskOutside(false);
+                  setHeld({ body: body.trim(), kind });
+                  setBody('');
+                }}
+              >
+                Send to {label}
+              </Button>
+              <Button
+                size="sm"
+                variant="quiet"
+                onClick={() => setAskOutside(false)}
+              >
+                Cancel
+              </Button>
+            </span>
+          }
         >
-          <span className="flex-1">
-            Someone outside your team will see this. Plain text only.
-          </span>
-          <Button
-            size="xs"
-            onClick={() => {
-              confirmOutside(to);
-              setAskOutside(false);
-              setHeld({ body: body.trim(), kind });
-              setBody('');
-            }}
-          >
-            Send to {label}
-          </Button>
-          <Button
-            size="xs"
-            variant="ghost"
-            onClick={() => setAskOutside(false)}
-          >
-            Cancel
-          </Button>
-        </div>
+          Someone outside your team will see this. Plain text only.
+        </Notice>
       )}
       {error !== null && (
-        <p role="alert" className="text-state-failed text-[12px]">
+        <Notice tone="danger" role="alert">
           {error}
-        </p>
+        </Notice>
       )}
-      <Textarea
+      <TextArea
         rows={2}
+        className={styles.text}
         aria-label={`Write to ${label}`}
         placeholder={disabled ? disabledReason : `Write to ${label}…`}
         value={body}
@@ -211,14 +211,18 @@ export function HomeComposer({
         }}
       />
       {/* Wraps in a peek's narrow drawer rather than clipping the send button. */}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
-        <InlineSegmented<HomeKind>
+      <div className={styles.controls}>
+        <SegmentedControl
           label="Kind"
+          size="sm"
           options={kinds.map((k) => ({ id: k, label: KIND_LABEL[k] }))}
           value={kind}
-          onChange={setKind}
+          onChange={(id) => {
+            const next = kinds.find((k) => k === id);
+            if (next !== undefined) setKind(next);
+          }}
         />
-        <span className="text-muted-foreground min-w-[140px] flex-1 text-[11px]">
+        <span className={styles.hint}>
           {kind === 'comment'
             ? 'Synced to the team and Linear · wakes no agent'
             : kind === 'notice'
@@ -227,7 +231,8 @@ export function HomeComposer({
         </span>
         <Button
           size="sm"
-          className="ml-auto max-w-full"
+          variant="primary"
+          className={styles.send}
           disabled={disabled || body.trim() === '' || held !== null}
           onClick={hold}
         >

@@ -1,4 +1,5 @@
 import type { SendResult } from '@dispatch/client';
+import { Button, cx, SegmentedControl, Switch } from '@dispatch/ui';
 import type { KeyboardEvent } from 'react';
 import { useId, useMemo, useState } from 'react';
 
@@ -20,11 +21,8 @@ import {
 } from '../../lib/composer';
 import type { KnownAddresses } from '../../lib/threads';
 import { completeAddress } from '../../lib/threads';
-import { cn } from '@/lib/utils';
-import { PromptBar } from '@/ui/ai/prompt-bar';
-import { SegmentedControl } from '@/ui/ai/segmented';
-import { Switch } from '@/ui/ai/switch';
-import { Button } from '@/ui/button';
+import { PromptBar } from '../chat/PromptBar';
+import styles from './Composer.module.css';
 
 const KINDS: { id: ComposeKind; label: string }[] = [
   { id: 'message', label: 'Message' },
@@ -162,7 +160,7 @@ export function Composer({
     <div
       role="group"
       aria-label="Compose"
-      className="flex flex-col gap-1.5"
+      className={styles.compose}
       onKeyDownCapture={onKeyDownCapture}
     >
       {listed && (
@@ -170,7 +168,7 @@ export function Composer({
           id={listId}
           role="listbox"
           aria-label="Recipients"
-          className="bg-surface-quaternary rounded-card border-border-strong max-h-48 overflow-y-auto border-[0.5px] p-1 text-[13px]"
+          className={styles.recipients}
         >
           {matches.map((match, i) => (
             <li
@@ -178,29 +176,22 @@ export function Composer({
               id={optionId(i)}
               role="option"
               aria-selected={i === active}
-              className={cn(
-                'rounded-control cursor-pointer px-2 py-1',
-                i === active && 'bg-surface-hover'
-              )}
+              className={styles.recipient}
               onMouseDown={(event) => {
                 event.preventDefault();
                 pick(i);
               }}
             >
-              {match.label}
+              <span className={styles.recipientLabel}>{match.label}</span>
+              {match.label !== match.address && (
+                <span className={styles.address}>{match.address}</span>
+              )}
             </li>
           ))}
         </ul>
       )}
       {/* Always mounted, since screen readers skip a live region's first text. */}
-      <p
-        role="status"
-        className={
-          noMatch
-            ? 'bg-surface-quaternary rounded-card border-border-strong text-muted-foreground border-[0.5px] px-3 py-2 text-[13px]'
-            : 'sr-only'
-        }
-      >
+      <p role="status" className={noMatch ? styles.hint : 'srOnly'}>
         {noMatch ? 'No match. Type kind:id, then Enter.' : ''}
       </p>
       <PromptBar
@@ -229,9 +220,10 @@ export function Composer({
         }
         focusOnMount={focusOnMount}
       />
-      <div className="flex flex-wrap items-center gap-3">
+      <div className={styles.options}>
         <SegmentedControl
           label="Kind"
+          size="sm"
           options={KINDS}
           value={kind}
           onChange={(id) => {
@@ -242,7 +234,7 @@ export function Composer({
         <Switch
           label="Urgent"
           checked={urgent}
-          onCheckedChange={(on) => {
+          onChange={(on) => {
             setUrgent(on);
             renewKey();
           }}
@@ -250,7 +242,7 @@ export function Composer({
         <Switch
           label="Wake if asleep"
           checked={wake}
-          onCheckedChange={(on) => {
+          onChange={(on) => {
             setWakeChoice(on);
             renewKey();
           }}
@@ -258,8 +250,8 @@ export function Composer({
         {onCancel !== undefined && (
           <Button
             size="sm"
-            variant="ghost"
-            className="ml-auto"
+            variant="quiet"
+            className={styles.cancel}
             onClick={onCancel}
           >
             Cancel
@@ -267,7 +259,11 @@ export function Composer({
         )}
       </div>
       {problem !== null && (
-        <p role="alert" className="text-destructive text-[12px]">
+        <p
+          role="alert"
+          className={cx('toneText', styles.problem)}
+          data-tone="danger"
+        >
           {problemText(problem)}
         </p>
       )}

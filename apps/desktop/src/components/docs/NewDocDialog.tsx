@@ -1,19 +1,9 @@
 import type { ApiClient } from '@dispatch/client';
+import { Button, cx, Dialog, Field, RadioGroup, TextField } from '@dispatch/ui';
 import { useId, useState } from 'react';
 
 import { describeError } from '../../lib/actionFeedback';
-import { Button } from '@/ui/button';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/ui/dialog';
-import { Input } from '@/ui/input';
-import { Label } from '@/ui/label';
-import { RadioGroup, RadioGroupItem } from '@/ui/radio-group';
+import styles from './NewDocDialog.module.css';
 
 interface NewDocDialogProps {
   client: Pick<ApiClient, 'createDoc'>;
@@ -22,23 +12,26 @@ interface NewDocDialogProps {
   onCreated: (id: string) => void;
 }
 
-/** A title and a Team/Personal choice: a team doc every teammate and run can
- *  read, or a personal one only its owner sees. */
-// Who a new doc is for: everyone on the team, or only you.
-const SCOPES = [
-  ['team', 'Team', 'Every teammate and their agents'],
-  ['personal', 'Personal', 'Only you'],
-] as const;
+type Scope = 'team' | 'personal';
 
+// Who a new doc is for: everyone on the team, or only you.
+const SCOPES: readonly { value: Scope; label: string; hint: string }[] = [
+  { value: 'team', label: 'Team', hint: 'Every teammate and their agents' },
+  { value: 'personal', label: 'Personal', hint: 'Only you' },
+];
+
+/** A title and a Team/Personal choice: a team doc every teammate and run can
+ *  read, or a personal one only its owner sees. The title field takes focus
+ *  on open; while the create is in flight the dialog cannot be dismissed. */
 export function NewDocDialog({
   client,
   open,
   onClose,
   onCreated,
 }: NewDocDialogProps) {
-  const titleId = useId();
+  const scopeLabelId = useId();
   const [title, setTitle] = useState('');
-  const [scope, setScope] = useState<'team' | 'personal'>('team');
+  const [scope, setScope] = useState<Scope>('team');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,70 +56,61 @@ export function NewDocDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>New doc</DialogTitle>
-        </DialogHeader>
-        <DialogBody>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor={titleId} className="text-[13px]">
-              Title
-            </Label>
-            <Input
-              id={titleId}
-              value={title}
-              placeholder="Checkout v2 spec"
-              onChange={(e) => setTitle(e.target.value)}
-            />
-          </div>
-          <div className="flex flex-col gap-2">
-            <span id={`${titleId}-scope`} className="text-[13px] font-medium">
-              Who sees it
-            </span>
-            <RadioGroup
-              aria-labelledby={`${titleId}-scope`}
-              value={scope}
-              onValueChange={(value) => setScope(value as typeof scope)}
-              className="flex flex-col gap-2"
-            >
-              {SCOPES.map(([value, label, hint]) => (
-                <div key={value} className="flex items-center gap-2">
-                  <Label className="font-normal">
-                    <RadioGroupItem
-                      value={value}
-                      aria-describedby={`${titleId}-${value}`}
-                    />
-                    <span className="text-[13px]">{label}</span>
-                  </Label>
-                  <span
-                    id={`${titleId}-${value}`}
-                    className="text-muted-foreground text-[12px]"
-                  >
-                    {hint}
-                  </span>
-                </div>
-              ))}
-            </RadioGroup>
-          </div>
-          {error !== null && (
-            <p role="alert" className="text-xs text-[var(--color-destructive)]">
-              {error}
-            </p>
-          )}
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title="New doc"
+      dismissible={!sending}
+      actions={
+        <>
+          <Button variant="quiet" disabled={sending} onClick={onClose}>
             Cancel
           </Button>
           <Button
-            disabled={sending || title.trim() === ''}
+            variant="primary"
+            busy={sending}
+            busyLabel="Creating…"
+            disabled={title.trim() === ''}
             onClick={() => void create()}
           >
             Create
           </Button>
-        </DialogFooter>
-      </DialogContent>
+        </>
+      }
+    >
+      <div className={styles.body}>
+        <Field label="Title">
+          <TextField
+            value={title}
+            placeholder="Checkout v2 spec"
+            onChange={(e) => setTitle(e.target.value)}
+          />
+        </Field>
+        <div className={styles.scope}>
+          <span id={scopeLabelId} className={styles.scopeLabel}>
+            Who sees it
+          </span>
+          <RadioGroup
+            aria-labelledby={scopeLabelId}
+            name="new-doc-scope"
+            value={scope}
+            onChange={(value) => {
+              const picked = SCOPES.find((option) => option.value === value);
+              if (picked !== undefined) setScope(picked.value);
+            }}
+            options={SCOPES}
+          />
+        </div>
+        {error !== null && (
+          <p
+            role="alert"
+            className={cx('toneText', styles.error)}
+            data-tone="danger"
+          >
+            {error}
+          </p>
+        )}
+      </div>
     </Dialog>
   );
 }

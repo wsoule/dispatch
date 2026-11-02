@@ -1,0 +1,7 @@
+/* The Threads rail's group headers (ThreadRail.tsx): Needs you, Channels
+   and Direct, each with its fold chevron and count, set a step above the
+   rows they head. */
+
+.header {
+  padding: var(--s-2) var(--s-1) 2px;
+}

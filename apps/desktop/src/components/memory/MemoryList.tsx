@@ -1,8 +1,10 @@
 import type { MemoryEntryView } from '@dispatch/client';
 
 import { entryProvenance } from '../../lib/memory';
+import styles from './MemoryList.module.css';
 
-/** One tab's entries: title, handle and where each came from. */
+/** One tab's entries: title, handle and where each came from. The open one
+ *  is marked `aria-current` and drawn in the selection tint. */
 export function MemoryList({
   entries,
   selected,
@@ -13,24 +15,22 @@ export function MemoryList({
   onSelect: (id: string) => void;
 }) {
   if (entries.length === 0)
-    return (
-      <p className="text-muted-foreground p-4 text-[13px]">Nothing here yet.</p>
-    );
+    return <p className={styles.empty}>Nothing here yet.</p>;
   return (
-    <ul aria-label="Memory entries" className="flex flex-col">
+    <ul aria-label="Memory entries" className={styles.list}>
       {entries.map((e) => (
         <li key={e.id}>
           <button
             type="button"
             aria-current={e.id === selected ? 'true' : undefined}
             onClick={() => onSelect(e.id)}
-            className="rounded-control hover:bg-surface-hover aria-[current=true]:bg-surface-selected flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left"
+            className={styles.row}
           >
-            <span className="text-foreground text-[13px] break-words">
-              {e.title}
-            </span>
-            <span className="text-muted-foreground text-[12px]">
-              {`${e.handle} · ${entryProvenance(e)}`}
+            {/* Titles are agent- or teammate-written: plain text only. */}
+            <span className={styles.title}>{e.title}</span>
+            <span className={styles.meta}>
+              <span className={styles.handle}>{e.handle}</span>
+              {` · ${entryProvenance(e)}`}
             </span>
           </button>
         </li>

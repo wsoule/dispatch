@@ -90,6 +90,14 @@ function clientWith(
   };
 }
 
+// The tone of the badge chip whose words are `text`.
+function toneOf(text: string): string | null {
+  return (
+    screen.getByText(text).closest('[data-tone]')?.getAttribute('data-tone') ??
+    null
+  );
+}
+
 function renderRow(message: Message, over: Partial<MessageRowProps> = {}) {
   const onAnswer = mock((_m: Message, _r: { body: string; choice?: string }) =>
     Promise.resolve()
@@ -236,6 +244,9 @@ test('badges a sender from outside the machine as A2A, and a run not at all', ()
   for (const from of ['a2a:acme', 'agent:wyat/a2a.acme']) {
     renderRow(msg(`m-${from}`, { from, body: 'hello' }), { open: false });
     expect(screen.getByText('A2A')).toBeTruthy();
+    expect(
+      screen.getByTitle('Sent from outside this machine over A2A').textContent
+    ).toBe('A2A');
     cleanup();
   }
   renderRow(msg('m-run', { from: 'run:r-000001', body: 'hello' }), {
@@ -264,6 +275,22 @@ test("keeps a revoked agent's message readable, with a Revoked pill", () => {
   });
   expect(screen.getByText('still here')).toBeTruthy();
   expect(screen.getByText('Revoked')).toBeTruthy();
+  expect(toneOf('Revoked')).toBe('muted');
+});
+
+test('prints the sender beside an avatar kept from assistive tech, and tones Urgent amber', () => {
+  renderRow(msg('m-u', { kind: 'question', urgent: true, body: 'now?' }), {
+    open: false,
+  });
+  const article = screen.getByRole('article');
+  expect(article.getAttribute('data-message-id')).toBe('m-u');
+  const avatar = article.querySelector('[data-mark="avatar"]');
+  expect(avatar?.getAttribute('aria-hidden')).toBe('true');
+  expect(
+    screen.getByRole('button', { name: 't-000002 · Checkout · r-000001' })
+  ).toBeTruthy();
+  expect(toneOf('Urgent')).toBe('warning');
+  expect(toneOf('Question')).toBe('default');
 });
 
 test('shows a failed answer on the row', async () => {
@@ -278,6 +305,7 @@ test('shows a failed answer on the row', async () => {
       'question m-q already has an answer'
     )
   );
+  expect(screen.getByRole('alert').getAttribute('data-tone')).toBe('danger');
 });
 
 test('a run sender and a task ref open where they lead; a commit ref does not', () => {
@@ -301,10 +329,13 @@ test('a run sender and a task ref open where they lead; a commit ref does not', 
     taskId: 't-000002',
     runId: 'r-000001',
   });
-  fireEvent.click(screen.getByRole('button', { name: 'task:t-000002' }));
+  const taskRef = screen.getByRole('button', { name: 'task:t-000002' });
+  expect(taskRef.hasAttribute('data-chip-button')).toBe(true);
+  fireEvent.click(taskRef);
   expect(onOpen).toHaveBeenCalledWith({ kind: 'task', taskId: 't-000002' });
   expect(screen.queryByRole('button', { name: /commit:/ })).toBeNull();
   expect(screen.getByText('commit:abc1234def')).toBeTruthy();
+  expect(toneOf('commit:abc1234def')).toBe('default');
 });
 
 test('marks a message from another machine', () => {
@@ -315,7 +346,11 @@ test('marks a message from another machine', () => {
       remoteLabel: 'bob',
     })
   );
-  expect(screen.getByText('remote: bob')).toBeTruthy();
+  // The words in sans, only the machine's label in its own (Geist Mono) span.
+  const label = screen
+    .getAllByText('bob')
+    .find((el) => el.parentElement?.textContent === 'remote: bob');
+  expect(label?.tagName).toBe('SPAN');
 });
 
 test('names remote recipient states: sent to their machine, delivered, read, answered, refused', () => {
@@ -405,6 +440,7 @@ test('badges a close from Dispatch as Closed, and a client’s look-alike as the
   });
   renderRow(system, { open: false });
   expect(screen.getByText('Closed')).toBeTruthy();
+  expect(toneOf('Closed')).toBe('muted');
   cleanup();
   const lookalike = msg('m-f', {
     from: 'agent:wyat/a2a.acme',
@@ -430,6 +466,7 @@ test('badges a breaker pause from Dispatch as Breaker', () => {
     { open: false }
   );
   expect(screen.getByText('Breaker')).toBeTruthy();
+  expect(toneOf('Breaker')).toBe('danger');
   expect(screen.queryByText('Notice')).toBeNull();
 });
 

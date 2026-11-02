@@ -22,10 +22,11 @@ import type { TasksDisplayPrefs, TasksGrouping } from './tasksPrefs';
 
 /**
  * The list's grouping model: `groupTasks` turns the visible tasks plus the display prefs into
- * the ordered sections the list (and the Milestones page) render — one `GroupHeader` per
- * group over a run of `ListRow`s. Every grouping (status, parent, milestone, assignee,
- * priority, none) comes out in the same shape so the view has one rendering path, and the
- * ordering / completed-by-recency / nested-sub-task rules apply identically to all of them.
+ * the ordered sections the list (and the Milestones page) render — `adapters/rows.ts` maps
+ * each onto one of `@dispatch/ui` TaskGroupTable's groups (its header) over its rows. Every
+ * grouping (status, parent, milestone, assignee, priority, none) comes out in the same shape
+ * so the view has one rendering path, and the ordering / completed-by-recency /
+ * nested-sub-task rules apply identically to all of them.
  */
 
 /** What the group's 14px glyph is — the view maps this to a `StatusIcon`, a parent swatch, a
@@ -156,7 +157,7 @@ export function sortTasks(
 /** Lays a sorted group out as rows: with `nestedSubtasks`, a task whose parent is also in
  * the group moves directly under that parent (children keep their sorted order, and their
  * own children follow them, depth-first); otherwise every task is a top-level row in sorted
- * order. `indent` is at most 1 — the `ListRow` API draws one tree level — so a deeper
+ * order. `indent` is at most 1 — TaskGroupTable's rows draw one tree level — so a deeper
  * descendant sits at the same indent as its parent, but never vanishes. A row whose parent
  * chain never reaches a top-level row (a cycle) falls back to the top level. */
 export function nestRows(

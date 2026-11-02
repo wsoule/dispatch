@@ -53,24 +53,6 @@ button {
   background: var(--accent-soft);
 }
 
-/* A group header tinted with its status colour: the left edge picks up `--tint-strength` of
-   `--tint` and fades to the plain surface. Set `--tint` to the group's status colour on the
-   element (legacy-bridge.css gives both names a fallback). Mixed in lch so the ramp matches
-   Linear's. TODO 2026-10-26: `--tint` is a retired Gr8r name (gr8r-rules.test.ts exempts this
-   one read); the recipe goes with ui-legacy's GroupHeader in Phase 7. */
-.status-tint {
-  background: linear-gradient(
-    90deg,
-    color-mix(
-        in lch,
-        var(--tint) var(--tint-strength),
-        var(--surface-quaternary)
-      )
-      0%,
-    var(--surface-quaternary) 100%
-  );
-}
-
 /* A slim always-drawn scrollbar for panes that scroll inside a small box. Deliberately no
    `scrollbar-width`: setting it makes the engine ignore these rules entirely. */
 .scroll-affordance::-webkit-scrollbar {

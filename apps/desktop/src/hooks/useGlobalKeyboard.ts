@@ -42,37 +42,31 @@ export function isShown(element: Element): boolean {
 }
 
 const MODAL_SURFACES =
-  '[data-slot="dialog-content"][data-open], [data-slot="alert-dialog-content"][data-open], [aria-modal="true"]';
+  '[data-slot="alert-dialog-content"][data-open], [aria-modal="true"]';
 
-/** True while any modal surface is currently open. Every dialog builds on Base UI (`@/ui/dialog`'s
- * `DialogContent` renders `data-slot="dialog-content"`, and `Dialog.Popup` carries a bare
- * `data-open` attribute only while open — it flips to `data-closed` for the exit animation, so
- * presence in the DOM alone is not enough). `AlertDialogContent` is the same device under
- * `data-slot="alert-dialog-content"`, so it is matched too — a destructive confirm has to
- * swallow the app's shortcuts exactly like any other modal does. The incoming `@dispatch/ui`
- * library's modal surfaces (slide-over, command palette, phone drawer) are not Base UI dialogs:
- * each sets `aria-modal="true"` on its panel while open and unmounts on close, so a bare
- * `[aria-modal="true"]` match covers them (Base UI never sets that attribute itself). The
- * Usage page's SessionDetailModal and the DispatchDialog form are among these, modal
- * `@dispatch/ui` SlideOvers, and the DiffModal stacked over SessionDetailModal a
- * `@dispatch/ui` Dialog; a closing SlideOver drops aria-modal for its exit slide, so an
- * exiting panel is not caught. The Base UI dialogs that remain (NewDocDialog, PublishDialog,
- * and the alert dialog in FirstTaskGuide) are the `data-slot` matches above; LiveView's Pause
- * all confirm is a `@dispatch/ui` ConfirmDialog (`aria-modal`). Checked
- * live via a DOM query at the moment a keydown fires, rather than threaded through as
- * reactive React state — every dialog instance
- * (TaskComposerSlideOver, SessionDetailModal, DiffModal, CommandPalette, …) only renders into the DOM
- * while open, so the query is always exactly as current as the state would be, without App.tsx
- * needing to know about every modal that exists anywhere in the component tree (including ones
- * mounted deep inside the Sessions hub). CommandPalette is one of these too (`@dispatch/ui`'s
- * aria-modal dialog), so a keydown reaching this listener while the palette is open resolves
- * `Escape` to `null` here — the library's own Escape handling owns it, and its `onClose`
- * dispatching `closePalette` through `onNavigate` is the only thing that closes it (see
- * `appNav.ts`'s `closePalette` case). Exported for a view whose own
- * document-level Escape must let an open panel's go first (the Graph's lock, `views/GraphView.tsx`).
- * A surface inside a view hidden under Settings (an `<Activity mode="hidden">` boundary keeps it
- * in the DOM, aria-modal and all) is not shown, so it does not count: Escape still closes
- * Settings, and the dialog is there again when its view comes back. */
+/** True while any modal surface is currently open. The `@dispatch/ui` modal surfaces (Dialog
+ * and ConfirmDialog, the slide-over, the command palette, the phone drawer) set
+ * `aria-modal="true"` on their panel while open and unmount on close, so a bare
+ * `[aria-modal="true"]` match covers them: NewDocDialog, PublishDialog, LiveView's Pause all
+ * confirm, the Usage page's SessionDetailModal and the DispatchDialog form among them (a
+ * closing SlideOver drops aria-modal for its exit slide, so an exiting panel is not caught).
+ * The one Base UI dialog left is ui-legacy's alert dialog (FirstTaskGuide):
+ * `AlertDialogContent` renders `data-slot="alert-dialog-content"`, and its popup carries a
+ * bare `data-open` only while open (it flips to `data-closed` for the exit animation, so
+ * presence in the DOM alone is not enough); a destructive confirm swallows the app's
+ * shortcuts like any other modal. Checked live via a DOM query at the moment a keydown
+ * fires, rather than threaded through as reactive React state: every dialog instance only
+ * renders into the DOM while open, so the query is as current as the state would be, without
+ * App.tsx needing to know about every modal anywhere in the tree (including ones mounted deep
+ * inside the Sessions hub). CommandPalette is one of these too, so a keydown reaching this
+ * listener while the palette is open resolves `Escape` to `null` here — the library's own
+ * Escape handling owns it, and its `onClose` dispatching `closePalette` through `onNavigate`
+ * is the only thing that closes it (see `appNav.ts`'s `closePalette` case). Exported for a
+ * view whose own document-level Escape must let an open panel's go first (the Graph's lock,
+ * `views/GraphView.tsx`). A surface inside a view hidden under Settings (an
+ * `<Activity mode="hidden">` boundary keeps it in the DOM, aria-modal and all) is not shown,
+ * so it does not count: Escape still closes Settings, and the dialog is there again when its
+ * view comes back. */
 export function isAnyModalOpen(): boolean {
   return Array.from(document.querySelectorAll(MODAL_SURFACES)).some(isShown);
 }

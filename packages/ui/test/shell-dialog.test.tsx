@@ -23,8 +23,8 @@ import SlideOver from '../src/shell/slide-over';
 afterEach(cleanup);
 
 // Dialog and ConfirmDialog. The first block ports the 11 behaviours of
-// packages/ui-legacy/src/dialog.test.tsx (the Base UI dialog) to their
-// Gr8r equivalents: the header row (Back, title, close) plays the legacy
+// the deleted legacy dialog test (the Base UI dialog) to their Gr8r
+// equivalents: the header row (Back, title, close) plays the legacy
 // chrome row and corner close, the panel plays the popup, and the data-*
 // hooks and initialFocusRef play the popup ref.
 

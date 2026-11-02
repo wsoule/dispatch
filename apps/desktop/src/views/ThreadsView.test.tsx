@@ -170,10 +170,98 @@ test('while the rail loads it is busy and says so, and the pane asks for nothing
   const rail = screen.getByRole('complementary', { name: 'Thread list' });
   expect(rail.getAttribute('aria-busy')).toBe('true');
   expect(within(rail).getByText('Loading threads…')).toBeTruthy();
+  // Skeleton rows hold the rail's shape while it loads, announced once.
+  expect(within(rail).getByRole('status').getAttribute('aria-busy')).toBe(
+    'true'
+  );
   expect(screen.queryByText('Pick a thread')?.textContent).toBeUndefined();
 });
 
+test('the page leads with its head: the project and Threads as the trail, and New thread', async () => {
+  renderRail({
+    getMailbox: mock(() => Promise.resolve({ items: [] })),
+    listRecentThreads: mock(() => Promise.resolve({ threads: [] })),
+    openDecisions: mock(() => Promise.resolve({ items: [] })),
+    listChannels: mock(() => Promise.resolve({ channels: [] })),
+    listAgentRoster: mock(() => Promise.resolve({ agents: [] })),
+  });
+  const head = document.querySelector('[data-slot="page-header"]');
+  if (!(head instanceof HTMLElement)) throw new Error('no page header');
+  expect(
+    head.querySelector('[data-slot="page-header-crumb"]')?.textContent
+  ).toBe('storefront›Threads');
+  expect(within(head).getByText('Threads').getAttribute('aria-current')).toBe(
+    'page'
+  );
+  expect(
+    within(head).getByRole<HTMLButtonElement>('button', { name: 'New thread' })
+      .disabled
+  ).toBe(false);
+  expect(screen.getByRole('region', { name: 'Thread' })).toBeTruthy();
+  await within(
+    screen.getByRole('complementary', { name: 'Thread list' })
+  ).findByText('No threads yet');
+});
+
 // An empty mailbox is not an empty rail while a decider's other lists are out.
+test('a rail that failed to load says why, in the danger tone', async () => {
+  renderRail({
+    getMailbox: mock(() => Promise.reject(new Error('mailbox is down'))),
+    listRecentThreads: mock(() => Promise.resolve({ threads: [] })),
+    openDecisions: mock(() => Promise.resolve({ items: [] })),
+    listChannels: mock(() => Promise.resolve({ channels: [] })),
+    listAgentRoster: mock(() => Promise.resolve({ agents: [] })),
+  });
+  const rail = screen.getByRole('complementary', { name: 'Thread list' });
+  const alert = await within(rail).findByRole('alert');
+  expect(alert.textContent).toBe('mailbox is down');
+  expect(alert.getAttribute('data-tone')).toBe('danger');
+});
+
+test('under Two views the head leads with the back chip and names only Threads', () => {
+  const onBack = mock(() => {});
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <ThreadsView
+        data={dataWith({
+          client: {} as unknown as ApiClient,
+          port: 4000,
+          me: 'human:wyat',
+          messageAccess: {
+            canDecide: false,
+            canMessage: false,
+            explanation: 'This window cannot send messages.',
+          },
+          scopeDecide: decideAvailability(
+            { token: 'agent', canDecide: false, canMessage: false },
+            []
+          ),
+          tasks: [],
+          runs: [],
+          presence: [],
+        })}
+        projectName="storefront"
+        focus={null}
+        onFocus={() => {}}
+        onOpenRef={() => {}}
+        overseer={OVERSEER}
+        onBack={onBack}
+      />
+    </QueryClientProvider>
+  );
+  const head = document.querySelector('[data-slot="page-header"]');
+  if (!(head instanceof HTMLElement)) throw new Error('no page header');
+  expect(
+    head.querySelector('[data-slot="page-header-crumb"]')?.textContent
+  ).toBe('Threads');
+  fireEvent.click(within(head).getByRole('button', { name: 'Back to tasks' }));
+  expect(onBack).toHaveBeenCalledTimes(1);
+});
+
 test('the rail stays loading until recent threads and open gates are in too', async () => {
   const pending = () => new Promise<never>(() => {});
   const getMailbox = mock(() => Promise.resolve({ items: [] }));
@@ -417,9 +505,12 @@ test('a teammate waits for the daemon to say who they are, with no reason given 
       />
     </QueryClientProvider>
   );
-  expect(
-    screen.getByText('Waiting for the daemon to say who you are.')
-  ).toBeTruthy();
+  // The rail's skeleton, busy, says what it waits for (no empty-state glyph).
+  const rail = screen.getByRole('complementary', { name: 'Thread list' });
+  expect(rail.getAttribute('aria-busy')).toBe('true');
+  const status = within(rail).getByRole('status');
+  expect(status.getAttribute('aria-busy')).toBe('true');
+  expect(status.textContent).toBe('Waiting for the daemon to say who you are.');
   expect(
     screen.queryByText('Threads are not available in this window.')
   ).toBeNull();

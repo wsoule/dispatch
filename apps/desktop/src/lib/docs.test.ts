@@ -5,6 +5,7 @@ import { openDocBuffer } from './docBuffer';
 import {
   anchorLine,
   docBadges,
+  docBadgeTone,
   docDiffCacheKey,
   docDiffPatch,
   docStatusActions,
@@ -46,6 +47,18 @@ describe('docs helpers', () => {
       'draft',
       'conflicted',
     ]);
+  });
+
+  it('tones each badge: amber waits on a human, grey is inactive, the rest plain', () => {
+    expect(docBadgeTone('unreviewed')).toBe('warning');
+    expect(docBadgeTone('conflicted')).toBe('warning');
+    expect(docBadgeTone('archived')).toBe('muted');
+    expect(docBadgeTone('draft')).toBe('muted');
+    // A restore is a plain fact, not work in progress: no blue.
+    expect(docBadgeTone('restored')).toBe('default');
+    expect(docBadgeTone('team')).toBe('default');
+    expect(docBadgeTone('personal')).toBe('default');
+    expect(docBadgeTone('accepted')).toBe('default');
   });
 
   it('offers Accept on a draft, Reopen on an accepted doc and Restore from archive', () => {

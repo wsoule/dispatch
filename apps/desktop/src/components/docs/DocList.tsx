@@ -1,22 +1,23 @@
 import type { DocSummary } from '@dispatch/client';
+import {
+  Button,
+  Chip,
+  EmptyState,
+  Notice,
+  Register,
+  RegisterCell,
+  RegisterRow,
+  SegmentedControl,
+  SkeletonRows,
+  ViewToolbar,
+} from '@dispatch/ui';
+import { Check } from 'lucide-react';
 import type { KeyboardEvent } from 'react';
-import { useId } from 'react';
 
 import type { DocFilter } from '../../lib/docs';
-import { docBadges } from '../../lib/docs';
+import { docBadges, docBadgeTone } from '../../lib/docs';
 import { resolveListKeyCommand } from '../../lib/keyboard';
-import { cn } from '@/lib/utils';
-import { Button } from '@/ui/button';
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
-} from '@/ui/empty';
-import { Input } from '@/ui/input';
-import { Toggle } from '@/ui/toggle';
-import { ToggleGroup, ToggleGroupItem } from '@/ui/toggle-group';
+import styles from './DocList.module.css';
 
 const SCOPES: { id: DocFilter['scope']; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -24,18 +25,25 @@ const SCOPES: { id: DocFilter['scope']; label: string }[] = [
   { id: 'personal', label: 'Personal' },
 ];
 
+// A pressed filter toggle leads with a check, so on reads as a shape and
+// not only as the pressed fill (about 1.2:1 on the toolbar).
+const PRESSED_MARK = <Check size={14} strokeWidth={1.8} />;
+
+// One template for every row: the title takes the room, then the badges and
+// the slug at the right edge.
+const COLUMNS = 'minmax(0, 1fr) minmax(0, 220px) minmax(0, 160px)';
+
 interface DocListProps {
   docs: readonly DocSummary[];
   filter: DocFilter;
   onFilter: (next: DocFilter) => void;
+  /** The row marked as picked: the doc last opened. */
   selected: string | null;
   onSelect: (id: string) => void;
   error: Error | null;
   /** The list has not arrived yet. */
   loading?: boolean;
-  /** `page` (Two views' All docs): filters on one line over full-width rows. */
-  layout?: 'rail' | 'page';
-  /** Starts a new doc; the empty page state offers it when given. */
+  /** Starts a new doc; the empty state offers it when given. */
   onNew?: () => void;
 }
 
@@ -50,47 +58,9 @@ function isNarrowed(f: DocFilter): boolean {
   );
 }
 
-// One All docs row at the Tasks list's density: glyph, title, then its tags.
-function PageRow({
-  doc,
-  onSelect,
-}: {
-  doc: DocSummary;
-  onSelect: (id: string) => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={doc.title}
-      onClick={() => onSelect(doc.id)}
-      className="hover:bg-surface-hover focus-visible:bg-surface-hover flex h-9 w-full items-center gap-2 px-4 text-left text-[13px] outline-none"
-    >
-      <span aria-hidden className="text-muted-foreground">
-        ▤
-      </span>
-      <span className="min-w-0 flex-1 truncate">{doc.title}</span>
-      {docBadges(doc).map((b) => (
-        <span
-          key={b}
-          className={cn(
-            'rounded-chip text-muted-foreground shrink-0 px-1.5 text-[11px]',
-            b === 'unreviewed'
-              ? 'border border-dashed border-(--text-ghost)'
-              : 'border-border-chip border-[0.5px]'
-          )}
-        >
-          {b}
-        </span>
-      ))}
-      <span className="text-muted-foreground w-40 shrink-0 truncate text-right font-mono text-[11px]">
-        {doc.handle}
-      </span>
-    </button>
-  );
-}
-
-// The Docs view's left pane: search, the scope, archived and unreviewed
-// filters, and one row per doc named by its title, badges as its description.
+// The All docs page: a toolbar (search, the scope, the Archived and
+// Unreviewed toggles) over one register row per doc, named by its title,
+// with its badges and its slug.
 export function DocList({
   docs,
   filter,
@@ -99,162 +69,140 @@ export function DocList({
   onSelect,
   error,
   loading = false,
-  layout = 'rail',
   onNew,
 }: DocListProps) {
-  const page = layout === 'page';
-  const idPrefix = useId();
-  // j/k (and the arrows) move the selection, as in the other lists.
-  const onKeyDown = (event: KeyboardEvent<HTMLUListElement>): void => {
+  // j/k (and the arrows) open the doc after or before the focused row, or,
+  // from the list's own tab stop, after the one last opened (the first doc
+  // when none was), as in the other lists.
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
     const command = resolveListKeyCommand(event, { isTyping: false });
     if (command !== 'list-down' && command !== 'list-up') return;
     event.preventDefault();
     if (docs.length === 0) return;
-    const at = docs.findIndex((d) => d.id === selected);
+    const row =
+      event.target instanceof HTMLElement
+        ? event.target.closest<HTMLElement>('[data-doc]')
+        : null;
+    const from = row?.dataset.doc ?? selected;
+    const at = docs.findIndex((d) => d.id === from);
     const next =
       command === 'list-down'
         ? Math.min(at + 1, docs.length - 1)
         : Math.max(at === -1 ? 0 : at - 1, 0);
     onSelect(docs[next].id);
   };
+  const narrowed = isNarrowed(filter);
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div
-        className={cn(
-          'flex gap-2',
-          page
-            ? 'shadow-hairline-bottom flex-wrap items-center px-4 py-2'
-            : 'flex-col border-b border-[var(--color-border)] p-2'
-        )}
+    <div className={styles.root}>
+      <ViewToolbar
+        label="Docs options"
+        search={{
+          value: filter.query,
+          onChange: (query) => onFilter({ ...filter, query }),
+          placeholder: 'Search docs',
+          label: 'Search docs',
+        }}
+        controls={
+          <>
+            <SegmentedControl
+              label="Scope"
+              size="sm"
+              options={SCOPES}
+              value={filter.scope}
+              onChange={(id) => {
+                const scope = SCOPES.find((s) => s.id === id);
+                if (scope !== undefined)
+                  onFilter({ ...filter, scope: scope.id });
+              }}
+            />
+            <Button
+              variant="quiet"
+              size="sm"
+              aria-pressed={filter.status === 'archived'}
+              icon={filter.status === 'archived' ? PRESSED_MARK : undefined}
+              onClick={() =>
+                onFilter({
+                  ...filter,
+                  status: filter.status === 'archived' ? 'active' : 'archived',
+                })
+              }
+            >
+              Archived
+            </Button>
+            <Button
+              variant="quiet"
+              size="sm"
+              aria-pressed={filter.unreviewedOnly}
+              icon={filter.unreviewedOnly ? PRESSED_MARK : undefined}
+              onClick={() =>
+                onFilter({ ...filter, unreviewedOnly: !filter.unreviewedOnly })
+              }
+            >
+              Unreviewed
+            </Button>
+          </>
+        }
+      />
+      {/* One tab stop for the whole list, as before the restyle: j/k typed
+          here open a doc without first tabbing onto a row. */}
+      <section
+        aria-label="All docs"
+        tabIndex={0}
+        className={styles.scroller}
+        onKeyDown={onKeyDown}
       >
-        <Input
-          aria-label="Search docs"
-          placeholder="Search docs"
-          className={page ? 'h-7 w-[220px] text-[12px]' : undefined}
-          value={filter.query}
-          onChange={(e) => onFilter({ ...filter, query: e.target.value })}
-        />
-        <div className="flex flex-wrap items-center gap-1">
-          <ToggleGroup
-            size="sm"
-            aria-label="Scope"
-            value={[filter.scope]}
-            onValueChange={([value]) => {
-              const scope = SCOPES.find((s) => s.id === value);
-              // Re-pressing the active scope hands back an empty list; keep it.
-              if (scope !== undefined) onFilter({ ...filter, scope: scope.id });
-            }}
-          >
-            {SCOPES.map((s) => (
-              <ToggleGroupItem key={s.id} value={s.id}>
-                {s.label}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-          <Toggle
-            size="sm"
-            pressed={filter.status === 'archived'}
-            onPressedChange={(on) =>
-              onFilter({ ...filter, status: on ? 'archived' : 'active' })
-            }
-          >
-            Archived
-          </Toggle>
-          <Toggle
-            size="sm"
-            pressed={filter.unreviewedOnly}
-            onPressedChange={(on) =>
-              onFilter({ ...filter, unreviewedOnly: on })
-            }
-          >
-            Unreviewed
-          </Toggle>
-        </div>
-      </div>
-      {error !== null && (
-        <p className="p-3 text-xs text-[var(--color-destructive)]">
-          {error.message}
-        </p>
-      )}
-      {loading && docs.length === 0 && error === null && (
-        <p className="p-3 text-xs text-[var(--color-muted-foreground)]">
-          Loading docs…
-        </p>
-      )}
-      {!loading &&
-        docs.length === 0 &&
-        error === null &&
-        (page ? (
-          <Empty>
-            <EmptyHeader>
-              <EmptyTitle>
-                {isNarrowed(filter) ? 'No docs match' : 'No docs yet'}
-              </EmptyTitle>
-              <EmptyDescription>
-                {isNarrowed(filter)
-                  ? 'Try another search, or clear the filters.'
-                  : 'Specs and plans your agents save land here, linked to their tasks.'}
-              </EmptyDescription>
-            </EmptyHeader>
-            {!isNarrowed(filter) && onNew !== undefined && (
-              <EmptyContent>
+        {error !== null && (
+          <Notice tone="danger" role="alert">
+            {error.message}
+          </Notice>
+        )}
+        {loading && docs.length === 0 && error === null && (
+          <SkeletonRows rows={4} label="Loading docs…" />
+        )}
+        {!loading && docs.length === 0 && error === null && (
+          <EmptyState
+            label={narrowed ? 'No docs match' : 'No docs yet'}
+            action={
+              !narrowed && onNew !== undefined ? (
                 <Button size="sm" onClick={onNew}>
                   New doc
                 </Button>
-              </EmptyContent>
-            )}
-          </Empty>
-        ) : (
-          <p className="p-3 text-xs text-[var(--color-muted-foreground)]">
-            {isNarrowed(filter) ? 'No docs match.' : 'No docs yet.'}
-          </p>
-        ))}
-      <ul
-        aria-label="Docs"
-        tabIndex={0}
-        onKeyDown={onKeyDown}
-        className={cn(
-          'min-h-0 flex-1 overflow-auto outline-none',
-          page ? 'py-1' : 'p-1'
+              ) : undefined
+            }
+          >
+            {narrowed
+              ? 'Try another search, or clear the filters.'
+              : 'Specs and plans your agents save land here, linked to their tasks.'}
+          </EmptyState>
         )}
-      >
-        {docs.map((d) =>
-          page ? (
-            <li key={d.id}>
-              <PageRow doc={d} onSelect={onSelect} />
-            </li>
-          ) : (
-            <li key={d.id}>
-              <button
-                type="button"
-                aria-label={d.title}
-                aria-describedby={`${idPrefix}-${d.id}`}
-                aria-current={selected === d.id ? 'true' : undefined}
-                onClick={() => onSelect(d.id)}
-                className={cn(
-                  'flex w-full flex-col items-start gap-1 rounded-control px-2 py-1.5 text-left hover:bg-surface-control',
-                  selected === d.id && 'bg-surface-selected'
-                )}
+        {docs.length > 0 && (
+          <Register label="Docs" columns={COLUMNS} stackWithin={600}>
+            {docs.map((d) => (
+              <RegisterRow
+                key={d.id}
+                data-doc={d.id}
+                rowLabel={d.title}
+                selected={selected === d.id}
+                onActivate={() => onSelect(d.id)}
               >
-                <span className="w-full truncate text-[13px]">{d.title}</span>
-                <span
-                  id={`${idPrefix}-${d.id}`}
-                  className="flex flex-wrap gap-1"
-                >
-                  {docBadges(d).map((b) => (
-                    <span
-                      key={b}
-                      className="rounded bg-[var(--color-muted)] px-1 text-[10px] text-[var(--color-muted-foreground)]"
-                    >
-                      {b}
-                    </span>
-                  ))}
-                </span>
-              </button>
-            </li>
-          )
+                <RegisterCell variant="name">{d.title}</RegisterCell>
+                <RegisterCell>
+                  <span className={styles.badges}>
+                    {docBadges(d).map((b) => (
+                      <Chip key={b} tone={docBadgeTone(b)}>
+                        {b}
+                      </Chip>
+                    ))}
+                  </span>
+                </RegisterCell>
+                <RegisterCell align="end">
+                  <span className={styles.slug}>{d.handle}</span>
+                </RegisterCell>
+              </RegisterRow>
+            ))}
+          </Register>
         )}
-      </ul>
+      </section>
     </div>
   );
 }

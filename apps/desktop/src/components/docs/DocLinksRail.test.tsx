@@ -48,9 +48,20 @@ test('the rail opens a linked target and leaves one with no page as text', () =>
       taskIdOfRun={taskIdOfRun}
     />
   );
+  // The rail and its list are both named by the visible heading.
+  expect(screen.getByRole('complementary', { name: 'Links' })).toBeDefined();
+  const list = screen.getByRole('list', { name: 'Links' });
+  expect(list.querySelectorAll('li')).toHaveLength(2);
   const buttons = screen.getAllByTestId('doc-link');
+  expect(buttons[0].tagName).toBe('BUTTON');
   expect(buttons.map((b) => b.textContent)).toEqual(['task:t-9']);
   fireEvent.click(buttons[0]);
   expect(onOpen).toHaveBeenCalledWith({ kind: 'task', taskId: 't-9' });
   expect(screen.getByText('memory:mem-1').tagName).toBe('SPAN');
+});
+
+test('the rail says so when the doc links nothing', () => {
+  render(<DocLinksRail links={[]} />);
+  expect(screen.getByText('No links yet.')).toBeDefined();
+  expect(screen.queryByRole('list', { name: 'Links' })).toBeNull();
 });

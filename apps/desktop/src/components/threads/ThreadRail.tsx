@@ -1,9 +1,10 @@
+import { SectionHeader } from '@dispatch/ui';
 import { useState } from 'react';
 
 import type { RailGroup, ThreadSummary } from '../../lib/threads';
 import type { ThreadLookups } from '../../lib/threadSources';
 import { ThreadList } from './ThreadList';
-import { GroupHeader } from '@/ui/ai/group-header';
+import styles from './ThreadRail.module.css';
 
 const GROUPS: readonly { key: RailGroup; name: string }[] = [
   { key: 'needs-you', name: 'Needs you' },
@@ -41,12 +42,17 @@ export function ThreadRail({
       sections={GROUPS.map(({ key, name }) => ({
         key,
         name,
+        // Not a heading: the listbox's group already carries the name, and
+        // the count is printed after it ("Needs you 2").
         header: (
-          <GroupHeader
+          <SectionHeader
+            as="div"
+            className={styles.header}
             name={name}
             count={groups[key].length}
             collapsed={collapsed.has(key)}
             onToggle={() => toggle(key)}
+            toggleLabel={`${collapsed.has(key) ? 'Expand' : 'Collapse'} ${name}`}
           />
         ),
         summaries: groups[key],

@@ -31,11 +31,6 @@ const GR8R_SCOPE: readonly string[] = [
   'adapters',
   'components/graph/GraphTooLarge.tsx',
   'components/graph/GraphTooLarge.module.css',
-  'components/peek/PeekSlideOver.tsx',
-  'components/peek/PeekSlideOver.module.css',
-  'components/peek/PeekSlideOver.test.tsx',
-  'components/peek/PersonPeek.tsx',
-  'components/peek/OutsidePeek.tsx',
   'components/shell/CommandPalette.tsx',
   'components/shell/CommandPalette.test.tsx',
   'components/shell/DispatchShell.tsx',
@@ -121,18 +116,6 @@ const GR8R_SCOPE: readonly string[] = [
   'components/gates',
   'components/plans',
   'components/runs',
-  'components/docs/DocGateCard.tsx',
-  'components/docs/DocGateCard.module.css',
-  'components/docs/DocGateCard.test.tsx',
-  'components/memory/MemoryGateCard.tsx',
-  'components/memory/MemoryGateCard.module.css',
-  'components/memory/MemoryGateCard.test.tsx',
-  'components/threads/TaskProposalCard.tsx',
-  'components/threads/TaskProposalCard.module.css',
-  'components/threads/TaskProposalCard.test.tsx',
-  'components/threads/A2ADeclineAction.tsx',
-  'components/threads/A2ADeclineAction.module.css',
-  'components/threads/A2ADeclineAction.test.tsx',
   'components/tasks/NeedsYouBlock.tsx',
   'components/tasks/NeedsYouBlock.module.css',
   'components/tasks/NeedsYouBlock.test.tsx',
@@ -145,8 +128,6 @@ const GR8R_SCOPE: readonly string[] = [
   'components/files/QuickOpenDialog.tsx',
   'components/files/QuickOpenDialog.module.css',
   'components/impact',
-  'components/peek/ThreadPeek.tsx',
-  'components/peek/ThreadPeek.module.css',
   'components/terminal/TerminalPane.tsx',
   'components/terminal/TerminalPane.module.css',
   'components/ledger',
@@ -269,6 +250,21 @@ const GR8R_SCOPE: readonly string[] = [
   'lib/cockpit.test.ts',
   'lib/cockpitKeys.ts',
   'lib/cockpitKeys.test.ts',
+  'components/threads',
+  'components/docs',
+  'components/memory',
+  'components/conversation',
+  'components/peek',
+  'views/ThreadsView.tsx',
+  'views/ThreadsView.module.css',
+  'views/ThreadsView.test.tsx',
+  'views/DocsView.tsx',
+  'views/DocsView.module.css',
+  'views/DocsView.test.tsx',
+  'lib/docs.ts',
+  'lib/docs.test.ts',
+  'lib/threadSources.ts',
+  'lib/threadSources.test.ts',
 ];
 
 /** Test files whose hex literals are Linear-supplied data, not colours of their own: a
@@ -325,13 +321,6 @@ const RETIRED: readonly string[] = [
   '--hairline-inverse',
   '--ease-out-quint',
   '--ease-out-expo',
-];
-
-/** The one read of a retired name allowed while packages/ui-legacy lives: global.css's
-    `.status-tint` recipe reads `--tint`, which ui-legacy's GroupHeader sets inline (the bridge
-    gives it a fallback). TODO 2026-10-26: remove with `.status-tint` in Phase 7. */
-const RETIRED_EXEMPT: ReadonlyArray<{ file: string; name: string }> = [
-  { file: 'styles/global.css', name: '--tint' },
 ];
 
 type Source = { file: string; text: string };
@@ -577,14 +566,7 @@ describe('the Gr8r code and the transitional sheets follow the design system', (
     ].flatMap(({ file, text }) =>
       RETIRED.filter((name) =>
         new RegExp(`(?<![\\w-])${name}(?![\\w-])`).test(text)
-      )
-        .filter(
-          (name) =>
-            !RETIRED_EXEMPT.some(
-              (exempt) => exempt.file === file && exempt.name === name
-            )
-        )
-        .map((name) => `${file}: ${name}`)
+      ).map((name) => `${file}: ${name}`)
     );
     expect(found).toEqual([]);
   });

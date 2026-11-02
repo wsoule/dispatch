@@ -1,5 +1,6 @@
+import { Button, SegmentedControl } from '@dispatch/ui';
 import { useQueryClient } from '@tanstack/react-query';
-import { BookText, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useMemo, useState } from 'react';
 
@@ -17,15 +18,21 @@ import { docsKey, useDocList, useDocSearch } from '../hooks/useDocs';
 import type { DocFilter } from '../lib/docs';
 import { filterDocs } from '../lib/docs';
 import type { RefAction } from '../lib/threadSources';
-import { Button } from '@/ui/button';
-import { ToggleGroup, ToggleGroupItem } from '@/ui/toggle-group';
+import styles from './DocsView.module.css';
 
 // The most search hits a query asks the daemon for.
 const SEARCH_LIMIT = 50;
 
-// Team documents beside tasks: a filtered list on the left, the open doc on the right.
-// `initialDoc` and `initialAnchor` are what navigation names; `onSelectDoc` hears list picks.
-// With `tasksPage` (Two views) it is one pane: the All docs list, or one doc under a crumb.
+// The two things the page lists, one at a time.
+const SECTIONS = [
+  { id: 'docs', label: 'Docs' },
+  { id: 'memory', label: 'Memory' },
+];
+
+// Team documents beside tasks, as one page under the Tasks back chip: the All
+// docs list, or one doc in its place under an "All docs › title" crumb.
+// `initialDoc` and `initialAnchor` are what navigation names; `onSelectDoc`
+// hears list picks.
 export function DocsView({
   data,
   initialDoc = null,
@@ -37,9 +44,9 @@ export function DocsView({
   tasksPage,
 }: {
   data: DispatchProjectData;
-  /** Two views: the Tasks back chip leads the header and "All docs" walks back to the list. */
-  tasksPage?: { onBack: () => void; onOpenAllDocs: () => void };
-  /** The open doc's discussion, under it (Two views). */
+  /** The Tasks back chip leads the header and "All docs" walks back to the list. */
+  tasksPage: { onBack: () => void; onOpenAllDocs: () => void };
+  /** The open doc's discussion, under it. */
   discussion?: (docId: string) => ReactNode;
   initialDoc?: string | null;
   initialAnchor?: string | null;
@@ -68,13 +75,18 @@ export function DocsView({
     unreviewedOnly: false,
   });
   const [open, setOpen] = useState<string | null>(initialDoc);
+  // The doc last opened: its row stays marked when the crumb walks back, so
+  // j and k carry on from it.
+  const [lastOpen, setLastOpen] = useState<string | null>(initialDoc);
+  if (open !== null && open !== lastOpen) setLastOpen(open);
   const [anchor, setAnchor] = useState<string | null>(initialAnchor);
   const [merge, setMerge] = useState<string | null>(initialMerge);
   const [creating, setCreating] = useState(false);
-  // Two views' list pane shows docs or the memory runs read, one at a time.
+  // The list pane shows docs or the memory runs read, one at a time.
   const [section, setSection] = useState<'docs' | 'memory'>('docs');
   const queryClient = useQueryClient();
-  // A doc named while the view is up (a ref, a palette hit) replaces the open one.
+  // A doc named while the view is up (a ref, a palette hit) replaces the open
+  // one; navigation naming no doc means the list.
   const [named, setNamed] = useState({
     doc: initialDoc,
     anchor: initialAnchor,
@@ -86,12 +98,9 @@ export function DocsView({
     named.merge !== initialMerge
   ) {
     setNamed({ doc: initialDoc, anchor: initialAnchor, merge: initialMerge });
-    // One pane: navigation naming no doc means the list.
-    if (initialDoc !== null || tasksPage !== undefined) {
-      setOpen(initialDoc);
-      setAnchor(initialAnchor);
-      setMerge(initialMerge);
-    }
+    setOpen(initialDoc);
+    setAnchor(initialAnchor);
+    setMerge(initialMerge);
   }
   const select = (id: string): void => {
     setOpen(id);
@@ -115,20 +124,18 @@ export function DocsView({
       (d) => found.has(d.id) || byTitle.has(d.id)
     );
   }, [docs, filter, hits, query]);
-  // Two views frames every state of the page under its header; classic shows it bare.
-  const frame = (body: ReactNode, crumb: ReactNode[], actions?: ReactNode) =>
-    tasksPage === undefined ? (
-      body
-    ) : (
-      <div data-testid="docs-page" className="flex h-full min-h-0 flex-col">
-        <TasksPageHeader
-          onBack={tasksPage.onBack}
-          crumb={crumb}
-          actions={actions}
-        />
-        <div className="min-h-0 flex-1">{body}</div>
-      </div>
-    );
+  // Every state of the page sits under the one header: the back chip, the
+  // crumb and the page's actions.
+  const frame = (body: ReactNode, crumb: ReactNode[], actions?: ReactNode) => (
+    <div data-testid="docs-page" className={styles.page}>
+      <TasksPageHeader
+        onBack={tasksPage.onBack}
+        crumb={crumb}
+        actions={actions}
+      />
+      <div className={styles.body}>{body}</div>
+    </div>
+  );
   if (client === null) {
     return frame(
       <DaemonUnavailable
@@ -141,56 +148,38 @@ export function DocsView({
   }
   if (!messageAccess.canMessage) {
     return frame(
-      <p className="p-4 text-xs text-[var(--color-muted-foreground)]">
+      <p className={styles.note}>
         {messageAccess.explanation ?? 'Docs need a teammate or app token.'}
       </p>,
       ['All docs']
     );
   }
-  const newDoc = (
-    <NewDocDialog
-      client={client}
-      open={creating}
-      onClose={() => setCreating(false)}
-      onCreated={(id) => {
-        setCreating(false);
-        void queryClient.invalidateQueries({ queryKey: docsKey(port) });
-        select(id);
-      }}
-    />
-  );
-  const docBody = (docId: string) => (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="min-h-0 flex-1 overflow-hidden">
-        <DocPage
-          key={docId}
-          client={client}
-          port={port}
-          refId={docId}
-          canDecide={messageAccess.canDecide}
-          anchor={anchor}
-          mergeProposal={merge}
-          onOpenDoc={select}
-          onOpenRef={onOpenRef}
-          taskIdOfRun={taskIdOfRun}
-          gates={gates}
-          titleInCrumb={tasksPage !== undefined}
-        />
-      </div>
-      {discussion !== undefined && (
-        <section
-          aria-label="Discussion"
-          className="border-border h-[38%] shrink-0 border-t-[0.5px]"
-        >
-          {discussion(docId)}
-        </section>
-      )}
-    </div>
-  );
-  if (tasksPage !== undefined) {
-    if (open !== null) {
-      const title = docs.find((d) => d.id === open)?.title ?? 'Doc';
-      return frame(docBody(open), [
+  if (open !== null) {
+    const title = docs.find((d) => d.id === open)?.title ?? 'Doc';
+    return frame(
+      <div className={styles.doc}>
+        <div className={styles.docMain}>
+          <DocPage
+            key={open}
+            client={client}
+            port={port}
+            refId={open}
+            canDecide={messageAccess.canDecide}
+            anchor={anchor}
+            mergeProposal={merge}
+            onOpenDoc={select}
+            onOpenRef={onOpenRef}
+            taskIdOfRun={taskIdOfRun}
+            gates={gates}
+          />
+        </div>
+        {discussion !== undefined && (
+          <section aria-label="Discussion" className={styles.discussion}>
+            {discussion(open)}
+          </section>
+        )}
+      </div>,
+      [
         <CrumbLink
           key="all"
           onClick={() => {
@@ -201,91 +190,61 @@ export function DocsView({
           All docs
         </CrumbLink>,
         title,
-      ]);
-    }
-    const sectionToggle = (
-      <ToggleGroup
-        size="sm"
-        aria-label="Docs or memory"
-        value={[section]}
-        onValueChange={([value]) => {
-          // Re-pressing the active one hands back an empty list; keep it.
-          if (value === 'docs' || value === 'memory') setSection(value);
-        }}
-      >
-        <ToggleGroupItem value="docs">Docs</ToggleGroupItem>
-        <ToggleGroupItem value="memory">Memory</ToggleGroupItem>
-      </ToggleGroup>
-    );
-    if (section === 'memory')
-      return frame(
-        <div className="h-full overflow-y-auto">
-          <MemoryBrowser data={data} />
-        </div>,
-        ['Memory'],
-        sectionToggle
-      );
-    return frame(
-      <>
-        {newDoc}
-        <DocList
-          layout="page"
-          docs={shown}
-          loading={loading}
-          filter={filter}
-          onFilter={setFilter}
-          selected={open}
-          onSelect={select}
-          error={error}
-          onNew={() => setCreating(true)}
-        />
-      </>,
-      ['All docs'],
-      <>
-        {sectionToggle}
-        <Button size="sm" variant="ghost" onClick={() => setCreating(true)}>
-          <Plus className="size-3.5" />
-          New doc
-        </Button>
-      </>
+      ]
     );
   }
-  return (
-    <div className="flex h-full min-h-0">
-      <aside className="flex w-72 shrink-0 flex-col border-r border-[var(--color-border)]">
-        <header className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2">
-          <BookText className="size-4" />
-          <h1 className="text-sm font-medium">Docs</h1>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="ml-auto"
-            onClick={() => setCreating(true)}
-          >
-            New doc
-          </Button>
-        </header>
-        {newDoc}
-        <DocList
-          docs={shown}
-          loading={loading}
-          filter={filter}
-          onFilter={setFilter}
-          selected={open}
-          onSelect={select}
-          error={error}
-        />
-      </aside>
-      <main className="min-w-0 flex-1">
-        {open === null ? (
-          <div className="flex h-full flex-col items-center justify-center gap-1 text-xs text-[var(--color-muted-foreground)]">
-            <BookText className="size-4 opacity-50" />
-            <p>Pick a doc.</p>
-          </div>
-        ) : (
-          docBody(open)
-        )}
-      </main>
-    </div>
+  const sectionToggle = (
+    <SegmentedControl
+      label="Docs or memory"
+      size="sm"
+      options={SECTIONS}
+      value={section}
+      onChange={(id) => setSection(id === 'memory' ? 'memory' : 'docs')}
+    />
+  );
+  if (section === 'memory') {
+    return frame(
+      <div className={styles.scroll}>
+        <MemoryBrowser data={data} />
+      </div>,
+      ['Memory'],
+      sectionToggle
+    );
+  }
+  return frame(
+    <>
+      <NewDocDialog
+        client={client}
+        open={creating}
+        onClose={() => setCreating(false)}
+        onCreated={(id) => {
+          setCreating(false);
+          void queryClient.invalidateQueries({ queryKey: docsKey(port) });
+          select(id);
+        }}
+      />
+      <DocList
+        docs={shown}
+        loading={loading}
+        filter={filter}
+        onFilter={setFilter}
+        selected={lastOpen}
+        onSelect={select}
+        error={error}
+        onNew={() => setCreating(true)}
+      />
+    </>,
+    ['All docs'],
+    <>
+      {sectionToggle}
+      <Button
+        variant="quiet"
+        size="sm"
+        icon={<Plus size={14} strokeWidth={1.8} aria-hidden />}
+        onClick={() => setCreating(true)}
+      >
+        New doc
+      </Button>
+    </>
   );
 }

@@ -1,0 +1,48 @@
+/* A home's composer (HomeComposer.tsx): the Undo, outside-the-team and
+   error notices over the text area, then the Kind toggle, what the kind
+   reaches, and the send button. It wraps in a peek's narrow drawer rather
+   than clipping the send button. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3) var(--s-3);
+  border-top: 1px solid var(--divider);
+}
+
+/* The text area grows with its draft from two rows, but stops at this cap
+   and scrolls inside, so a long or pasted draft never pushes the Kind row
+   and the send button out of a room page, a task's Conversation tab or a
+   peek. Two classes outrank the library TextArea's grow rule
+   (overflow: hidden). */
+.root .text {
+  max-height: min(40vh, 320px);
+  overflow-y: auto;
+}
+
+.actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px var(--s-2);
+}
+
+.hint {
+  flex: 1 1 140px;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.send {
+  max-width: 100%;
+  margin-left: auto;
+}

@@ -402,7 +402,7 @@ the types for the rest.
 | -------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | basics   | `StatusMark`                                                                                                                      | `status`, `label`                                                   |
 |          | `BlockBar` (a section heading row; `index` is ignored)                                                                            | `title`                                                             |
-|          | `Tabs` (ids are prefixed per instance; `label` names the tablist; empty renders nothing)                                          | `items: TabItem[]` (`id`, `label`, `content`)                       |
+|          | `Tabs` (prefixed ids; `label` names the tablist; empty renders nothing; `value` and `onChange` control it; host panel below)      | `items: TabItem[]` (`id`, `label`, optional `content`)              |
 |          | `ThemeToggle`                                                                                                                     | `storageKey`                                                        |
 |          | `InitialsAvatar` (round, a pastel hue from the name; blank = nobody), `avatarHue(name)`                                           | `name`                                                              |
 | tasks    | `Button` (primary, secondary, quiet, danger; `size` sm / md / lg; `block`)                                                        | none (`href` renders a link)                                        |
@@ -471,8 +471,8 @@ host's `data-testid` and `data-slot` hooks. `Button` (as a button and as a
 link), `Popover`, `Dialog`, `ConfirmDialog`, `PickerPopover`, `SlideOver`,
 `Disclosure`, `Menu`, `Select`, `RadioGroup`, `Chip`, `ChipButton`, `Switch`,
 `Checkbox`, `Notice`, `SearchField`, `CopyValue`, `CodeBlock`, `Register`,
-`RegisterRow`, `RegisterCell`, `SectionHeader`, `ListItem`, `Panel` and
-`PanelRow` take them and spread them, untouched, on their root element: the
+`RegisterRow`, `RegisterCell`, `SectionHeader`, `ListItem`, `Panel`, `PanelRow`
+and `Tabs` take them and spread them, untouched, on their root element: the
 `<button>` or the link, the popover's and the picker's `role="dialog"` layer
 (not the trigger), the dialog's and the slide-over's panel (the `role="dialog"`
 or `role="alertdialog"` element), the disclosure's wrapper, the open menu's root
@@ -484,12 +484,13 @@ field's wrapper (which holds the input), the copy value's `<code>` element
 (whose text is exactly the value, so `data-testid="issued-token"` reads it), the
 code block's root, the register's root, the row's `<li>`, the cell, the section
 header's row, the list item's root (the wrapper of an `as="button"` row with
-trailing controls), the panel's root and the panel row's `<div>`. The
-component's own `data-*` attributes (`data-variant`, `data-picker-popup`,
-`data-popover`, `data-state`, `data-open`, `data-tone`, `data-stack`,
-`data-disabled`, the list item's and the code block's `data-slot`) win over a
-host's of the same name. A host's link component receives them in `UiLinkProps`
-and spreads them onto its anchor.
+trailing controls), the panel's root, the panel row's `<div>` and the tab
+strip's wrapper (which holds the tablist and its panels). The component's own
+`data-*` attributes (`data-variant`, `data-picker-popup`, `data-popover`,
+`data-state`, `data-open`, `data-tone`, `data-stack`, `data-disabled`, the list
+item's and the code block's `data-slot`) win over a host's of the same name. A
+host's link component receives them in `UiLinkProps` and spreads them onto its
+anchor.
 
 **Switch, Checkbox and Notice.** `Switch` with `hideLabel` keeps its label for
 assistive tech only (a `.srOnly` span) and draws just the track, for a settings
@@ -502,6 +503,35 @@ page, such as why it is read only); static copy needs none. A `Notice` reflows
 by its own width rather than the viewport's: when the lead-in, a 12rem body and
 the action do not fit on one line (a card in a narrow column), the body drops
 under the lead-in and the action onto a line of its own.
+
+### Tabs, controlled
+
+`Tabs` is uncontrolled by default: a click, an arrow key, Home or End selects a
+tab and moves focus to it. Pass `value` (the selected item's id) to control it:
+a pick then calls `onChange(id)` and moves focus, but the selection moves only
+when the host passes the new `value`; an id that names no item selects the first
+tab. `onChange` fires in both modes, only for a tab other than the selected one.
+The selected tab holds the strip's one tab stop in both modes.
+
+An item's `content` is optional. An item with `content` keeps its own panel,
+mounted and `hidden` while another tab is selected. An item without it shows the
+strip's `children`, the host's own panel: one `role="tabpanel"` element whose id
+is the selected tab's `aria-controls` and whose `aria-labelledby` is that tab.
+It stays mounted while the selection moves between tabs without content (a host
+list keeps its state and scroll), and is not rendered while the selected tab has
+its own content. An unselected tab without content has no `aria-controls`, since
+its panel does not exist yet.
+
+The strip sits in a page column (`.pageBlock`) with a bottom margin, as a page
+section does. Inside a pane that already sets its own width and gutter (a
+drawer, a sub-page), pass `flush` to leave both out instead of overriding the
+class from the host.
+
+```tsx
+<Tabs items={memoryTabs} label="Memory" value={tab} onChange={setTab} flush>
+  <MemoryList entries={shown} />
+</Tabs>
+```
 
 ### Disclosure
 

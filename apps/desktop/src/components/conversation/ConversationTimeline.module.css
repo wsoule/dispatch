@@ -1,0 +1,109 @@
+/* A home's flat timeline (ConversationTimeline.tsx): the host's header
+   beside the Show toggle, then one scroller of messages, comments and
+   folded agent chatter, then the composer. Colours and type come from
+   tokens and the library's components; this sheet places them. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+}
+
+.header {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.timeline {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.error {
+  padding: var(--s-2) var(--s-3);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+.empty {
+  padding: var(--s-6) var(--s-3);
+  font-size: var(--fs);
+  color: var(--text-2);
+  text-align: center;
+}
+
+/* Without a token the home says why, centred in its pane. */
+.unavailable {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: 100%;
+  padding: var(--s-4);
+}
+
+.comment {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding: var(--s-2) var(--s-3);
+}
+
+.commentHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.author {
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+.commentBody {
+  margin: 0;
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.fold {
+  padding: var(--s-1) var(--s-3);
+}
+
+/* A fold's messages hang off a rule at the left, under the bar. */
+.folded {
+  margin: 0;
+  padding: 0;
+  border-left: 1px solid var(--border);
+  list-style: none;
+}
+
+/* "↳ re: …" above a reply: one quiet line that truncates. */
+.quote {
+  margin: 0;
+  padding: var(--s-1) var(--s-3) 0;
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

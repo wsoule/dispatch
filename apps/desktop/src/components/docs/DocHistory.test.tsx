@@ -1,6 +1,12 @@
 import type { ApiClient } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
 import type { ReactNode } from 'react';
 
@@ -59,6 +65,11 @@ test('lists revisions with author, cause and summary, and restores one', async (
   } as unknown as ApiClient;
   renderHistory(client);
   expect(await screen.findByText('replaced "## API"')).toBeDefined();
+  const list = screen.getByRole('list', { name: 'History' });
+  expect(within(list).getAllByRole('listitem')).toHaveLength(2);
+  expect(within(list).getByText('run:r-1').classList.contains('mono')).toBe(
+    true
+  );
   fireEvent.click(screen.getAllByRole('button', { name: 'Restore' })[1]);
   await waitFor(() => expect(reverted).toEqual([['spec', 1]]));
 });
@@ -73,12 +84,24 @@ test('diffs the two picked revisions, older first, whichever was picked first', 
     },
   } as unknown as ApiClient;
   renderHistory(client);
-  fireEvent.click(await screen.findByLabelText('Compare rev 2'));
+  // Each box keeps its name with the label hidden from sight.
+  fireEvent.click(
+    await screen.findByRole('checkbox', { name: 'Compare rev 2' })
+  );
   expect(
     await screen.findByText('Pick another revision to compare.')
   ).toBeDefined();
-  fireEvent.click(screen.getByLabelText('Compare rev 1'));
+  const older = screen.getByRole('checkbox', { name: 'Compare rev 1' });
+  expect(older.closest('label')?.querySelector('.srOnly')?.textContent).toBe(
+    'Compare rev 1'
+  );
+  fireEvent.click(older);
   await waitFor(() => expect(asked).toEqual([['spec', 1, 2]]));
+  expect(
+    screen
+      .getAllByRole('checkbox')
+      .map((box) => (box as HTMLInputElement).checked)
+  ).toEqual([true, true]);
 });
 
 test('offers no Restore to a reader who cannot write', async () => {
@@ -99,7 +122,9 @@ test('says why a restore failed', async () => {
   fireEvent.click(
     (await screen.findAllByRole('button', { name: 'Restore' }))[1]
   );
-  expect((await screen.findByRole('alert')).textContent).toBe('rev 1 is gone');
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toBe('rev 1 is gone');
+  expect(alert.getAttribute('data-tone')).toBe('danger');
 });
 
 test('notes a diff that ran out of budget', async () => {

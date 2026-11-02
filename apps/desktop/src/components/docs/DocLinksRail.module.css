@@ -1,0 +1,47 @@
+/* A doc's links rail (DocLinksRail.tsx): a 224px column at the page's end
+   edge, its heading, then one row per target: the `type:id` chip (a chip
+   button when it opens somewhere) and its rel in the quiet ink. */
+
+.rail {
+  flex: 0 0 224px;
+  width: 224px;
+  min-height: 0;
+  padding: var(--s-3);
+  overflow: auto;
+  border-left: 1px solid var(--border);
+}
+
+.heading {
+  margin: 0 0 var(--s-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-3);
+}
+
+.empty {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  font-size: var(--fs-xs);
+}
+
+.rel {
+  color: var(--text-3);
+}

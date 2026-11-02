@@ -1,9 +1,10 @@
 import type { ApiClient } from '@dispatch/client';
+import { Button, cx } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { memoryQueryKey, memoryQueryRootKey } from '../../lib/memory';
-import { Button } from '@/ui/button';
+import styles from './RehomePanel.module.css';
 
 /**
  * Personal entries narrowed to another checkout's key reach nothing once the
@@ -41,18 +42,15 @@ export function RehomePanel({
     }
   }
   return (
-    <div
-      data-slot="memory-rehome"
-      className="rounded-control bg-surface-panel flex flex-col gap-2 p-3"
-    >
+    <div data-slot="memory-rehome" className={styles.root}>
       {others.map(({ key, count }) => (
-        <div key={key} className="flex items-center gap-3">
-          <span className="text-foreground flex-1 text-[13px]">
+        <div key={key} className={styles.row}>
+          <span className={styles.text}>
             {`${count} ${count === 1 ? 'entry is' : 'entries are'} narrowed to another checkout (key ${key})`}
           </span>
           <Button
             size="sm"
-            variant="outline"
+            variant="secondary"
             disabled={busy !== null}
             onClick={() => void move(key)}
           >
@@ -61,7 +59,11 @@ export function RehomePanel({
         </div>
       ))}
       {error !== null && (
-        <span role="alert" className="text-red text-[12px]">
+        <span
+          role="alert"
+          className={cx('toneText', styles.error)}
+          data-tone="danger"
+        >
           {error}
         </span>
       )}

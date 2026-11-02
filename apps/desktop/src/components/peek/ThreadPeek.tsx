@@ -1,4 +1,4 @@
-import { Button, EmptyState, Spinner } from '@dispatch/ui';
+import { Button, EmptyState, SkeletonText } from '@dispatch/ui';
 import { useEffect, useMemo } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
@@ -121,8 +121,8 @@ export function ThreadPeek({
             <EmptyState>{open.error.message}</EmptyState>
           </div>
         ) : (
-          <div className={styles.centred}>
-            <Spinner size="md" label="Loading the thread" />
+          <div className={styles.loading}>
+            <SkeletonText lines={4} label="Loading the thread" />
           </div>
         )}
       </div>

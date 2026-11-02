@@ -158,10 +158,6 @@
   --dur-regular: 0.25s;
   --dur-slow: 0.35s;
 
-  /* How much of a status colour a group header picks up at its left edge (`.status-tint` in
-     global.css). */
-  --tint-strength: 4%;
-
   /* Run state — "what does this run want from a human", named after lib/runState.ts's
      `RunDisposition`. `-fg` is text and the state dot, `-surface` a row/tile tint, `-edge` its
      hairline. References to the palette above, never literals, so the dark block flows through

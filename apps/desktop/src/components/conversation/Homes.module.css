@@ -1,0 +1,73 @@
+/* A task's or room's conversation home (Homes.tsx): a milestone room's
+   Follow button over who its posts reach, a task's sync note, and a named
+   room's page with its members strip over the timeline. */
+
+.roomHead {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.follow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.reach,
+.note {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.room {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* The members strip: the heading, then a chip per member (an avatar and
+   the printed name) and how many more there are. */
+.members {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px var(--s-2);
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--divider);
+}
+
+.membersHead {
+  flex: none;
+}
+
+.memberList {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.member {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: -4px;
+}
+
+.more {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline {
+  flex: 1 1 auto;
+  min-height: 0;
+}

@@ -1,0 +1,33 @@
+/* Settings › Memory's "Your memory" (MemoryRecent.tsx): the section header
+   with its count, the day's activity in a bordered card like the settings
+   groups above it, and the note on undoing older changes. The commands are
+   machine-read strings, so they are set in Geist Mono. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.note {
+  margin: 0;
+  padding: 0 2px;
+  font-size: var(--fs-xs);
+  line-height: var(--lh);
+  color: var(--text-2);
+}
+
+.code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}

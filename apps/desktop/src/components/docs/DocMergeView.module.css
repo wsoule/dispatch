@@ -1,0 +1,101 @@
+/* The merge view (DocMergeView.tsx): a header bar with the count and Save
+   resolution, then one section per marked block (its picks, the base fold,
+   the head and yours labels, the split diff, the hand-merged text). The
+   picks are bordered toggle Buttons; the chosen side leads with a check as
+   well as the pressed fill. */
+
+.merge {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.head {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  align-items: center;
+  padding: var(--s-2) var(--s-3);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-xs);
+}
+
+.headTitle {
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
+.progress {
+  color: var(--text-3);
+}
+
+.actions {
+  display: flex;
+  gap: var(--s-1);
+  margin-left: auto;
+}
+
+.hunks {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.hunk {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border-bottom: 1px solid var(--divider);
+}
+
+.hunkHead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  align-items: center;
+  font-size: var(--fs-xs);
+}
+
+.hunkTitle {
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+.picks {
+  display: flex;
+  gap: var(--s-1);
+  margin-left: auto;
+}
+
+.base {
+  margin: var(--s-1) 0 0;
+  padding: var(--s-2);
+  overflow: auto;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  font-size: var(--fs-2xs);
+  color: var(--text);
+}
+
+.sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-2);
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}
+
+.side {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hunk .resolution {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}

@@ -1,0 +1,86 @@
+/* Docs › Memory (MemoryBrowser.tsx): the library tab strip over one host
+   panel, the error, the tab's list (or the open proposals) in its own
+   scroller, then the open entry ruled off under it. Colours and type come
+   from tokens; this sheet places them. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: var(--s-4) var(--gutter) var(--s-8);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+/* A long tab keeps the open entry in reach: the list scrolls on its own. */
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  max-height: 320px;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.entry {
+  min-width: 0;
+  border-top: 1px solid var(--divider);
+}
+
+/* Why memory cannot load (no token): a quiet sentence. */
+.note {
+  margin: 0;
+  padding: var(--s-4) var(--gutter);
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+  color: var(--text-2);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+.empty {
+  margin: 0;
+  padding: var(--s-3) 10px;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.proposals {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.proposal {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s-2) 10px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.proposal:last-child {
+  border-bottom: 0;
+}
+
+.title {
+  font-size: var(--fs);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}

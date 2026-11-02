@@ -4,6 +4,11 @@
   margin-bottom: 48px;
 }
 
+/* flush: no page column and no bottom margin; the host's pane places it. */
+.flush {
+  min-width: 0;
+}
+
 .tablist {
   display: grid;
   grid-template-columns: repeat(var(--tab-count, 5), minmax(0, 1fr));
@@ -59,6 +64,15 @@
   }
   .tab {
     font-size: var(--fs-xs);
+  }
+}
+
+/* Forced colours paint the underline's --text fill as Canvas, so the
+   selected tab would lose its mark (a gap in the rule): draw it in the
+   system text colour instead, as NavTabs does. */
+@media (forced-colors: active) {
+  .tab[aria-selected='true']::after {
+    background: CanvasText;
   }
 }
 

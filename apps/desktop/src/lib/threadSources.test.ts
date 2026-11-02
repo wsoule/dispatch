@@ -10,6 +10,8 @@ import {
   knownAddresses,
   lookupsKey,
   mergeThreadSources,
+  messageBadge,
+  messageBadgeTone,
   offersAnswer,
   openRefWith,
   participantLabel,
@@ -917,6 +919,33 @@ describe('refs and labels', () => {
     expect(kindLabel('answer')).toBe('Answer');
     expect(kindLabel('x-review')).toBe('x-review');
     expect(kindLabel('message')).toBeUndefined();
+  });
+
+  it("badges the daemon's close and breaker markers by name, a look-alike by its kind", () => {
+    const marker = (from: string, kind: string, type: string) =>
+      msg('m-01', { from, kind, data: { type } });
+    expect(messageBadge(marker('agent:dispatch', 'answer', 'x-closed'))).toBe(
+      'Closed'
+    );
+    expect(messageBadge(marker('agent:dispatch', 'notice', 'x-breaker'))).toBe(
+      'Breaker'
+    );
+    expect(
+      messageBadge(marker('agent:wyat/a2a.acme', 'answer', 'x-closed'))
+    ).toBe('Answer');
+    expect(messageBadge(msg('m-01', { kind: 'question' }))).toBe('Question');
+    expect(messageBadge(msg('m-01', { kind: 'message' }))).toBeUndefined();
+  });
+
+  it('tones a closed thread and a silenced agent grey, a breaker red, Urgent amber, the rest neutral', () => {
+    expect(messageBadgeTone('Closed')).toBe('muted');
+    expect(messageBadgeTone('Revoked')).toBe('muted');
+    expect(messageBadgeTone('Muted')).toBe('muted');
+    expect(messageBadgeTone('Breaker')).toBe('danger');
+    expect(messageBadgeTone('Urgent')).toBe('warning');
+    expect(messageBadgeTone('Question')).toBe('default');
+    expect(messageBadgeTone('Answer')).toBe('default');
+    expect(messageBadgeTone('x-review')).toBe('default');
   });
 
   it('keys the lookups by what they read, so an event that changes no label keeps them', () => {

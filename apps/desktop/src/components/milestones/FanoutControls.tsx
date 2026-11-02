@@ -130,9 +130,9 @@ export function sessionIdle(session: MilestoneSession | null): boolean {
 }
 
 /**
- * The fan-out controls one milestone header carries — rendered inside the `GroupHeader`
- * `actions` slot by both the milestones page and the board lane header so the two cannot
- * drift. Left to right by session state: `◔ done/total`, the caller's pills, then
+ * The fan-out controls one milestone header carries — rendered in the board's
+ * `MilestoneLaneHeader` `actions` slot and in the Flight plan and Live heads, so they
+ * cannot drift. Left to right by session state: `◔ done/total`, the caller's pills, then
  *
  * - no session (or a finished one): Send agents… — or Land once every child is done, and
  *   nothing for a landed milestone or one with no children to send;

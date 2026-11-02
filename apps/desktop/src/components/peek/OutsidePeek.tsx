@@ -1,4 +1,4 @@
-import { Chip } from '@dispatch/ui';
+import { Chip, cx } from '@dispatch/ui';
 import { useQuery } from '@tanstack/react-query';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
@@ -73,7 +73,7 @@ export function OutsidePeek({
           {peer !== undefined && (
             <span className={`mono ${styles.fact}`}>{peer.interfaceUrl}</span>
           )}
-          <span className={styles.caution}>
+          <span className={cx('toneText', styles.caution)} data-tone="warning">
             plain text only · this machine only
           </span>
           <div className={styles.chips}>

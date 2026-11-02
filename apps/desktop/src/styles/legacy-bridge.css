@@ -148,14 +148,6 @@
   --dur-regular: calc(var(--dur) * 2);
   --dur-slow: calc(var(--dur) * 2.5);
 
-  /* `.status-tint` in global.css: a group header washes its left edge with `--tint-strength` of
-     `--tint`. The wash is stronger than Linear's 4% so it still shows on Gr8r's soft surfaces,
-     and a header that sets no `--tint` of its own gets the accent instead of nothing. Both
-     names are retired in Gr8r (`RETIRED` in packages/ui/test/contrast-helpers.ts) and go with
-     `.status-tint` in Phase 7. */
-  --tint-strength: 10%;
-  --tint: var(--accent);
-
   /* Run-state roles ("what does this run want from a human", lib/runState.ts): `-fg` is the
      text and dot, `-surface` the row tint, `-edge` its line. Working, review and landing are in
      progress (blue), waiting and blocked want a person (amber), failed is red, ready is green,

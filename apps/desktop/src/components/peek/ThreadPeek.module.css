@@ -1,5 +1,5 @@
-/* One thread in the slide-over (ThreadPeek.tsx): the pane fills the body; the empty, error
-   and loading states sit centred in it. */
+/* One thread in the slide-over (ThreadPeek.tsx): the pane fills the body; the empty and
+   error states sit centred in it, and the loading skeleton holds the top of it. */
 .body {
   flex: 1 1 auto;
   min-height: 0;
@@ -11,4 +11,8 @@
   height: 100%;
   padding: var(--s-4);
   color: var(--text-3);
+}
+
+.loading {
+  padding: var(--s-4) 0;
 }

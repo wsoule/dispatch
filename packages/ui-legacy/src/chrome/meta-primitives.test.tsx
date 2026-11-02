@@ -1,7 +1,6 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
-import { CollapseBar } from './collapse-bar';
 import { SectionLabel } from './SectionLabel';
 import { HintText, MetaText } from './text';
 
@@ -16,34 +15,12 @@ test('a colour passed through className reaches the element', () => {
     <SectionLabel key="label" className="text-foreground">
       Merge queue
     </SectionLabel>,
-    <CollapseBar
-      key="bar"
-      label="16 unmodified lines"
-      collapsed
-      onToggle={() => {}}
-      className="text-foreground"
-    />,
   ];
   for (const element of cases) {
     const { container } = render(element);
     const root = container.firstElementChild as HTMLElement;
     expect(root.className.split(/\s+/)).toContain('text-foreground');
   }
-});
-
-test('a collapse bar toggles', () => {
-  let toggled = false;
-  render(
-    <CollapseBar
-      label="16 unmodified lines"
-      collapsed
-      onToggle={() => {
-        toggled = true;
-      }}
-    />
-  );
-  fireEvent.click(screen.getByRole('button', { name: /16 unmodified lines/ }));
-  expect(toggled).toBe(true);
 });
 
 // Ids, counts and times are 12px sans — mono is for code, paths and diffs only.

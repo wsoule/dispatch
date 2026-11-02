@@ -1,3 +1,4 @@
+import { Chip, ListItem } from '@dispatch/ui';
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import { Fragment, useEffect, useId, useState } from 'react';
 
@@ -6,9 +7,7 @@ import { formatShortDate } from '../../lib/taskDates';
 import type { ThreadSummary } from '../../lib/threads';
 import type { ThreadLookups } from '../../lib/threadSources';
 import { participantLabel, threadTitle } from '../../lib/threadSources';
-import { cn } from '@/lib/utils';
-import { ListRow } from '@/ui/ai/list-row';
-import { Pill } from '@/ui/ai/pill';
+import styles from './ThreadList.module.css';
 
 /** One run of rows; a named section is a group under its own header. */
 interface ThreadListSection {
@@ -102,8 +101,9 @@ export function ThreadList({
   };
 
   // Options take no focus of their own, so the listbox takes their clicks and
-  // keeps focus when one is clicked.
-  const onClick = (event: MouseEvent<HTMLDivElement>) => {
+  // keeps focus when one is clicked. It listens in the capture phase because
+  // a row's trailing unread chip keeps its own clicks from bubbling.
+  const onClickCapture = (event: MouseEvent<HTMLDivElement>) => {
     const option =
       event.target instanceof Element
         ? event.target.closest<HTMLElement>('[role="option"]')
@@ -116,35 +116,31 @@ export function ThreadList({
 
   const rows = (summaries: readonly ThreadSummary[]) =>
     summaries.map((summary) => (
-      <div
+      <ListItem
         key={summary.thread}
-        id={optionId(summary.thread)}
+        // ListItem sets aria-selected from `selected` on an option row.
+        // oxlint-disable-next-line jsx-a11y/role-has-required-aria-props
         role="option"
-        aria-selected={summary.thread === selected}
+        domId={optionId(summary.thread)}
         data-thread={summary.thread}
-      >
-        <ListRow
-          role="none"
-          focused={summary.thread === active}
-          className={cn(
-            'cursor-pointer',
-            summary.thread === selected &&
-              'bg-surface-selected hover:bg-surface-selected'
-          )}
-          title={threadTitle(summary.root)}
-          crumb={summary.participants
-            .map((address) => participantLabel(address, lookups))
-            .join(', ')}
-          trailing={
-            summary.unread > 0 ? (
-              <Pill aria-label={`${summary.unread} unread`}>
-                {summary.unread}
-              </Pill>
-            ) : undefined
-          }
-          date={formatShortDate(summary.last.createdAt)}
-        />
-      </div>
+        selected={summary.thread === selected}
+        active={summary.thread === active}
+        className={styles.row}
+        title={threadTitle(summary.root)}
+        crumb={summary.participants
+          .map((address) => participantLabel(address, lookups))
+          .join(', ')}
+        trailing={
+          summary.unread > 0 ? (
+            // Named as a whole ("2 unread"), so the bare count is never
+            // read on its own.
+            <span role="img" aria-label={`${summary.unread} unread`}>
+              <Chip tone="accent">{summary.unread}</Chip>
+            </span>
+          ) : undefined
+        }
+        date={formatShortDate(summary.last.createdAt)}
+      />
     ));
 
   return (
@@ -154,8 +150,8 @@ export function ThreadList({
       aria-activedescendant={activeId}
       tabIndex={0}
       onKeyDown={onKeyDown}
-      onClick={onClick}
-      className="flex flex-col gap-1 outline-none"
+      onClickCapture={onClickCapture}
+      className={styles.list}
     >
       {sections.map((section) => {
         const body = (
@@ -171,7 +167,7 @@ export function ThreadList({
             key={section.key}
             role="group"
             aria-label={section.name}
-            className="flex flex-col"
+            className={styles.group}
           >
             {body}
           </div>
