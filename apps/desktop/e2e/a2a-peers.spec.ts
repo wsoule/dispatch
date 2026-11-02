@@ -17,7 +17,7 @@ async function openA2ASettings(page: Page): Promise<void> {
   await page.keyboard.press('s');
   await page
     .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'A2A', exact: true })
+    .getByRole('link', { name: 'A2A', exact: true })
     .click();
 }
 

@@ -207,7 +207,8 @@ describe('status words in the lists read on their real grounds', () => {
 
 describe('the list controls keep 3:1 edges', () => {
   test('fields, boxes and the off switch use --control-border', () => {
-    expect(cssRule('tasks/view-toolbar.module.css', '.input')).toContain(
+    // The toolbar's search is a SearchField.
+    expect(cssRule('tasks/search-field.module.css', '.input')).toContain(
       'border: 1px solid var(--control-border);'
     );
     expect(cssRule('tasks/checkbox.module.css', '.glyph')).toContain(
@@ -273,7 +274,7 @@ describe('the list controls keep 3:1 edges', () => {
 
   test('a field takes the fields’ ring, never outline: none', () => {
     const focus = cssRule(
-      'tasks/view-toolbar.module.css',
+      'tasks/search-field.module.css',
       '.input:focus-visible'
     );
     expect(focus).toContain('outline: 2px solid transparent;');
@@ -308,6 +309,9 @@ const LANE_FILES = [
   'tasks/filter-chips.module.css',
   'tasks/bulk-bar.module.css',
   'tasks/view-toolbar.module.css',
+  'tasks/search-field.module.css',
+  'tasks/copy-value.module.css',
+  'tasks/chip.module.css',
   'tasks/checkbox.module.css',
   'tasks/switch.module.css',
   'tasks/segmented-control.module.css',

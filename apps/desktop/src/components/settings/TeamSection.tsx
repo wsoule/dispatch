@@ -3,14 +3,23 @@ import type {
   IssuedTeamToken,
   TeamTokenHolder,
 } from '@dispatch/client';
-import { Button, Chip, Select, TextField } from '@dispatch/ui';
+import {
+  Button,
+  Chip,
+  CopyValue,
+  cx,
+  Disclosure,
+  Select,
+  TextField,
+} from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, UserMinus, UserPlus } from 'lucide-react';
+import { UserMinus, UserPlus } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { NEEDS_DECIDE, useSettingsAccess } from './access';
 import { MachinesGroup } from './MachinesGroup';
+import { useSearching } from './search';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import { TeamEncryptionGroup } from './TeamEncryptionGroup';
 import styles from './TeamSection.module.css';
@@ -72,38 +81,6 @@ export function holderDates(holder: TeamTokenHolder): string {
   return `${expiry} · ${used}`;
 }
 
-/** A copy button that says it worked. Clipboard access can be refused (an
- *  insecure origin, a denied permission), which it reports rather than
- *  pretending — the value is still on screen to select by hand. */
-export function CopyButton({ value, label }: { value: string; label: string }) {
-  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
-  return (
-    <Button
-      size="sm"
-      aria-label={`Copy ${label}`}
-      icon={
-        state === 'copied' ? (
-          <Check size={14} strokeWidth={1.8} />
-        ) : (
-          <Copy size={14} strokeWidth={1.8} />
-        )
-      }
-      onClick={() => {
-        navigator.clipboard
-          .writeText(value)
-          .then(() => setState('copied'))
-          .catch(() => setState('failed'));
-      }}
-    >
-      {state === 'copied'
-        ? 'Copied'
-        : state === 'failed'
-          ? 'Select it'
-          : 'Copy'}
-    </Button>
-  );
-}
-
 /**
  * Settings → Members: the team (start, invite, join), then two folded extras
  * that are easy to mistake for it — the team's machine keys, and browser
@@ -142,6 +119,11 @@ export function TeamSection({ data }: TeamSectionProps) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [issued, setIssued] = useState<IssuedTeamToken | null>(null);
+  // The two folds start closed, and open while a settings search is on so a
+  // matching row inside is visible (their rows stay mounted either way).
+  const searching = useSearching();
+  const [machinesOpen, setMachinesOpen] = useState(false);
+  const [browserOpen, setBrowserOpen] = useState(false);
 
   if (!canManage) {
     return (
@@ -209,20 +191,28 @@ export function TeamSection({ data }: TeamSectionProps) {
     <>
       <TeamSetupGroup data={data} />
       <TeamEncryptionGroup data={data} />
-      <details data-testid="team-machines" className={styles.fold}>
-        <summary className={styles.summary}>
-          Machines: keys, fingerprints and admitting by hand
-        </summary>
+      <Disclosure
+        data-testid="team-machines"
+        variant="bar"
+        keepMounted
+        open={searching || machinesOpen}
+        onOpenChange={setMachinesOpen}
+        summary="Machines: keys, fingerprints and admitting by hand"
+      >
         <div className={styles.foldBody}>
           <MachinesGroup data={data} />
         </div>
-      </details>
+      </Disclosure>
       {/* Not a team invite: a token for using this machine's Dispatch from a
           browser, with nothing installed on the other end. */}
-      <details data-testid="team-browser-access" className={styles.fold}>
-        <summary className={styles.summary}>
-          Browser access: let someone use this machine&rsquo;s Dispatch
-        </summary>
+      <Disclosure
+        data-testid="team-browser-access"
+        variant="bar"
+        keepMounted
+        open={searching || browserOpen}
+        onOpenChange={setBrowserOpen}
+        summary="Browser access: let someone use this machine’s Dispatch"
+      >
         <div className={styles.foldBody}>
           <SettingsGroup
             title="Give someone browser access"
@@ -280,7 +270,11 @@ export function TeamSection({ data }: TeamSectionProps) {
               </form>
               <SettingsHint>{TIER_INFO[tier].adds}.</SettingsHint>
               {error !== null && (
-                <p role="alert" className={styles.error}>
+                <p
+                  role="alert"
+                  className={cx('toneText', styles.error)}
+                  data-tone="danger"
+                >
                   {error}
                 </p>
               )}
@@ -295,10 +289,7 @@ export function TeamSection({ data }: TeamSectionProps) {
                 <div className={styles.stack}>
                   {origins.length > 0 ? (
                     origins.map((origin) => (
-                      <div key={origin} className={styles.copyLine}>
-                        <code className={styles.code}>{origin}</code>
-                        <CopyButton value={origin} label="address" />
-                      </div>
+                      <CopyValue key={origin} value={origin} label="address" />
                     ))
                   ) : (
                     <SettingsHint>
@@ -310,12 +301,11 @@ export function TeamSection({ data }: TeamSectionProps) {
                       .
                     </SettingsHint>
                   )}
-                  <div className={styles.copyLine}>
-                    <code data-testid="issued-token" className={styles.code}>
-                      {issued.token}
-                    </code>
-                    <CopyButton value={issued.token} label="token" />
-                  </div>
+                  <CopyValue
+                    data-testid="issued-token"
+                    value={issued.token}
+                    label="token"
+                  />
                 </div>
               </SettingsRow>
             )}
@@ -376,7 +366,7 @@ export function TeamSection({ data }: TeamSectionProps) {
             })}
           </SettingsGroup>
         </div>
-      </details>
+      </Disclosure>
     </>
   );
 }

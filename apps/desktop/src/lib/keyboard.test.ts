@@ -344,6 +344,39 @@ describe('isTypingTagName', () => {
     expect(isTypingTagName('BUTTON', false)).toBe(false);
     expect(isTypingTagName('DIV', false)).toBe(false);
   });
+
+  // A native <select>'s typeahead jumps to the option starting with the letter pressed
+  // (SnippetComposer still has one), so a focused select is typing: a bare `g` there picks
+  // an option instead of arming the global chord.
+  test('is true for a focused SELECT, so bare keys stay with its typeahead', () => {
+    expect(isTypingTagName('SELECT', false)).toBe(true);
+    const inSelect: GlobalKeyboardContext = {
+      ...baseGlobalCtx,
+      isTyping: isTypingTagName('SELECT', false),
+    };
+    expect(resolveChordPrefix(key('g'), inSelect)).toBeNull();
+    expect(resolveGlobalKeyCommand(key('g'), inSelect)).toBeNull();
+    expect(resolveGlobalKeyCommand(key('c'), inSelect)).toBeNull();
+    expect(resolveGlobalKeyCommand(key('['), inSelect)).toBeNull();
+    expect(resolveGlobalKeyCommand(key('1'), inSelect)).toBeNull();
+  });
+
+  test('a focused SELECT still lets Escape and modifier chords through', () => {
+    const inSelect: GlobalKeyboardContext = {
+      ...baseGlobalCtx,
+      isTyping: isTypingTagName('SELECT', false),
+    };
+    expect(resolveGlobalKeyCommand(key('Escape'), inSelect)).toBe('escape');
+    expect(resolveGlobalKeyCommand(key('k', { metaKey: true }), inSelect)).toBe(
+      'open-palette'
+    );
+    expect(resolveGlobalKeyCommand(key(',', { metaKey: true }), inSelect)).toBe(
+      'goto-settings'
+    );
+    expect(resolveGlobalKeyCommand(key('2', { ctrlKey: true }), inSelect)).toBe(
+      'goto-2'
+    );
+  });
 });
 
 describe('isInteractiveControlTagName', () => {

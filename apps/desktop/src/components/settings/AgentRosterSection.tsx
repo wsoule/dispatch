@@ -1,10 +1,14 @@
 import type { AgentStatus, AgentSummary, ApiClient } from '@dispatch/client';
-import type { ChipTone } from '@dispatch/ui';
+import type { ChipTone, RegisterColumn } from '@dispatch/ui';
 import {
   Button,
   Chip,
   ConfirmDialog,
+  cx,
   InitialsAvatar,
+  Register,
+  RegisterCell,
+  RegisterRow,
   Tooltip,
 } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -39,6 +43,17 @@ const STATUS_PILL: Record<AgentStatus, { label: string; tone: ChipTone }> = {
 };
 
 const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
+
+// The roster's columns: the agent (address over its client), status chips,
+// the approver's avatar, the row's actions and the date it registered.
+const ROSTER_COLUMNS = 'minmax(0, 1fr) auto 24px 92px 64px';
+const ROSTER_HEADER: RegisterColumn[] = [
+  { id: 'agent', label: 'Agent' },
+  { id: 'status', label: 'Status' },
+  { id: 'approver', label: 'Approver' },
+  { id: 'actions', label: 'Actions', align: 'end' },
+  { id: 'added', label: 'Added', align: 'end' },
+];
 
 function muteLabel(agent: AgentSummary): string {
   return `${agent.muted ? 'Unmute' : 'Mute'} ${agent.address}`;
@@ -90,15 +105,15 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<AgentSummary | null>(null);
-  // After a change, focus goes to the row's mute button, or to the table (label null)
-  // once the row offers nothing, so it never falls to the page with the pressed button.
+  // After a change, focus goes to the row's mute button, or to the Agents group (label
+  // null) once the row offers nothing, so it never falls to the page with the pressed button.
   const [refocus, setRefocus] = useState<{
     agent: AgentSummary;
     label: string | null;
     /** What had focus when the change started. */
     from: Element | null;
   } | null>(null);
-  const tableRef = useRef<HTMLDivElement>(null);
+  const groupRef = useRef<HTMLDivElement>(null);
 
   const roster = useQuery({
     queryKey: rosterKey,
@@ -110,7 +125,7 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
   });
 
   // Runs one roster change, writes the daemon's answer into the cached row so
-  // the table moves at once, then refetches to pick up anything else.
+  // the roster moves at once, then refetches to pick up anything else.
   async function act(
     address: string,
     change: (api: ApiClient) => Promise<AgentSummary>
@@ -158,8 +173,8 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
   // Waits until the row shows the change (a re-sort moves it, which drops focus)
   // and the target is enabled, then refocuses unless the user moved focus meanwhile.
   useEffect(() => {
-    const table = tableRef.current;
-    if (refocus === null || table === null) return;
+    const group = groupRef.current;
+    if (refocus === null || group === null) return;
     const shown = roster.data?.agents.find(
       (a) => a.address === refocus.agent.address
     );
@@ -171,8 +186,8 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
     }
     const target =
       refocus.label === null
-        ? table
-        : Array.from(table.querySelectorAll('button')).find(
+        ? group
+        : Array.from(group.querySelectorAll('button')).find(
             (button) =>
               button.getAttribute('aria-label') === refocus.label &&
               !button.disabled
@@ -186,6 +201,10 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
       !active.isConnected ||
       active === refocus.from
     ) {
+      // The group takes focus only by script, so it marks that focus: its
+      // ring shows then, after a mouse confirm too, while a mouse press on
+      // the roster's text (which also focuses the group) draws none.
+      if (target === group) group.dataset.refocused = '';
       target.focus();
     }
   }, [refocus, roster.data, busy]);
@@ -196,47 +215,58 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
     const pill = STATUS_PILL[agent.status];
     const who = agent.approvedBy === null ? null : handleOf(agent.approvedBy);
     return (
-      <div key={agent.address} role="row" className={styles.row}>
-        <span role="cell" className={styles.title} data-roster-title="">
+      <RegisterRow key={agent.address}>
+        <RegisterCell
+          variant="name"
+          data-roster-title=""
+          sub={
+            <span className={styles.client}>
+              {agent.client}
+              {typeof agent.remote === 'string' && (
+                <Chip>{`remote: ${agent.remote}`}</Chip>
+              )}
+            </span>
+          }
+        >
           <span className={styles.address}>{agent.address}</span>
-          <span className={styles.client}>
-            {agent.client}
-            {typeof agent.remote === 'string' && (
-              <Chip>{`remote: ${agent.remote}`}</Chip>
+        </RegisterCell>
+        <RegisterCell label="Status">
+          <span className={styles.status}>
+            {agent.muted && (
+              <Chip tone="muted">
+                <BellOff size={12} strokeWidth={1.8} aria-hidden />
+                Muted
+              </Chip>
+            )}
+            <Chip tone={pill.tone}>{pill.label}</Chip>
+          </span>
+        </RegisterCell>
+        <RegisterCell label="Approver">
+          {/* An empty slot of the avatar's size keeps the columns aligned. */}
+          <span className={styles.approver}>
+            {who !== null && (
+              <span
+                role="img"
+                aria-label={`Approved by ${who}`}
+                title={`Approved by ${who}`}
+              >
+                <InitialsAvatar name={who} />
+              </span>
             )}
           </span>
-        </span>
-        <span role="cell" className={styles.status}>
-          {agent.muted && (
-            <Chip tone="muted">
-              <BellOff size={12} strokeWidth={1.8} aria-hidden />
-              Muted
-            </Chip>
-          )}
-          <Chip tone={pill.tone}>{pill.label}</Chip>
-        </span>
-        <span role="cell" className={styles.approver}>
-          {/* An empty slot of the avatar's size keeps the columns aligned. */}
-          {who !== null && (
-            <span
-              role="img"
-              aria-label={`Approved by ${who}`}
-              title={`Approved by ${who}`}
-            >
-              <InitialsAvatar name={who} />
-            </span>
-          )}
-        </span>
-        <span role="cell">{rosterRowActions(agent)}</span>
-        <span role="cell" className={styles.date}>
+        </RegisterCell>
+        <RegisterCell label="Actions" align="end">
+          {rosterRowActions(agent)}
+        </RegisterCell>
+        <RegisterCell label="Added" variant="mono" align="end">
           {formatShortDate(agent.createdAt)}
-        </span>
-      </div>
+        </RegisterCell>
+      </RegisterRow>
     );
   }
 
   // The row's buttons, right-aligned in a fixed-width cell so mute and revoke
-  // line up down the table whether or not approve is there.
+  // line up down the roster whether or not approve is there.
   function rosterRowActions(agent: AgentSummary): ReactElement {
     // A teammate's agent is approved or revoked only on its own machine.
     const remote = typeof agent.remote === 'string';
@@ -326,20 +356,35 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
         ) : (
           <SettingsSearchable text={searchText}>
             <div
-              ref={tableRef}
+              ref={groupRef}
               role="group"
               aria-label="Agents"
               tabIndex={-1}
               className={styles.roster}
+              onBlur={(event) => {
+                if (event.target === event.currentTarget) {
+                  delete event.currentTarget.dataset.refocused;
+                }
+              }}
             >
-              <div role="table" aria-label="Connected agents">
+              <Register
+                label="Connected agents"
+                columns={ROSTER_COLUMNS}
+                header={ROSTER_HEADER}
+                stackBelow={700}
+                data-roster=""
+              >
                 {agents.map(rosterRow)}
-              </div>
+              </Register>
             </div>
           </SettingsSearchable>
         )}
         {error !== null && (
-          <p role="alert" className={`${shared.error} ${styles.error}`}>
+          <p
+            role="alert"
+            className={cx('toneText', shared.error, styles.error)}
+            data-tone="danger"
+          >
             {error}
           </p>
         )}

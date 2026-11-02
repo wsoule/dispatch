@@ -1,5 +1,5 @@
 import type { LinearUnlinkedTask } from '@dispatch/client';
-import { Button, Chip, Disclosure, ProgressRule } from '@dispatch/ui';
+import { Button, Chip, cx, Disclosure, ProgressRule } from '@dispatch/ui';
 import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
@@ -77,7 +77,9 @@ function UnlinkedRow({
           )}
         </div>
         {task.lastError !== null && (
-          <span className={styles.error}>{task.lastError}</span>
+          <span className={cx('toneText', styles.error)} data-tone="danger">
+            {task.lastError}
+          </span>
         )}
         {attempts !== null && <SettingsHint>{attempts}</SettingsHint>}
         {task.reason === 'moved-out' && (
@@ -85,7 +87,11 @@ function UnlinkedRow({
             Its issue moved to another team; link that team to follow it.
           </SettingsHint>
         )}
-        {error !== null && <span className={styles.error}>{error}</span>}
+        {error !== null && (
+          <span className={cx('toneText', styles.error)} data-tone="danger">
+            {error}
+          </span>
+        )}
       </div>
       {sendable && (
         <div className={styles.unlinkedActions}>
@@ -208,7 +214,9 @@ export function LinearCoverageGroup({
           )}
           {outcome !== null && <SettingsHint>{outcome}</SettingsHint>}
           {retryError !== null && (
-            <span className={styles.error}>{retryError}</span>
+            <span className={cx('toneText', styles.error)} data-tone="danger">
+              {retryError}
+            </span>
           )}
           {coverage.unlinked.length > 0 && (
             <Disclosure

@@ -27,13 +27,13 @@
   gap: 6px;
 }
 
+/* The failure line; its colour is the global toneText class (danger). */
 .failed {
   display: flex;
   align-items: center;
   gap: 6px;
   margin: 0;
   font-size: var(--fs-sm);
-  color: var(--red);
 }
 
 .stats {

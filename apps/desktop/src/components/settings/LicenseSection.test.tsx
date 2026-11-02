@@ -82,9 +82,11 @@ test('a key that does not verify says why, and the plan stays', async () => {
     target: { value: 'dispatch1.abc.def' },
   });
   fireEvent.click(screen.getByRole('button', { name: /Install/ }));
-  expect((await screen.findByRole('alert')).textContent).toContain(
-    'signature does not match'
-  );
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toContain('signature does not match');
+  // The refusal reads in the danger tone's text colour (the global toneText).
+  expect(alert.getAttribute('data-tone')).toBe('danger');
+  expect(alert.classList.contains('toneText')).toBe(true);
   expect(screen.getByText('Free plan: up to 3 people')).toBeTruthy();
 });
 

@@ -95,7 +95,7 @@ export type ButtonProps = ButtonAsButtonProps | ButtonAsLinkProps;
  * tint (docs/architecture.md §8.2). */
 export type ChipTone = UiTone | 'inverse';
 
-export interface ChipProps {
+export interface ChipProps extends DataAttributes {
   tone?: ChipTone;
   /**
    * A status tone (danger, warning, success, info) drawn as Gr8r's tinted
@@ -116,6 +116,26 @@ export interface ChipProps {
   statusLabel?: string;
   title?: string;
   children: ReactNode;
+}
+
+/**
+ * A Chip that does something: a filter or a starter that toggles
+ * (`selected`), a door to a place (`href`), a reference to open. Drawn in
+ * the chip's look with a hover fill and the focus ring; its accessible name
+ * is its visible text.
+ */
+export interface ChipButtonProps extends ChipProps {
+  /** A press: a `<button type="button">`, or the link when `href` is set. */
+  onClick?: (event: MouseEvent<HTMLElement>) => void;
+  /** Renders through the host's <Link> instead of a button. */
+  href?: string;
+  /** Button only: a toggle that is on (aria-pressed), drawn in the
+      accent's selection tint. Omit for a plain action (no aria-pressed);
+      false says it is a toggle that is off. */
+  selected?: boolean;
+  /** Cannot be pressed: a disabled button, or (with `href`) the chip's
+      text marked aria-disabled, not a link. */
+  disabled?: boolean;
 }
 
 export interface SegmentedOption {
@@ -139,7 +159,7 @@ export interface SegmentedControlProps {
   fill?: boolean;
 }
 
-export interface SwitchProps {
+export interface SwitchProps extends DataAttributes {
   /** Controlled state. Omit (and pass defaultChecked) for uncontrolled. */
   checked?: boolean;
   defaultChecked?: boolean;
@@ -157,9 +177,13 @@ export interface SwitchProps {
   /** Names the switch by another element (a row heading), in place of
       the label. */
   'aria-labelledby'?: string;
+  /** Keep the label for assistive tech only: a settings row whose title
+      (its `<label htmlFor>` or `aria-labelledby`) already names the switch
+      draws just the track. aria-label and aria-labelledby still win. */
+  hideLabel?: boolean;
 }
 
-export interface CheckboxProps {
+export interface CheckboxProps extends DataAttributes {
   /** Controlled state. Omit (and pass defaultChecked) for uncontrolled. */
   checked?: boolean;
   defaultChecked?: boolean;
@@ -182,6 +206,10 @@ export interface CheckboxProps {
       partly selected): a dash in the accent box, aria-checked="mixed".
       A click then reports `true` (select the rest). */
   indeterminate?: boolean;
+  /** The native input's click, before it toggles: a box inside a clickable
+      header calls `event.stopPropagation()` here so ticking it does not
+      also press the header. */
+  onClick?: (event: MouseEvent<HTMLInputElement>) => void;
 }
 
 /** One cell of a NavTabs strip: a destination, not a state. */
@@ -208,18 +236,45 @@ export interface NavTabItem {
   onFollow?: () => void;
 }
 
-export interface NavTabsProps {
+/** A titled run of NavTabs cells in a grouped sub-nav (Settings'
+    "Project", "Team", "This machine"). */
+export interface NavTabsGroup {
+  /** The group's title, in the eyebrow voice above its cells, and the
+      accessible name of its `role="group"`. */
+  label: string;
   items: NavTabItem[];
+}
+
+interface NavTabsCommonProps {
   /** Accessible name of the <nav> ("Graph level", "Settings sections"). */
   label: string;
-  /** horizontal = a tab strip; vertical = a sub-nav column that becomes a
-      wrapping strip at 900px and below. */
-  orientation?: 'horizontal' | 'vertical';
   size?: 'sm' | 'md';
-  /** Horizontal only: stretch the cells across the container. */
-  fill?: boolean;
   className?: string;
 }
+
+/** One run of cells, as a tab strip or a sub-nav column. */
+export interface NavTabsItemsProps extends NavTabsCommonProps {
+  items: NavTabItem[];
+  groups?: undefined;
+  /** horizontal = a tab strip; vertical = a sub-nav column that becomes
+      one sideways-scrolling strip at 900px and below. */
+  orientation?: 'horizontal' | 'vertical';
+  /** Horizontal only: stretch the cells across the container. */
+  fill?: boolean;
+}
+
+/** A grouped sub-nav column (vertical only, so `items`, `fill` and a
+    horizontal orientation do not apply): each group's eyebrow title over
+    its cells. At 900px and below the column becomes the one strip of
+    every cell, the titles hidden. */
+export interface NavTabsGroupsProps extends NavTabsCommonProps {
+  groups: readonly NavTabsGroup[];
+  items?: undefined;
+  orientation?: 'vertical';
+  fill?: undefined;
+}
+
+export type NavTabsProps = NavTabsItemsProps | NavTabsGroupsProps;
 
 export interface ProgressRuleProps {
   done: number;
@@ -235,7 +290,7 @@ export interface ProgressRuleProps {
   'aria-label'?: string;
 }
 
-export interface NoticeProps {
+export interface NoticeProps extends DataAttributes {
   /** Lead-in word before the copy, sentence case: "Blocked", "Demo data". */
   label?: string;
   children: ReactNode;
@@ -246,8 +301,9 @@ export interface NoticeProps {
    * (danger for errors and failures, warning for blocked or a missing
    * input, success, info). */
   tone?: UiTone;
-  /** status (polite) for updates, alert for errors. Omit for static copy. */
-  role?: 'status' | 'alert';
+  /** status (polite) for updates, alert for errors, note for an aside
+      that qualifies the page (a read-only reason). Omit for static copy. */
+  role?: 'status' | 'alert' | 'note';
   /** Trailing control, e.g. a quiet Button. */
   action?: ReactNode;
 }
@@ -654,6 +710,57 @@ export interface TaskDragProps {
   label: (count: number) => string;
 }
 
+/* ---- search field, copy value ------------------------------------------ */
+
+/**
+ * A search box: a native `type="search"` input named by `label`, a leading
+ * magnifier, and a quiet "Clear search" button while it holds text.
+ */
+export interface SearchFieldProps extends DataAttributes {
+  value: string;
+  /** Every keystroke, and '' when the field is cleared. */
+  onChange: (value: string) => void;
+  /** Accessible name of the field ("Search settings"). */
+  label: string;
+  placeholder?: string;
+  /** The clear button's accessible name. Default "Clear search". */
+  clearLabel?: string;
+  /** Escape in a non-empty field clears it and stops there
+      (preventDefault and stopPropagation); in an empty field Escape is
+      left alone, so it reaches the page (a second Escape closes Settings).
+      Default true. */
+  escapeClears?: boolean;
+  /** The input, for a host's own shortcut (`/` or ⌘F focuses it). */
+  inputRef?: Ref<HTMLInputElement>;
+  /** sm 26px (a toolbar's), md 30px (the default). */
+  size?: 'sm' | 'md';
+  /** The search is final: Enter (not while an IME is composing), leaving
+      the field, and a clear (the button or Escape). Enter is kept from
+      submitting a surrounding form only when this is set. */
+  onCommit?: (value: string) => void;
+  /** Draw the clear button while the field holds text. Default true;
+      false leaves the browser's own clear control (ViewToolbar). */
+  clearable?: boolean;
+}
+
+/**
+ * A value to copy (a token, a pairing code, an invite link) shown in a
+ * recessed code well, with a Copy button that says Copied for COPIED_MS,
+ * or "Select it" when the clipboard is refused.
+ */
+export interface CopyValueProps extends DataAttributes {
+  /** The text shown and copied. */
+  value: string;
+  /** What it is, for the button's name: "Copy {label}" ("Copy token"). */
+  label: string;
+  /** Geist Mono, for a machine-read string (the default). False for a
+      value people read (an address said aloud). */
+  mono?: boolean;
+  /** One line with an ellipsis, the whole value in the title. Default
+      false: a long value wraps, so all of it can be read and selected. */
+  truncate?: boolean;
+}
+
 /* ---- list toolbar, filter chips, bulk bar ------------------------------ */
 
 export interface ViewToolbarSearch {
@@ -799,7 +906,7 @@ export interface RegisterColumn {
   align?: 'start' | 'end';
 }
 
-export interface RegisterProps {
+export interface RegisterProps extends DataAttributes {
   /** CSS grid-template-columns shared by the header and every row. */
   columns: string;
   /** Optional header row; cells then hide their own labels on desktop. */
@@ -820,7 +927,7 @@ export interface RegisterProps {
   stackedColumns?: string;
 }
 
-interface RegisterRowCommonProps {
+interface RegisterRowCommonProps extends DataAttributes {
   /** The row's tone, as data only (`data-tone`): Gr8r draws no row rule,
    * so a row that needs attention (warning: allocation blocked, unassigned
    * issues; danger: overdue, failed) says so with a tinted Chip or a toned
@@ -840,6 +947,7 @@ export interface RegisterLinkRowProps extends RegisterRowCommonProps {
   /** Accessible name of the row's link: the stretched target has no text
    * of its own, so it is required. */
   rowLabel: string;
+  pressed?: undefined;
 }
 
 /** Callback row: the whole row is a button. */
@@ -849,6 +957,9 @@ export interface RegisterButtonRowProps extends RegisterRowCommonProps {
   onActivate: () => void;
   /** Accessible name of the row's button (required, as for links). */
   rowLabel: string;
+  /** The row is a toggle (a filter row): aria-pressed on its stretched
+      button. Omit for a plain action. */
+  pressed?: boolean;
 }
 
 /** A plain row (settings): its controls live in the cells. */
@@ -857,6 +968,7 @@ export interface RegisterPlainRowProps extends RegisterRowCommonProps {
   external?: undefined;
   onActivate?: undefined;
   rowLabel?: undefined;
+  pressed?: undefined;
 }
 
 export type RegisterRowProps =
@@ -864,7 +976,7 @@ export type RegisterRowProps =
   | RegisterButtonRowProps
   | RegisterPlainRowProps;
 
-export interface RegisterCellProps {
+export interface RegisterCellProps extends DataAttributes {
   /** The cell's own label in the column-header voice (12px, medium,
    * `--text-3`), above the value; visually hidden under a header row until
    * the rows stack, and always readable to assistive tech. */

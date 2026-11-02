@@ -18,28 +18,16 @@
   gap: 2px;
 }
 
-/* A token or pairing code shown once, beside its copy button. */
+/* The pairing code (CopyValue) taking the room beside its Done button. */
 .secretLine {
   display: flex;
   align-items: center;
   gap: var(--s-2);
-}
-
-.secret {
-  flex: 1 1 auto;
   min-width: 0;
-  padding: var(--s-1) var(--s-2);
-  border-radius: var(--r-sm);
-  background: var(--sunken);
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  overflow-wrap: anywhere;
 }
 
-.secret[data-truncate] {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.secretLine > :first-child {
+  flex: 1 1 auto;
 }
 
 .taskList {

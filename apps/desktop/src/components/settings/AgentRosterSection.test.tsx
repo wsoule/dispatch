@@ -104,10 +104,11 @@ function mount(
   return queryClient;
 }
 
-// The roster row naming `address`; the row's own text holds every cell.
+// The roster row (a Register list item) naming `address`; the row's own text
+// holds every cell.
 async function row(address: string): Promise<HTMLElement> {
   const title = await screen.findByText(address);
-  const element = title.closest<HTMLElement>('[role="row"]');
+  const element = title.closest<HTMLElement>('li');
   if (element === null) throw new Error(`no row for ${address}`);
   return element;
 }
@@ -116,8 +117,8 @@ describe('AgentRosterSection', () => {
   test('lists every agent with its client and status, pending first', async () => {
     mount(rosterClient());
     await row(APPROVED);
-    const rows = screen
-      .getAllByRole('row')
+    const rows = within(screen.getByRole('list', { name: 'Connected agents' }))
+      .getAllByRole('listitem')
       .map((r) => r.querySelector('[data-roster-title]')?.textContent);
     expect(rows).toEqual([
       `${PENDING}cursor`,
@@ -309,6 +310,23 @@ describe('AgentRosterSection', () => {
     await waitFor(() =>
       expect(document.activeElement?.getAttribute('aria-label')).toBe('Agents')
     );
+    // Script focus marks the group, so its ring shows after a mouse confirm;
+    // the mark goes once focus leaves, and a press on its text draws none.
+    const group = screen.getByRole('group', { name: 'Agents' });
+    expect(group.dataset.refocused).toBe('');
+    fireEvent.blur(group);
+    expect(group.dataset.refocused).toBeUndefined();
+  });
+
+  test('the roster is one dense row per agent at desktop width, stacking only on a phone', async () => {
+    mount(rosterClient());
+    await row(APPROVED);
+    // stackBelow is a viewport query: a container query (stackWithin 700)
+    // would always stack inside the ~640px settings column.
+    const register = screen
+      .getByRole('list', { name: 'Connected agents' })
+      .closest('[data-roster]');
+    expect(register?.getAttribute('data-stack')).toBe('viewport-700');
   });
 
   test('a refused action says why beside the roster', async () => {
@@ -322,9 +340,10 @@ describe('AgentRosterSection', () => {
         name: `Approve ${PENDING}`,
       })
     );
-    expect((await screen.findByRole('alert')).textContent).toBe(
-      'no agent agent:wyat/cursor.macbook'
-    );
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('no agent agent:wyat/cursor.macbook');
+    expect(alert.classList.contains('toneText')).toBe(true);
+    expect(alert.dataset.tone).toBe('danger');
   });
 
   // Approving from Needs you or the CLI answers the gate elsewhere; the data

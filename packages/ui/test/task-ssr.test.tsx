@@ -13,6 +13,7 @@ interface SsrResult {
   issueList: string;
   windowedList: string;
   disclosures: string;
+  primitives: string;
 }
 
 function serverRender(): SsrResult {
@@ -123,5 +124,36 @@ describe('task family server render', () => {
     expect(html).toMatch(
       /<button aria-expanded="false" aria-controls="fold-chip" type="button" class="chip">\+3 more<\/button>/
     );
+  });
+
+  test('the Settings primitives render with their hooks and no client state', () => {
+    const html = result.primitives;
+    // SearchField: the named search box with its clear button.
+    expect(html).toContain('data-testid="settings-search"');
+    expect(html).toContain('type="search"');
+    expect(html).toContain('aria-label="Clear search"');
+    // CopyValue: the hook on the code element, idle.
+    expect(html).toMatch(/<code data-testid="issued-token"[^>]*>dsp_tok_123</);
+    expect(html).toContain('aria-label="Copy token"');
+    expect(html).toContain('data-state="idle"');
+    // NavTabs groups.
+    expect(html).toContain('role="group" aria-label="Project"');
+    expect(html).toContain('aria-current="page"');
+    // ChipButton as a toggle and as a link.
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain('href="/runs"');
+    // The passthrough hooks.
+    for (const id of [
+      'failed-chip',
+      'live-switch',
+      'viewed-box',
+      'read-only',
+      'spend',
+      'spend-row',
+    ]) {
+      expect(html).toContain(`data-testid="${id}"`);
+    }
+    expect(html).toContain('role="note"');
+    expect(html).toContain('data-slot="cost"');
   });
 });

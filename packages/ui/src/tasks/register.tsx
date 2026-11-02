@@ -2,6 +2,7 @@
 
 import type { CSSProperties } from 'react';
 
+import { dataAttributes } from '../lib/data-attributes';
 import { Link } from '../lib/link';
 import { cx } from './class-names';
 import styles from './register.module.css';
@@ -26,16 +27,18 @@ const WITHIN_CLASS: Record<700 | 900 | 1000, string | undefined> = {
    the rows become cards (subject cell on top, the rest on
    `stackedColumns`) and each cell shows its own label, which the header
    otherwise carries (the labels stay readable to assistive tech either
-   way, because the header itself is decorative). */
-export function Register({
-  columns,
-  header,
-  label,
-  children,
-  stackBelow = 900,
-  stackWithin,
-  stackedColumns = 'minmax(0, 1fr) minmax(0, 1fr)',
-}: RegisterProps) {
+   way, because the header itself is decorative). The host's data-* hooks
+   land on the register's root. */
+export function Register(props: RegisterProps) {
+  const {
+    columns,
+    header,
+    label,
+    children,
+    stackBelow = 900,
+    stackWithin,
+    stackedColumns = 'minmax(0, 1fr) minmax(0, 1fr)',
+  } = props;
   const hasHeader = header !== undefined && header.length > 0;
   const stackClass =
     stackWithin === undefined
@@ -45,6 +48,7 @@ export function Register({
       : cx(styles.container, WITHIN_CLASS[stackWithin]);
   return (
     <div
+      {...dataAttributes(props)}
       className={cx(
         styles.register,
         hasHeader ? styles.hasHeader : undefined,
@@ -90,16 +94,20 @@ export function Register({
    focus take the hover fill, a selected row the accent tint with a 2px
    accent bar. The row's tone is data only (data-tone): a row that needs
    action says so with a tinted chip or a toned cell, never a rule (Gr8r);
-   muted steps the row's subject back. */
-export function RegisterRow({
-  href,
-  external = false,
-  onActivate,
-  rowLabel,
-  tone = 'default',
-  selected = false,
-  children,
-}: RegisterRowProps) {
+   muted steps the row's subject back. A button row that is a toggle (a
+   filter row) passes `pressed`, which sets aria-pressed on its stretched
+   button. The host's data-* hooks land on the <li>. */
+export function RegisterRow(props: RegisterRowProps) {
+  const {
+    href,
+    external = false,
+    onActivate,
+    rowLabel,
+    pressed,
+    tone = 'default',
+    selected = false,
+    children,
+  } = props;
   const linked = href !== undefined || onActivate !== undefined;
   const name =
     rowLabel !== undefined && external
@@ -107,6 +115,7 @@ export function RegisterRow({
       : rowLabel;
   return (
     <li
+      {...dataAttributes(props)}
       className={cx(
         styles.row,
         tone === 'muted' ? styles.rowMuted : undefined,
@@ -129,6 +138,7 @@ export function RegisterRow({
           type="button"
           className={styles.overlay}
           aria-label={name}
+          aria-pressed={pressed}
           onClick={onActivate}
         />
       ) : null}
@@ -153,19 +163,21 @@ const VARIANT_CLASS: Record<
    is historical, the face is Geist). A tone other than default and muted
    colours the value in the tone's text colour (data-tone), and the sub
    line too only when `toneSub` asks (a reason line that is the point);
-   muted greys the value. */
-export function RegisterCell({
-  label,
-  variant = 'value',
-  sub,
-  tone = 'default',
-  toneSub = false,
-  align = 'start',
-  children,
-}: RegisterCellProps) {
+   muted greys the value. The host's data-* hooks land on the cell. */
+export function RegisterCell(props: RegisterCellProps) {
+  const {
+    label,
+    variant = 'value',
+    sub,
+    tone = 'default',
+    toneSub = false,
+    align = 'start',
+    children,
+  } = props;
   const toned = tone !== 'default' && tone !== 'muted';
   return (
     <div
+      {...dataAttributes(props)}
       className={cx(
         styles.cell,
         VARIANT_CLASS[variant],

@@ -13,6 +13,7 @@ import {
   type ReactNode,
   useCallback,
   useContext,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -25,8 +26,9 @@ import {
   buildShellTabs,
   type OverseerBadge,
 } from '../../adapters/shell';
+import { isShown } from '../../hooks/useGlobalKeyboard';
 import type { AdminItem } from '../../lib/adminItems';
-import type { MainView, NavAction } from '../../lib/appNav';
+import type { MainView, NavAction, NavSettingsPage } from '../../lib/appNav';
 import { parseHref } from '../../lib/routes';
 import { hrefFor, type ShellDestination } from '../../lib/shellRoutes';
 import { usePeople } from '../people/PeopleContext';
@@ -78,14 +80,24 @@ export interface DispatchShellProps {
   topbarActions?: ReactNode;
   /** An app-wide notice strip under the topbar (setup problems). */
   banner?: ReactNode;
-  /** A resolution, sign-in or get-started screen; it replaces both views. */
+  /** A resolution, sign-in or get-started screen; it replaces both views.
+   * Settings still opens over it (the gate stays mounted, hidden). */
   gate: ReactNode | null;
   overseer: ReactNode;
   tasks: ReactNode;
-  /** A drawer over either view; it never changes the view underneath. */
+  /** A drawer over either view; it never changes the view underneath.
+   * Hidden, still mounted, while Settings shows, so closing Settings brings
+   * it back as it was (Escape closes Settings before the peek). */
   peek: ReactNode;
-  /** The first-task guide card, floating over either view; hidden under a gate or a peek. */
+  /** The first-task guide card, floating over either view; hidden under a
+   * gate, a peek or Settings. */
   guide?: ReactNode;
+  /** The Settings page, set while `NavState.settings` is: it takes the main
+   * column (over a gate too), and both views stay mounted, hidden, beneath
+   * it. Null or undefined while Settings is closed. */
+  settings?: ReactNode;
+  /** The Settings page showing, for the last crumb ("Settings › Agents"). */
+  settingsPage?: NavSettingsPage | null;
 }
 
 // Main width below which the expanded guide card (320px) would sit over centered content.
@@ -152,13 +164,139 @@ function displayName(
   return personFor(me)?.name ?? me.replace(/^human:/, '');
 }
 
+/** True when focus rests nowhere useful: on <body>, or on an element that is
+ * gone or hidden (inside a view an Activity boundary just hid). */
+function focusLost(): boolean {
+  const active = document.activeElement;
+  return (
+    active === null ||
+    active === document.body ||
+    active === document.documentElement ||
+    !(active instanceof HTMLElement) ||
+    !isShown(active)
+  );
+}
+
+/**
+ * Moves focus into Settings when it opens and back out when it closes, the
+ * part of the old Settings dialog's focus handling a main-column page still
+ * needs. Opening hides the view that held focus, so focus would drop to
+ * <body>: it goes to the Settings region instead (named "Settings" for a
+ * screen reader), unless it is already inside. A page switch that drops focus
+ * (the focused link unmounted) brings it back to the region. Closing unmounts
+ * the page with focus inside it: focus returns to the element last focused
+ * outside Settings when that is shown again, else to the main column. Focus
+ * a close left somewhere useful (a sidebar link, a peek) stays there.
+ */
+function useSettingsFocus(
+  slotRef: React.RefObject<HTMLDivElement | null>,
+  open: boolean,
+  page: NavSettingsPage | null
+): void {
+  // The element focused last outside Settings, recorded on every focus move.
+  const openerRef = useRef<HTMLElement | null>(null);
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    function record(event: FocusEvent) {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (slotRef.current?.contains(target) === true) return;
+      openerRef.current = target;
+    }
+    document.addEventListener('focusin', record, true);
+    return () => document.removeEventListener('focusin', record, true);
+  }, [slotRef]);
+  // A passive effect on purpose: it runs after the passive cleanups of the
+  // subtree Settings just hid, among them a peek's dialog focus handing focus
+  // back to its own opener, so Settings takes focus last.
+  useEffect(() => {
+    const wasOpen = wasOpenRef.current;
+    wasOpenRef.current = open;
+    if (open) {
+      const slot = slotRef.current;
+      if (slot === null || slot.contains(document.activeElement)) return;
+      if (!wasOpen || focusLost()) slot.focus({ preventScroll: true });
+      return;
+    }
+    if (!wasOpen || !focusLost()) return;
+    const opener = openerRef.current;
+    if (opener !== null && isShown(opener)) {
+      opener.focus({ preventScroll: true });
+    } else {
+      document.getElementById(MAIN_ID)?.focus({ preventScroll: true });
+    }
+  }, [slotRef, open, page]);
+}
+
+// How many scrolled boxes the shell remembers before it prunes removed ones.
+const KEPT_SCROLL_LIMIT = 64;
+
+/**
+ * Puts back the scroll positions that Settings' hidden views lose. A hidden
+ * Activity boundary hides its subtree with display: none, and the browser
+ * drops the scroll offset of a box it does not render, so a list scrolled
+ * halfway down (or a peek's body) would come back at the top. The content box
+ * records each scroll as it happens (scroll events do not bubble, so it
+ * listens in the capture phase) and writes the positions back once Settings
+ * closes and the views show again.
+ */
+function useScrollKeptUnderSettings(
+  contentRef: React.RefObject<HTMLDivElement | null>,
+  settingsRef: React.RefObject<HTMLDivElement | null>,
+  open: boolean
+): void {
+  const positionsRef = useRef(
+    new Map<Element, { top: number; left: number }>()
+  );
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    const box = contentRef.current;
+    if (box === null) return;
+    function record(event: Event) {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (settingsRef.current?.contains(target) === true) return;
+      const positions = positionsRef.current;
+      // Rows come and go; drop the boxes React removed before the map grows.
+      if (positions.size >= KEPT_SCROLL_LIMIT) {
+        for (const element of positions.keys()) {
+          if (!element.isConnected) positions.delete(element);
+        }
+      }
+      positions.set(target, {
+        top: target.scrollTop,
+        left: target.scrollLeft,
+      });
+    }
+    box.addEventListener('scroll', record, { capture: true, passive: true });
+    return () => box.removeEventListener('scroll', record, { capture: true });
+  }, [contentRef, settingsRef]);
+  useLayoutEffect(() => {
+    const wasOpen = wasOpenRef.current;
+    wasOpenRef.current = open;
+    if (open || !wasOpen) return;
+    for (const [element, { top, left }] of positionsRef.current) {
+      if (!element.isConnected) {
+        positionsRef.current.delete(element);
+      } else if (isShown(element)) {
+        element.scrollTop = top;
+        element.scrollLeft = left;
+      }
+    }
+  }, [open]);
+}
+
 /**
  * The desktop's frame: @dispatch/ui's AppShell (sidebar with the destinations
  * and the Projects section, topbar with crumbs, search and the project menu)
  * around the two views, both mounted so each keeps its place, with the peek
- * drawer and the guide card floating over them. Navigation stays in App's nav
- * reducer: the sidebar reads it for the current row, and every link's href is
- * a route whose actions a plain click dispatches.
+ * drawer and the guide card floating over them. While Settings is open it
+ * takes the main column in their place, over a gate too. It is an overlay
+ * place: the views, the gate and the peek stay mounted, hidden (their state,
+ * focus and scroll come back with them), and Escape or any navigation
+ * returns to them. Navigation stays in App's nav reducer: the
+ * sidebar reads it for the current row, and every link's href is a route
+ * whose actions a plain click dispatches.
  */
 export function DispatchShell({
   projectName,
@@ -182,11 +320,20 @@ export function DispatchShell({
   tasks,
   peek,
   guide,
+  settings,
+  settingsPage = null,
 }: DispatchShellProps) {
   const modLabel = useModKeyLabel();
+  // Settings is an overlay place: while it shows, the views, the gate and the
+  // peek stay mounted under hidden Activity boundaries (scroll, drafts and
+  // state kept).
+  const settingsOpen = settings !== undefined && settings !== null;
   const { me, personFor } = usePeople();
   const contentRef = useRef<HTMLDivElement>(null);
   const narrow = useIsNarrow(contentRef);
+  const settingsRef = useRef<HTMLDivElement>(null);
+  useSettingsFocus(settingsRef, settingsOpen, settingsPage);
+  useScrollKeptUnderSettings(contentRef, settingsRef, settingsOpen);
 
   // The handlers change every render; the link component must not, or every
   // sidebar link would remount (and lose focus) on each app render.
@@ -247,7 +394,12 @@ export function DispatchShell({
                     label: `Sign out ${teamSession.handle}`,
                   }
             }
-            crumbs={buildCrumbs({ projectName, destination, taskTitle })}
+            crumbs={buildCrumbs({
+              projectName,
+              destination,
+              taskTitle,
+              settingsPage,
+            })}
             onSearch={onSearch}
             topbarActions={topbarActions}
             banner={banner}
@@ -262,18 +414,31 @@ export function DispatchShell({
             <div ref={contentRef} className={styles.content}>
               <NarrowMainContext.Provider value={narrow}>
                 <ErrorBoundary label="this view">
-                  {gate ?? (
+                  {gate === null || gate === undefined ? (
                     <>
                       <Activity
-                        mode={view === 'overseer' ? 'visible' : 'hidden'}
+                        mode={
+                          !settingsOpen && view === 'overseer'
+                            ? 'visible'
+                            : 'hidden'
+                        }
                       >
                         {overseer}
                       </Activity>
-                      <Activity mode={view === 'tasks' ? 'visible' : 'hidden'}>
+                      <Activity
+                        mode={
+                          !settingsOpen && view === 'tasks'
+                            ? 'visible'
+                            : 'hidden'
+                        }
+                      >
                         {tasks}
                       </Activity>
-                      {peek}
-                      {guide !== undefined &&
+                      <Activity mode={settingsOpen ? 'hidden' : 'visible'}>
+                        {peek}
+                      </Activity>
+                      {!settingsOpen &&
+                        guide !== undefined &&
                         guide !== null &&
                         peek === null && (
                           <div
@@ -288,6 +453,21 @@ export function DispatchShell({
                           </div>
                         )}
                     </>
+                  ) : (
+                    <Activity mode={settingsOpen ? 'hidden' : 'visible'}>
+                      {gate}
+                    </Activity>
+                  )}
+                  {settingsOpen && (
+                    <div
+                      ref={settingsRef}
+                      role="region"
+                      aria-label="Settings"
+                      tabIndex={-1}
+                      className={styles.settingsSlot}
+                    >
+                      <ErrorBoundary label="Settings">{settings}</ErrorBoundary>
+                    </div>
                   )}
                 </ErrorBoundary>
               </NarrowMainContext.Provider>

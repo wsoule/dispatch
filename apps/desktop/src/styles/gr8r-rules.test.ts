@@ -157,12 +157,14 @@ const GR8R_SCOPE: readonly string[] = [
   'lib/milestoneSession.ts',
   'lib/milestoneSession.test.ts',
   'components/settings',
-  'components/shell/SettingsPanel.tsx',
-  'components/shell/SettingsPanel.module.css',
-  'components/shell/SettingsPanel.test.tsx',
+  'components/shell/DispatchShell.test.tsx',
   'views/SettingsView.tsx',
-  'views/SettingsView.module.css',
   'views/SettingsView.test.tsx',
+  'lib/appNav.ts',
+  'lib/appNav.test.ts',
+  'lib/keyboard.ts',
+  'lib/keyboard.test.ts',
+  'lib/shellRoutes.test.ts',
 ];
 
 /** GR8R_SCOPE directory entries allowed to be absent. Every other directory entry must exist

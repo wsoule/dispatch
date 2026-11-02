@@ -123,13 +123,16 @@ describe('phaseTone', () => {
     expect(phaseTone('working')).toBe('info');
     expect(phaseTone('reviewing')).toBe('info');
     expect(phaseTone('fixing')).toBe('info');
-    expect(phaseTone('needs-review')).toBe('info');
     expect(phaseTone('landing')).toBe('info');
+    // Amber for waiting on someone and for blocked (the status hue table).
     expect(phaseTone('capped')).toBe('warning');
     expect(phaseTone('held')).toBe('warning');
     expect(phaseTone('waiting')).toBe('warning');
+    expect(phaseTone('blocked')).toBe('warning');
+    // Its work passed; only a person's review is left.
+    expect(phaseTone('needs-review')).toBe('success');
+    // Red only for a failure.
     expect(phaseTone('failed')).toBe('danger');
-    expect(phaseTone('blocked')).toBe('danger');
   });
 
   test('leaves the glyph-only phases untoned', () => {

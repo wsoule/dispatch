@@ -1,5 +1,5 @@
 import type { LicenseStatus, TeamKeys } from '@dispatch/client';
-import { Button, TextField } from '@dispatch/ui';
+import { Button, cx, TextField } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { KeyRound } from 'lucide-react';
 import { useState } from 'react';
@@ -107,14 +107,14 @@ export function LicenseSection({ data }: LicenseSectionProps) {
           subtitle={`${status.used} of ${status.seats} seats used: you and everyone with an active invite.`}
         >
           {status.kind === 'expired' && (
-            <SettingsHint className={styles.waiting}>
+            <SettingsHint tone="warning">
               The license for {status.org} expired on{' '}
               {status.expiresAt?.slice(0, 10)}. The free plan applies until you
               add a new key; the people invited first keep their seats.
             </SettingsHint>
           )}
           {status.kind === 'invalid' && status.reason !== null && (
-            <SettingsHint className={styles.waiting}>
+            <SettingsHint tone="warning">
               The installed key was not accepted: {status.reason}.
             </SettingsHint>
           )}
@@ -165,7 +165,11 @@ export function LicenseSection({ data }: LicenseSectionProps) {
               is refused and the current one stays.
             </SettingsHint>
             {error !== null && (
-              <p role="alert" className={styles.error}>
+              <p
+                role="alert"
+                className={cx('toneText', styles.error)}
+                data-tone="danger"
+              >
                 {error}
               </p>
             )}
@@ -229,7 +233,11 @@ function TeamLicenseGroup({
           }
         >
           {error !== null && (
-            <p role="alert" className={styles.error}>
+            <p
+              role="alert"
+              className={cx('toneText', styles.error)}
+              data-tone="danger"
+            >
               {error}
             </p>
           )}

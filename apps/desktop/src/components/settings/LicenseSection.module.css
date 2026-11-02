@@ -1,7 +1,5 @@
-/* The plan's warnings and the license key form (LicenseSection.tsx). */
-.waiting {
-  color: var(--amber);
-}
+/* The license key form (LicenseSection.tsx). The plan's warnings and the
+   refusal line take their colour from the global toneText class. */
 
 .form {
   display: flex;
@@ -25,5 +23,4 @@
 .error {
   margin: 6px 0 0;
   font-size: var(--fs-sm);
-  color: var(--red);
 }

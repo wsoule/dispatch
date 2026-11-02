@@ -2,7 +2,6 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import { CollapseBar } from './collapse-bar';
-import { CountChip } from './CountChip';
 import { SectionLabel } from './SectionLabel';
 import { HintText, MetaText } from './text';
 
@@ -14,7 +13,6 @@ test('a colour passed through className reaches the element', () => {
     <MetaText key="meta" className="text-foreground">
       12s
     </MetaText>,
-    <CountChip key="chip" count={4} className="text-foreground" />,
     <SectionLabel key="label" className="text-foreground">
       Merge queue
     </SectionLabel>,
@@ -49,10 +47,9 @@ test('a collapse bar toggles', () => {
 });
 
 // Ids, counts and times are 12px sans — mono is for code, paths and diffs only.
-test('meta text, counts and section labels are sans, not mono', () => {
+test('meta text and section labels are sans, not mono', () => {
   const cases = [
     render(<MetaText>12s</MetaText>).container,
-    render(<CountChip count={4} />).container,
     render(<SectionLabel>Merge queue</SectionLabel>).container,
   ];
   for (const container of cases) {

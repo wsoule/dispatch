@@ -1,0 +1,101 @@
+/* The autonomy slider: a range over the ladder's stops, a button under each
+   stop, and the chosen stop's meaning. */
+
+.slider {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+/* The track fills with the accent up to the chosen stop (--fill, set inline). */
+.range {
+  --fill: 0%;
+
+  width: 100%;
+  height: 6px;
+  margin: var(--s-2) 0;
+  border-radius: var(--r-full);
+  background: linear-gradient(
+    to right,
+    var(--accent) var(--fill),
+    var(--border-strong) var(--fill)
+  );
+  cursor: pointer;
+  appearance: none;
+}
+
+.range::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  appearance: none;
+}
+
+.range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  appearance: none;
+}
+
+/* One label per stop under the stop it names: the first hugs the track's left end, the
+   last its right end, the middle ones centre on theirs. */
+.stops {
+  display: flex;
+}
+
+.stops .stop {
+  flex: 1 1 0;
+  min-width: 0;
+  height: auto;
+  min-height: var(--h-sm);
+  white-space: normal;
+  line-height: 1.25;
+  font-size: var(--fs-xs);
+}
+
+.stops .first {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.stops .last {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+/* The stops are library Buttons, which carry their own colour transition and
+   drop it under prefers-reduced-motion: reduce; the slider adds no motion. */
+
+/* Forced colours drop the gradient fill and the soft shadow: the track keeps a
+   system-coloured edge, the thumb a solid disc, and the chosen stop an edge in
+   the selection colour so it is told apart without the pressed fill. */
+@media (forced-colors: active) {
+  .range {
+    border: 1px solid CanvasText;
+  }
+
+  .range::-webkit-slider-thumb {
+    border: 1px solid ButtonText;
+    background: ButtonText;
+  }
+
+  .range::-moz-range-thumb {
+    border: 1px solid ButtonText;
+    background: ButtonText;
+  }
+
+  .stops .stop {
+    border: 1px solid transparent;
+  }
+
+  .stops .stop[aria-pressed='true'] {
+    border-color: Highlight;
+  }
+}

@@ -1,5 +1,6 @@
 /* Settings → Members, "Your team" (TeamSetupGroup.tsx): the inline forms, the
-   values to copy and the notes set straight into the card. */
+   recovery code's line and the notes set straight into the card. Status
+   words (a problem, a refusal) take the global toneText class. */
 
 .line {
   display: flex;
@@ -16,36 +17,19 @@
   width: 224px;
 }
 
-/* A one-time secret: wrapped anywhere, never cut. */
-.secret {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  word-break: break-all;
+/* A value to copy (CopyValue) taking the room beside its Done button. */
+.copyLine {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
 }
 
-/* A link to copy: one line, cut with an ellipsis. */
-.code {
+.copyLine > :first-child {
   flex: 1 1 auto;
-  min-width: 0;
-  padding: var(--s-1) var(--s-2);
-  overflow: hidden;
-  border-radius: var(--r-sm);
-  background: var(--sunken);
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* A hint set straight into the card, padded like a row. */
 .note {
   padding: var(--s-2) var(--s-3);
-}
-
-.warning {
-  color: var(--tone-ink);
-}
-
-.error {
-  color: var(--red);
 }

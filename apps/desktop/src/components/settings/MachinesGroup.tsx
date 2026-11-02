@@ -1,6 +1,6 @@
 import type { TeamKeys } from '@dispatch/client';
 import { isInsufficientTier } from '@dispatch/client';
-import { Button, Chip, TextField } from '@dispatch/ui';
+import { Button, Chip, CopyValue, TextField } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
@@ -149,7 +149,11 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
         ) : (
           <SettingsRow
             title="Couldn’t read the team"
-            subtitle={<span className={styles.error}>{message}</span>}
+            subtitle={
+              <span className="toneText" data-tone="danger">
+                {message}
+              </span>
+            }
           />
         )}
       </SettingsGroup>
@@ -221,8 +225,15 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
           }
           stacked
           control={
-            <div className={styles.line}>
-              <span className={styles.secret}>{shown.code}</span>
+            <div className={styles.copyLine}>
+              <CopyValue
+                value={shown.code}
+                label={
+                  shown.title === 'Recovery code'
+                    ? 'recovery code'
+                    : 'invite code'
+                }
+              />
               <Button size="sm" variant="quiet" onClick={() => setShown(null)}>
                 Done
               </Button>
@@ -670,7 +681,7 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
         <SettingsRow
           key={w}
           title={
-            <span data-tone="warning" className={styles.warning}>
+            <span data-tone="warning" className="toneText">
               {w}
             </span>
           }
@@ -704,7 +715,11 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
       {error !== null && (
         <SettingsRow
           title="That change didn’t go through"
-          subtitle={<span className={styles.error}>{error}</span>}
+          subtitle={
+            <span className="toneText" data-tone="danger">
+              {error}
+            </span>
+          }
         />
       )}
       {k.team === null && k.foundings.length === 0 && !canOperate && (

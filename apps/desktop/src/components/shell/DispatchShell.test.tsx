@@ -1,7 +1,7 @@
-import type { ShellSection } from '@dispatch/ui';
+import { Link, type ShellSection } from '@dispatch/ui';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 import type { NavAction } from '../../lib/appNav';
 import { FirstTaskGuide } from '../guide/FirstTaskGuide';
@@ -265,7 +265,302 @@ describe('DispatchShell', () => {
     rerender(shell({ guide: <p>guide card</p> }).element);
     expect(screen.getByTestId('first-task-guide-slot')).toBeTruthy();
   });
+
+  // Settings is an overlay place in the main column: the views stay mounted
+  // beneath it under hidden Activity boundaries, so their state is kept.
+  test('Settings takes the main column with both views hidden beneath it', () => {
+    const { rerender } = render(
+      shell({
+        view: 'tasks',
+        destination: 'settings',
+        settings: <section data-testid="settings-panel">settings page</section>,
+        settingsPage: 'agents',
+      }).element
+    );
+    expect(screen.getByTestId('settings-panel').textContent).toBe(
+      'settings page'
+    );
+    // Hidden Activity children stay in the DOM with display: none.
+    const overseer = screen.getByText('overseer');
+    const tasks = screen.getByText('tasks');
+    expect(overseer.style.display).toBe('none');
+    expect(tasks.style.display).toBe('none');
+    // The crumbs name the place, since the page has no header row of its own.
+    expect(
+      screen.getByRole('navigation', { name: 'Breadcrumb' }).textContent
+    ).toBe('storefront/Settings/Agents');
+    expect(
+      within(screen.getByRole('navigation', { name: 'Breadcrumb' }))
+        .getByRole('link', { name: 'Settings' })
+        .getAttribute('href')
+    ).toBe('#/settings');
+    // Closing it shows the view it opened over again.
+    rerender(shell({ view: 'tasks', destination: 'issues' }).element);
+    expect(screen.queryByTestId('settings-panel')).toBeNull();
+    expect(screen.getByText('tasks').style.display).not.toBe('none');
+    expect(screen.getByText('overseer').style.display).toBe('none');
+  });
+
+  test('the peek stays mounted, hidden, under Settings and comes back as it was; the guide steps aside', () => {
+    const { rerender } = render(
+      shell({
+        destination: 'settings',
+        settings: <p>settings page</p>,
+        settingsPage: 'general',
+        peek: <aside>peek</aside>,
+        guide: <p>guide card</p>,
+      }).element
+    );
+    expect(screen.getByText('peek').style.display).toBe('none');
+    expect(screen.queryByTestId('first-task-guide-slot')).toBeNull();
+    rerender(shell({ peek: <aside>peek</aside> }).element);
+    expect(screen.getByText('peek').style.display).not.toBe('none');
+    rerender(shell({ guide: <p>guide card</p> }).element);
+    expect(screen.getByTestId('first-task-guide-slot')).toBeTruthy();
+  });
+
+  // The old panel floated over the peek; the peek's own state (a half-typed
+  // reply, its tab) must survive Settings opening and closing over it.
+  test('a peek keeps its local state while Settings shows over it', () => {
+    const settingsOver = (open: boolean) =>
+      shell({
+        destination: open ? 'settings' : 'overseer',
+        settings: open ? <p>settings page</p> : null,
+        settingsPage: open ? 'general' : null,
+        peek: <DraftPeek />,
+      }).element;
+    const { rerender } = render(settingsOver(false));
+    fireEvent.change(screen.getByLabelText('Reply'), {
+      target: { value: 'half typed' },
+    });
+    rerender(settingsOver(true));
+    rerender(settingsOver(false));
+    expect(screen.getByLabelText<HTMLInputElement>('Reply').value).toBe(
+      'half typed'
+    );
+  });
+
+  // The old panel floated over any gate: a first-run person can still reach
+  // Settings > Agents from the agent setup screen.
+  test('Settings shows over a gate, which stays mounted beneath it', () => {
+    const { rerender } = render(
+      shell({
+        gate: <p>agent setup</p>,
+        destination: 'settings',
+        settings: <section data-testid="settings-panel">settings page</section>,
+        settingsPage: 'agents',
+      }).element
+    );
+    expect(screen.getByTestId('settings-panel')).toBeTruthy();
+    expect(screen.getByText('agent setup').style.display).toBe('none');
+    expect(
+      screen.getByRole('navigation', { name: 'Breadcrumb' }).textContent
+    ).toBe('storefront/Settings/Agents');
+    rerender(shell({ gate: <p>agent setup</p> }).element);
+    expect(screen.queryByTestId('settings-panel')).toBeNull();
+    expect(screen.getByText('agent setup').style.display).not.toBe('none');
+  });
+
+  // From the old Settings dialog: focus moves in when it opens (the region is
+  // named, so a screen reader says where focus went) and back out on close.
+  test('opening Settings moves focus into it, and closing gives focus back to the opener', () => {
+    const at = (open: boolean) =>
+      shell({
+        view: 'tasks',
+        destination: open ? 'settings' : 'issues',
+        tasks: <button type="button">Row in the list</button>,
+        settings: open ? (
+          <button type="button">A Settings control</button>
+        ) : null,
+        settingsPage: open ? 'general' : null,
+      }).element;
+    const { rerender } = render(at(false));
+    const opener = screen.getByRole('button', { name: 'Row in the list' });
+    opener.focus();
+    rerender(at(true));
+    const region = screen.getByRole('region', { name: 'Settings' });
+    expect(document.activeElement).toBe(region);
+    // Focus moved on inside Settings stays there across a rerender.
+    screen.getByRole('button', { name: 'A Settings control' }).focus();
+    rerender(at(true));
+    expect(document.activeElement?.textContent).toBe('A Settings control');
+    // Closing unmounts the page with focus in it: focus returns to the row.
+    rerender(at(false));
+    expect(document.activeElement).toBe(opener);
+  });
+
+  // display: none drops a box's scroll offset in a real browser, so a list
+  // hidden under Settings would come back at the top without the shell.
+  test('a view scrolled before Settings opened gets its scroll position back', () => {
+    const at = (open: boolean) =>
+      shell({
+        view: 'tasks',
+        destination: open ? 'settings' : 'issues',
+        tasks: <div data-testid="list">rows</div>,
+        settings: open ? <p>settings page</p> : null,
+        settingsPage: open ? 'general' : null,
+      }).element;
+    const { rerender } = render(at(false));
+    const list = screen.getByTestId('list');
+    list.scrollTop = 240;
+    fireEvent.scroll(list);
+    rerender(at(true));
+    // What the browser does to a box under display: none.
+    list.scrollTop = 0;
+    rerender(at(false));
+    expect(list.scrollTop).toBe(240);
+  });
+
+  // A peek's dialog focus (useDialogFocus) hands focus back to its opener in
+  // a passive cleanup when Settings hides it; Settings still ends with focus.
+  test('Settings opened over a peek ends with focus in Settings', () => {
+    const at = (open: boolean) =>
+      shell({
+        destination: open ? 'settings' : 'overseer',
+        topbarActions: <button type="button">Topbar action</button>,
+        peek: <FocusReturningPeek />,
+        settings: open ? <p>settings page</p> : null,
+        settingsPage: open ? 'general' : null,
+      }).element;
+    const { rerender } = render(at(false));
+    expect(document.activeElement?.textContent).toBe('Inside the peek');
+    rerender(at(true));
+    expect(document.activeElement).toBe(
+      screen.getByRole('region', { name: 'Settings' })
+    );
+    // Closing brings the peek back, and its own focus move stands.
+    rerender(at(false));
+    expect(document.activeElement?.textContent).toBe('Inside the peek');
+  });
+
+  test('a page switch that drops focus brings it back to the Settings region', () => {
+    const page = (settingsPage: 'general' | 'agents') =>
+      shell({
+        destination: 'settings',
+        settings: (
+          <button type="button" key={settingsPage}>
+            {settingsPage}
+          </button>
+        ),
+        settingsPage,
+      }).element;
+    const { rerender } = render(page('general'));
+    screen.getByRole('button', { name: 'general' }).focus();
+    rerender(page('agents'));
+    expect(document.activeElement).toBe(
+      screen.getByRole('region', { name: 'Settings' })
+    );
+  });
+
+  test('closing Settings leaves focus a person moved elsewhere, and falls back to the main column', () => {
+    const at = (open: boolean, tasks: ReactNode = <p>tasks</p>) =>
+      shell({
+        view: 'tasks',
+        destination: open ? 'settings' : 'issues',
+        tasks,
+        settings: open ? <p>settings page</p> : null,
+        settingsPage: open ? 'general' : null,
+      }).element;
+    // A sidebar link focused while Settings shows keeps focus when it closes.
+    const { rerender, unmount } = render(at(true));
+    const sidebarLink = within(primaryNav()).getByRole('link', {
+      name: /^Issues/,
+    });
+    sidebarLink.focus();
+    rerender(at(false));
+    expect(document.activeElement).toBe(sidebarLink);
+    unmount();
+    // No opener left to go back to: the main column takes focus.
+    const again = render(at(false, <button type="button">Gone soon</button>));
+    screen.getByRole('button', { name: 'Gone soon' }).focus();
+    // Opening swaps the button out of the list, so the opener is gone.
+    again.rerender(at(true));
+    expect(document.activeElement).toBe(
+      screen.getByRole('region', { name: 'Settings' })
+    );
+    again.rerender(at(false));
+    expect(document.activeElement?.id).toBe('dispatch-main');
+  });
+
+  test('a page that throws inside Settings is caught by its own boundary', () => {
+    function Broken(): ReactNode {
+      throw new Error('boom');
+    }
+    const quiet = console.error;
+    console.error = () => {};
+    try {
+      render(
+        shell({
+          destination: 'settings',
+          settings: <Broken />,
+          settingsPage: 'general',
+        }).element
+      );
+    } finally {
+      console.error = quiet;
+    }
+    expect(
+      screen.getByText("Dispatch couldn't display Settings.")
+    ).toBeTruthy();
+    // The sidebar is still there to leave by.
+    expect(primaryNav()).toBeTruthy();
+  });
+
+  test('a link inside Settings follows through the shell like any other', () => {
+    const { element, log } = shell({
+      destination: 'settings',
+      settings: <ShellLinkProbe href="#/settings/integrations" />,
+      settingsPage: 'general',
+    });
+    render(element);
+    fireEvent.click(screen.getByRole('link', { name: 'Linear settings' }));
+    expect(log.actions).toEqual([
+      { type: 'openSettings', page: 'integrations' },
+    ]);
+  });
 });
+
+// A peek that takes focus when it shows and hands it back to an element
+// outside (the topbar's action) when it stops showing, as a dialog does.
+function FocusReturningPeek() {
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    ref.current?.focus();
+    return () => {
+      Array.from(document.querySelectorAll('button'))
+        .find((button) => button.textContent === 'Topbar action')
+        ?.focus();
+    };
+  }, []);
+  return (
+    <aside>
+      <button ref={ref} type="button">
+        Inside the peek
+      </button>
+    </aside>
+  );
+}
+
+// A peek with a field of its own, standing in for a thread peek's reply box.
+function DraftPeek() {
+  const [draft, setDraft] = useState('');
+  return (
+    <aside>
+      <label>
+        Reply
+        <input
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+      </label>
+    </aside>
+  );
+}
+
+// A link rendered through the shell's UiLinkProvider, as Settings' own links are.
+function ShellLinkProbe({ href }: { href: string }) {
+  return <Link href={href}>Linear settings</Link>;
+}
 
 // Fakes the content area's measured width, since the test DOM has no layout.
 const realWidth = Object.getOwnPropertyDescriptor(

@@ -17,11 +17,13 @@ import type { TasksPreset } from './tasksPresets';
 // The model is the Two views one: the main pane is the Overseer or Tasks, and
 // Tasks shows its list or one page (a task, a doc, a PR, a draft, a room, a
 // file, or a hosted view: Files, Terminals, Threads, Timeline, Graph, Projects,
-// Live). A peek is a drawer over either view and never a place; Settings is a
-// dialog over the views. The legacy project/global view vocabulary survives
-// as `ProjectView` and `GlobalView`, mapped onto places by
-// `projectViewDestination` and `globalViewDestination`, so the palette, the
-// inbox and the key chords keep naming pages the old way.
+// Live). A peek is a drawer over either view and never a place; Settings is
+// an overlay place: it takes the main column while it is open, and Escape or
+// any navigation leaves it for the view underneath, which never stopped being
+// the recorded place (history never holds Settings). The legacy project/global
+// view vocabulary survives as `ProjectView` and `GlobalView`, mapped onto
+// places by `projectViewDestination` and `globalViewDestination`, so the
+// palette, the inbox and the key chords keep naming pages the old way.
 
 /** The primary views for whichever project is active, as the palette, the
  * inbox and the key chords name them. Each maps to a place through
@@ -150,33 +152,35 @@ export type SettingsPage =
  * is the Usage page, All agents the Runs page. */
 export type NavSettingsPage = SettingsPage | 'usage' | 'runs';
 
-// Every NavSettingsPage once, so a route's `#/settings/<page>` is checked
-// against the type: adding a page without listing it here fails in tsc.
-const SETTINGS_PAGE_IDS = {
-  general: true,
-  agents: true,
-  checks: true,
-  autonomy: true,
-  memory: true,
-  previews: true,
-  notifications: true,
-  team: true,
-  'connected-agents': true,
-  sync: true,
-  integrations: true,
-  a2a: true,
-  license: true,
-  remotes: true,
-  daemon: true,
-  diffs: true,
-  setup: true,
-  usage: true,
-  runs: true,
-} satisfies Record<NavSettingsPage, true>;
+/** Every NavSettingsPage once with the name Settings shows for it: the
+ * rail's link, the page's h1 and the topbar's last crumb all read it, so
+ * the three cannot drift. A route's `#/settings/<page>` is checked against
+ * the same record: adding a page without naming it here fails in tsc. */
+export const SETTINGS_PAGE_LABELS: Readonly<Record<NavSettingsPage, string>> = {
+  general: 'General',
+  agents: 'Agents',
+  checks: 'Checks',
+  autonomy: 'Autonomy',
+  memory: 'Memory',
+  previews: 'Previews',
+  notifications: 'Notifications',
+  team: 'Members',
+  'connected-agents': 'Connected agents',
+  sync: 'Board sync',
+  integrations: 'Linear',
+  a2a: 'A2A',
+  license: 'License',
+  remotes: 'Remotes',
+  daemon: 'Background',
+  diffs: 'Diff display',
+  setup: 'Setup',
+  usage: 'Usage',
+  runs: 'Runs',
+};
 
 /** Every Settings page a route may open, for `#/settings/<page>`. */
 export const NAV_SETTINGS_PAGES: readonly NavSettingsPage[] = Object.keys(
-  SETTINGS_PAGE_IDS
+  SETTINGS_PAGE_LABELS
 ) as NavSettingsPage[];
 
 /** Which side of the main pane shows: the Overseer, or Tasks. */
@@ -263,7 +267,9 @@ export interface NavState extends Place {
   /** What the list and board show: All, or one question like Needs you or Failed. */
   tasksPreset: TasksPreset;
   peek: Peek | null;
-  /** The open Settings page, or `null` while Settings is closed. */
+  /** The open Settings page, or `null` while Settings is closed. While set,
+   * Settings fills the main column over the place below (the views stay
+   * mounted underneath), and the peek waits until it closes. */
   settings: NavSettingsPage | null;
   /** Whether the AI task composer dialog is open. A dialog over whatever
    * shows, never a place: history and the hash ignore it. */
@@ -586,6 +592,14 @@ function withTaskPage(
   return { ...state, tasksPage: { ...page, ...patch } };
 }
 
+// Opens the quick-look drawer over the view underneath. The shell draws no
+// peek while Settings fills the main column, so opening one is navigation
+// that leaves Settings: the drawer shows at once instead of waiting, unseen,
+// behind the Settings page.
+function withPeek(state: NavState, peek: Peek): NavState {
+  return { ...state, peek, settings: null };
+}
+
 // Where an address leads: people, outside agents and tasks peek (a task by
 // address is a quick look); rooms open under Tasks.
 function openAddress(state: NavState, address: string): NavState {
@@ -594,13 +608,13 @@ function openAddress(state: NavState, address: string): NavState {
   const rest = address.slice(colon + 1);
   switch (kind) {
     case 'human':
-      return { ...state, peek: { kind: 'person', address } };
+      return withPeek(state, { kind: 'person', address });
     case 'a2a':
-      return { ...state, peek: { kind: 'outside', address } };
+      return withPeek(state, { kind: 'outside', address });
     case 'channel':
       return toTasks(state, { kind: 'room', room: rest });
     case 'task':
-      return { ...state, peek: { kind: 'task', taskId: rest } };
+      return withPeek(state, { kind: 'task', taskId: rest });
     default:
       return state;
   }
@@ -624,6 +638,15 @@ function step(state: NavState, delta: -1 | 1): NavState {
     paletteOpen: false,
     shortcutsOpen: false,
   };
+}
+
+// Back or forward from Settings. Settings is an overlay place that hides any
+// peek beneath it, so it is what either key leaves: one press closes both,
+// stepping through history when there is an entry that way, and closing them
+// in place when there is none (never a hidden peek alone, never nothing).
+function leaveSettings(state: NavState, delta: -1 | 1): NavState {
+  const stepped = step(state, delta);
+  return stepped === state ? { ...state, settings: null, peek: null } : stepped;
 }
 
 export function navReducer(state: NavState, action: NavAction): NavState {
@@ -650,7 +673,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
     case 'openPeek':
       // The quick-look slide-over, over whichever view is showing (owner
       // decision, Phase 3a: no split pane beside the list any more).
-      return { ...state, peek: { kind: 'task', taskId: action.taskId } };
+      return withPeek(state, { kind: 'task', taskId: action.taskId });
     case 'closePeek':
       return state.peek === null ? state : { ...state, peek: null };
     case 'openRun':
@@ -673,7 +696,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
     case 'openThread':
       return action.messageId === null
         ? applyDestination(state, { kind: 'overseer' })
-        : { ...state, peek: { kind: 'thread', messageId: action.messageId } };
+        : withPeek(state, { kind: 'thread', messageId: action.messageId });
     case 'openDoc':
       return toTasks(state, {
         kind: 'docs',
@@ -701,11 +724,13 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         nodeId: action.nodeId,
       });
     case 'back':
+      if (state.settings !== null) return leaveSettings(state, -1);
       // A peek is the nearest thing to leave: back closes it rather than
       // leaving it over another page.
       if (state.peek !== null) return { ...state, peek: null };
       return step(state, -1);
     case 'forward':
+      if (state.settings !== null) return leaveSettings(state, 1);
       return step(state, 1);
     case 'escape':
       if (state.shortcutsOpen) return { ...state, shortcutsOpen: false };

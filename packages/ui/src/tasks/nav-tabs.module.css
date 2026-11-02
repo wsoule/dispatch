@@ -5,8 +5,10 @@
    --text-4, hover --surface-2, the current one the sidebar's current pill
    (--nav-current-*: raised white in light, a --surface-3 fill in dark)
    with its icon in the accent, the cue that reaches 3:1; it becomes one
-   horizontally scrolling strip at 900px and below. A cell that cannot be
-   followed yet is dimmed. */
+   horizontally scrolling strip at 900px and below. Grouped, the column
+   stacks its groups 16px apart, each under its eyebrow title; at 900px
+   and below the groups join that one strip and the titles go. A cell
+   that cannot be followed yet is dimmed. */
 
 .nav {
   max-width: 100%;
@@ -29,6 +31,25 @@
 
 .fill .item {
   flex: 1 1 0;
+}
+
+.grouped {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* The eyebrow (primitives.css) inset to the cells' text. */
+.groupLabel {
+  padding: 0 10px;
+  line-height: 20px;
 }
 
 .item {
@@ -156,15 +177,15 @@
 }
 
 @media (hover: hover) and (width >= 901px) {
-  a.tab:not(.current):hover {
+  .tab:not(.current, .unavailable):hover {
     color: var(--text);
   }
 
-  .vertical a.tab:not(.current):hover {
+  .vertical .tab:not(.current, .unavailable):hover {
     background: var(--surface-2);
   }
 
-  a.tab:not(.current):hover .icon {
+  .tab:not(.current, .unavailable):hover .icon {
     color: var(--text-2);
   }
 }
@@ -191,6 +212,32 @@
 
   .vertical .count {
     margin-left: 0;
+  }
+
+  /* Grouped: the groups sit side by side in the one strip, which scrolls
+     (their own lists no longer do), and the titles go. */
+  .grouped {
+    flex-flow: row nowrap;
+    gap: 2px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .grouped::-webkit-scrollbar {
+    display: none;
+  }
+
+  .grouped .group {
+    flex: none;
+  }
+
+  .grouped .list {
+    overflow-x: visible;
+  }
+
+  .groupLabel {
+    display: none;
   }
 }
 

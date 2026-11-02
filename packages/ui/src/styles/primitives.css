@@ -60,6 +60,15 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* A status word in its tone's text colour ("Failed", "Waiting", "Live"):
+   <span class="toneText" data-tone="danger">. --tone-ink holds 4.5:1 on
+   the page and on every surface (styles-contrast.test.ts); the words still
+   say the status, so the colour is never the only cue. A bare data-tone
+   (default) keeps the surrounding text colour. */
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .toneText[data-tone] {
+  color: var(--tone-ink);
+}
+
 /* A text link in the accent ("Open in Linear", "Graph", "Settings →
    Modes" inside a sentence). Underlined at rest, softly, so a link in
    running text is not told apart by colour alone (WCAG 1.4.1); the

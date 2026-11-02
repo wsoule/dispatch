@@ -2,9 +2,20 @@ import { renderToString } from 'react-dom/server';
 
 import {
   BulkBar,
+  Checkbox,
+  Chip,
+  ChipButton,
+  CopyValue,
   Disclosure,
   FilterChips,
+  NavTabs,
+  Notice,
   PickerPopover,
+  Register,
+  RegisterCell,
+  RegisterRow,
+  SearchField,
+  Switch,
   TaskDetail,
   type TaskDetailProps,
   TaskGroupTable,
@@ -219,6 +230,53 @@ const disclosures = (
   </>
 );
 
+// The primitives the Settings page builds on: the search field (with
+// text, so its clear button renders), the copy value (no clipboard read
+// before a press), the grouped sub-nav, the chip button both ways, and
+// the data-* passthrough of Chip, Switch, Checkbox, Notice and Register.
+const primitives = (
+  <>
+    <SearchField
+      value="linear"
+      onChange={() => undefined}
+      label="Search settings"
+      data-testid="settings-search"
+    />
+    <CopyValue value="dsp_tok_123" label="token" data-testid="issued-token" />
+    <NavTabs
+      label="Settings"
+      groups={[
+        {
+          label: 'Project',
+          items: [
+            { id: 'general', label: 'General', href: '#/g', current: true },
+          ],
+        },
+      ]}
+    />
+    <ChipButton selected>Blocked</ChipButton>
+    <ChipButton href="/runs">Runs</ChipButton>
+    <Chip tone="danger" filled data-testid="failed-chip">
+      Failed
+    </Chip>
+    <Switch label="Live" hideLabel data-testid="live-switch" />
+    <Checkbox label="Viewed" data-testid="viewed-box" />
+    <Notice role="note" tone="default" data-testid="read-only">
+      Read only.
+    </Notice>
+    <Register columns="1fr" label="Spend" data-testid="spend">
+      <RegisterRow
+        rowLabel="Filter by Atlas"
+        onActivate={() => undefined}
+        pressed
+        data-testid="spend-row"
+      >
+        <RegisterCell data-slot="cost">$4</RegisterCell>
+      </RegisterRow>
+    </Register>
+  </>
+);
+
 console.log(
   JSON.stringify({
     hasWindow: typeof window !== 'undefined',
@@ -230,5 +288,6 @@ console.log(
     issueList: renderToString(issueList),
     windowedList: renderToString(windowedList),
     disclosures: renderToString(disclosures),
+    primitives: renderToString(primitives),
   })
 );

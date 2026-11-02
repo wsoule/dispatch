@@ -3,6 +3,7 @@
 // ./lib/link.tsx), so the package carries no framework or domain coupling.
 // Import '@dispatch/ui/styles.css' once, globally, in the host.
 export * from './types';
+export { COPIED_MS, writeClipboard } from './lib/clipboard';
 export { Link, UiLinkProvider, type UiLinkProviderProps } from './lib/link';
 export { themeScript } from './lib/theme';
 export {
@@ -30,25 +31,27 @@ export {
   type ThemeToggleProps,
 } from './components/theme-toggle';
 
-// ---- tasks family (src/tasks): primitives (the disclosure among them),
-// the grouped task table, deadlines, stats strip and registers. Props are
-// typed in ./tasks/types.
+// ---- tasks family (src/tasks): primitives (the disclosure, the search
+// field and the copy value among them), the grouped task table, deadlines,
+// stats strip and registers. Props are typed in ./tasks/types.
 export { Button } from './tasks/button';
 export { Checkbox } from './tasks/checkbox';
 export { cx } from './tasks/class-names';
 export { Checklist } from './tasks/checklist';
-export { Chip } from './tasks/chip';
+export { Chip, ChipButton } from './tasks/chip';
 export {
   parseCollapsed,
   serializeCollapsed,
   toggleCollapsed,
 } from './tasks/collapsed-groups';
+export { CopyValue } from './tasks/copy-value';
 export { DeadlineList } from './tasks/deadline-list';
 export { Disclosure } from './tasks/disclosure';
 export { NavTabs } from './tasks/nav-tabs';
 export { EmptyState, Notice } from './tasks/notice';
 export { ProgressRule } from './tasks/progress-rule';
 export { Register, RegisterCell, RegisterRow } from './tasks/register';
+export { SearchField } from './tasks/search-field';
 export { SegmentedControl } from './tasks/segmented-control';
 export { StatsStrip } from './tasks/stats-strip';
 export { Switch } from './tasks/switch';
@@ -82,8 +85,10 @@ export type {
   CheckboxProps,
   ChecklistItem,
   ChecklistProps,
+  ChipButtonProps,
   ChipProps,
   ChipTone,
+  CopyValueProps,
   DeadlineGroup,
   DeadlineItem,
   DeadlineListProps,
@@ -92,6 +97,9 @@ export type {
   FilterChipData,
   FilterChipsProps,
   NavTabItem,
+  NavTabsGroup,
+  NavTabsGroupsProps,
+  NavTabsItemsProps,
   NavTabsProps,
   NoticeProps,
   ProgressRuleProps,
@@ -102,6 +110,7 @@ export type {
   RegisterPlainRowProps,
   RegisterProps,
   RegisterRowProps,
+  SearchFieldProps,
   SegmentedControlProps,
   SegmentedOption,
   StatCell,
@@ -305,7 +314,7 @@ export {
   type PackSize,
   shelfWidth,
 } from './graph/pack';
-export { COPIED_MS, MermaidSource } from './graph/mermaid-source';
+export { MermaidSource } from './graph/mermaid-source';
 export type {
   DependencyGraphProps,
   GraphClusterData,

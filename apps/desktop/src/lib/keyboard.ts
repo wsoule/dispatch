@@ -258,12 +258,19 @@ export function resolveListKeyCommand(
  * decision itself is testable without a DOM. Any view with a keydown-listening container that
  * also contains real form controls (the Board's roving-focus track wrapping a milestone card's
  * concurrency `<input>` is the motivating case) should build its `isTyping` this way rather
- * than hardcoding `false`. */
+ * than hardcoding `false`. A focused native `<select>` counts too: its typeahead jumps to the
+ * option whose label starts with the letter pressed, so a bare `g` or digit there picks an
+ * option rather than firing a global chord. */
 export function isTypingTagName(
   tagName: string,
   isContentEditable: boolean
 ): boolean {
-  return tagName === 'INPUT' || tagName === 'TEXTAREA' || isContentEditable;
+  return (
+    tagName === 'INPUT' ||
+    tagName === 'TEXTAREA' ||
+    tagName === 'SELECT' ||
+    isContentEditable
+  );
 }
 
 /** True for tag names that are their own interactive controls — a keydown landing on one

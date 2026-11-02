@@ -16,8 +16,8 @@
   color: var(--text-3);
 }
 
+/* Coloured by the global toneText class with data-tone="danger". */
 .error {
   margin: 0;
   font-size: var(--fs-xs);
-  color: var(--red);
 }

@@ -3,31 +3,12 @@
 import { Check, ChevronRight, Copy, X } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 
+import { COPIED_MS, writeClipboard } from '../lib/clipboard';
 import { cx } from '../tasks/class-names';
 import styles from './mermaid-source.module.css';
 import type { MermaidSourceProps } from './types';
 
-/** How long the button says Copied (a 1600ms confirmation). */
-export const COPIED_MS = 1600;
-
 type CopyState = 'idle' | 'copied' | 'failed';
-
-/**
- * Puts `text` on the clipboard. False when the API is missing (insecure
- * origin, old webview) or the browser refuses.
- */
-async function writeClipboard(text: string): Promise<boolean> {
-  try {
-    if (typeof navigator === 'undefined') return false;
-    // Older webviews (and insecure origins) have no clipboard at all.
-    const clipboard = navigator.clipboard as Clipboard | undefined;
-    if (clipboard === undefined) return false;
-    await clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * "Copy Mermaid": one panel with a secondary button that copies the

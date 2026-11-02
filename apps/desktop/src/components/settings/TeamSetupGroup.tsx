@@ -1,6 +1,6 @@
 import type { TeamInvite, TeamStatus } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
-import { Button, TextField } from '@dispatch/ui';
+import { Button, CopyValue, TextField } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
@@ -9,7 +9,6 @@ import { useSettingsAccess } from './access';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import { StartTeamRow } from './StartTeamRow';
 import { TakeOverDaemon } from './TakeOverDaemon';
-import { CopyButton } from './TeamSection';
 import styles from './TeamSetupGroup.module.css';
 
 interface TeamSetupGroupProps {
@@ -142,7 +141,7 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
         <SettingsRow
           key={p.message}
           title={
-            <span data-tone="warning" className={styles.warning}>
+            <span data-tone="warning" className="toneText">
               {p.message}
             </span>
           }
@@ -186,10 +185,12 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
           subtitle="Store this where you keep other recovery codes; it is the only way back in if every admin machine is lost. It is shown once."
           stacked
           control={
-            <div className={styles.line}>
-              <code data-testid="team-recovery-code" className={styles.secret}>
-                {recovery}
-              </code>
+            <div className={styles.copyLine}>
+              <CopyValue
+                data-testid="team-recovery-code"
+                value={recovery}
+                label="recovery code"
+              />
               <Button
                 size="sm"
                 variant="quiet"
@@ -250,15 +251,12 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
           subtitle={JOIN_STEPS}
           stacked
         >
-          <div className={styles.line}>
-            <code data-testid="team-invite-link" className={styles.code}>
-              {invite.link ?? invite.code}
-            </code>
-            <CopyButton
-              value={invite.link ?? invite.code}
-              label="invite link"
-            />
-          </div>
+          <CopyValue
+            data-testid="team-invite-link"
+            value={invite.link ?? invite.code}
+            label="invite link"
+            truncate
+          />
         </SettingsRow>
       )}
 
@@ -347,7 +345,7 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
         <SettingsRow
           title="That didn’t go through"
           subtitle={
-            <span role="alert" className={styles.error}>
+            <span role="alert" className="toneText" data-tone="danger">
               {error}
             </span>
           }

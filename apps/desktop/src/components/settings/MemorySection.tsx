@@ -2,7 +2,7 @@ import type { ConfigPatch, DispatchConfig } from '@dispatch-foo/core/browser';
 import { DEFAULT_MEMORY } from '@dispatch-foo/core/browser';
 import type { ApiClient, MemoryIngestProblem } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
-import { Button, TextField } from '@dispatch/ui';
+import { Button, CopyValue, cx, TextField } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
@@ -71,7 +71,11 @@ function ActionError({ error }: { error: string | null }) {
   if (error === null) return null;
   return (
     <div data-settings-row="" className={kit.row}>
-      <span role="alert" className={kit.error}>
+      <span
+        role="alert"
+        className={cx('toneText', kit.error)}
+        data-tone="danger"
+      >
         {error}
       </span>
     </div>
@@ -277,7 +281,9 @@ function ClaudeImportGroup({
       {model.claudeImport === 'failed' &&
         model.claudeProblems.map((problem) => (
           <div key={problem} data-settings-row="" className={kit.row}>
-            <span className={kit.error}>{problem}</span>
+            <span className={cx('toneText', kit.error)} data-tone="danger">
+              {problem}
+            </span>
           </div>
         ))}
       {model.claudeImport === 'unconfirmed' && (
@@ -521,10 +527,12 @@ function IdentityGroup({
           }
         >
           {issued !== null && (
-            <SettingsHint>
-              <span className={styles.code}>{issued.code}</span> until{' '}
-              {new Date(issued.expiresAt).toLocaleTimeString()}
-            </SettingsHint>
+            <>
+              <CopyValue value={issued.code} label="link code" />
+              <SettingsHint>
+                Good until {new Date(issued.expiresAt).toLocaleTimeString()}.
+              </SettingsHint>
+            </>
           )}
         </SettingsRow>
       )}

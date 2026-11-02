@@ -88,9 +88,10 @@ which is Tailwind's display utility in a host that still loads it), `.blockBar`,
 `.blockTitle`, `.blockMeta` (a section heading row), `.srOnly`, `.skipLink`,
 `.page`, `.key` (a semibold lead-in), `.label` (a 12px quiet label), `.eyebrow`
 (the one uppercase voice), `.muted`, `.faint`, `.mono` (ids and keys only),
-`.num` (tabular figures), `.accentLink` (underlined), `.button`,
-`.buttonPrimary`, `.input`, `.select`, `.textarea` (with Gr8r's focus ring and a
-red `aria-invalid` state), `.notice`, `.empty` and `.hatched` (a dashed edge).
+`.num` (tabular figures), `.toneText` (with `data-tone`: a status word in the
+tone's text colour), `.accentLink` (underlined), `.button`, `.buttonPrimary`,
+`.input`, `.select`, `.textarea` (with Gr8r's focus ring and a red
+`aria-invalid` state), `.notice`, `.empty` and `.hatched` (a dashed edge).
 
 The pre-Gr8r names (`--paper`, `--ink`, `--background`, `--foreground`,
 `--muted`, `--ink-soft`, `--grey*`, `--tint`, `--hairline-faint`, `--hatch`,
@@ -313,9 +314,15 @@ The other shared vocabularies:
   line that is the point: a blocked project's reason, a failed sync's error) and
   `StatsStrip` draw every tone; a `RegisterRow`'s tone is data only (no rule:
   the row says it with a chip or a toned cell). `Button variant="danger"` is a
-  red fill. `Checklist` (the rubric) keeps a met item a neutral disc with a
-  tick, like done, so a missing item's dashed amber ring and "Missing" chip are
-  the only hue in the list.
+  red fill. A status word in running text or a host's own cell is a span with
+  the global `.toneText` class and `data-tone`
+  (`<span class="toneText" data-tone="danger">Failed</span>`):
+  `color: var(--tone-ink)`, which holds 4.5:1 on `--bg` and `--surface` for
+  every tone in both themes (`test/styles-contrast.test.ts`); a bare `data-tone`
+  keeps the surrounding colour. It replaces a raw hue read (`color: var(--red)`)
+  for words; the words still say the status. `Checklist` (the rubric) keeps a
+  met item a neutral disc with a tick, like done, so a missing item's dashed
+  amber ring and "Missing" chip are the only hue in the list.
 - `TaskStateKind` (Linear's state types): `triage`, `backlog`, `unstarted`,
   `started`, `completed`, `canceled`, drawn by `StateGlyph` in the `--st-*`
   colours (in progress a blue half disc, done a green disc with a tick, triage
@@ -380,14 +387,18 @@ the types for the rest.
 |          | `ThemeToggle`                                                                                                                     | `storageKey`                                                        |
 |          | `InitialsAvatar` (round, a pastel hue from the name; blank = nobody), `avatarHue(name)`                                           | `name`                                                              |
 | tasks    | `Button` (primary, secondary, quiet, danger; `size` sm / md / lg; `block`)                                                        | none (`href` renders a link)                                        |
-|          | `Checkbox` (`indeterminate` for a partly selected group), `Switch`, `SegmentedControl`, `Chip`                                    | see `tasks/types.ts`                                                |
+|          | `Checkbox` (`indeterminate` for a partly selected group), `Switch` (`hideLabel`), `SegmentedControl`, `Chip`                      | see `tasks/types.ts`                                                |
+|          | `ChipButton` (a chip that is a button, a toggle with `selected`, or a link with `href`; below)                                    | `children`                                                          |
+|          | `SearchField` (a search box with a clear button; Escape clears; below)                                                            | `value`, `onChange`, `label`                                        |
+|          | `CopyValue` (a value in a code well with a Copy button; below)                                                                    | `value`, `label`                                                    |
 |          | `TaskGroupTable` (grouped issue list; selection, drag and slots below)                                                            | `sections`                                                          |
 |          | `ViewToolbar` (list toolbar: search, the host's Filter / Sort / Group, end actions), `ToolbarBadge`                               | `search`, `controls`                                                |
 |          | `FilterChips` ("Project is …" chips joined by "and", + Filter, Clear all)                                                         | `chips`                                                             |
 |          | `BulkBar` (the floating bar of a selection; confirm strip, busy, note), `useBulkBarHeight()` (its height while up)                | `count`, `onClear`, `children`                                      |
 |          | `DeadlineList`, `StatsStrip`, `ProgressRule`                                                                                      | `groups`; `cells`; `done`/`total`                                   |
-|          | `Register`, `RegisterRow`, `RegisterCell`                                                                                         | `columns`, `label`, `children`                                      |
-|          | `Notice`, `EmptyState` (a centred icon, optional `label` title, the sentence, an action), `NavTabs`, `Checklist`                  | see `tasks/types.ts`                                                |
+|          | `Register`, `RegisterRow` (`pressed` on a button row), `RegisterCell`                                                             | `columns`, `label`, `children`                                      |
+|          | `Notice` (`role` status, alert or note), `EmptyState` (a centred icon, optional `label` title, the sentence, an action)           | see `tasks/types.ts`                                                |
+|          | `NavTabs` (`items`, or `groups` for a grouped vertical sub-nav; below), `Checklist`                                               | `label` and `items` or `groups`; `items`                            |
 |          | `Disclosure` (a fold: a trigger and the panel it shows or hides; below)                                                           | `children`                                                          |
 | shell    | `AppShell` (sidebar, topbar, phone tab bar; `workspaceSwitcher` makes the brand row a workspace menu, below)                      | `appName`, `brandHref`, `nav`                                       |
 |          | `CommandPaletteProvider` + `CommandPalette`                                                                                       | none; pass `navigate` (the default is `window.location.assign`)     |
@@ -433,16 +444,32 @@ helper.
 (``{ [key: `data-${string}`]: string | number | boolean | undefined }``) types a
 host's `data-testid` and `data-slot` hooks. `Button` (as a button and as a
 link), `Popover`, `Dialog`, `ConfirmDialog`, `PickerPopover`, `SlideOver`,
-`Disclosure`, `Menu`, `Select` and `RadioGroup` take them and spread them,
-untouched, on their root element: the `<button>` or the link, the popover's and
-the picker's `role="dialog"` layer (not the trigger), the dialog's and the
-slide-over's panel (the `role="dialog"` or `role="alertdialog"` element), the
-disclosure's wrapper, the open menu's root layer (not the trigger; its submenus
-sit inside it), the open `Select` list's layer (not the trigger), and the
-`role="radiogroup"` element. The component's own `data-*` attributes
-(`data-variant`, `data-picker-popup`, `data-popover`, `data-state`, `data-open`)
-win over a host's of the same name. A host's link component receives them in
-`UiLinkProps` and spreads them onto its anchor.
+`Disclosure`, `Menu`, `Select`, `RadioGroup`, `Chip`, `ChipButton`, `Switch`,
+`Checkbox`, `Notice`, `SearchField`, `CopyValue`, `Register`, `RegisterRow` and
+`RegisterCell` take them and spread them, untouched, on their root element: the
+`<button>` or the link, the popover's and the picker's `role="dialog"` layer
+(not the trigger), the dialog's and the slide-over's panel (the `role="dialog"`
+or `role="alertdialog"` element), the disclosure's wrapper, the open menu's root
+layer (not the trigger; its submenus sit inside it), the open `Select` list's
+layer (not the trigger), the `role="radiogroup"` element, the chip (or the chip
+button's `<button>` or link), the switch's `role="switch"` button, the
+checkbox's `<label>` (which holds the input), the notice's box, the search
+field's wrapper (which holds the input), the copy value's `<code>` element
+(whose text is exactly the value, so `data-testid="issued-token"` reads it), the
+register's root, the row's `<li>` and the cell. The component's own `data-*`
+attributes (`data-variant`, `data-picker-popup`, `data-popover`, `data-state`,
+`data-open`, `data-tone`, `data-stack`, `data-disabled`) win over a host's of
+the same name. A host's link component receives them in `UiLinkProps` and
+spreads them onto its anchor.
+
+**Switch, Checkbox and Notice.** `Switch` with `hideLabel` keeps its label for
+assistive tech only (a `.srOnly` span) and draws just the track, for a settings
+row whose title already names it; `aria-label` and `aria-labelledby` still win.
+`Checkbox` takes `onClick` on its native input, which runs before the box
+toggles, so a box inside a clickable header can stop the click there
+(`event.stopPropagation()`). `Notice` takes `role` `status` (polite, something
+that just changed), `alert` (an error) or `note` (an aside that qualifies the
+page, such as why it is read only); static copy needs none.
 
 ### Disclosure
 
@@ -500,7 +527,63 @@ From a shadcn-style button (Dispatch's `ui-legacy`):
 | size `lg`              | `lg` (36px)                                                                       |
 | size `icon-*`          | no children, plus `aria-label`                                                    |
 | `IconButton`           | a quiet sm icon Button; `filled` becomes secondary, `active` becomes aria-pressed |
-| `PillButton`           | a secondary sm Button                                                             |
+| `PillButton`           | a secondary sm Button, or a `ChipButton` where it is chip-shaped                  |
+
+### ChipButton
+
+`ChipButton` takes every `Chip` prop (tone, `filled`, `dot`, `status`) and draws
+the same chip as a `<button type="button">`, or through the host's link with
+`href` (a door to a place, a reference to open). Its accessible name is its
+visible text (with a status mark's label). It adds a hover fill one surface
+darker (a tinted chip shows its tinted edge instead, so its text stays on its
+tint; the inverse slab keeps its fill), the 2px `--focus-ring` outline, and a
+ButtonText edge in forced colours. `selected` makes the button a toggle
+(`aria-pressed`, `true` or `false`; omit it for a plain action), drawn in the
+accent's selection tint (`--accent-soft` in an `--accent-line` edge,
+`--accent-ink` text); a link never carries it. `disabled` disables the button,
+or turns a link into its text marked `aria-disabled="true"` (a link cannot be
+disabled). It carries `data-chip-button` and the host's `data-*` hooks.
+
+### CopyValue
+
+`CopyValue` shows `value` in a recessed code well (`--sunken`, `--r-sm`, 12px,
+Geist Mono unless `mono={false}`) and a small secondary button reading "Copy"
+with a copy icon, named "Copy {label}" ("Copy token", "Copy code", "Copy invite
+link"). A press writes the value with `writeClipboard` (exported, with
+`COPIED_MS`, from `src/lib/clipboard.ts`; MermaidSource uses the same pair): it
+then reads "Copied" with a tick for `COPIED_MS` (1600ms), or "Select it" when
+the clipboard is missing (an insecure origin, an old webview) or refused, with
+the value selected so Ctrl/⌘ C still works. Either way it returns to "Copy"
+after `COPIED_MS`; the timer is cleared on unmount. The button's name never
+changes; a polite live region (no role, so a page's own `role="status"` stays
+the only one) says what happened. A long value wraps anywhere so it can be read
+whole; `truncate` keeps one line with an ellipsis and the whole value in the
+`title`. The host's `data-*` hooks land on the `<code>` element, whose text is
+exactly the value.
+
+### NavTabs groups
+
+`NavTabs` with `groups` (`NavTabsGroup[]`: `{ label, items }`) in place of
+`items` is a grouped vertical sub-nav (Settings' rail): one `<nav>` named by
+`label`, each group a `role="group"` named by its `label`, which also shows
+above its cells as an eyebrow (`.eyebrow`, `aria-hidden` so it is not read
+twice, never a heading, so the page keeps its own `h1` outline; it carries
+`data-nav-group-label`). The cells are the usual ones: host links with
+`aria-current="page"` on the current one, `onFollow` taking a plain click,
+`icon`, `count` and `note`, a dimmed span without `href`. `groups` is vertical
+only and exclusive with `items` (`NavTabsProps` is the union
+`NavTabsItemsProps | NavTabsGroupsProps`, so a call site passes one or the
+other). At 900px and below the groups join the one sideways-scrolling strip of
+every cell and the titles are hidden.
+
+### Register
+
+`Register`, every `RegisterRow` (link, button and plain rows) and `RegisterCell`
+take the host's `data-*` hooks on their roots (the register's wrapper, the row's
+`<li>`, the cell), so a host keeps its row hooks (`needs-you-row`, a roster's
+`data-roster-title`) on Register rows. A button row that is a toggle (a project
+filter) passes `pressed`, which sets `aria-pressed` on its stretched button
+only; link and plain rows take no `pressed`, and the `<li>` never carries it.
 
 ### Lists: selection, drag, slots, toolbar, chips, bulk bar
 
@@ -665,8 +748,29 @@ its progressive mount.
   sheet has no animation and reduced motion has nothing to switch off beyond its
   transitions.
 
+`SearchField` is the search box: a native `type="search"` input named by `label`
+(`aria-label`; `autoComplete` off, `spellCheck` false, `enterKeyHint` search), a
+leading 14px magnifier (13px at `size="sm"`) in `--text-4`, a `--control-border`
+edge with the fields' focus ring, and, while it holds text, a quiet icon button
+named `clearLabel` (default "Clear search") inside its right edge, which empties
+the field and puts focus back in it (a press never takes focus from the field).
+Escape in a non-empty field clears it and calls `preventDefault()` and
+`stopPropagation()`; in an empty field Escape is left alone, so it reaches the
+page and a second Escape closes what the field sits in (Settings, a find bar).
+`escapeClears={false}` leaves Escape to the browser. `onChange` fires per
+keystroke and with `''` on a clear; `onCommit` marks the search final: Enter
+(not while an IME is composing; Enter is kept from submitting a surrounding form
+only when `onCommit` is set), leaving the field, and a clear. `size` is `sm`
+(26px, a toolbar's) or `md` (30px, the default); `inputRef` hands the input to a
+host shortcut; `clearable={false}` drops the clear button and keeps the
+browser's own clear control. Phones get the 16px touch size. Amended 2026-11-02
+(B3): `onCommit` and `clearable` are additions to the frozen L16 API, because
+ViewToolbar needs `onCommit` (Enter when not composing, and blur) and must keep
+its look (no clear button of its own); a clear also commits `''`.
+
 `ViewToolbar` lays out Gr8r's list toolbar, one 44px row over a `--border` rule:
-a 26px search field with a leading magnifier (a `--control-border` edge and the
+a 26px search field (a `SearchField` at `size="sm"`, `clearable={false}`,
+`escapeClears={false}`: a leading magnifier, a `--control-border` edge and the
 fields' focus ring), as the timeline and projects toolbars draw theirs
 (`onChange` per keystroke, `onCommit` on Enter and on leaving the field, so it
 may fire twice for one value; `inputRef` for a `/` shortcut), the host's

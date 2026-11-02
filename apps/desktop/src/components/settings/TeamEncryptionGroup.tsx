@@ -1,6 +1,6 @@
 import type { ContentE2eStatus } from '@dispatch/client';
 import { isInsufficientTier } from '@dispatch/client';
-import { Button, Chip, ConfirmDialog } from '@dispatch/ui';
+import { Button, Chip, ConfirmDialog, cx } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
@@ -148,7 +148,9 @@ export function TeamEncryptionGroup({ data }: TeamEncryptionGroupProps) {
         <SettingsRow
           title="Couldn’t read the encryption status"
           subtitle={
-            <span className={styles.error}>{status.error.message}</span>
+            <span className="toneText" data-tone="danger">
+              {status.error.message}
+            </span>
           }
         />
       )
@@ -256,7 +258,11 @@ export function TeamEncryptionGroup({ data }: TeamEncryptionGroupProps) {
         }
       >
         {error !== null && (
-          <span role="alert" className={styles.alert}>
+          <span
+            role="alert"
+            className={cx('toneText', styles.alert)}
+            data-tone="danger"
+          >
             {error}
           </span>
         )}

@@ -1,4 +1,4 @@
-import { cx, Tooltip } from '@dispatch/ui';
+import { cx, Tooltip, type UiTone } from '@dispatch/ui';
 import { LockIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { createContext, useContext } from 'react';
@@ -93,15 +93,30 @@ function GroupMatchMarker() {
   return useScopeMatched() ? <span data-settings-row="" hidden /> : null;
 }
 
-/** Explanatory prose beside a settings control: small and muted. */
+/** Explanatory prose beside a settings control: small and muted. With a
+ *  `tone` it is a status line in that tone's text colour (`.toneText`, for
+ *  example danger for a refusal); its words still say the status. */
 export function SettingsHint({
   children,
   className,
+  tone,
 }: {
   children: ReactNode;
   className?: string;
+  tone?: UiTone;
 }) {
-  return <p className={cx(styles.hint, className)}>{children}</p>;
+  return (
+    <p
+      className={cx(
+        styles.hint,
+        tone === undefined ? undefined : 'toneText',
+        className
+      )}
+      data-tone={tone}
+    >
+      {children}
+    </p>
+  );
 }
 
 /** A lock beside a setting the viewer may read but not change. */

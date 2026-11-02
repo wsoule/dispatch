@@ -48,25 +48,28 @@ export const PHASE_LABEL: Record<MilestoneChildPhase, string> = {
   dropped: 'Dropped',
 };
 
-/** The status tone a phase chip carries (its `data-tone`): info while agents
- * work, warning while it waits on someone, danger once it broke; `null` for
- * the phases the status glyph already says everything about. */
+/** The status tone a phase chip carries (its `data-tone`), on the status hue
+ * table: info (blue) while agents work, warning (amber) while it waits on
+ * someone or is blocked, success (green) once its work passed and only a
+ * person's review is left, danger (red) once it failed; `null` for the phases
+ * the status glyph already says everything about. */
 export function phaseTone(
   phase: MilestoneChildPhase
-): 'info' | 'warning' | 'danger' | null {
+): 'info' | 'warning' | 'danger' | 'success' | null {
   switch (phase) {
     case 'working':
     case 'reviewing':
     case 'fixing':
-    case 'needs-review':
     case 'landing':
       return 'info';
     case 'capped':
     case 'held':
     case 'waiting':
-      return 'warning';
-    case 'failed':
     case 'blocked':
+      return 'warning';
+    case 'needs-review':
+      return 'success';
+    case 'failed':
       return 'danger';
     default:
       return null;

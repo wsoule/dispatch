@@ -12,6 +12,8 @@ import {
   Checkbox,
   Chip,
   ConfirmDialog,
+  CopyValue,
+  cx,
   Select,
   TextField,
 } from '@dispatch/ui';
@@ -54,7 +56,6 @@ import styles from './A2ASection.module.css';
 import { SettingsSwitch } from './fields';
 import shared from './settings.module.css';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
-import { CopyButton } from './TeamSection';
 
 interface A2ASectionProps {
   data: DispatchProjectData;
@@ -153,7 +154,7 @@ function useA2AQuery<T>(
 function FieldProblem({ message }: { message: string | null }) {
   if (message === null) return null;
   return (
-    <p role="alert" className={shared.error}>
+    <p role="alert" className={cx('toneText', shared.error)} data-tone="danger">
       {message}
     </p>
   );
@@ -667,12 +668,7 @@ function ClientsGroup({
             subtitle="Shown once. Hand it to the client's operator."
             stacked
           >
-            <div className={styles.secretLine}>
-              <code className={styles.secret} data-truncate="">
-                {issued.token}
-              </code>
-              <CopyButton value={issued.token} label="token" />
-            </div>
+            <CopyValue value={issued.token} label="token" truncate />
           </SettingsRow>
         )}
         <SettingsRow title="Client name" htmlFor="a2a-client-name" stacked>
@@ -1222,7 +1218,11 @@ function PeersGroup({
                 message={problemAt('token') ?? problemAt('apiKeyHeader')}
               />
               {conflict !== null && (
-                <p role="alert" className={shared.error}>
+                <p
+                  role="alert"
+                  className={cx('toneText', shared.error)}
+                  data-tone="danger"
+                >
                   The card at {conflict.cardOrigin} points its A2A interface at{' '}
                   {conflict.interfaceOrigin}.
                   {canOperate
@@ -1385,8 +1385,7 @@ function PairingGroup({
               stacked
             >
               <div className={styles.secretLine}>
-                <code className={styles.secret}>{offered.code}</code>
-                <CopyButton value={offered.code} label="code" />
+                <CopyValue value={offered.code} label="code" />
                 <Button
                   variant="secondary"
                   size="sm"

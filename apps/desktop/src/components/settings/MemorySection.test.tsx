@@ -319,6 +319,7 @@ describe('MemorySection', () => {
     expect(screen.getByText('dispatch')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Get a link code' }));
     expect(await screen.findByText('k7m2-q9xd')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Copy link code' })).toBeTruthy();
     expect(client.startMemoryLink).toHaveBeenCalledWith();
   });
 

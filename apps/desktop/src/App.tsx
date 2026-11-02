@@ -73,7 +73,6 @@ import {
 import { PresenceStack } from './components/shell/PresenceStack';
 import { ProjectSwitcher } from './components/shell/ProjectSwitcher';
 import { SavedViewsProvider } from './components/shell/SavedViewsContext';
-import { SettingsPanel } from './components/shell/SettingsPanel';
 import {
   type CreateTaskPreset,
   type ShellActions,
@@ -221,7 +220,7 @@ import { OverseerFocusView } from './views/OverseerFocusView';
 import { ProjectsView } from './views/ProjectsView';
 import { PrReviewView } from './views/PrReviewView';
 import { SessionsHubView } from './views/SessionsHubView';
-import type { HostedSettingsPage } from './views/SettingsView';
+import { type HostedSettingsPage, SettingsView } from './views/SettingsView';
 import { SetupView } from './views/SetupView';
 import { TerminalsView } from './views/TerminalsView';
 import { ThreadsView } from './views/ThreadsView';
@@ -1001,10 +1000,10 @@ function App() {
     setQuickCaptureOpen(false);
     setCreatePreset(null);
   }, []);
-  // The Settings panel (⌘, works while typing, or the palette and the sidebar) stays out of the
-  // browser's top layer at z-index 40, so the composer's modal SlideOver (z-index 50) would
-  // cover it: opening Settings closes the composer, in the same render, so the composer hands
-  // focus back to its opener before the panel takes it (see useOnOpening).
+  // Settings (⌘, works while typing, or the palette and the sidebar) is a page in the shell's
+  // main column, under the browser's top layer, so the composer's modal SlideOver (z-index 50)
+  // would cover it: opening Settings closes the composer, in the same render, so the composer
+  // hands focus back to its opener before Settings shows (see useOnOpening).
   useOnOpening(navState.settings !== null, closeComposer);
 
   const openShortcuts = useCallback(
@@ -2505,32 +2504,37 @@ function App() {
             }
           />
         }
+        settings={
+          navState.settings === null ? null : (
+            <SettingsView
+              activeProject={activeProject}
+              data={settingsData}
+              initialPage={navState.settings}
+              onSelectPage={(page) =>
+                dispatchNav({ type: 'openSettings', page })
+              }
+              onOpenTask={(taskId) => openTaskView(taskId, 'auto')}
+              hostedPages={hostedSettingsPages}
+              pageExtras={{
+                autonomy:
+                  data.client === null ? null : (
+                    <OverseerGrantsGroup
+                      client={data.client}
+                      port={data.port}
+                      conversationId={overseer.conversationId}
+                    />
+                  ),
+                memory:
+                  data.client === null ? null : (
+                    <MemoryRecent client={data.client} port={data.port} />
+                  ),
+              }}
+            />
+          )
+        }
+        settingsPage={navState.settings}
         peek={peekView}
       />
-      {navState.settings !== null && (
-        <SettingsPanel
-          activeProject={activeProject}
-          data={settingsData}
-          initialPage={navState.settings}
-          onOpenTask={(taskId) => openTaskView(taskId, 'auto')}
-          hostedPages={hostedSettingsPages}
-          pageExtras={{
-            autonomy:
-              data.client === null ? null : (
-                <OverseerGrantsGroup
-                  client={data.client}
-                  port={data.port}
-                  conversationId={overseer.conversationId}
-                />
-              ),
-            memory:
-              data.client === null ? null : (
-                <MemoryRecent client={data.client} port={data.port} />
-              ),
-          }}
-          onClose={() => dispatchNav({ type: 'closeSettings' })}
-        />
-      )}
     </>
   );
 

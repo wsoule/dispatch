@@ -1,26 +1,11 @@
-/* Settings → Members (TeamSection.tsx): the folded extras, the browser-access invite
-   form and the copyable values it hands back. */
-
-/* A folded extra under the team groups. */
-.fold {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-4);
-}
-
-.summary {
-  padding: 0 2px;
-  font-size: var(--fs-sm);
-  color: var(--text-3);
-  cursor: pointer;
-  user-select: none;
-}
+/* Settings → Members (TeamSection.tsx): the folded extras' bodies, the
+   browser-access invite form and the people list. */
 
 .foldBody {
   display: flex;
   flex-direction: column;
   gap: var(--s-6);
-  margin-top: var(--s-3);
+  padding-top: var(--s-3);
 }
 
 .inviteForm {
@@ -45,36 +30,16 @@
   width: 120px;
 }
 
+/* A refusal; its colour comes from the global toneText class. */
 .error {
   margin: 0;
   font-size: var(--fs-sm);
-  color: var(--red);
 }
 
 .stack {
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
-}
-
-/* A value to copy and its Copy button. */
-.copyLine {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-}
-
-.code {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: var(--s-1) var(--s-2);
-  overflow: hidden;
-  border-radius: var(--r-sm);
-  background: var(--sunken);
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .holder {

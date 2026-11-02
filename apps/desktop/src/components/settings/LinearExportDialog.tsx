@@ -4,7 +4,7 @@ import type {
   LinearExportPreview,
   LinearExportScope,
 } from '@dispatch/client';
-import { Button, Dialog, RadioGroup } from '@dispatch/ui';
+import { Button, cx, Dialog, RadioGroup } from '@dispatch/ui';
 import { useEffect, useState } from 'react';
 
 import { describeError } from '../../lib/actionFeedback';
@@ -163,7 +163,11 @@ export function LinearExportDialog({
           <p className={styles.note}>{fitLine(capacity, preview, scope)}</p>
         )}
         {error !== null && (
-          <p role="alert" className={styles.error}>
+          <p
+            role="alert"
+            className={cx('toneText', styles.error)}
+            data-tone="danger"
+          >
             {error}
           </p>
         )}

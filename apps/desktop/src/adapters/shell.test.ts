@@ -359,6 +359,56 @@ describe('buildCrumbs', () => {
     ]);
   });
 
+  test('Settings in the main column reads project / Settings / page', () => {
+    expect(
+      buildCrumbs({
+        projectName: 'storefront',
+        destination: 'settings',
+        settingsPage: 'integrations',
+        // A task left open beneath Settings is not what shows.
+        taskTitle: 'Persist the cart',
+      })
+    ).toEqual([
+      { label: 'storefront', href: '#/overseer' },
+      { label: 'Settings', href: '#/settings' },
+      { label: 'Linear' },
+    ]);
+  });
+
+  test('the Runs row is still a Settings page in the crumbs', () => {
+    expect(
+      buildCrumbs({
+        projectName: null,
+        destination: 'runs',
+        settingsPage: 'runs',
+      })
+    ).toEqual([{ label: 'Settings', href: '#/settings' }, { label: 'Runs' }]);
+  });
+
+  test('without a Settings page, Settings is a plain destination crumb', () => {
+    expect(
+      buildCrumbs({
+        projectName: 'storefront',
+        destination: 'settings',
+        settingsPage: null,
+      })
+    ).toEqual([
+      { label: 'storefront', href: '#/overseer' },
+      { label: 'Settings', href: '#/settings' },
+    ]);
+    // A stale page with another destination is ignored.
+    expect(
+      buildCrumbs({
+        projectName: 'storefront',
+        destination: 'issues',
+        settingsPage: 'agents',
+      })
+    ).toEqual([
+      { label: 'storefront', href: '#/overseer' },
+      { label: 'Issues', href: '#/issues' },
+    ]);
+  });
+
   test('without a project the destination stands alone', () => {
     expect(
       buildCrumbs({

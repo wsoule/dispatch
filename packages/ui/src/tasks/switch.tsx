@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 
+import { dataAttributes } from '../lib/data-attributes';
 import styles from './switch.module.css';
 import type { SwitchProps } from './types';
 
@@ -9,18 +10,22 @@ import type { SwitchProps } from './types';
    sliding across, beside a label (and an optional quiet note). The whole
    line is the control, role=switch with aria-checked, so Space/Enter and
    click toggle it natively. Its name is the visible label unless the host
-   passes aria-label / aria-labelledby (a row that names the setting). */
-export function Switch({
-  checked,
-  defaultChecked = false,
-  onChange,
-  label,
-  note,
-  disabled,
-  id,
-  'aria-label': ariaLabel,
-  'aria-labelledby': ariaLabelledBy,
-}: SwitchProps) {
+   passes aria-label / aria-labelledby (a row that names the setting);
+   hideLabel keeps the label for assistive tech only, drawing just the
+   track. The host's data-* hooks land on the button. */
+export function Switch(props: SwitchProps) {
+  const {
+    checked,
+    defaultChecked = false,
+    onChange,
+    label,
+    note,
+    disabled,
+    id,
+    hideLabel = false,
+    'aria-label': ariaLabel,
+    'aria-labelledby': ariaLabelledBy,
+  } = props;
   const [inner, setInner] = useState(defaultChecked);
   const on = checked ?? inner;
 
@@ -32,6 +37,7 @@ export function Switch({
 
   return (
     <button
+      {...dataAttributes(props)}
       type="button"
       role="switch"
       id={id}
@@ -43,7 +49,7 @@ export function Switch({
       onClick={toggle}
     >
       <span className={styles.glyph} aria-hidden="true" />
-      <span className={styles.label}>{label}</span>
+      <span className={hideLabel ? 'srOnly' : styles.label}>{label}</span>
       {note !== undefined && note !== '' ? (
         <span className={styles.note}>{note}</span>
       ) : null}

@@ -100,7 +100,7 @@ export function TakeOverDaemon({
         </Button>
       )}
       {error !== null && (
-        <span role="alert" className={styles.error}>
+        <span role="alert" className="toneText" data-tone="danger">
           {error}
         </span>
       )}

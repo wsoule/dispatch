@@ -6,7 +6,7 @@ import {
   isMaskedSecretUrl,
   NOTIFICATION_KINDS,
 } from '@dispatch-foo/core/browser';
-import { Button, TextField } from '@dispatch/ui';
+import { Button, cx, TextField } from '@dispatch/ui';
 import { useEffect, useState } from 'react';
 
 import { useSidePanelNotifications } from '../../hooks/useSidePanelNotifications';
@@ -215,7 +215,7 @@ export function NotificationsSection({
             }
           >
             {refused && (
-              <span className={kit.error}>
+              <span className={cx('toneText', kit.error)} data-tone="danger">
                 That&rsquo;s the shortened address shown for a saved webhook.
                 Paste the full URL.
               </span>

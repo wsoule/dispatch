@@ -143,6 +143,9 @@ describe('TeamSetupGroup', () => {
         'RECOVERY-CODE'
       )
     );
+    expect(
+      screen.getByRole('button', { name: 'Copy recovery code' })
+    ).toBeTruthy();
     expect(c.startTeam).toHaveBeenCalledWith({
       confirmed: true,
       repo: 'git@example.com:acme/board.git',
@@ -359,7 +362,11 @@ describe('TeamSetupGroup', () => {
       handleRestartDaemon: () => Promise.reject(new Error(refusal)),
     });
     fireEvent.click(await findHookButton('daemon-takeover'));
-    expect((await screen.findByRole('alert')).textContent).toBe(refusal);
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe(refusal);
+    // The refusal is coloured through the tone hook, not a raw hue.
+    expect(alert.classList.contains('toneText')).toBe(true);
+    expect(alert.dataset.tone).toBe('danger');
   });
 
   test('confirms first when runs wait on a human, then restarts', async () => {

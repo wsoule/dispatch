@@ -96,11 +96,103 @@
   --gray: color-mix(in srgb, var(--text-inv) 62%, var(--chip-fill));
 }
 
+/* ChipButton: the chip as a button or a link. The browser's button face
+   is reset to the chip's; a muted chip gets its padding back so the hover
+   fill has room. Hover steps the fill one surface darker (a tinted chip
+   shows its tinted edge instead, keeping its text on its tint at 4.5:1;
+   the inverse slab keeps its fill);
+   selected (aria-pressed) is the accent's selection tint in its edge.
+   Focus is the 2px --focus-ring outline, 2px out. */
+.button {
+  font-family: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.button.muted {
+  padding-inline: 7px;
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.button[aria-pressed='true'] {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.button:disabled,
+.button[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .button:not(
+      :disabled,
+      [aria-disabled='true'],
+      [aria-pressed='true'],
+      .inverse
+    ):hover {
+    background: var(--surface-3);
+  }
+
+  .button.pill:not(
+      :disabled,
+      [aria-disabled='true'],
+      [aria-pressed='true']
+    ):hover,
+  .button.muted:not(
+      :disabled,
+      [aria-disabled='true'],
+      [aria-pressed='true']
+    ):hover {
+    background: var(--surface-2);
+  }
+
+  .button.accent:not(
+      :disabled,
+      [aria-disabled='true'],
+      [aria-pressed='true']
+    ):hover,
+  .button.tinted:not(
+      :disabled,
+      [aria-disabled='true'],
+      [aria-pressed='true']
+    ):hover {
+    border-color: var(--tone-line);
+    background: var(--tone-soft);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .button {
+    transition:
+      background-color var(--dur) ease,
+      border-color var(--dur) ease;
+  }
+}
+
 /* Forced colours drop backgrounds: the dot keeps a fill so the pill still
-   shows its mark (the words say the status). */
+   shows its mark (the words say the status). A chip button keeps a
+   ButtonText edge (a chip with no border of its own would lose its
+   shape), and a selected one the Highlight edge, twice as thick. */
 @media (forced-colors: active) {
   .dot {
     forced-color-adjust: none;
     background: CanvasText;
+  }
+
+  .button {
+    border-color: ButtonText;
+  }
+
+  .button[aria-pressed='true'] {
+    border-color: Highlight;
+    outline: 1px solid Highlight;
   }
 }

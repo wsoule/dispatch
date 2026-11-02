@@ -1,17 +1,15 @@
 /* Linear's Capacity and Coverage groups (LinearCapacityGroup.tsx, LinearCoverageGroup.tsx). */
+/* A failure line, coloured by the global toneText class with
+   data-tone="danger" where it is used. */
 .error {
   font-size: var(--fs-xs);
-  color: var(--red);
 }
 
-/* The Check again icon while a check runs. */
-.spin {
-  animation: spin 1s linear infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
+/* The Check again icon turns while a check runs, only when motion is
+   welcome; otherwise it stays still beside its "Checking" words. */
+@media (prefers-reduced-motion: no-preference) {
   .spin {
-    animation: none;
+    animation: spin 1s linear infinite;
   }
 }
 

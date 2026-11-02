@@ -14,7 +14,8 @@ let a: IsolatedDaemon | null = null;
 let b: IsolatedDaemon | null = null;
 let scratch: string | null = null;
 
-// Threads, from the top bar; Settings is a dialog over it, so close it first.
+// Threads, from the sidebar. Settings fills the main column while it is open
+// (an overlay place); Escape returns to the view beneath before moving on.
 async function openThreads(page: Page): Promise<void> {
   const settings = page.getByTestId('settings-panel');
   if ((await settings.count()) > 0) {
@@ -31,7 +32,7 @@ async function openA2ASettings(page: Page): Promise<void> {
   await page.keyboard.press('s');
   await page
     .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'A2A', exact: true })
+    .getByRole('link', { name: 'A2A', exact: true })
     .click();
 }
 

@@ -1,5 +1,11 @@
 import { LINEAR_USAGE_LIMIT_MESSAGE } from '@dispatch/client';
-import { Button, Checkbox, ConfirmDialog, ProgressRule } from '@dispatch/ui';
+import {
+  Button,
+  Checkbox,
+  ConfirmDialog,
+  cx,
+  ProgressRule,
+} from '@dispatch/ui';
 import { RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 
@@ -139,7 +145,7 @@ export function LinearCapacityGroup({
         )}
         {pausedUntil !== null && (
           <>
-            <span className={styles.error}>
+            <span className={cx('toneText', styles.error)} data-tone="warning">
               {paused?.message ?? LINEAR_USAGE_LIMIT_MESSAGE}
             </span>
             <SettingsHint>
@@ -153,12 +159,14 @@ export function LinearCapacityGroup({
           </SettingsHint>
         )}
         {capacityError !== null && (
-          <span className={styles.error}>
+          <span className={cx('toneText', styles.error)} data-tone="danger">
             {describeFetchFailure(capacityError)}
           </span>
         )}
         {checkError !== null && (
-          <span className={styles.error}>{checkError}</span>
+          <span className={cx('toneText', styles.error)} data-tone="danger">
+            {checkError}
+          </span>
         )}
       </SettingsRow>
 
@@ -210,12 +218,18 @@ export function LinearCapacityGroup({
         )}
         {outcome !== null && <SettingsHint>{outcome}</SettingsHint>}
         {status.lastArchive?.errors.map((message) => (
-          <span key={message} className={styles.error}>
+          <span
+            key={message}
+            className={cx('toneText', styles.error)}
+            data-tone="danger"
+          >
             {message}
           </span>
         ))}
         {archiveError !== null && (
-          <span className={styles.error}>{archiveError}</span>
+          <span className={cx('toneText', styles.error)} data-tone="danger">
+            {archiveError}
+          </span>
         )}
       </SettingsRow>
 

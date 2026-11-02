@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { dataAttributes } from '../lib/data-attributes';
 import styles from './checkbox.module.css';
 import type { CheckboxProps } from './types';
 
@@ -13,21 +14,25 @@ import type { CheckboxProps } from './types';
    `indeterminate` draws the mixed state (a group of rows partly
    selected): the accent box with a dash. The native property is set
    after each render, since a click clears it, and aria-checked="mixed"
-   says so before hydration. */
-export function Checkbox({
-  checked,
-  defaultChecked = false,
-  onChange,
-  label,
-  note,
-  disabled,
-  id,
-  name,
-  value,
-  hideLabel = false,
-  'aria-label': ariaLabel,
-  indeterminate = false,
-}: CheckboxProps) {
+   says so before hydration. onClick reaches the native input before it
+   toggles (a box in a clickable header stops the click there); the host's
+   data-* hooks land on the <label>. */
+export function Checkbox(props: CheckboxProps) {
+  const {
+    checked,
+    defaultChecked = false,
+    onChange,
+    onClick,
+    label,
+    note,
+    disabled,
+    id,
+    name,
+    value,
+    hideLabel = false,
+    'aria-label': ariaLabel,
+    indeterminate = false,
+  } = props;
   const [inner, setInner] = useState(defaultChecked);
   const on = checked ?? inner;
   const inputRef = useRef<HTMLInputElement>(null);
@@ -40,7 +45,11 @@ export function Checkbox({
   });
 
   return (
-    <label className={styles.checkbox} data-disabled={disabled === true}>
+    <label
+      {...dataAttributes(props)}
+      className={styles.checkbox}
+      data-disabled={disabled === true}
+    >
       <input
         ref={inputRef}
         type="checkbox"
@@ -52,6 +61,7 @@ export function Checkbox({
         disabled={disabled}
         aria-label={ariaLabel}
         aria-checked={mixed ? 'mixed' : undefined}
+        onClick={onClick}
         onChange={(event) => {
           const next = event.target.checked;
           if (checked === undefined) setInner(next);

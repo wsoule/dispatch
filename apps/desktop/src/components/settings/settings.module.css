@@ -150,11 +150,11 @@
   width: 180px;
 }
 
-/* Shared text pieces the pages repeat. */
+/* Shared text pieces the pages repeat. An error takes its colour from
+   `.toneText` with data-tone="danger" where it is used. */
 .error {
   margin: 0;
   font-size: var(--fs-xs);
-  color: var(--red);
 }
 
 .stack {

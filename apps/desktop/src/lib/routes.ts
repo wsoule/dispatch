@@ -16,11 +16,12 @@ import { TASKS_PRESETS, type TasksPreset } from './tasksPresets';
 // middle-click, and `hooks/useHashRoute.ts` can mirror the state into
 // `location.hash` and apply a hash on reload. Pure: no React, no DOM.
 //
-// Only places are routed. A peek is a drawer over a place and Settings a
-// dialog over it, so neither is in the URL, with two exceptions that are
-// destinations in their own right: `#/threads?message=` opens Threads with
-// that thread's peek, and `#/settings/<page>` (or `#/runs`) opens Settings on
-// a page, since the sidebar has rows for both. Only the top place is routed,
+// Only places are routed. A peek is a drawer over a place and Settings an
+// overlay place that takes the main column over it, so neither is in the
+// URL, with two exceptions that are destinations in their own right:
+// `#/threads?message=` opens Threads with that thread's peek, and
+// `#/settings/<page>` (or `#/runs`) opens Settings on a page, since the
+// sidebar has rows for both. Only the top place is routed,
 // too: on the Overseer the hash is `#/overseer` whatever Tasks page, preset
 // or layout the reducer would return to, and `#/settings/<page>` says nothing
 // about the view beneath, so a reload there lands Tasks on its list. Within a
@@ -140,9 +141,9 @@ function pageRoute(
   };
 }
 
-// In write order: Settings is a dialog over the views, so while it is open
-// it (or Runs, its page with a row of its own) is the place; then the
-// Overseer; then Tasks' list and each page under it.
+// In write order: Settings takes the main column over the views, so while
+// it is open it (or Runs, its page with a row of its own) is the place; then
+// the Overseer; then Tasks' list and each page under it.
 const ROUTES: readonly Route[] = [
   {
     head: 'runs',

@@ -13,8 +13,10 @@ import type {
 
 import type { AdminItem } from '../lib/adminItems';
 import type { OrbTone } from '../lib/agentPresence';
+import { type NavSettingsPage, SETTINGS_PAGE_LABELS } from '../lib/appNav';
 import type { ContainerStatus } from '../lib/containerStatus';
 import {
+  hrefFor,
   PROJECTS_HREF,
   SHELL_ROUTES,
   type ShellDestination,
@@ -262,9 +264,18 @@ export interface CrumbsInput {
   destination: ShellDestination;
   /** The task open under Issues, the last crumb. */
   taskTitle?: string | null;
+  /** The Settings page showing in the main column (`NavState.settings`), or
+   * null while Settings is closed. */
+  settingsPage?: NavSettingsPage | null;
 }
 
-/** The topbar breadcrumb: project / destination / open task. */
+/**
+ * The topbar breadcrumb: project / destination / open task. While Settings
+ * fills the main column it reads project / Settings / page instead (Runs,
+ * which has a sidebar row of its own, is still a Settings page here): the
+ * crumbs name the place, since the page itself has no header row, and a task
+ * open beneath Settings is not what shows.
+ */
 export function buildCrumbs(input: CrumbsInput): ShellCrumb[] {
   const crumbs: ShellCrumb[] = [];
   if (input.projectName !== null && input.projectName !== '') {
@@ -272,6 +283,18 @@ export function buildCrumbs(input: CrumbsInput): ShellCrumb[] {
       label: input.projectName,
       href: shellRoute('overseer').href,
     });
+  }
+  const page = input.settingsPage ?? null;
+  if (
+    page !== null &&
+    (input.destination === 'settings' || input.destination === 'runs')
+  ) {
+    crumbs.push({
+      label: shellRoute('settings').label,
+      href: hrefFor('settings'),
+    });
+    crumbs.push({ label: SETTINGS_PAGE_LABELS[page] });
+    return crumbs;
   }
   const route = shellRoute(input.destination);
   crumbs.push({ label: route.label, href: route.href });

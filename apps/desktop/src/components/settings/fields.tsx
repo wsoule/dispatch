@@ -156,8 +156,10 @@ interface SettingsSwitchProps {
   'aria-label'?: string;
 }
 
-/** The Switch every Settings page uses: just the track, named by its row's label, and
- *  disabled inside a locked group. */
+/** The Switch every Settings page uses: just the track (`hideLabel`), named by its row's
+ *  label, and disabled inside a locked group. The disabled prop is passed even though the
+ *  group's `<fieldset disabled>` already disables it, because happy-dom still fires onClick
+ *  inside a disabled fieldset. */
 export function SettingsSwitch({
   id,
   checked,
@@ -169,7 +171,10 @@ export function SettingsSwitch({
   return (
     <Switch
       id={id}
+      // Named by the row's <label htmlFor> or aria-label, so the switch's own
+      // label stays empty: a copy of the name would match the row title twice.
       label=""
+      hideLabel
       aria-label={ariaLabel}
       checked={checked}
       disabled={groupLocked || disabled === true}

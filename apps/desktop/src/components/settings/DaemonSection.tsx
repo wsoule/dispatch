@@ -1,5 +1,5 @@
 import type { UiTone } from '@dispatch/ui';
-import { StatsStrip } from '@dispatch/ui';
+import { cx, StatsStrip } from '@dispatch/ui';
 import { AlertCircle } from 'lucide-react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
@@ -54,7 +54,7 @@ export function DaemonSection({ activeProject, data }: DaemonSectionProps) {
         >
           {data.portError && (
             <div className={styles.failure}>
-              <p className={styles.failed}>
+              <p className={cx('toneText', styles.failed)} data-tone="danger">
                 <AlertCircle aria-hidden size={14} strokeWidth={1.8} />
                 Dispatch couldn&rsquo;t start for this project
               </p>

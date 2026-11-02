@@ -465,6 +465,37 @@ describe('the data-tone hook', () => {
       ]);
     }
   });
+
+  // .toneText (primitives.css) prints a status word in its tone's text:
+  // `color: var(--tone-ink)`. Every tone's ink, read from the hook in
+  // tokens.css, holds 4.5:1 on the page and on a panel in both themes.
+  test('the .toneText primitive reads the tone ink', () => {
+    expect(
+      cssRule(
+        'styles/primitives.css',
+        ':where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .toneText[data-tone]'
+      )
+    ).toBe('color: var(--tone-ink);');
+  });
+
+  for (const [theme, tokens] of THEMES) {
+    test(`${theme}: every tone's ink holds 4.5:1 on --bg and --surface`, () => {
+      const failing: string[] = [];
+      for (const tone of Object.keys(HOOK)) {
+        const head = `:where([data-tone='${tone}']) {`;
+        const at = flat.indexOf(head);
+        const body = flat.slice(at + head.length, flat.indexOf('}', at));
+        const ink = /--tone-ink: var\((--[\w-]+)\);/.exec(body)?.[1];
+        expect([tone, ink]).toEqual([tone, expect.stringMatching(/^--/)]);
+        for (const ground of ['--bg', '--surface']) {
+          const ratio = contrast(hex(tokens, ink ?? ''), hex(tokens, ground));
+          if (ratio < 4.5)
+            failing.push(`${tone} (${ink}) on ${ground}: ${ratio}`);
+        }
+      }
+      expect(failing).toEqual([]);
+    });
+  }
 });
 
 describe('dark mode is a soft dark', () => {

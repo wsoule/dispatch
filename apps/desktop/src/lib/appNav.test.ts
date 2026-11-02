@@ -14,6 +14,7 @@ import {
   type ProjectView,
   projectViewDestination,
   samePlace,
+  SETTINGS_PAGE_LABELS,
   TASK_TABS,
 } from './appNav';
 import { resolveChordKey } from './keyboard';
@@ -164,6 +165,20 @@ describe('the route vocabularies', () => {
     expect(NAV_SETTINGS_PAGES).toContain('usage');
     expect(NAV_SETTINGS_PAGES).toContain('runs');
     expect(new Set(NAV_SETTINGS_PAGES).size).toBe(NAV_SETTINGS_PAGES.length);
+    expect(NAV_SETTINGS_PAGES).toEqual(
+      Object.keys(SETTINGS_PAGE_LABELS) as typeof NAV_SETTINGS_PAGES
+    );
+  });
+
+  test('every Settings page has the name the rail and the crumbs show', () => {
+    expect(SETTINGS_PAGE_LABELS.general).toBe('General');
+    expect(SETTINGS_PAGE_LABELS.team).toBe('Members');
+    expect(SETTINGS_PAGE_LABELS.integrations).toBe('Linear');
+    expect(SETTINGS_PAGE_LABELS.daemon).toBe('Background');
+    expect(SETTINGS_PAGE_LABELS.runs).toBe('Runs');
+    for (const page of NAV_SETTINGS_PAGES) {
+      expect(SETTINGS_PAGE_LABELS[page]).not.toBe('');
+    }
   });
 });
 
@@ -477,6 +492,93 @@ describe('navReducer', () => {
     const closed = navReducer(open, { type: 'closeSettings' });
     expect(closed.settings).toBeNull();
     expect(navReducer(closed, { type: 'closeSettings' })).toBe(closed);
+  });
+
+  // Settings is an overlay place (Q11): it fills the main column over the
+  // recorded place, and leaving it in any way returns there.
+  describe('Settings as an overlay place', () => {
+    const onTasks = run([{ type: 'showTasks' }]);
+    const open = navReducer(onTasks, { type: 'openSettings', page: 'agents' });
+
+    test('opening it records no place', () => {
+      expect(open.settings).toBe('agents');
+      expect(open.history).toEqual(onTasks.history);
+      expect(open.historyIndex).toBe(onTasks.historyIndex);
+    });
+
+    test.each<[string, NavAction]>([
+      ['showTasks', { type: 'showTasks' }],
+      ['showOverseer', { type: 'showOverseer' }],
+      ['openPeek', { type: 'openPeek', taskId: 't-1' }],
+      ['openThread', { type: 'openThread', messageId: 'm-1' }],
+      ['openAddress', { type: 'openAddress', address: 'human:ana' }],
+      ['openTask', { type: 'openTask', taskId: 't-1' }],
+      ['back', { type: 'back' }],
+      ['selectProject', { type: 'selectProject', projectId: '/other' }],
+      ['escape', { type: 'escape' }],
+      ['closeSettings', { type: 'closeSettings' }],
+    ])('%s closes it', (_name, action) => {
+      expect(navReducer(open, action).settings).toBeNull();
+    });
+
+    test('forward closes it', () => {
+      const back = navReducer(onTasks, { type: 'back' });
+      const reopened = navReducer(back, { type: 'openSettings' });
+      const forward = navReducer(reopened, { type: 'forward' });
+      expect(forward.settings).toBeNull();
+      expect(forward.mainView).toBe('tasks');
+    });
+
+    test('escape returns to the place it opened over', () => {
+      const closed = navReducer(open, { type: 'escape' });
+      expect(closed.mainView).toBe('tasks');
+      expect(closed.tasksPage).toEqual(onTasks.tasksPage);
+      expect(closed.history).toEqual(onTasks.history);
+    });
+
+    test('a peek that was open stays in state beneath it and is back once it closes', () => {
+      const peeked = run([
+        { type: 'openThread', messageId: 'm-1' },
+        { type: 'openSettings' },
+      ]);
+      expect(peeked.settings).toBe('general');
+      expect(peeked.peek).toEqual({ kind: 'thread', messageId: 'm-1' });
+      const closed = navReducer(peeked, { type: 'escape' });
+      expect(closed.settings).toBeNull();
+      expect(closed.peek).toEqual({ kind: 'thread', messageId: 'm-1' });
+    });
+
+    test('back over a hidden peek leaves Settings in one press, not the unseen peek alone', () => {
+      const peeked = navReducer(
+        navReducer(onTasks, { type: 'openThread', messageId: 'm-1' }),
+        { type: 'openSettings' }
+      );
+      const back = navReducer(peeked, { type: 'back' });
+      expect(back.settings).toBeNull();
+      expect(back.peek).toBeNull();
+      // There was somewhere to go back to, so it steps there as back always does.
+      expect(back.historyIndex).toBe(onTasks.historyIndex - 1);
+    });
+
+    test('forward with nothing ahead still leaves Settings, in place', () => {
+      const fresh = run([{ type: 'openSettings', page: 'agents' }]);
+      const forward = navReducer(fresh, { type: 'forward' });
+      expect(forward.settings).toBeNull();
+      expect(forward.history).toEqual(fresh.history);
+      expect(forward.historyIndex).toBe(fresh.historyIndex);
+    });
+
+    test('back with no history behind closes Settings and the peek it hid', () => {
+      const fresh = run([
+        { type: 'openThread', messageId: 'm-1' },
+        { type: 'openSettings' },
+      ]);
+      expect(fresh.historyIndex).toBe(0);
+      const back = navReducer(fresh, { type: 'back' });
+      expect(back.settings).toBeNull();
+      expect(back.peek).toBeNull();
+      expect(back.history).toEqual(fresh.history);
+    });
   });
 
   test('escape closes the shortcuts sheet, the palette and the composer, in that order, before anything beneath', () => {

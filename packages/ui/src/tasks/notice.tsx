@@ -1,5 +1,6 @@
 import { CircleDashed, Inbox } from 'lucide-react';
 
+import { dataAttributes } from '../lib/data-attributes';
 import type { UiTone } from '../types';
 import { cx } from './class-names';
 import styles from './notice.module.css';
@@ -21,17 +22,14 @@ const TONED_KEY: ReadonlySet<UiTone> = new Set<UiTone>([
    prints the lead-in in the tone's text colour (accent = Gr8r's info
    alert, the default; danger for errors and failures, warning for blocked
    or a missing input, success, info), the sentence staying --text. role is
-   opt-in: "status" for something that just changed, "alert" for an error;
-   static copy needs neither. */
-export function Notice({
-  label,
-  children,
-  tone = 'accent',
-  role,
-  action,
-}: NoticeProps) {
+   opt-in: "status" for something that just changed, "alert" for an error,
+   "note" for an aside that qualifies the page (why it is read only);
+   static copy needs none. The host's data-* hooks land on the box. */
+export function Notice(props: NoticeProps) {
+  const { label, children, tone = 'accent', role, action } = props;
   return (
     <div
+      {...dataAttributes(props)}
       className={cx(
         'notice',
         tone === 'default' || tone === 'muted' ? styles.quiet : undefined

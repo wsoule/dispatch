@@ -6,7 +6,7 @@ import type {
   LinearTeam,
   LinearViewer,
 } from '@dispatch/client';
-import { Button, Checkbox, Select, TextField } from '@dispatch/ui';
+import { Button, Checkbox, cx, Select, TextField } from '@dispatch/ui';
 import { CheckCircle2, CircleAlert, RefreshCw, Upload } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -195,7 +195,9 @@ function FetchFailureRow({
 }) {
   return (
     <div className={styles.failureRow}>
-      <span className={styles.failureText}>{describeFetchFailure(error)}</span>
+      <span className={cx('toneText', styles.failureText)} data-tone="danger">
+        {describeFetchFailure(error)}
+      </span>
       <Button variant="secondary" size="sm" onClick={onRetry}>
         Retry
       </Button>
@@ -393,7 +395,9 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
             }
           >
             {connectError !== null && (
-              <span className={styles.error}>{connectError}</span>
+              <span className={cx('toneText', styles.error)} data-tone="danger">
+                {connectError}
+              </span>
             )}
           </SettingsRow>
         )}
@@ -406,6 +410,7 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
                   aria-hidden
                   size={14}
                   strokeWidth={1.8}
+                  data-tone="success"
                   className={styles.connectedIcon}
                 />
                 Connected{viewer !== null ? ` as ${viewer.name}` : ''}
@@ -426,7 +431,9 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
             }
           >
             {disconnectError !== null && (
-              <span className={styles.error}>{disconnectError}</span>
+              <span className={cx('toneText', styles.error)} data-tone="danger">
+                {disconnectError}
+              </span>
             )}
           </SettingsRow>
         )}
@@ -663,7 +670,9 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
               <SettingsHint>{formatSyncCounts(importResult)}</SettingsHint>
             )}
             {importError !== null && (
-              <span className={styles.error}>{importError}</span>
+              <span className={cx('toneText', styles.error)} data-tone="danger">
+                {importError}
+              </span>
             )}
           </SettingsRow>
 
@@ -700,7 +709,11 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
               <SettingsHint>{exportOutcome}</SettingsHint>
             )}
             {lastExport?.errors.map((message) => (
-              <span key={message} className={styles.error}>
+              <span
+                key={message}
+                className={cx('toneText', styles.error)}
+                data-tone="danger"
+              >
                 {message}
               </span>
             ))}
@@ -734,7 +747,9 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
             }
           >
             {linearStatus.lastError !== null && !lastErrorInSummary && (
-              <span className={styles.error}>{linearStatus.lastError}</span>
+              <span className={cx('toneText', styles.error)} data-tone="danger">
+                {linearStatus.lastError}
+              </span>
             )}
             {summary !== null && (
               <div className={styles.summary}>
@@ -742,13 +757,17 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
                 {summary.errors.map((message, i) => (
                   <span
                     key={`${message}-${String(i)}`}
-                    className={styles.error}
+                    className={cx('toneText', styles.error)}
+                    data-tone="danger"
                   >
                     {message}
                   </span>
                 ))}
                 {summary.rateLimited && (
-                  <span className={styles.error}>
+                  <span
+                    className={cx('toneText', styles.error)}
+                    data-tone="warning"
+                  >
                     Linear rate-limited this pass — it will retry on its own.
                   </span>
                 )}
@@ -756,10 +775,17 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
               </div>
             )}
             {usageLimited && !usageShown && (
-              <span className={styles.error}>{LINEAR_USAGE_LIMIT_MESSAGE}</span>
+              <span
+                className={cx('toneText', styles.error)}
+                data-tone="warning"
+              >
+                {LINEAR_USAGE_LIMIT_MESSAGE}
+              </span>
             )}
             {syncError !== null && (
-              <span className={styles.error}>{syncError}</span>
+              <span className={cx('toneText', styles.error)} data-tone="danger">
+                {syncError}
+              </span>
             )}
           </SettingsRow>
 

@@ -1,7 +1,6 @@
-// The two presentation helpers a Linear-style row shares with the app: the label pill's dot
-// colour and the far-right absolute date. The label colour has one home here, so `ui` records
-// and app tasks wear the same hue for the same label. The day formatter now also has an app
-// copy in apps/desktop's lib/taskDates.ts; this one stays until ai/records-table.tsx goes.
+// The label pill's dot colour, shared with the app: apps/desktop's lib/labelColor.ts falls
+// back to this hash for labels without a stored colour, so a legacy pill and a Gr8r row wear
+// the same hue for the same label. The colour has one home here until ui-legacy goes in B16.
 
 const LABEL_COLOR_COUNT = 8;
 
@@ -13,34 +12,4 @@ export function colorForLabel(label: string): string {
     hash = (hash * 33 + label.charCodeAt(i)) >>> 0;
   }
   return `var(--project-color-${(hash % LABEL_COLOR_COUNT) + 1})`;
-}
-
-const MONTHS = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-
-/** `Sep 13`, with the year appended (`Sep 13, 2025`) once it is not the current one. Takes
- * an ISO string, epoch ms or a `Date`; an unparseable value reads as a dash rather than
- * `Invalid Date`. `now` is injectable for tests. */
-export function formatShortDate(
-  value: string | number | Date,
-  now: Date = new Date()
-): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '—';
-  const month = MONTHS[date.getMonth()] ?? '';
-  const day = date.getDate();
-  if (date.getFullYear() === now.getFullYear()) return `${month} ${day}`;
-  return `${month} ${day}, ${date.getFullYear()}`;
 }

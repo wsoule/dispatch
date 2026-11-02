@@ -137,6 +137,16 @@ describe('the issue list modules are scoped', () => {
     'tasks/bulk-bar.module.css',
     'tasks/task-group-table.module.css',
     'tasks/checkbox.module.css',
+    // The rest of the tasks primitives the Settings move builds on: the
+    // search field, the copy value, the chip and its button form, the
+    // switch and the grouped sub-nav.
+    'tasks/search-field.module.css',
+    'tasks/copy-value.module.css',
+    'tasks/chip.module.css',
+    'tasks/switch.module.css',
+    'tasks/nav-tabs.module.css',
+    'tasks/notice.module.css',
+    'tasks/register.module.css',
     'edit/picker-popover.module.css',
     // The overlays: they sit in the browser's top layer, so nothing in
     // them may reach a host element either.

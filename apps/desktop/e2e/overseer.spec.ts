@@ -203,7 +203,7 @@ test.describe('overseer chat end to end', () => {
       await openSettings(page);
       await settings
         .getByRole('navigation', { name: 'Settings' })
-        .getByRole('button', { name: 'Runs', exact: true })
+        .getByRole('link', { name: 'Runs', exact: true })
         .click();
     };
     const runRows = settings.getByText(titlePattern);

@@ -162,6 +162,8 @@ test('keys switch views and open Settings without leaving the view', async ({
   await expect(
     panel.getByRole('heading', { name: 'General', level: 1 })
   ).toBeVisible();
+  // Settings takes the main column; the view stays mounted, hidden, beneath it.
+  await expect(page.getByTestId('tasks-view')).toBeHidden();
   // Settings is the current place while it is open.
   await expect(
     page

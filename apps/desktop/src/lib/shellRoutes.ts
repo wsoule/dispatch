@@ -150,9 +150,10 @@ export function shellShortcut(
 }
 
 /**
- * Which destination the sidebar marks current. Settings is a dialog over the
- * views, so while it is open it (or Runs, its page with a row of its own) is
- * the place; under Tasks the Docs, Threads, Timeline and Graph pages are their
+ * Which destination the sidebar marks current. Settings is an overlay place
+ * in the main column (the views stay mounted, hidden, beneath it), so while
+ * it is open it (or Runs, its page with a row of its own) is the place; under
+ * Tasks the Docs, Threads, Timeline and Graph pages are their
  * own rows, the Needs you preset is its row, and everything else (the list, a
  * task page, Files, Terminals, Projects, Live) is Issues.
  */

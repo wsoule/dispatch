@@ -7,20 +7,18 @@ import type {
 } from '@dispatch-foo/core/browser';
 import {
   consultPolicy,
-  MAX_POLICY_RUNG,
-  MIN_POLICY_RUNG,
   POLICY_GATES,
-  POLICY_RUNGS,
   projectPolicy,
 } from '@dispatch-foo/core/browser';
 import type { ApiClient } from '@dispatch/client';
-import { Button, cx, Select } from '@dispatch/ui';
+import { cx, Select } from '@dispatch/ui';
 import { Lock } from 'lucide-react';
-import type { CSSProperties, KeyboardEvent } from 'react';
+import type { KeyboardEvent } from 'react';
 import { useEffect, useState } from 'react';
 
 import { relativeTime } from '../../lib/landingView';
 import { policyReceipts } from '../../lib/policyReceipts';
+import { AutonomySlider } from './AutonomySlider';
 import styles from './PolicySection.module.css';
 import { SettingsSearchable } from './search';
 import kit from './settings.module.css';
@@ -34,23 +32,6 @@ interface PolicyPatch {
     gates?: Partial<Record<PolicyGate, PolicyGateMode | null>>;
   };
 }
-
-// What each ladder stop means, phrased for the slider. Cumulative on purpose:
-// a rung carries every demotion below it (see GATE_RUNGS in core's policy.ts).
-const RUNG_DESCRIPTIONS: Record<number, string> = {
-  1: 'Every decision waits for you.',
-  2: 'Requests to edit extra files are approved for you. Everything else waits.',
-  3: 'Extra files and uncertain commands are decided for you, and failed checks go straight back to be fixed. Merging, shared memory and accepted docs still wait.',
-  4: "Work that passes its checks merges on its own. You review what happened afterwards. Agents' lessons join shared memory without review. Agents' edits to accepted docs apply without review.",
-};
-
-// Short names for the slider's stops, in the page's words rather than core's.
-const RUNG_LABELS: Record<number, string> = {
-  1: 'Review everything',
-  2: 'Allow extra files',
-  3: 'Fix on its own',
-  4: 'Merge and accept memory and doc edits on their own',
-};
 
 // One line per gate: what actually happens when it auto-decides, so the table
 // reads as behavior, not as config keys.
@@ -105,75 +86,6 @@ const FLOOR_ROWS: readonly { text: string; keywords: string }[] = [
     keywords: 'review',
   },
 ];
-
-interface AutonomySliderProps {
-  rung: number;
-  onRungChange: (rung: number) => void;
-}
-
-/** The builder lens's whole policy surface: one slider over the ladder's
- *  stops. Fully controlled; `onRungChange` fires once per settled change
- *  (release or stop click), not per drag frame. */
-function AutonomySlider({ rung, onRungChange }: AutonomySliderProps) {
-  // Local while dragging so a drag across stops saves once, on release.
-  const [draft, setDraft] = useState(rung);
-  useEffect(() => {
-    setDraft(rung);
-  }, [rung]);
-
-  const commit = (value: number) => {
-    setDraft(value);
-    if (value !== rung) onRungChange(value);
-  };
-
-  const percent =
-    ((draft - MIN_POLICY_RUNG) / (MAX_POLICY_RUNG - MIN_POLICY_RUNG)) * 100;
-  const active = POLICY_RUNGS.find((stop) => stop.rung === draft);
-
-  return (
-    <div className={styles.slider}>
-      <input
-        type="range"
-        aria-label="Autonomy"
-        min={MIN_POLICY_RUNG}
-        max={MAX_POLICY_RUNG}
-        step={1}
-        value={draft}
-        onChange={(e) => setDraft(Number(e.target.value))}
-        onPointerUp={() => commit(draft)}
-        onKeyUp={() => commit(draft)}
-        style={{ '--fill': `${String(percent)}%` } as CSSProperties}
-        className={styles.range}
-      />
-      {/* One label per stop, sitting under the stop it names: the first hugs the track's
-          left end, the last its right end, the middle ones centre on theirs — a plain
-          four-column grid left every label drifting right of its stop. */}
-      <div className={styles.stops}>
-        {POLICY_RUNGS.map((stop, index) => {
-          const edge =
-            index === 0
-              ? styles.first
-              : index === POLICY_RUNGS.length - 1
-                ? styles.last
-                : undefined;
-          return (
-            <Button
-              key={stop.rung}
-              variant="quiet"
-              size="sm"
-              aria-pressed={stop.rung === draft}
-              onClick={() => commit(stop.rung)}
-              className={cx(styles.stop, edge)}
-            >
-              {RUNG_LABELS[stop.rung] ?? stop.label}
-            </Button>
-          );
-        })}
-      </div>
-      <SettingsHint>{RUNG_DESCRIPTIONS[draft] ?? active?.label}</SettingsHint>
-    </div>
-  );
-}
 
 // An override's choices: follow the level, or pin the gate either way.
 const PIN_OPTIONS = [

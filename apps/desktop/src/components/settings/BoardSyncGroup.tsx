@@ -5,7 +5,6 @@ import { RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
-import styles from './BoardSyncGroup.module.css';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 
 interface BoardSyncGroupProps {
@@ -122,22 +121,18 @@ export function BoardSyncGroup({ data }: BoardSyncGroupProps) {
         }
       >
         {syncError !== null && (
-          <SettingsHint className={styles.failed}>
+          <SettingsHint tone="danger">
             Couldn&rsquo;t sync: {syncError}
           </SettingsHint>
         )}
         {status.restartRequired !== undefined && (
-          <SettingsHint className={styles.waiting}>
-            {status.restartRequired}
-          </SettingsHint>
+          <SettingsHint tone="warning">{status.restartRequired}</SettingsHint>
         )}
         {status.paused !== null && (
-          <SettingsHint className={styles.waiting}>
-            {status.paused}
-          </SettingsHint>
+          <SettingsHint tone="warning">{status.paused}</SettingsHint>
         )}
         {status.lastError !== null && (
-          <SettingsHint className={styles.waiting}>
+          <SettingsHint tone="warning">
             Couldn&rsquo;t reach the remote: {status.lastError}. Your changes
             are safe here and go out on the next successful sync.
           </SettingsHint>

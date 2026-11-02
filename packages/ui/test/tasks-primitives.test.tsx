@@ -2,17 +2,22 @@ import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { renderToString } from 'react-dom/server';
 
 import {
   Button,
   Checklist,
   Chip,
+  ChipButton,
   ConfirmDialog,
   Dialog,
   EmptyState,
   Notice,
   Popover,
   ProgressRule,
+  Register,
+  RegisterCell,
+  RegisterRow,
   SegmentedControl,
   Switch,
   type UiLinkProps,
@@ -268,6 +273,35 @@ describe('host data attributes', () => {
     expect(alert.getAttribute('data-testid')).toBe('delete-view');
     expect(alert.getAttribute('data-slot')).toBe('alert-dialog-content');
   });
+
+  test('reach the root of Chip, Switch and Notice; their own data-tone wins', () => {
+    const { getByRole, getByTestId } = render(
+      <>
+        <Chip tone="warning" data-testid="landing-badge" data-tone="info">
+          Waiting
+        </Chip>
+        <Switch label="Live" data-testid="jev-status" data-slot="switch" />
+        <Notice
+          tone="danger"
+          role="alert"
+          data-testid="sync-failed"
+          data-slot="notice"
+        >
+          Sync failed.
+        </Notice>
+      </>
+    );
+    const chip = getByTestId('landing-badge');
+    expect(chip.textContent).toBe('Waiting');
+    expect(chip.getAttribute('data-tone')).toBe('warning');
+    const sw = getByRole('switch', { name: 'Live' });
+    expect(sw.getAttribute('data-testid')).toBe('jev-status');
+    expect(sw.getAttribute('data-slot')).toBe('switch');
+    const alert = getByRole('alert');
+    expect(alert.getAttribute('data-testid')).toBe('sync-failed');
+    expect(alert.getAttribute('data-slot')).toBe('notice');
+    expect(alert.getAttribute('data-tone')).toBe('danger');
+  });
 });
 
 describe('Chip', () => {
@@ -280,6 +314,105 @@ describe('Chip', () => {
     expect(getByRole('img', { name: 'Overdue' })).toBeTruthy();
     expect(getByText('Overdue · 2 days')).toBeTruthy();
     expect(container.querySelector('[data-tone="accent"]')).not.toBeNull();
+  });
+});
+
+describe('ChipButton', () => {
+  test('a button named by its text, in the chip look; a press calls onClick', () => {
+    const onClick = mock(() => {});
+    const { getByRole } = render(
+      <ChipButton tone="info" onClick={onClick} data-testid="starter">
+        Write the spec
+      </ChipButton>
+    );
+    const button = getByRole('button', { name: 'Write the spec' });
+    expect(button.getAttribute('type')).toBe('button');
+    expect(button.getAttribute('data-tone')).toBe('info');
+    expect(button.hasAttribute('data-chip-button')).toBe(true);
+    expect(button.getAttribute('data-testid')).toBe('starter');
+    // A plain action, not a toggle.
+    expect(button.hasAttribute('aria-pressed')).toBe(false);
+    fireEvent.click(button);
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  test('selected makes a toggle: aria-pressed true or false', () => {
+    const { getByRole, rerender } = render(
+      <ChipButton selected>Blocked</ChipButton>
+    );
+    expect(
+      getByRole('button', { name: 'Blocked' }).getAttribute('aria-pressed')
+    ).toBe('true');
+    rerender(<ChipButton selected={false}>Blocked</ChipButton>);
+    expect(
+      getByRole('button', { name: 'Blocked' }).getAttribute('aria-pressed')
+    ).toBe('false');
+  });
+
+  test('disabled: the button cannot be pressed', () => {
+    const onClick = mock(() => {});
+    const { getByRole } = render(
+      <ChipButton disabled onClick={onClick}>
+        Retry
+      </ChipButton>
+    );
+    const button = getByRole('button', { name: 'Retry' }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  test('href renders the host link (no aria-pressed); disabled turns it into text', () => {
+    const { getByRole, queryByRole, getByText, rerender } = render(
+      <UiLinkProvider link={HostLink}>
+        <ChipButton href="/tasks/42" selected data-testid="ref">
+          #42 Fix login
+        </ChipButton>
+      </UiLinkProvider>
+    );
+    const link = getByRole('link', { name: '#42 Fix login' });
+    expect(link.getAttribute('href')).toBe('/tasks/42');
+    expect(link.hasAttribute('data-host-link')).toBe(true);
+    expect(link.getAttribute('data-testid')).toBe('ref');
+    expect(link.hasAttribute('aria-pressed')).toBe(false);
+    rerender(
+      <UiLinkProvider link={HostLink}>
+        <ChipButton href="/tasks/42" disabled>
+          #42 Fix login
+        </ChipButton>
+      </UiLinkProvider>
+    );
+    expect(queryByRole('link')).toBeNull();
+    expect(
+      getByText('#42 Fix login').parentElement?.getAttribute('aria-disabled')
+    ).toBe('true');
+  });
+
+  test('the module draws the focus ring, a hover fill and the selection tint', () => {
+    const css = readFileSync(
+      path.join(import.meta.dir, '..', 'src', 'tasks', 'chip.module.css'),
+      'utf8'
+    ).replace(/\s+/g, ' ');
+    expect(css).toContain(
+      '.button:focus-visible { outline: 2px solid var(--focus-ring);'
+    );
+    expect(css).toContain(
+      ".button[aria-pressed='true'] { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent-ink); }"
+    );
+    const hover = css.slice(css.indexOf('@media (hover: hover)'));
+    expect(hover).toContain('background: var(--surface-3);');
+  });
+
+  test('renders on the server as a button or a link', () => {
+    const html = renderToString(
+      <>
+        <ChipButton selected>Blocked</ChipButton>
+        <ChipButton href="/runs">Runs</ChipButton>
+      </>
+    );
+    expect(html).toContain('type="button"');
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain('href="/runs"');
   });
 });
 
@@ -382,6 +515,21 @@ describe('Switch', () => {
     expect(getByRole('switch', { name: 'Allocation live' })).toBeTruthy();
     expect(getByRole('switch', { name: 'Warnings' })).toBeTruthy();
   });
+
+  // A settings row whose title names the switch draws just the track:
+  // the label stays for assistive tech, and aria-labelledby still wins.
+  test('hideLabel keeps the label for assistive tech only', () => {
+    const { getByRole, getByText } = render(
+      <>
+        <Switch label="Auto-merge" hideLabel />
+        <p id="notify-title">Notify on finish</p>
+        <Switch label="Notify" hideLabel aria-labelledby="notify-title" />
+      </>
+    );
+    expect(getByRole('switch', { name: 'Auto-merge' })).toBeTruthy();
+    expect(getByText('Auto-merge').classList.contains('srOnly')).toBe(true);
+    expect(getByRole('switch', { name: 'Notify on finish' })).toBeTruthy();
+  });
 });
 
 describe('ProgressRule', () => {
@@ -439,6 +587,18 @@ describe('Notice and EmptyState', () => {
     expect(getByRole('button', { name: 'Fix' })).toBeTruthy();
   });
 
+  test('Notice role="note": an aside that qualifies the page', () => {
+    const { getByRole } = render(
+      <Notice tone="default" role="note" label="Read only">
+        You can view these settings, but only someone with decide access can
+        change them.
+      </Notice>
+    );
+    const note = getByRole('note');
+    expect(note.textContent).toContain('Read only');
+    expect(note.getAttribute('data-tone')).toBe('default');
+  });
+
   test('EmptyState renders its copy on the .empty primitive', () => {
     const { getByText, container } = render(
       <EmptyState hatched>Nothing due</EmptyState>
@@ -478,5 +638,143 @@ describe('Notice and EmptyState', () => {
     own.unmount();
     const bare = render(<EmptyState icon={null}>Nothing yet.</EmptyState>);
     expect(bare.container.querySelector('svg')).toBeNull();
+  });
+});
+
+// L35: a Register's root, rows and cells carry the host's hooks (e2e
+// counts `needs-you-row`), and a button row can be a toggle (a filter).
+describe('Register passthrough', () => {
+  test('host hooks reach the register, row and cell roots', () => {
+    const { getByTestId, getByRole } = render(
+      <Register
+        columns="1fr auto"
+        label="Needs you"
+        data-testid="needs-you"
+        data-slot="register"
+      >
+        <RegisterRow
+          rowLabel="Open the plan question"
+          onActivate={() => {}}
+          data-testid="needs-you-row"
+          data-tone="info"
+        >
+          <RegisterCell variant="name" data-roster-title="">
+            Plan question
+          </RegisterCell>
+          <RegisterCell tone="warning" data-testid="row-state">
+            Waiting
+          </RegisterCell>
+        </RegisterRow>
+        <RegisterRow href="/runs/7" rowLabel="Run 7" data-slot="link-row">
+          <RegisterCell>Run 7</RegisterCell>
+        </RegisterRow>
+        <RegisterRow data-slot="plain-row">
+          <RegisterCell>Plain</RegisterCell>
+        </RegisterRow>
+      </Register>
+    );
+    const register = getByTestId('needs-you');
+    expect(register.getAttribute('data-slot')).toBe('register');
+    // The register's own hook stays.
+    expect(register.getAttribute('data-stack')).toBe('viewport-900');
+    expect(register.contains(getByRole('list', { name: 'Needs you' }))).toBe(
+      true
+    );
+    const row = getByTestId('needs-you-row');
+    expect(row.tagName).toBe('LI');
+    // The row's own data-tone wins over a host's.
+    expect(row.getAttribute('data-tone')).toBe('default');
+    const title = row.querySelector('[data-roster-title]');
+    expect(title?.textContent).toBe('Plan question');
+    expect(getByTestId('row-state').getAttribute('data-tone')).toBe('warning');
+    expect(
+      getByRole('link', { name: 'Run 7' }).closest('[data-slot="link-row"]')
+    ).not.toBeNull();
+    expect(
+      register.querySelector('li[data-slot="plain-row"]')?.textContent
+    ).toBe('Plain');
+  });
+
+  test('pressed sets aria-pressed on a button row only', () => {
+    const { getByRole, getAllByRole } = render(
+      <Register columns="1fr" label="Projects">
+        <RegisterRow rowLabel="Filter by Atlas" onActivate={() => {}} pressed>
+          <RegisterCell>Atlas</RegisterCell>
+        </RegisterRow>
+        <RegisterRow
+          rowLabel="Filter by Beacon"
+          onActivate={() => {}}
+          pressed={false}
+        >
+          <RegisterCell>Beacon</RegisterCell>
+        </RegisterRow>
+        <RegisterRow rowLabel="Open Garnet" onActivate={() => {}}>
+          <RegisterCell>Garnet</RegisterCell>
+        </RegisterRow>
+        <RegisterRow href="/p/delta" rowLabel="Delta">
+          <RegisterCell>Delta</RegisterCell>
+        </RegisterRow>
+      </Register>
+    );
+    expect(
+      getByRole('button', { name: 'Filter by Atlas' }).getAttribute(
+        'aria-pressed'
+      )
+    ).toBe('true');
+    expect(
+      getByRole('button', { name: 'Filter by Beacon' }).getAttribute(
+        'aria-pressed'
+      )
+    ).toBe('false');
+    expect(
+      getByRole('button', { name: 'Open Garnet' }).hasAttribute('aria-pressed')
+    ).toBe(false);
+    expect(
+      getByRole('link', { name: 'Delta' }).hasAttribute('aria-pressed')
+    ).toBe(false);
+    // Only the stretched buttons, never the rows, carry it.
+    for (const item of getAllByRole('listitem')) {
+      expect(item.hasAttribute('aria-pressed')).toBe(false);
+    }
+  });
+
+  test('renders on the server with the hooks and the pressed state', () => {
+    const html = renderToString(
+      <Register columns="1fr" label="Spend" data-testid="spend">
+        <RegisterRow
+          rowLabel="Filter by Atlas"
+          onActivate={() => {}}
+          pressed
+          data-testid="spend-row"
+        >
+          <RegisterCell data-slot="cost">$4</RegisterCell>
+        </RegisterRow>
+      </Register>
+    );
+    expect(html).toContain('data-testid="spend"');
+    expect(html).toContain('data-testid="spend-row"');
+    expect(html).toContain('data-slot="cost"');
+    expect(html).toContain('aria-pressed="true"');
+  });
+});
+
+describe('server render of the passthrough primitives', () => {
+  test('Chip, Switch with hideLabel and a note Notice render with no state', () => {
+    const html = renderToString(
+      <>
+        <Chip tone="danger" filled data-testid="failed-chip">
+          Failed
+        </Chip>
+        <Switch label="Live" hideLabel data-testid="live" />
+        <Notice role="note" tone="default" data-testid="read-only">
+          Read only.
+        </Notice>
+      </>
+    );
+    expect(html).toContain('data-testid="failed-chip"');
+    expect(html).toContain('role="switch"');
+    expect(html).toContain('class="srOnly"');
+    expect(html).toContain('role="note"');
+    expect(html).toContain('data-testid="read-only"');
   });
 });

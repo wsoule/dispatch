@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { renderToString } from 'react-dom/server';
 
 import {
   Checkbox,
@@ -122,6 +123,126 @@ describe('NavTabs onFollow', () => {
   });
 });
 
+describe('NavTabs groups', () => {
+  const groups = [
+    {
+      label: 'Project',
+      items: [
+        {
+          id: 'general',
+          label: 'General',
+          href: '#/settings/general',
+          current: true,
+        },
+        { id: 'agents', label: 'Agents', href: '#/settings/agents' },
+      ],
+    },
+    {
+      label: 'This machine',
+      items: [
+        { id: 'daemon', label: 'Daemon', href: '#/settings/daemon', count: 2 },
+      ],
+    },
+  ];
+
+  test('one nav, a named group per title, the current link marked', () => {
+    const { getAllByRole, getByRole } = render(
+      <UiLinkProvider link={HostLink}>
+        <NavTabs label="Settings" groups={groups} />
+      </UiLinkProvider>
+    );
+    expect(getAllByRole('navigation')).toHaveLength(1);
+    const nav = getByRole('navigation', { name: 'Settings' });
+    const project = getByRole('group', { name: 'Project' });
+    const machine = getByRole('group', { name: 'This machine' });
+    expect(nav.contains(project) && nav.contains(machine)).toBe(true);
+    // Each group's cells are a list of host links inside it.
+    expect(
+      [...project.querySelectorAll('a')].map((a) => a.textContent)
+    ).toEqual(['General', 'Agents']);
+    expect(machine.querySelector('a')?.textContent).toBe('Daemon2');
+    const links = getAllByRole('link');
+    expect(links).toHaveLength(3);
+    expect(links.every((link) => link.hasAttribute('data-host-link'))).toBe(
+      true
+    );
+    expect(
+      getByRole('link', { name: 'General' }).getAttribute('aria-current')
+    ).toBe('page');
+    expect(
+      getByRole('link', { name: 'Agents' }).hasAttribute('aria-current')
+    ).toBe(false);
+  });
+
+  test('the visible titles are eyebrows, not headings, and are not read twice', () => {
+    const { container, queryAllByRole } = render(
+      <NavTabs label="Settings" groups={groups} />
+    );
+    // No heading role: the page keeps its own h1 outline.
+    expect(queryAllByRole('heading')).toHaveLength(0);
+    const titles = [
+      ...container.querySelectorAll('[data-nav-group-label]'),
+    ] as HTMLElement[];
+    expect(titles.map((t) => t.textContent)).toEqual([
+      'Project',
+      'This machine',
+    ]);
+    for (const title of titles) {
+      expect(title.classList.contains('eyebrow')).toBe(true);
+      expect(title.getAttribute('aria-hidden')).toBe('true');
+    }
+    expect(
+      container.querySelector('nav')?.hasAttribute('data-nav-grouped')
+    ).toBe(true);
+  });
+
+  test('onFollow takes a plain click on a grouped cell', () => {
+    const follow = mock(() => undefined);
+    const { getByRole } = render(
+      <NavTabs
+        label="Settings"
+        groups={[
+          {
+            label: 'Team',
+            items: [
+              {
+                id: 'team',
+                label: 'Members',
+                href: '#/settings/team',
+                onFollow: follow,
+              },
+            ],
+          },
+        ]}
+      />
+    );
+    const plain = new MouseEvent('click', { bubbles: true, cancelable: true });
+    getByRole('link', { name: 'Members' }).dispatchEvent(plain);
+    expect(plain.defaultPrevented).toBe(true);
+    expect(follow).toHaveBeenCalledTimes(1);
+  });
+
+  // The titles hide at 900px and below, where every cell joins the one
+  // strip: a CSS concern, checked in the sheet.
+  test('at 900px and below the groups join one strip and the titles go', () => {
+    const css = readFileSync(
+      path.join(import.meta.dir, '../src/tasks/nav-tabs.module.css'),
+      'utf8'
+    ).replace(/\s+/g, ' ');
+    const narrow = css.slice(css.indexOf('@media (width <= 900px)'));
+    expect(narrow).toContain('.groupLabel { display: none; }');
+    expect(narrow).toMatch(/\.grouped \{ flex-flow: row nowrap;/);
+  });
+
+  test('renders on the server', () => {
+    const html = renderToString(<NavTabs label="Settings" groups={groups} />);
+    expect(html).toContain('aria-label="Settings"');
+    expect(html).toContain('role="group"');
+    expect(html).toContain('aria-label="This machine"');
+    expect(html).toContain('aria-current="page"');
+  });
+});
+
 describe('Checkbox', () => {
   test('is a native checkbox named by its label, toggled by the label', () => {
     const onChange = mock((_: boolean) => {});
@@ -164,6 +285,55 @@ describe('Checkbox', () => {
     expect((box as HTMLInputElement).disabled).toBe(true);
     fireEvent.click(box);
     expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('Checkbox passthrough', () => {
+  test('onClick reaches the input first, so a header click can be stopped', () => {
+    const onHeader = mock(() => undefined);
+    const onChange = mock((_: boolean) => {});
+    const { getByRole } = render(
+      // A stand-in for a collapsible diff header that a click toggles.
+      // oxlint-disable-next-line jsx-a11y/click-events-have-key-events
+      <div onClick={onHeader}>
+        <Checkbox
+          label="Viewed"
+          hideLabel
+          onChange={onChange}
+          onClick={(event) => event.stopPropagation()}
+        />
+      </div>
+    );
+    fireEvent.click(getByRole('checkbox', { name: 'Viewed' }));
+    expect(onChange).toHaveBeenCalledWith(true);
+    expect(onHeader).not.toHaveBeenCalled();
+  });
+
+  test('host hooks land on the label, which holds the box', () => {
+    const { getByTestId, getByRole } = render(
+      <Checkbox
+        label="Watcher"
+        data-testid="watcher-box"
+        data-slot="checkbox"
+        disabled
+      />
+    );
+    const root = getByTestId('watcher-box');
+    expect(root.tagName).toBe('LABEL');
+    expect(root.getAttribute('data-slot')).toBe('checkbox');
+    // The component's own hook stays.
+    expect(root.getAttribute('data-disabled')).toBe('true');
+    expect(root.contains(getByRole('checkbox', { name: 'Watcher' }))).toBe(
+      true
+    );
+  });
+
+  test('renders on the server with the hooks', () => {
+    const html = renderToString(
+      <Checkbox label="Watcher" id="w" data-testid="watcher-box" />
+    );
+    expect(html).toContain('data-testid="watcher-box"');
+    expect(html).toContain('id="w"');
   });
 });
 

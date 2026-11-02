@@ -1,12 +1,9 @@
 /* Settings → Members, "End-to-end encryption" (TeamEncryptionGroup.tsx). */
 
-.error {
-  color: var(--red);
-}
-
+/* A refusal under the switch; its colour comes from the global toneText
+   class. */
 .alert {
   font-size: var(--fs-xs);
-  color: var(--red);
 }
 
 /* A hint set straight into the card, padded like a row. */

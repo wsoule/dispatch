@@ -1,58 +1,45 @@
-/* Settings → Connected agents: the roster's rows (AgentRosterSection.tsx). */
+/* Settings → Connected agents: the roster register (AgentRosterSection.tsx). */
 
+/* The "Agents" group around the register. The script that moves focus here
+   (once a changed row offers nothing left to press) marks it with
+   data-refocused, so that ring shows after a mouse confirm too: it is the
+   only sign of where focus went. A mouse press on the roster's text also
+   focuses the group, and draws no ring. */
 .roster {
-  padding: var(--s-1);
+  min-width: 0;
 }
 
-.roster:focus-visible {
+.roster:focus-visible,
+.roster[data-refocused]:focus {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 
-/* Title, status, approver, actions and date across one dense row. */
-.row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 18px 92px 56px;
-  align-items: center;
-  gap: var(--s-2);
-  min-height: var(--row-h);
-  padding: 0 var(--s-2);
-  border-radius: var(--r-sm);
-}
-
-.row:hover {
-  background: var(--surface-2);
-}
-
-.title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
+/* The register sits inside the settings card, whose edge is already the
+   panel: its rows read as the card's rows, without a second border. */
+.roster [data-roster] {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .address {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-medium);
-  color: var(--text);
+  white-space: nowrap;
 }
 
 .client {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--fs-sm);
-  color: var(--text-3);
 }
 
 .status {
-  display: flex;
+  display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
   gap: 6px;
 }
 
@@ -62,7 +49,7 @@
   height: 18px;
 }
 
-/* Mute and revoke line up down the table whether or not approve is there. */
+/* Mute and revoke line up down the roster whether or not approve is there. */
 .actions {
   display: flex;
   align-items: center;
@@ -70,13 +57,8 @@
   gap: 2px;
 }
 
-.date {
-  font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  color: var(--text-3);
-}
-
+/* A refusal under the roster, padded like a row; its colour comes from the
+   global toneText class. */
 .error {
   padding: 0 var(--s-3) 10px;
 }

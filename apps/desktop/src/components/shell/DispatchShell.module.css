@@ -22,7 +22,7 @@
 }
 
 /* The views' box: Overseer and Tasks fill it, the peek drawer and the guide
-   card float over it. */
+   card float over it. Settings fills it in their place while it is open. */
 .content {
   position: relative;
   flex: 1 1 auto;
@@ -42,4 +42,22 @@
 /* Tasks pages pin action footers (a draft's Send, a run review) above the dock. */
 .guideSlotTasks {
   bottom: 112px;
+}
+
+/* Settings in the main column: it fills the views' box while they are hidden
+   beneath it, and scrolls inside itself like every view. */
+.settingsSlot {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Focus lands on the region when Settings opens, as it did on the old Settings
+   dialog's panel: a landing point, not a control, so its ring is transparent
+   (forced colours still draw it) rather than a purple frame around the whole
+   column. The next Tab reaches the rail's search, which shows its own ring. */
+.settingsSlot:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: -2px;
 }

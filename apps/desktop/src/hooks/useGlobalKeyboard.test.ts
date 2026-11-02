@@ -1,8 +1,14 @@
-import { renderHook } from '@testing-library/react';
+import { render, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, test } from 'bun:test';
+import { Activity, type ComponentProps, createElement } from 'react';
 
 import type { GlobalKeyCommand } from '../lib/keyboard';
-import { useGlobalKeyboard } from './useGlobalKeyboard';
+import {
+  isAnyModalOpen,
+  isShown,
+  isTypingTarget,
+  useGlobalKeyboard,
+} from './useGlobalKeyboard';
 
 // Fires a real `keydown` on `window`, optionally pre-cancelled the way a Base UI popup
 // cancels Escape when it dismisses itself — before this listener ever sees the event, not as
@@ -177,6 +183,71 @@ describe('useGlobalKeyboard', () => {
     // Unmounted on close, so the shortcuts come straight back.
     el.remove();
     dispatchKeydown('c');
+    expect(commands).toEqual(['new-task']);
+  });
+
+  // Settings hides the views under <Activity mode="hidden">, which keeps a dialog
+  // open in one in the DOM (aria-modal and all) behind display: none.
+  test('a modal surface inside a hidden Activity does not count as open', () => {
+    // ActivityProps types children as a prop; they go in as createElement's
+    // third argument, as JSX would put them.
+    const surface = (mode: 'hidden' | 'visible') =>
+      createElement(
+        Activity,
+        { mode } as ComponentProps<typeof Activity>,
+        createElement('div', { role: 'dialog', 'aria-modal': 'true' }, 'kept')
+      );
+    const { getByRole, rerender } = render(surface('hidden'));
+    const dialog = getByRole('dialog', { hidden: true });
+    expect(isShown(dialog)).toBe(false);
+    expect(isAnyModalOpen()).toBe(false);
+    const { commands } = mount();
+    dispatchKeydown('Escape');
+    expect(commands).toEqual(['escape']);
+    // Its view back, the dialog owns the keyboard again.
+    rerender(surface('visible'));
+    expect(isShown(dialog)).toBe(true);
+    expect(isAnyModalOpen()).toBe(true);
+    dispatchKeydown('Escape');
+    expect(commands).toEqual(['escape']);
+  });
+});
+
+describe('isTypingTarget', () => {
+  // A picker's list is not a text field, but its typeahead owns the letters
+  // typed into it, matched or not; a submenu is only role="menu".
+  test('focus inside an open picker or menu counts as typing', () => {
+    const popup = document.createElement('div');
+    popup.setAttribute('data-picker-popup', '');
+    const list = document.createElement('ul');
+    list.setAttribute('role', 'listbox');
+    list.tabIndex = -1;
+    popup.appendChild(list);
+    const submenu = document.createElement('div');
+    submenu.setAttribute('role', 'menu');
+    const item = document.createElement('button');
+    submenu.appendChild(item);
+    const plain = document.createElement('button');
+    document.body.append(popup, submenu, plain);
+    expect(isTypingTarget(list)).toBe(true);
+    expect(isTypingTarget(item)).toBe(true);
+    expect(isTypingTarget(plain)).toBe(false);
+    // A letter typed in the open list never reaches a shortcut.
+    const { commands } = mount();
+    list.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'c',
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    plain.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'c',
+        bubbles: true,
+        cancelable: true,
+      })
+    );
     expect(commands).toEqual(['new-task']);
   });
 });

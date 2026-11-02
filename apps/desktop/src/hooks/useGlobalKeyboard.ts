@@ -8,15 +8,38 @@ import {
   resolveGlobalKeyCommand,
 } from '../lib/keyboard';
 
-/** True while the event's target is a text field — the DOM-touching half of
+/** An open picker, popover or menu (`data-picker-popup`; a submenu is only a
+ * `role="menu"`) owns the letters typed into it, as a text field does: its list
+ * takes them as typeahead and drops the ones no option starts with. Without
+ * this, a letter with no match would reach the app's shortcuts (`c` opens the
+ * composer, `g h` leaves the page) from inside the open list. */
+const OWNS_ITS_KEYS = '[data-picker-popup], [role="menu"]';
+
+/** True while the event's target is a text field, or inside an open picker or menu — the DOM-touching half of
  * `GlobalKeyboardContext.isTyping` that `lib/keyboard.ts` itself stays pure of. Exported so
  * any other keydown-listening container that also holds real form controls (e.g. `BoardView`'s
  * roving-focus track, which wraps a milestone card's concurrency `<input>`) can build its own
  * `isTyping` the same way instead of hardcoding `false`. */
 export function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
-  return isTypingTagName(target.tagName, target.isContentEditable);
+  return (
+    isTypingTagName(target.tagName, target.isContentEditable) ||
+    target.closest(OWNS_ITS_KEYS) !== null
+  );
 }
+
+/** True unless an ancestor (or the element itself) is hidden with
+ * `display: none` the way React's `<Activity mode="hidden">` hides a view:
+ * an inline style. The element stays in the DOM, so presence alone does not
+ * say it shows. */
+export function isShown(element: Element): boolean {
+  return (
+    element.isConnected && element.closest('[style*="display: none"]') === null
+  );
+}
+
+const MODAL_SURFACES =
+  '[data-slot="dialog-content"][data-open], [data-slot="alert-dialog-content"][data-open], [aria-modal="true"]';
 
 /** True while any modal surface is currently open. Every dialog builds on Base UI (`@/ui/dialog`'s
  * `DialogContent` renders `data-slot="dialog-content"`, and `Dialog.Popup` carries a bare
@@ -38,13 +61,12 @@ export function isTypingTarget(target: EventTarget | null): boolean {
  * `Escape` to `null` here — the library's own Escape handling owns it, and its `onClose`
  * dispatching `closePalette` through `onNavigate` is the only thing that closes it (see
  * `appNav.ts`'s `closePalette` case). Exported for a view whose own
- * document-level Escape must let an open panel's go first (the Graph's lock, `views/GraphView.tsx`). */
+ * document-level Escape must let an open panel's go first (the Graph's lock, `views/GraphView.tsx`).
+ * A surface inside a view hidden under Settings (an `<Activity mode="hidden">` boundary keeps it
+ * in the DOM, aria-modal and all) is not shown, so it does not count: Escape still closes
+ * Settings, and the dialog is there again when its view comes back. */
 export function isAnyModalOpen(): boolean {
-  return (
-    document.querySelector(
-      '[data-slot="dialog-content"][data-open], [data-slot="alert-dialog-content"][data-open], [aria-modal="true"]'
-    ) !== null
-  );
+  return Array.from(document.querySelectorAll(MODAL_SURFACES)).some(isShown);
 }
 
 /** How long an armed chord prefix (`g`) waits for its second key. */

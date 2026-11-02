@@ -15,7 +15,8 @@ import {
   test,
 } from 'bun:test';
 
-import { COPIED_MS, MermaidSource } from '../src/graph/mermaid-source';
+import { MermaidSource } from '../src/graph/mermaid-source';
+import { COPIED_MS } from '../src/lib/clipboard';
 
 const SOURCE = [
   'flowchart LR',

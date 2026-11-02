@@ -308,9 +308,13 @@ test('invites a handle and shows the code once; makes a new recovery code', asyn
   });
   fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
   expect(await screen.findByText('di1.invite-code')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Copy invite code' })).toBeTruthy();
   expect(client.inviteToTeam).toHaveBeenCalledWith('dee');
   fireEvent.click(screen.getByRole('button', { name: 'New recovery code' }));
   expect(await screen.findByText('NEW-RECOVERY-CODE')).toBeTruthy();
+  expect(
+    screen.getByRole('button', { name: 'Copy recovery code' })
+  ).toBeTruthy();
 });
 
 test('closes the legacy window and sets the hosts a machine serves', async () => {
