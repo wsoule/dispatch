@@ -26,6 +26,7 @@ import {
 } from './flightKeys';
 import type { FlightLayout } from './flightLayout';
 import { flightNodeDomId, type FlightNodeView } from './FlightNodeCard';
+import styles from './FlightStage.module.css';
 
 /** What the branch lane reads beyond its groups. */
 export interface FlightLaneData {
@@ -206,8 +207,8 @@ export const FlightStage = memo(function FlightStage({
   }
 
   return (
-    <div className="flex min-h-0 flex-1">
-      <div className="flex min-w-0 flex-1 flex-col">
+    <div className={styles.stage}>
+      <div className={styles.column}>
         <div
           ref={canvasRef}
           role="group"
@@ -221,9 +222,9 @@ export const FlightStage = memo(function FlightStage({
           onBlur={(e) => {
             if (!e.currentTarget.contains(e.relatedTarget)) setHasFocus(false);
           }}
-          // The focused node carries the ring, so the canvas's own would only frame it.
-          style={{ outline: 'none' }}
-          className="relative min-h-0 flex-1 overflow-auto"
+          // Keyboard focus draws an inset ring on the pane (the module); the focused node
+          // carries its own ring as the cursor.
+          className={styles.canvas}
         >
           <FlightCanvas
             layout={layout}

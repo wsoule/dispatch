@@ -309,14 +309,16 @@ The other shared vocabularies:
   done's words, succeeded) and `info` (blue: in progress, running, live).
   Components emit it as `data-tone`. `Chip`, `Notice`, `AlertStrip` (default
   `warning`: an alert is always a status, never the purple), `ProgressRule` (the
-  fill only; default is the accent), `RegisterCell` (the value only; the `sub`
-  line under it stays secondary text unless `toneSub` opts it in, for a reason
-  line that is the point: a blocked project's reason, a failed sync's error) and
-  `StatsStrip` draw every tone; a `RegisterRow`'s tone is data only (no rule:
-  the row says it with a chip or a toned cell). `Button variant="danger"` is a
-  red fill. A status word in running text or a host's own cell is a span with
-  the global `.toneText` class and `data-tone`
-  (`<span class="toneText" data-tone="danger">Failed</span>`):
+  fill only; default is the accent; its progressbar reads "3 of 7 done", and
+  `valueText` says what a meter of something else counts, such as Dispatch's
+  agent slots: "2 of 4 slots in use", `warning` once they are all in use),
+  `RegisterCell` (the value only; the `sub` line under it stays secondary text
+  unless `toneSub` opts it in, for a reason line that is the point: a blocked
+  project's reason, a failed sync's error) and `StatsStrip` draw every tone; a
+  `RegisterRow`'s tone is data only (no rule: the row says it with a chip or a
+  toned cell). `Button variant="danger"` is a red fill. A status word in running
+  text or a host's own cell is a span with the global `.toneText` class and
+  `data-tone` (`<span class="toneText" data-tone="danger">Failed</span>`):
   `color: var(--tone-ink)`, which holds 4.5:1 on `--bg` and `--surface` for
   every tone in both themes (`test/styles-contrast.test.ts`); a bare `data-tone`
   keeps the surrounding colour. It replaces a raw hue read (`color: var(--red)`)
@@ -413,7 +415,7 @@ the types for the rest.
 |          | `ViewToolbar` (list toolbar: an optional search, the host's Filter / Sort / Group, end actions), `ToolbarBadge`                   | `controls` (`search` optional)                                      |
 |          | `FilterChips` ("Project is …" chips joined by "and", + Filter, Clear all)                                                         | `chips`                                                             |
 |          | `BulkBar` (the floating bar of a selection; confirm strip, busy, note), `useBulkBarHeight()` (its height while up)                | `count`, `onClear`, `children`                                      |
-|          | `DeadlineList`, `StatsStrip`, `ProgressRule`                                                                                      | `groups`; `cells`; `done`/`total`                                   |
+|          | `DeadlineList`, `StatsStrip` (`data-*` on the list and each cell; a cell's `title` hint), `ProgressRule` (`valueText`, `data-*`)  | `groups`; `cells`; `done`/`total`                                   |
 |          | `Register`, `RegisterRow` (`pressed` on a button row), `RegisterCell` (`span="row"` takes the whole row)                          | `columns`, `label`, `children`                                      |
 |          | `Notice` (`role` status, alert or note), `EmptyState` (a centred icon, optional `label` title, the sentence, an action)           | see `tasks/types.ts`                                                |
 |          | `NavTabs` (`items`, or `groups` for a grouped vertical sub-nav; below), `Checklist` (the rubric; `onToggle` for Checkbox rows)    | `label` and `items` or `groups`; `items` (`onToggle` optional)      |
@@ -991,28 +993,46 @@ groups in reading order), `dragging` (row ids kept mounted) and `estimate` (the
 px of a row before any is measured; default 55, a list row; a board passes its
 card's height plus the space between cards) and `overscan` (rows kept mounted
 past each edge of the viewport; default 8, sized for list rows, so a board of
-tall cards passes fewer). It returns `RowWindows`: each group's `<ul>` registers
-itself with `registerList(id, el)` (a ref callback), and `segmentsOf(id)` gives
-that group's window as `RowSegment[]`, `rows` runs to draw and `gap` runs of
-`px` the host renders as spacer elements (or null while `enabled` is off: draw
-every row); `revealElement`, `revealRow` and `setFocusedRow` (the focused row
-stays mounted) serve a host's keyboard. `focusUnmountedRow` expects the table's
-row hooks (`data-nav-item="row"` with a `data-nav-target` inside), so a host
-with its own rows uses `revealRow`. The hook measures every drawn
-`li[data-row-id]` of a registered list (its border box, so keep the space
-between rows inside the `li`, as padding, not as a flex `gap` or a margin) and
-uses each row's own height; rows never drawn take the running mean of the
-measured ones (`estimate` before the first), so cards of different heights need
-no separate mode. A group with `offscreen: true` (a column scrolled off
-sideways) mounts no rows but its pinned ones (the focused row, the rows being
-dragged) and is otherwise one gap of its full height, so it costs nothing until
-it scrolls back; the first render spends none of its first ~60 rows on it. A
-group whose window a measurement leaves as it was keeps the same `segmentsOf`
-array, so a host can memoize each list on it and redraw only the lists a scroll
-moved. `flushOnScroll: true` renders a scroll's new windows inside the scroll
-event (`flushSync`), so the frame that scroll paints already holds the rows it
-brought in; a board of tall cards turns it on, the table leaves it off. Without
-`estimate`, `overscan`, `offscreen` and `flushOnScroll` the table's path is
+tall cards passes fewer). `rowHeight(rowId)` gives a row's exact height, for
+rows whose height the host computes (undefined when it is not known; 0, less or
+NaN counts as unknown): it wins over a measurement, and a new function (pass a
+`useCallback` over the heights) re-windows before paint, so a row that grows or
+folds moves the gaps without a scroll; `initialRows` is how many rows the server
+render and the first client render draw before the first measurement (default
+60, sized for list rows). Dispatch's Live passes both: each band's computed
+height and about four first rows, since one band is a whole canvas, so the gaps,
+the scroll range and a J/K jump are exact before every band was drawn. It
+returns `RowWindows`: each group's `<ul>` registers itself with
+`registerList(id, el)` (a ref callback), and `segmentsOf(id)` gives that group's
+window as `RowSegment[]`, `rows` runs to draw and `gap` runs of `px` the host
+renders as spacer elements (or null while `enabled` is off: draw every row);
+`revealElement`, `revealRow` and `setFocusedRow` (the focused row stays mounted,
+is mounted at once when the cursor moves into a row the window left out, and
+stays mounted through a re-sort) serve a host's keyboard.
+`revealRow(id, index, align)` scrolls the least that shows the row whole
+(`'nearest'`, the default), or with `'start'` puts its top at the viewport's top
+under the sticky header (a jump to a section's title, as Live's J/K do), then
+mounts the rows there. `focusUnmountedRow` expects the table's row hooks
+(`data-nav-item="row"` with a `data-nav-target` inside), so a host with its own
+rows uses `revealRow`. The hook measures every drawn `li[data-row-id]` of a
+registered list (its border box, so keep the space between rows inside the `li`,
+as padding, not as a flex `gap` or a margin) and uses each row's own height
+unless `rowHeight` knows it; a row never drawn takes its `rowHeight`, else the
+running mean of the measured ones (`estimate` before the first), so cards of
+different heights need no separate mode. A known height never enters the mean,
+and a row that leaves every group leaves the mean and the cache. The windows are
+measured again before paint when the rows change (ids and order, not only
+counts), so a re-sort keeps the focused row mounted. A group with
+`offscreen: true` (a column scrolled off sideways) mounts no rows but its pinned
+ones (the focused row, the rows being dragged) and is otherwise one gap of its
+full height, so it costs nothing until it scrolls back; the first render spends
+none of its `initialRows` on it. A group whose window a measurement leaves as it
+was keeps the same `segmentsOf` array, so a host can memoize each list on it and
+redraw only the lists a scroll moved. `flushOnScroll: true` renders a scroll's
+new windows inside the scroll event (`flushSync`), so the frame that scroll
+paints already holds the rows it brought in; a board of tall cards turns it on,
+the table leaves it off. Without `estimate`, `overscan`, `rowHeight`,
+`initialRows`, `offscreen`, `flushOnScroll` and `align` the table's path is
 unchanged.
 
 **Folded groups in storage.** `readCollapsedRaw(key, kind)` (the stored string,

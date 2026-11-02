@@ -20,6 +20,7 @@ interface SsrResult {
   codeBlocks: string;
   codeBlocksHosted: string;
   checkboxChecklist: string;
+  stats: string;
 }
 
 function serverRender(): SsrResult {
@@ -328,5 +329,25 @@ describe('task family server render', () => {
     // No rubric state column in this mode.
     expect(html).not.toContain('Missing');
     expect(html).not.toContain('>Met<');
+  });
+
+  test("the stat strip and the progress rule carry a host's hooks", () => {
+    const html = result.stats;
+    // The host's hooks come first on each root, ahead of the component's
+    // own attributes.
+    expect(html).toMatch(
+      /^<ul data-slot="flight-header"[^>]* aria-label="Flight plan"/
+    );
+    expect(html).toMatch(
+      /<li data-slot="flight-stat"[^>]* data-tone="default">/
+    );
+    expect(html).toMatch(
+      /<li data-slot="flight-critical-stat"[^>]* data-tone="default" title="The longest chain of open work">/
+    );
+    expect(html).toMatch(
+      /<span data-slot="flight-slots"[^>]* data-tone="default">/
+    );
+    expect(html).toContain('aria-label="Agent slots"');
+    expect(html).toContain('aria-valuetext="2 of 4 slots in use"');
   });
 });

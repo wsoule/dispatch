@@ -1,0 +1,268 @@
+/* The Flight Plan canvas (FlightCanvas.tsx): a sticky row of wave heads over
+   an absolutely positioned canvas of band title rows, one SVG of edges and
+   the node cards. Geometry is inline (it comes from the layout); colours
+   come from tokens, and a toned edge's from its data-tone (--tone). An
+   edge's EdgeTone sits on data-edge: idle and landed are neutral (landed is
+   done, never green), active and flowing are in progress (info), satisfied
+   is in review (success). */
+
+.root {
+  position: relative;
+}
+
+/* ---- wave heads ---------------------------------------------------------- */
+
+.waveHeads {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg);
+}
+
+.waveHead {
+  position: absolute;
+  top: 0;
+  display: flex;
+  height: 100%;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+}
+
+.waveName {
+  color: var(--text-2);
+  font-weight: var(--fw-medium);
+}
+
+.waveHead[data-current] .waveName {
+  color: var(--text);
+}
+
+.waveTally {
+  color: var(--text-3);
+}
+
+.waveDone {
+  flex: none;
+  color: var(--text-2);
+}
+
+.waveNow {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: var(--fw-medium);
+}
+
+.waveNowDot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--tone);
+}
+
+/* The hairline under a wave: landed fills neutral, then running in the
+   in-progress hue. */
+.waveTrack {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  overflow: hidden;
+  background: var(--border);
+}
+
+.waveLanded,
+.waveRunning {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.waveLanded {
+  left: 0;
+  background: var(--text-3);
+}
+
+.waveRunning {
+  background: var(--tone);
+}
+
+/* ---- band heads ---------------------------------------------------------- */
+
+.bandHead {
+  position: absolute;
+  left: 0;
+  display: flex;
+  align-items: flex-end;
+}
+
+/* The label sticks to the left edge while the plan scrolls sideways. */
+.bandLabel {
+  position: sticky;
+  left: 0;
+  display: flex;
+  height: 32px;
+  max-width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 0 20px;
+}
+
+.bandGlyph {
+  flex: none;
+}
+
+.bandTitle {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs);
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bandRef {
+  flex: none;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.bandCount {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+.bandControls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ---- the canvas and its edges -------------------------------------------- */
+
+.canvas {
+  position: relative;
+}
+
+/* Its own compositing layer: cards culled in over the edges never repaint
+   the strokes (WebKit). */
+.edges {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* The critical path's soft accent highlighter, drawn under its edges. */
+.critical {
+  fill: none;
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-opacity: 0.26;
+  stroke-width: 4;
+}
+
+.edge {
+  fill: none;
+  stroke-width: 1.25;
+}
+
+.edge[data-edge='idle'] {
+  stroke: var(--text-3);
+  stroke-dasharray: 3 4;
+  stroke-opacity: 0.6;
+  stroke-width: 1;
+}
+
+.edge[data-edge='active'] {
+  stroke: var(--tone);
+  stroke-opacity: 0.45;
+  stroke-width: 1;
+}
+
+.edge[data-edge='flowing'] {
+  stroke: var(--tone);
+  stroke-dasharray: 4 4;
+  stroke-opacity: 0.9;
+}
+
+.edge[data-edge='satisfied'] {
+  stroke: var(--tone);
+  stroke-opacity: 0.7;
+}
+
+.edge[data-edge='landed'] {
+  stroke: var(--text-2);
+  stroke-opacity: 0.55;
+}
+
+/* A blocker landing eases its edges to the new colour, and a flowing edge's
+   dashes drift toward the dependent. The dashes step rather than glide: five
+   repaints a second instead of sixty, for the same sense of motion. With
+   reduced motion the colour changes at once and the dashes stand still. */
+@media (prefers-reduced-motion: no-preference) {
+  .edge {
+    transition:
+      stroke 0.5s var(--ease),
+      stroke-opacity 0.5s var(--ease);
+  }
+
+  .edge[data-edge='flowing'] {
+    animation: flight-flow 1.6s steps(8) infinite;
+  }
+
+  .waveLanded {
+    transition: width 0.5s var(--ease);
+  }
+
+  .waveRunning {
+    transition:
+      left 0.5s var(--ease),
+      width 0.5s var(--ease);
+  }
+}
+
+@keyframes flight-flow {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+
+/* Forced colours: every edge in the text colour (its dashes tell idle and
+   flowing apart), the critical path in Highlight; the wave track and its
+   fills keep their marks in system colours. */
+@media (forced-colors: active) {
+  .edges {
+    forced-color-adjust: none;
+  }
+
+  .edge[data-edge] {
+    stroke: CanvasText;
+  }
+
+  .critical {
+    stroke: Highlight;
+  }
+
+  .waveTrack {
+    forced-color-adjust: none;
+    background: GrayText;
+  }
+
+  .waveLanded {
+    background: CanvasText;
+  }
+
+  .waveRunning,
+  .waveNowDot {
+    forced-color-adjust: none;
+    background: Highlight;
+  }
+}

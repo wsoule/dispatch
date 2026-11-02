@@ -43,11 +43,13 @@ export type UiTone = 'default' | 'muted' | 'accent' | SemanticTone;
 
 /**
  * `data-*` attributes a host puts on a component (its `data-testid` and
- * `data-slot` hooks). The components that take them (Button, Popover,
- * PickerPopover, Dialog, ConfirmDialog) spread them, untouched, on their
- * root element, so a host keeps its test and styling hooks without the
- * package knowing their names. A component's own `data-*` attributes win
- * over a host's of the same name.
+ * `data-slot` hooks). The components whose props extend it (Button,
+ * Popover, PickerPopover, Dialog, ConfirmDialog, StatsStrip and each of its
+ * StatCells, ProgressRule, and the others whose props say so) spread them,
+ * untouched, on their root element (a StatCell's on its cell), so a host
+ * keeps its test and styling hooks without the package knowing their
+ * names. A component's own `data-*` attributes win over a host's of the
+ * same name.
  */
 export type DataAttributes = {
   [key: `data-${string}`]: string | number | boolean | undefined;

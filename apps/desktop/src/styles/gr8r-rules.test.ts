@@ -260,6 +260,15 @@ const GR8R_SCOPE: readonly string[] = [
   'lib/fixLoopStatus.ts',
   'lib/fixLoopStatus.test.ts',
   'lib/reviewCriteria.ts',
+  'components/flightplan',
+  'components/live',
+  'views/LiveView.tsx',
+  'views/LiveView.module.css',
+  'views/LiveView.test.tsx',
+  'lib/cockpit.ts',
+  'lib/cockpit.test.ts',
+  'lib/cockpitKeys.ts',
+  'lib/cockpitKeys.test.ts',
 ];
 
 /** Test files whose hex literals are Linear-supplied data, not colours of their own: a

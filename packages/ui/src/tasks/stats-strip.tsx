@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react';
 
+import { dataAttributes } from '../lib/data-attributes';
 import { Link } from '../lib/link';
 import { cx } from './class-names';
 import styles from './stats-strip.module.css';
@@ -40,12 +41,16 @@ function lastCellSpan(count: number, columns: number): number {
    value and a quiet note. The cell's tone (data-tone) colours the value
    and its note: danger for an overdue count, warning for at risk, accent
    for new; default stays --text. Four across, two on phones, with the last
-   cell spanning the rest of its row so the panel closes. */
-export function StatsStrip({ cells, label = 'Summary' }: StatsStripProps) {
+   cell spanning the rest of its row so the panel closes. The host's data-*
+   hooks land on the list and on each cell's <li> (with the cell's title as
+   a hover hint); the cell's own data-tone wins over a host's. */
+export function StatsStrip(props: StatsStripProps) {
+  const { cells, label = 'Summary' } = props;
   const columns = Math.max(1, Math.min(cells.length, MAX_COLUMNS));
   const span = lastCellSpan(cells.length, columns);
   return (
     <ul
+      {...dataAttributes(props)}
       className={styles.strip}
       aria-label={label}
       style={{ '--stat-cols': columns } as CSSProperties}
@@ -56,8 +61,10 @@ export function StatsStrip({ cells, label = 'Summary' }: StatsStripProps) {
         return (
           <li
             key={cell.id}
+            {...dataAttributes(cell)}
             className={cx(styles.cell, styles[tone])}
             data-tone={tone}
+            title={cell.title}
             style={
               last && span > 1
                 ? ({ '--stat-span': span } as CSSProperties)

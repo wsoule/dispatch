@@ -13,7 +13,16 @@ import type {
   MilestoneProgress,
   MilestoneProgressChild,
 } from '@dispatch/client';
-import { Waypoints } from 'lucide-react';
+import {
+  Button,
+  cx,
+  EmptyState,
+  Menu,
+  type MenuEntry,
+  Skeleton,
+  SkeletonRows,
+} from '@dispatch/ui';
+import { ChevronDown, Waypoints } from 'lucide-react';
 import {
   type ReactNode,
   useCallback,
@@ -53,6 +62,7 @@ import {
   viewerHolderOf,
 } from './flightPlan';
 import { type FlightHeaderStats, FlightPlanHeader } from './FlightPlanHeader';
+import styles from './FlightPlanView.module.css';
 import {
   childrenByParent,
   DIRECT_BAND,
@@ -67,17 +77,6 @@ import {
   flightWaveViews,
   queuePositions,
 } from './flightViews';
-import { cn } from '@/lib/utils';
-import { SelectPill } from '@/ui/ai/pill';
-import { EmptyState } from '@/ui/chrome';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from '@/ui/dropdown-menu';
-import { Spinner } from '@/ui/spinner';
 
 export interface FlightPlanProps {
   containerId: string;
@@ -103,6 +102,13 @@ export interface FlightPlanProps {
   /** Called once the ask above opened the dialog, so it is not replayed. */
   onSendAgentsServed?: (nonce: number) => void;
   className?: string;
+}
+
+const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
+
+/** A fan-out's agent slots as the slots trigger reads them: "1 slot", "3 slots". */
+function slotsText(slots: number): string {
+  return `${slots} ${slots === 1 ? 'slot' : 'slots'}`;
 }
 
 // A clock for estimates that age: remaining time on a running node shrinks with it.
@@ -638,35 +644,42 @@ export function FlightPlan({
         data.config?.orchestrator.milestoneConcurrency ?? 3,
         data.config?.orchestrator.maxConcurrency
       );
+      // The live session's ceiling as radio rows; picking another one pauses and resumes
+      // the session at it. Beside FanoutControls, whose own concurrency picker only
+      // renders while no session runs.
+      const slotItems: MenuEntry[] =
+        session?.state === 'active'
+          ? choices.map((choice) => ({
+              kind: 'radio',
+              id: String(choice),
+              label: concurrencyLabel(choice),
+              checked: choice === session.concurrency,
+              onSelect: () => {
+                if (choice !== session.concurrency)
+                  void setCeiling(milestoneId, choice);
+              },
+            }))
+          : [];
       return (
         <>
           {!band && session?.state === 'active' && (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <SelectPill aria-label={`Agent slots for ${milestoneId}`} />
-                }
-              >
-                {session.concurrency}{' '}
-                {session.concurrency === 1 ? 'slot' : 'slots'}
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[96px]">
-                <DropdownMenuRadioGroup
-                  value={String(session.concurrency)}
-                  onValueChange={(value) => {
-                    const next = Number(value);
-                    if (next !== session.concurrency)
-                      void setCeiling(milestoneId, next);
-                  }}
+            <Menu
+              label={`Agent slots for ${milestoneId}`}
+              items={slotItems}
+              align="end"
+              trigger={(props) => (
+                <Button
+                  {...props}
+                  variant="secondary"
+                  size="sm"
+                  // The name carries the visible text, so "click 2 slots" finds it.
+                  aria-label={`Agent slots for ${milestoneId}: ${slotsText(session.concurrency)}`}
+                  iconAfter={<ChevronDown {...ICON} size={12} />}
                 >
-                  {choices.map((choice) => (
-                    <DropdownMenuRadioItem key={choice} value={String(choice)}>
-                      {concurrencyLabel(choice)}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                  {slotsText(session.concurrency)}
+                </Button>
+              )}
+            />
           )}
           <FanoutControls
             milestone={milestone}
@@ -730,19 +743,27 @@ export function FlightPlan({
   ]);
 
   if (!data.tasksReady) {
+    // A load: the header's strip and a few rows of cards hold the plan's shape.
     return (
-      <div className="flex h-full items-center justify-center">
-        <Spinner className="text-muted-foreground size-4" />
+      <div
+        data-slot="flight-plan"
+        className={cx(styles.root, styles.loading, className)}
+      >
+        {/* One status for the one load: the strip's block is a decorative shape. */}
+        <Skeleton height={72} className={styles.headSkeleton} />
+        <SkeletonRows rows={4} label="Loading the flight plan" />
       </div>
     );
   }
   if (container === null || scope === null) {
     return (
-      <EmptyState
-        className="h-full"
-        heading="This plan is no longer available."
-        description="Its container was archived or deleted."
-      />
+      <div data-slot="flight-plan" className={cx(styles.root, className)}>
+        <div className={styles.empty}>
+          <EmptyState label="This plan is no longer available.">
+            Its container was archived or deleted.
+          </EmptyState>
+        </div>
+      </div>
     );
   }
 
@@ -787,19 +808,19 @@ export function FlightPlan({
       : null;
 
   return (
-    <div
-      data-slot="flight-plan"
-      className={cn('flex h-full min-h-0 flex-col', className)}
-    >
+    <div data-slot="flight-plan" className={cx(styles.root, className)}>
       {/* The container's fan-out covers the whole plan, every band included. */}
       <FlightPlanHeader stats={stats} controls={fanoutFor(container, false)} />
       {nodes.length === 0 ? (
-        <EmptyState
-          icon={Waypoints}
-          heading="Nothing to plan yet"
-          description="Tasks under this container show up here as waves, with their blockers drawn between them."
-          className="min-h-0 flex-1"
-        />
+        <div className={styles.empty}>
+          <EmptyState
+            icon={<Waypoints size={22} strokeWidth={1.8} aria-hidden />}
+            label="Nothing to plan yet"
+          >
+            Tasks under this container show up here as waves, with their
+            blockers drawn between them.
+          </EmptyState>
+        </div>
       ) : (
         <FlightStage
           title={container.meta.title}

@@ -65,6 +65,55 @@ describe('StatsStrip', () => {
     expect(link.hasAttribute('data-host-link')).toBe(true);
     expect(link.textContent).toBe('Overdue2');
   });
+
+  test("a host's data-* reach the list and each cell, a cell's title its li", () => {
+    const { getByRole, getAllByRole } = render(
+      <StatsStrip
+        label="Live work"
+        data-slot="live-header"
+        data-testid="live-stats"
+        cells={[
+          {
+            id: 'queued',
+            label: 'Queued',
+            value: 3,
+            title: 'Waiting for a free agent slot',
+            'data-slot': 'live-queued',
+          },
+          {
+            id: 'eta',
+            label: 'ETA',
+            value: '2h',
+            tone: 'warning',
+            'data-slot': 'flight-eta',
+            // The cell's own tone wins over a host's.
+            'data-tone': 'danger',
+          },
+        ]}
+      />
+    );
+    const list = getByRole('list', { name: 'Live work' });
+    expect(list.getAttribute('data-slot')).toBe('live-header');
+    expect(list.getAttribute('data-testid')).toBe('live-stats');
+    const [queued, eta] = getAllByRole('listitem');
+    expect(queued?.getAttribute('data-slot')).toBe('live-queued');
+    expect(queued?.getAttribute('title')).toBe('Waiting for a free agent slot');
+    expect(eta?.getAttribute('data-slot')).toBe('flight-eta');
+    expect(eta?.getAttribute('data-tone')).toBe('warning');
+    expect(eta?.hasAttribute('title')).toBe(false);
+  });
+
+  test('without data-* or title it adds no attribute', () => {
+    const { getByRole, getAllByRole } = render(
+      <StatsStrip cells={[{ id: 'open', label: 'Open', value: 7 }]} />
+    );
+    const hooks = (el: Element | undefined) =>
+      (el?.getAttributeNames() ?? []).filter(
+        (name) => name.startsWith('data-') || name === 'title'
+      );
+    expect(hooks(getByRole('list', { name: 'Summary' }))).toEqual([]);
+    expect(hooks(getAllByRole('listitem')[0])).toEqual(['data-tone']);
+  });
 });
 
 function item(id: string): DeadlineGroup['items'][number] {

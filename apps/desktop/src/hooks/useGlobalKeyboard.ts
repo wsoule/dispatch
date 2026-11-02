@@ -57,7 +57,8 @@ const MODAL_SURFACES =
  * `@dispatch/ui` SlideOvers, and the DiffModal stacked over SessionDetailModal a
  * `@dispatch/ui` Dialog; a closing SlideOver drops aria-modal for its exit slide, so an
  * exiting panel is not caught. The Base UI dialogs that remain (NewDocDialog, PublishDialog,
- * and the alert dialogs in FirstTaskGuide and LiveView) are the `data-slot` matches above. Checked
+ * and the alert dialog in FirstTaskGuide) are the `data-slot` matches above; LiveView's Pause
+ * all confirm is a `@dispatch/ui` ConfirmDialog (`aria-modal`). Checked
  * live via a DOM query at the moment a keydown fires, rather than threaded through as
  * reactive React state — every dialog instance
  * (TaskComposerSlideOver, SessionDetailModal, DiffModal, CommandPalette, …) only renders into the DOM

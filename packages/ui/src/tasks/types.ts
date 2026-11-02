@@ -385,7 +385,9 @@ export interface ProgressPieProps {
   className?: string;
 }
 
-export interface ProgressRuleProps {
+/** The host's `data-*` hooks land on the root span (Dispatch's
+ * `data-slot="flight-slots"`), beside the component's own `data-tone`. */
+export interface ProgressRuleProps extends DataAttributes {
   done: number;
   total: number;
   /** The fill's colour: default = the accent (Gr8r's progress fill);
@@ -397,6 +399,10 @@ export interface ProgressRuleProps {
   label?: string | null;
   /** Accessible name, e.g. "Cutover rehearsal progress". */
   'aria-label'?: string;
+  /** The track's aria-valuetext, for a meter that counts something other
+   * than work done ("3 of 4 slots in use" for agent slots). Default (and
+   * when '') "<done> of <total> done", with the clamped numbers. */
+  valueText?: string;
 }
 
 export interface NoticeProps extends DataAttributes {
@@ -632,7 +638,9 @@ export interface PanelRowProps
 
 /* ---- stats ------------------------------------------------------------- */
 
-export interface StatCell {
+/** A cell's `data-*` hooks land on its `<li>` (Dispatch's
+ * `data-slot="flight-stat"`), beside the cell's own `data-tone`. */
+export interface StatCell extends DataAttributes {
   id: string;
   label: string;
   /** Rendered in tabular figures. */
@@ -647,9 +655,16 @@ export interface StatCell {
   tone?: UiTone;
   /** Makes the cell a link (Gr8r stat cards navigate to the filtered list). */
   href?: string;
+  /** A hover hint over the whole cell (the `<li>`'s title), for what the
+   * number counts or how it was worked out ("Queued: waiting for a free
+   * slot"). Pointer-only, so the same fact must also be in words somewhere
+   * a keyboard reaches (the label, the note, or the page). */
+  title?: string;
 }
 
-export interface StatsStripProps {
+/** The host's `data-*` hooks land on the `<ul>` (Dispatch's
+ * `data-slot="live-header"`). */
+export interface StatsStripProps extends DataAttributes {
   cells: StatCell[];
   /** Accessible name of the strip. */
   label?: string;

@@ -225,27 +225,22 @@ describe('FlightPlan', () => {
     expect(sentenceOf('t-c')).toBe('Auto-starts when t-b finishes');
     // Two slots, one running: the queued node is next.
     expect(sentenceOf('t-e')).toBe('Next up');
-    expect(
-      document
-        .querySelector('[data-slot=flight-slots]')
-        ?.getAttribute('aria-label')
-    ).toBe('1 of 2 slots in use');
+    // The header's slots meter is a progressbar named for agent slots.
+    const meter = document.querySelector(
+      '[data-slot=flight-header] [data-slot=flight-slots] [role=progressbar]'
+    );
+    expect(meter?.getAttribute('aria-label')).toBe('Agent slots');
+    expect(meter?.getAttribute('aria-valuetext')).toBe('1 of 2 slots in use');
   });
 
   test('a blocker landing flips its dependent in place and lights the edge', () => {
     const view = mount(dataWith(plan()));
     const before = node('t-c')?.style.transform;
-    expect(
-      document.querySelectorAll('[data-slot=flight-edge][data-tone=flowing]')
-        .length
-    ).toBe(1);
+    expect(document.querySelectorAll('[data-edge=flowing]').length).toBe(1);
     view.rerenderWith(dataWith(plan({ 't-b': { status: 'landed' } }), []));
     expect(stateOf('t-c')).toBe('queued');
     expect(node('t-c')?.style.transform).toBe(before);
-    expect(
-      document.querySelectorAll('[data-slot=flight-edge][data-tone=landed]')
-        .length
-    ).toBe(2);
+    expect(document.querySelectorAll('[data-edge=landed]').length).toBe(2);
   });
 
   test('arrows walk the grid, Enter opens, d dispatches optimistically', async () => {
@@ -354,6 +349,20 @@ describe('FlightPlan', () => {
     const view = mount(dataWith(tasks, []), undefined, 'e-p');
     expect(header()).toContain('Send agents');
     expect(bandText()).toContain('Send agents');
+    // The strip reads label then value, cell by cell; with no fan-out nothing is
+    // queued, only ready.
+    expect(
+      Array.from(
+        document.querySelectorAll('[data-slot=flight-header] li'),
+        (cell) => cell.textContent
+      )
+    ).toEqual([
+      'SlotsNoneNot fanning out',
+      'Running0',
+      'Ready3',
+      'Landed0/3',
+      'Critical path1~20m',
+    ]);
 
     // The project's session owns every milestone's nodes: one queue, its slots.
     view.rerenderWith(dataWith(tasks, [], [progress('active', 1, 'e-p')]));
@@ -361,6 +370,58 @@ describe('FlightPlan', () => {
     expect(sentenceOf('t-1')).toBe('Next up');
     expect(sentenceOf('t-2')).toBe('#1 in queue');
     expect(sentenceOf('t-3')).toBe('#2 in queue');
+  });
+
+  test('the agent slots menu moves a live session to a new ceiling', async () => {
+    const calls: string[] = [];
+    const data = {
+      ...dataWith(plan(), [LIVE], [progress('active', 2)]),
+      handlePauseMilestone: (id: string) => {
+        calls.push(`pause ${id}`);
+        return Promise.resolve();
+      },
+      handleResumeMilestone: (id: string, opts?: { concurrency?: number }) => {
+        calls.push(`resume ${id} ${String(opts?.concurrency)}`);
+        return Promise.resolve();
+      },
+    } as DispatchProjectData;
+    mount(data);
+    // The name carries the trigger's visible text (label in name).
+    const trigger = screen.getByRole('button', {
+      name: 'Agent slots for e-1: 2 slots',
+    });
+    expect(trigger.textContent).toBe('2 slots');
+    // A menu places itself a microtask after it opens, so let the queue drain.
+    const settle = (work: () => void) =>
+      act(async () => {
+        work();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    await settle(() => fireEvent.click(trigger));
+    expect(
+      screen.getByRole('menu', { name: 'Agent slots for e-1' })
+    ).toBeTruthy();
+    const rows = screen.getAllByRole('menuitemradio');
+    expect(rows.map((row) => row.textContent)).toEqual([
+      '1×',
+      '2×',
+      '3×',
+      '4×',
+    ]);
+    expect(rows.map((row) => row.getAttribute('aria-checked'))).toEqual([
+      'false',
+      'true',
+      'false',
+      'false',
+    ]);
+    // The checked row changes nothing; another pauses, then resumes at it.
+    await settle(() => fireEvent.click(rows[1]));
+    expect(calls).toEqual([]);
+    await settle(() => fireEvent.click(trigger));
+    await settle(() =>
+      fireEvent.click(screen.getAllByRole('menuitemradio')[2])
+    );
+    expect(calls).toEqual(['pause e-1', 'resume e-1 3']);
   });
 
   test('a node the server will not start never reads as next up', () => {
@@ -491,6 +552,26 @@ describe('FlightPlan', () => {
   test('an empty container says what will appear', () => {
     mount(dataWith([task('e-1', { kind: 'milestone', parent: null })], []));
     expect(screen.getByText('Nothing to plan yet')).toBeTruthy();
+  });
+
+  test('a load draws skeletons, and a missing container says it is gone', () => {
+    const { unmount } = mount({
+      ...dataWith(plan()),
+      tasksReady: false,
+    } as DispatchProjectData);
+    // One load, one status: the strip's block is decorative.
+    const status = document.querySelectorAll(
+      '[data-slot=flight-plan] [role=status]'
+    );
+    expect(status).toHaveLength(1);
+    expect(status[0]?.textContent).toBe('Loading the flight plan');
+    expect(document.querySelector('[data-slot=flight-header]')).toBeNull();
+    unmount();
+    mount(dataWith(plan()), undefined, 'e-gone');
+    expect(screen.getByText('This plan is no longer available.')).toBeTruthy();
+    expect(
+      screen.getByText('Its container was archived or deleted.')
+    ).toBeTruthy();
   });
 
   test('the section draws from the app’s host, and nothing without one', () => {

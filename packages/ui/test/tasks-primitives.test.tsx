@@ -808,6 +808,43 @@ describe('ProgressRule', () => {
     expect(container.textContent).toBe('');
     expect(container.querySelector('[data-tone="accent"]')).not.toBeNull();
   });
+
+  test("a host's data-* land on the root and valueText says what it counts", () => {
+    const { getByRole, container } = render(
+      <ProgressRule
+        done={4}
+        total={4}
+        tone="warning"
+        aria-label="Agent slots"
+        valueText="4 of 4 slots in use"
+        data-slot="flight-slots"
+        data-testid="slots"
+      />
+    );
+    const root = container.firstElementChild;
+    expect(root?.getAttribute('data-slot')).toBe('flight-slots');
+    expect(root?.getAttribute('data-testid')).toBe('slots');
+    expect(root?.getAttribute('data-tone')).toBe('warning');
+    const bar = getByRole('progressbar', { name: 'Agent slots' });
+    expect(bar.getAttribute('aria-valuetext')).toBe('4 of 4 slots in use');
+    expect(bar.getAttribute('aria-valuenow')).toBe('4');
+  });
+
+  test('without valueText (or with an empty one) the value text is done of total', () => {
+    const { getAllByRole, container } = render(
+      <>
+        <ProgressRule done={2} total={5} />
+        <ProgressRule done={2} total={5} valueText="" />
+      </>
+    );
+    for (const bar of getAllByRole('progressbar')) {
+      expect(bar.getAttribute('aria-valuetext')).toBe('2 of 5 done');
+    }
+    const root = container.firstElementChild;
+    expect(
+      root?.getAttributeNames().filter((name) => name.startsWith('data-'))
+    ).toEqual(['data-tone']);
+  });
 });
 
 describe('Checklist', () => {

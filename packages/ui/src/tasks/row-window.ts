@@ -15,8 +15,8 @@ export type RowSegment =
 export interface RowWindowInput {
   /** The group's shown rows. */
   count: number;
-  /** A row's height in px: measured when it has been drawn, else the
-      running estimate. Always positive. */
+  /** A row's height in px: the host's known height for it, else measured
+      when it has been drawn, else the running estimate. Always positive. */
   heightAt: (index: number) => number;
   /** The list's top edge (row 0's top), in the viewport's coordinates. */
   listTop: number;
@@ -129,20 +129,32 @@ export function sameSegments(
   return true;
 }
 
+/** `px` when it is a usable row height (finite and above 0), else
+    `fallback`. A host's known height of 0, a negative one or NaN would
+    collapse or poison a gap, so it counts as unknown. */
+export function heightOr(px: number | undefined, fallback: number): number {
+  return px !== undefined && Number.isFinite(px) && px > 0 ? px : fallback;
+}
+
 /**
  * The windows before anything has been measured (the server render, and
  * the client's first render, which a layout effect corrects before paint):
- * whole groups in order until `budget` rows are drawn, then one estimated
- * gap per group. Pure in the data, so a server render and its hydration
- * agree. Returns the segments per group, by position in `counts`.
+ * whole groups in order until `budget` rows are drawn, then one gap per
+ * group for the rest. A gap's px is the sum of its rows' known heights
+ * (`heightAt`, by group position and row index: a host that computes its
+ * rows' heights, such as Live's bands) with `estimate` for a row whose
+ * height is not known, or `estimate` per row without `heightAt`. Pure in
+ * the data, so a server render and its hydration agree. Returns the
+ * segments per group, by position in `counts`.
  */
 export function initialSegments(
   counts: readonly number[],
   budget: number,
-  estimate: number
+  estimate: number,
+  heightAt?: (group: number, index: number) => number | undefined
 ): RowSegment[][] {
   let left = budget;
-  return counts.map((count) => {
+  return counts.map((count, group) => {
     if (count === 0) return [];
     const drawn = Math.min(count, left);
     left -= drawn;
@@ -153,7 +165,14 @@ export function initialSegments(
         kind: 'gap',
         start: drawn,
         end: count,
-        px: (count - drawn) * estimate,
+        px:
+          heightAt === undefined
+            ? (count - drawn) * estimate
+            : sumHeights(
+                (index) => heightOr(heightAt(group, index), estimate),
+                drawn,
+                count
+              ),
       });
     }
     return segments;

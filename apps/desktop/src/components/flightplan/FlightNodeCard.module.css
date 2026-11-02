@@ -1,0 +1,170 @@
+/* One Flight Plan node (FlightNodeCard.tsx), 240x68 at its layout position:
+   the glyph, id, cost and the owner's avatar (or a live clock) on top, the
+   title, then the node's sentence. Size and position are inline; the state
+   sets the look through data-state, and running and review take their
+   status edge from data-tone (--tone-line). Cards sit in the canvas, so
+   they carry no shadow. */
+
+.card {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  overflow: hidden;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  scroll-margin-top: 40px;
+  scroll-margin-left: 20px;
+
+  /* Its own compositing layer: in WebKit a card culled in or out as the
+     plan pans would otherwise repaint the canvas under every other card. */
+  will-change: transform;
+}
+
+/* Done: a filled neutral mark, never green. */
+.card[data-state='done'] {
+  background: var(--surface-2);
+}
+
+/* Running (info) and review (success): the status hue's edge. */
+.card[data-state='running'],
+.card[data-state='review'] {
+  border-color: var(--tone-line);
+}
+
+/* Blocked: an open dashed outline on the canvas. */
+.card[data-state='blocked'] {
+  border-style: dashed;
+  border-color: var(--control-border);
+  background: transparent;
+}
+
+@media (hover: hover) {
+  .card:hover {
+    background: var(--surface-2);
+  }
+
+  .card[data-state='done']:hover {
+    background: var(--surface-3);
+  }
+}
+
+/* The keyboard cursor: the canvas holds focus (aria-activedescendant), so
+   the focused card draws the ring itself. */
+.card[data-focused] {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* A critical-path node's accent rail at the left edge. */
+.card[data-critical]::before {
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 0;
+  width: 2px;
+  border-radius: 0 var(--r-full) var(--r-full) 0;
+  background: var(--accent);
+  content: '';
+}
+
+/* A state change eases the card's fill and edge, so a landing reads as the
+   card settling rather than a re-render. */
+@media (prefers-reduced-motion: no-preference) {
+  .card {
+    transition:
+      background-color var(--dur) var(--ease),
+      border-color var(--dur) var(--ease);
+  }
+}
+
+.head {
+  display: flex;
+  height: 16px;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  line-height: 16px;
+}
+
+.glyph {
+  flex: none;
+}
+
+.glyphQueued {
+  flex: none;
+  color: var(--text-2);
+}
+
+.glyphBlocked {
+  flex: none;
+  color: var(--text-3);
+}
+
+.ref {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  flex: none;
+  color: var(--text-3);
+}
+
+.title {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs);
+  font-weight: var(--fw-medium);
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card[data-state='done'] .title,
+.card[data-state='blocked'] .title {
+  color: var(--text-2);
+}
+
+/* The sentence: neutral in the secondary ink, a status word in its tone's
+   ink through the global toneText class. */
+.sentence {
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Forced colours keep every shape: the edge in the system text colour
+   (dashed stays dashed), the cursor and the rail in Highlight. */
+@media (forced-colors: active) {
+  .card[data-state] {
+    border-color: CanvasText;
+  }
+
+  .card[data-focused] {
+    outline-color: Highlight;
+  }
+
+  .card[data-critical]::before {
+    forced-color-adjust: none;
+    background: Highlight;
+  }
+}

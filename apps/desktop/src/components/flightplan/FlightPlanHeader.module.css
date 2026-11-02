@@ -1,0 +1,44 @@
+/* The Flight Plan's header (FlightPlanHeader): the stats strip, with the
+   fan-out controls beside it on the right, wrapping under it when the
+   column is narrow. A soft rule closes it off from the canvas. */
+.header {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.strip {
+  flex: 1 1 420px;
+  min-width: 0;
+}
+
+.controls {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* The critical path's legend: the canvas highlighter's accent at the
+   same strength. */
+.criticalSwatch {
+  display: block;
+  width: 14px;
+  height: 5px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  opacity: 0.4;
+}
+
+@media (forced-colors: active) {
+  .criticalSwatch {
+    border: 1px solid CanvasText;
+    opacity: 1;
+  }
+}

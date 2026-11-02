@@ -110,10 +110,3 @@ button {
     background-position: -50%;
   }
 }
-
-/* The Flight Plan's edge out of a running node: its dashes drift toward the dependent. */
-@keyframes flight-flow {
-  to {
-    stroke-dashoffset: -16;
-  }
-}

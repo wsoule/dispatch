@@ -207,9 +207,10 @@ const CARD_GAP = 8;
 const ROW_ESTIMATE = CARD_ESTIMATE + CARD_GAP;
 // Cards kept mounted past each edge of the board's viewport. The library default (8) is
 // sized for 55px list rows and would keep about 1,100px of ~138px cards on each side of
-// every column. Two is enough (VirtualRows kept three): a scroll renders its new cards
-// inside the scroll event (`flushOnScroll`), so the overscan is not what keeps a column
-// from painting blank, and the 2,000-task board stays under VirtualRows' DOM size.
+// every column. Two is enough (the old react-virtual board kept three): a scroll renders
+// its new cards inside the scroll event (`flushOnScroll`), so the overscan is not what
+// keeps a column from painting blank, and the 2,000-task board stays under the old
+// board's DOM size.
 const CARD_OVERSCAN = 2;
 
 // How far past each side of the board's visible width a column still counts as near, as a
@@ -767,8 +768,9 @@ export function TaskBoard({
     dragging,
     estimate: ROW_ESTIMATE,
     overscan: CARD_OVERSCAN,
-    // VirtualRows' guarantee: a scroll renders every column's new cards in one commit
-    // inside the scroll event, so the frame it paints never shows a column short of cards.
+    // The old react-virtual board's guarantee: a scroll renders every column's new cards in
+    // one commit inside the scroll event, so the frame it paints never shows a column short
+    // of cards.
     flushOnScroll: true,
   });
 

@@ -17,6 +17,7 @@ import {
   PanelRow,
   PickerPopover,
   ProgressPie,
+  ProgressRule,
   Register,
   RegisterCell,
   RegisterRow,
@@ -24,6 +25,7 @@ import {
   SectionHeader,
   SegmentedControl,
   StatePicker,
+  StatsStrip,
   Switch,
   TaskDetail,
   type TaskDetailProps,
@@ -436,6 +438,35 @@ const checkboxChecklist = (
   />
 );
 
+// A flight plan header (B10): a stat strip with the host's hooks on the
+// list and a cell (with its hover hint), and the agent slots meter with its
+// hook and its own value text.
+const stats = (
+  <>
+    <StatsStrip
+      label="Flight plan"
+      data-slot="flight-header"
+      cells={[
+        { id: 'open', label: 'Open', value: 4, 'data-slot': 'flight-stat' },
+        {
+          id: 'critical',
+          label: 'Critical path',
+          value: '3 steps',
+          title: 'The longest chain of open work',
+          'data-slot': 'flight-critical-stat',
+        },
+      ]}
+    />
+    <ProgressRule
+      done={2}
+      total={4}
+      aria-label="Agent slots"
+      valueText="2 of 4 slots in use"
+      data-slot="flight-slots"
+    />
+  </>
+);
+
 console.log(
   JSON.stringify({
     hasWindow: typeof window !== 'undefined',
@@ -454,5 +485,6 @@ console.log(
     codeBlocks: renderToString(codeBlocks),
     codeBlocksHosted: renderToString(codeBlocksHosted),
     checkboxChecklist: renderToString(checkboxChecklist),
+    stats: renderToString(stats),
   })
 );

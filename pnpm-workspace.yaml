@@ -115,7 +115,6 @@ catalog:
   '@playwright/test': '1.62.0'
   '@tailwindcss/vite': '4.3.3'
   '@tanstack/react-query': '5.101.2'
-  '@tanstack/react-virtual': '3.14.13'
   '@tauri-apps/api': '2.11.1'
   '@tauri-apps/cli': '2.11.4'
   '@tauri-apps/plugin-deep-link': '2.4.10'

@@ -1,7 +1,9 @@
+import { cx, type UiTone } from '@dispatch/ui';
 import { Check } from 'lucide-react';
 import { memo, type ReactNode, useMemo } from 'react';
 
 import { StatusIcon } from '../tasks/StatusIcon';
+import styles from './FlightCanvas.module.css';
 import {
   type CullWindow,
   edgeBounds,
@@ -10,7 +12,6 @@ import {
 } from './flightCull';
 import { BAND_HEADER_HEIGHT, type FlightLayout } from './flightLayout';
 import { FlightNodeCard, type FlightNodeView } from './FlightNodeCard';
-import { cn } from '@/lib/utils';
 
 /**
  * How an edge reads, from its blocker's state: `landed` and `satisfied` (in review) are
@@ -52,25 +53,23 @@ export interface FlightBandView {
 /** The sticky wave-header row's height — where the canvas starts in its scroller. */
 export const WAVE_HEADER_HEIGHT = 32;
 
-const EDGE_STYLE: Record<
-  EdgeTone,
-  { stroke: string; width: number; dash?: string; opacity: number }
-> = {
-  idle: { stroke: 'var(--text-ghost)', width: 1, dash: '3 4', opacity: 0.6 },
-  active: { stroke: 'var(--status-progress)', width: 1, opacity: 0.45 },
-  flowing: {
-    stroke: 'var(--state-working-fg)',
-    width: 1.25,
-    dash: '4 4',
-    opacity: 0.9,
-  },
-  satisfied: { stroke: 'var(--state-review-fg)', width: 1.25, opacity: 0.7 },
-  landed: { stroke: 'var(--status-done)', width: 1.25, opacity: 0.55 },
+/**
+ * The status tone an edge strokes in, through its `data-tone` (`--tone`): a teammate or an
+ * agent on the blocker is in progress (info), a blocker in review is green (success). Idle
+ * and landed carry no tone: idle is a faint dashed line, and landed is done, a neutral
+ * stroke, never green beside a red.
+ */
+const EDGE_TONE: Record<EdgeTone, UiTone | null> = {
+  idle: null,
+  active: 'info',
+  flowing: 'info',
+  satisfied: 'success',
+  landed: null,
 };
 
 // One edge. Memoized on its path and tone, so a blocker landing repaints only its own
-// out-edges; the stroke eases to the new colour. A flowing edge's dashes step rather than
-// glide: five repaints a second instead of sixty, for the same sense of motion.
+// out-edges. Stroke, width, dashes and the flowing edge's drift come from the module,
+// keyed by `data-edge`.
 const FlightEdgeLine = memo(function FlightEdgeLine({
   d,
   tone,
@@ -78,22 +77,13 @@ const FlightEdgeLine = memo(function FlightEdgeLine({
   d: string;
   tone: EdgeTone;
 }) {
-  const style = EDGE_STYLE[tone];
   return (
     <path
       d={d}
       data-slot="flight-edge"
-      data-tone={tone}
-      fill="none"
-      stroke={style.stroke}
-      strokeWidth={style.width}
-      strokeDasharray={style.dash}
-      strokeOpacity={style.opacity}
-      className={cn(
-        'transition-[stroke,stroke-opacity] duration-500',
-        tone === 'flowing' &&
-          'motion-safe:animate-[flight-flow_1.6s_steps(8)_infinite]'
-      )}
+      data-edge={tone}
+      data-tone={EDGE_TONE[tone] ?? undefined}
+      className={styles.edge}
     />
   );
 });
@@ -107,43 +97,32 @@ const WaveHead = memo(function WaveHead({ wave }: { wave: FlightWaveView }) {
     <div
       data-slot="flight-wave-head"
       data-current={wave.current || undefined}
-      className="absolute top-0 flex h-full items-center gap-1.5 text-[12px]"
+      className={styles.waveHead}
       style={{ left: wave.x, width: wave.width }}
     >
-      <span
-        className={cn(
-          'font-medium',
-          wave.current ? 'text-foreground' : 'text-text-secondary'
-        )}
-      >
-        Wave {wave.wave + 1}
-      </span>
-      <span className="font-book text-(--text-muted) tabular-nums">
+      <span className={styles.waveName}>Wave {wave.wave + 1}</span>
+      <span className={cx(styles.waveTally, 'num')}>
         {wave.done}/{wave.total}
       </span>
       {finished && (
         <Check
           aria-hidden
-          className="text-status-done size-3"
-          strokeWidth={2.25}
+          size={14}
+          strokeWidth={1.8}
+          className={styles.waveDone}
         />
       )}
       {wave.current && (
-        <span className="text-state-working flex items-center gap-1">
-          <span aria-hidden className="size-1.5 rounded-full bg-current" />
+        <span className={cx(styles.waveNow, 'toneText')} data-tone="info">
+          <span aria-hidden className={styles.waveNowDot} />
           Now
         </span>
       )}
-      <span
-        aria-hidden
-        className="absolute inset-x-0 bottom-0 h-px overflow-hidden bg-(--border-default)"
-      >
+      <span aria-hidden className={styles.waveTrack}>
+        <span className={styles.waveLanded} style={{ width: `${donePct}%` }} />
         <span
-          className="bg-status-done absolute inset-y-0 left-0 transition-[width] duration-500"
-          style={{ width: `${donePct}%` }}
-        />
-        <span
-          className="bg-state-working absolute inset-y-0 transition-[left,width] duration-500"
+          className={styles.waveRunning}
+          data-tone="info"
           style={{ left: `${donePct}%`, width: `${runPct}%` }}
         />
       </span>
@@ -163,33 +142,27 @@ const BandHead = memo(function BandHead({
     <div
       data-slot="flight-band-head"
       data-band={band.key}
-      className="absolute left-0 flex items-end"
+      className={styles.bandHead}
       style={{ top: band.top, width, height: BAND_HEADER_HEIGHT }}
     >
-      <div className="sticky left-0 flex h-8 max-w-full items-center gap-2 pr-3 pl-5">
-        <StatusIcon status={band.status} className="size-3.5 shrink-0" />
-        <span className="text-foreground truncate text-[13px] font-medium">
-          {band.title}
-        </span>
+      <div className={styles.bandLabel}>
+        <StatusIcon status={band.status} className={styles.bandGlyph} />
+        <span className={styles.bandTitle}>{band.title}</span>
         {band.refLabel !== null && (
-          <span className="font-book shrink-0 text-[12px] tracking-(--id-tracking) text-(--text-muted)">
-            {band.refLabel}
-          </span>
+          <span className={styles.bandRef}>{band.refLabel}</span>
         )}
-        <span className="font-book shrink-0 text-[12px] text-(--text-muted) tabular-nums">
+        <span className={cx(styles.bandCount, 'num')}>
           {band.done}/{band.total}
         </span>
-        <span className="flex shrink-0 items-center gap-1.5">
-          {band.controls}
-        </span>
+        <span className={styles.bandControls}>{band.controls}</span>
       </div>
     </div>
   );
 });
 
 // Every edge in one SVG, the critical path's highlighter first so it sits beneath. Its own
-// memoized layer, so moving the cursor never walks the edges, and its own compositing layer,
-// so cards mounting over it never repaint its strokes.
+// memoized layer, so moving the cursor never walks the edges, and its own compositing layer
+// (`will-change` in the module), so cards mounting over it never repaint its strokes.
 const EdgeLayer = memo(function EdgeLayer({
   edges,
   width,
@@ -200,23 +173,14 @@ const EdgeLayer = memo(function EdgeLayer({
   height: number;
 }) {
   return (
-    <svg
-      aria-hidden
-      width={width}
-      height={height}
-      className="pointer-events-none absolute inset-0 overflow-visible will-change-transform"
-    >
+    <svg aria-hidden width={width} height={height} className={styles.edges}>
       {edges.map((edge) =>
         edge.critical ? (
           <path
             key={`crit:${edge.key}`}
             d={edge.d}
             data-slot="flight-critical"
-            fill="none"
-            stroke="var(--accent)"
-            strokeOpacity={0.26}
-            strokeWidth={4}
-            strokeLinecap="round"
+            className={styles.critical}
           />
         ) : null
       )}
@@ -275,10 +239,10 @@ export function FlightCanvas({
     [edges, cull, bounds]
   );
   return (
-    <div className="relative" style={{ width: Math.max(layout.width, 1) }}>
+    <div className={styles.root} style={{ width: Math.max(layout.width, 1) }}>
       <div
         data-slot="flight-wave-heads"
-        className="sticky top-0 z-10 bg-(--surface-page)"
+        className={styles.waveHeads}
         style={{ height: WAVE_HEADER_HEIGHT, width: layout.width }}
       >
         {waves.map((wave) => (
@@ -287,7 +251,7 @@ export function FlightCanvas({
       </div>
       <div
         data-slot="flight-canvas"
-        className="relative"
+        className={styles.canvas}
         style={{ width: layout.width, height: layout.height }}
       >
         {bands?.map((band) => (

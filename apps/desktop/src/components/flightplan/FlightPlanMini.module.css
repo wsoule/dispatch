@@ -1,0 +1,87 @@
+/* The mini Flight Plan (FlightPlanMini): wave segments, the wave label, the
+   running count and the slot dots on one quiet line in tabular figures. */
+.mini {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.waves,
+.slots {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* One wave on a soft track: the landed share in the neutral done fill, the
+   running share in info. The wave being worked (data-tone="info") wears an
+   info outline. */
+.wave {
+  position: relative;
+  width: 14px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--border-strong);
+}
+
+.wave[data-current] {
+  outline: 1px solid var(--tone);
+  outline-offset: 1px;
+}
+
+.landed,
+.running {
+  position: absolute;
+  inset-block: 0;
+}
+
+.landed {
+  left: 0;
+  background: var(--text-3);
+}
+
+.running {
+  background: var(--tone);
+}
+
+/* One dot per agent slot: filled info while in use, a ring while free. */
+.slot {
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--control-border);
+  border-radius: 50%;
+}
+
+.slot[data-tone='info'] {
+  border-color: var(--tone);
+  background: var(--tone);
+}
+
+/* Forced colours drop backgrounds: the track gets an edge, the landed fill
+   and the used dots keep the system's text colour and the running share
+   the highlight colour, so every shape stays. */
+@media (forced-colors: active) {
+  .wave {
+    border: 1px solid CanvasText;
+  }
+
+  .landed,
+  .running,
+  .slot[data-tone='info'] {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+
+  .running {
+    background: Highlight;
+  }
+
+  .slot {
+    border-color: CanvasText;
+  }
+}
