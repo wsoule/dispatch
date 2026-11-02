@@ -3,7 +3,13 @@ import { Button, ChipButton, cx } from '@dispatch/ui';
 import type { CodeViewFileItem } from '@pierre/diffs';
 import { CodeView } from '@pierre/diffs/react';
 import { Check, CornerDownRight } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 
 import styles from './ReviewThread.module.css';
 import type { ApplySuggestionOutcome } from '@/lib/suggestionRange';
@@ -307,6 +313,71 @@ export function ReviewThread({
   );
 }
 
+/** What an open composer holds: the note, the suggestion typed into its editor, and whether a
+ * save is in flight with what last went wrong. */
+interface ComposerDraft {
+  body: string;
+  /** The suggestion editor's text and the seed it was edited from. It counts only while that
+   * seed is still the composer's: a new range, or contents that just arrived, start from their
+   * own seed. `null` until the reviewer types into the editor. */
+  suggestion: { seed: string; text: string } | null;
+  busy: boolean;
+  error: string | null;
+}
+
+const EMPTY_DRAFT: ComposerDraft = {
+  body: '',
+  suggestion: null,
+  busy: false,
+  error: null,
+};
+
+/** A composer's draft, held outside the composer so it outlives a remount. */
+export interface ComposerDraftStore {
+  get: () => ComposerDraft;
+  set: (patch: Partial<ComposerDraft>) => void;
+  subscribe: (listener: () => void) => () => void;
+  /** Back to an empty draft: the composer closed (saved or cancelled). */
+  reset: () => void;
+  /** The range (`file:start-line`) the note box last took the caret for, so a composer drawn
+   * again for the same range takes it back only when it went with the old one. */
+  focusedFor: string | null;
+}
+
+/**
+ * A draft store for one composer, read with `useSyncExternalStore`.
+ *
+ * `PierreReviewDiff` holds one and hands it to its `ReviewComposer`, because Pierre keys a
+ * file's annotation slots by position (threads, then findings, then the composer): a thread or
+ * finding landing on that file while the composer is open (a refetch, another reviewer, the
+ * comment `Apply now` just saved) shifts the composer one slot along, React mounts a fresh one
+ * there, and a draft kept in its own state would be gone. Its save also writes here, so a
+ * save that settles after such a remount still clears the new composer's `busy`.
+ */
+export function createComposerDraft(): ComposerDraftStore {
+  let draft = EMPTY_DRAFT;
+  const listeners = new Set<() => void>();
+  const store: ComposerDraftStore = {
+    get: () => draft,
+    set: (patch) => {
+      draft = { ...draft, ...patch };
+      for (const listener of listeners) listener();
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    reset: () => {
+      store.focusedFor = null;
+      store.set(EMPTY_DRAFT);
+    },
+    focusedFor: null,
+  };
+  return store;
+}
+
 interface ComposerProps {
   line: number;
   /** First line of a range comment; omitted for a single line. */
@@ -348,6 +419,9 @@ interface ComposerProps {
     commentId: string,
     outcome: ApplySuggestionOutcome
   ) => void;
+  /** Where the draft lives (see `createComposerDraft`). Omitted, the composer keeps its own,
+   * which a remount loses. */
+  draft?: ComposerDraftStore;
 }
 
 /**
@@ -373,27 +447,50 @@ export function ReviewComposer({
   destination = 'agent',
   onApply,
   onApplyNowFailed,
+  draft,
 }: ComposerProps) {
-  const [body, setBody] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [ownDraft] = useState(createComposerDraft);
+  const store = draft ?? ownDraft;
+  const current = useSyncExternalStore(store.subscribe, store.get, store.get);
+  const { body, busy, error } = current;
   const start = startLine ?? line;
   // The composer only exists because the reviewer just asked to comment on this range, so
-  // the caret goes straight into the body — again if they re-aim it at another range.
+  // the caret goes straight into the body — again if they re-aim it at another range. Drawn
+  // again for the same range (a remount), it takes the caret back only if the caret went with
+  // the old composer, and puts it after the kept text; focus elsewhere stays where it is.
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
-    bodyRef.current?.focus();
-  }, [file, start, line]);
+    const box = bodyRef.current;
+    if (box === null) return;
+    const aim = `${file}:${start}-${line}`;
+    // Focus that went with the old composer leaves the body focused (or, in some DOMs, a
+    // detached element).
+    const active = document.activeElement;
+    const lost =
+      active === null || active === document.body || !active.isConnected;
+    if (store.focusedFor === aim && !lost) return;
+    store.focusedFor = aim;
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+  }, [store, file, start, line]);
   const seed = useMemo(
     () =>
       fileContents === null ? '' : seedFromRange(fileContents, start, line),
     [fileContents, start, line]
   );
-  // Tracks the suggestion editor's live text, reported by `CodeView`'s `onItemEditChange` on
-  // every keystroke. Reset to the seed whenever the target range changes (a fresh compose) —
-  // `seed` only changes value when contents resolve or the range moves, so this does not loop.
-  const [suggestionText, setSuggestionText] = useState(seed);
-  useEffect(() => setSuggestionText(seed), [seed]);
+  // The suggestion editor's live text, reported by `CodeView`'s `onItemEditChange` on every
+  // keystroke and kept with the seed it was typed over: a new seed (a fresh range, or the
+  // contents arriving) starts over from that seed.
+  const suggestionText =
+    current.suggestion !== null && current.suggestion.seed === seed
+      ? current.suggestion.text
+      : seed;
+  // What the editor opens with: the seed, or the text already typed over that same seed when
+  // this composer is drawn again. Read once per seed, so typing never resets the editor.
+  const opensWith = useMemo(() => {
+    const kept = store.get().suggestion;
+    return kept !== null && kept.seed === seed ? kept.text : seed;
+  }, [store, seed]);
 
   const suggestionItem: CodeViewFileItem | null = useMemo(() => {
     if (fileContents === null) return null;
@@ -401,11 +498,11 @@ export function ReviewComposer({
     return {
       id: cacheKey,
       type: 'file',
-      file: { name: file, contents: seed, cacheKey },
+      file: { name: file, contents: opensWith, cacheKey },
       edit: true,
       version: 1,
     };
-  }, [fileContents, file, seed, start, line]);
+  }, [fileContents, file, opensWith, start, line]);
 
   const suggestion = suggestionForSubmit(seed, suggestionText);
   // The anchor is the LAST line of the range, because that is the line
@@ -424,16 +521,15 @@ export function ReviewComposer({
   const handleSuggest = () => {
     const trimmed = body.trim();
     if (trimmed === '' || busy) return;
-    setBusy(true);
-    setError(null);
+    store.set({ busy: true, error: null });
     onSubmit(trimmed, suggestion, anchorText)
       .then(() => onSaved())
       .catch((err: unknown) => {
         // Nothing was created — the draft stays in the box for the reviewer to
         // retry, with what went wrong shown rather than swallowed.
-        setError(err instanceof Error ? err.message : SAVE_FAILED);
+        store.set({ error: err instanceof Error ? err.message : SAVE_FAILED });
       })
-      .finally(() => setBusy(false));
+      .finally(() => store.set({ busy: false }));
   };
 
   // `Apply now`: save, then immediately apply via `submitAndApplyNow`, which guarantees the
@@ -445,8 +541,7 @@ export function ReviewComposer({
     const trimmed = body.trim();
     if (trimmed === '' || busy || onApply === undefined) return;
     if (suggestion === undefined) return;
-    setBusy(true);
-    setError(null);
+    store.set({ busy: true, error: null });
     submitAndApplyNow(
       () => onSubmit(trimmed, suggestion, anchorText),
       onApply,
@@ -455,9 +550,9 @@ export function ReviewComposer({
       .then(() => onSaved())
       .catch((err: unknown) => {
         // The save itself failed — same as `handleSuggest`, nothing was created to apply.
-        setError(err instanceof Error ? err.message : SAVE_FAILED);
+        store.set({ error: err instanceof Error ? err.message : SAVE_FAILED });
       })
-      .finally(() => setBusy(false));
+      .finally(() => store.set({ busy: false }));
   };
 
   return (
@@ -473,9 +568,14 @@ export function ReviewComposer({
         ref={bodyRef}
         className={cx('textarea', styles.field, styles.composerBody)}
         value={body}
-        onChange={(e) => setBody(e.target.value)}
+        onChange={(e) => store.set({ body: e.target.value })}
         onKeyDown={(e) => {
-          if (e.key === 'Escape') onCancel();
+          if (e.key === 'Escape') {
+            // Claimed, so the app's window-level Escape (which honours `defaultPrevented`)
+            // does not also close the task page: one press peels one layer.
+            e.preventDefault();
+            onCancel();
+          }
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && body.trim()) {
             handleSuggest();
           }
@@ -489,7 +589,7 @@ export function ReviewComposer({
             disableWorkerPool
             items={[suggestionItem]}
             onItemEditChange={(_item, changedFile) =>
-              setSuggestionText(changedFile.contents)
+              store.set({ suggestion: { seed, text: changedFile.contents } })
             }
             className={styles.suggestionCode}
           />

@@ -11,6 +11,7 @@ import type {
   FileContents,
   FileDiffMetadata,
 } from '@pierre/diffs';
+import { DIFFS_TAG_NAME } from '@pierre/diffs';
 import type { CodeViewHandle } from '@pierre/diffs/react';
 import {
   Copy,
@@ -20,7 +21,7 @@ import {
   Pencil,
   TriangleAlert,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { DiffSurface, useParsedPatchFiles } from '../code/DiffSurface';
@@ -33,7 +34,11 @@ import type {
 import { SelectionActions } from '../code/SelectionActions';
 import styles from './PierreReviewDiff.module.css';
 import type { ReviewDestination } from './ReviewThread';
-import { ReviewComposer, ReviewThread } from './ReviewThread';
+import {
+  createComposerDraft,
+  ReviewComposer,
+  ReviewThread,
+} from './ReviewThread';
 import { useRunFileLoader } from '@/hooks/useRunFileContents';
 import { snippetFromSelection } from '@/lib/conversation';
 import { createReviewEditor } from '@/lib/pierreEditor';
@@ -44,6 +49,7 @@ import {
   editErrorMessage,
   isEditableDiffType,
   resolveEditFailure,
+  reviewCacheKeyPrefix,
 } from '@/lib/reviewDiffItems';
 import { isTerminalRunState } from '@/lib/runState';
 import type { ApplySuggestionOutcome } from '@/lib/suggestionRange';
@@ -149,6 +155,94 @@ const GUTTER_SLOT_CSS = [
   '[data-column-number] { padding-left: max(2ch, calc(var(--s-4) + 2px)); }',
 ].join('\n');
 
+// Keys that only modify another key; see `keepTypedKeysInEditor`.
+const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta']);
+
+/**
+ * Stops a plain key typed into one of Pierre's editors (edit mode, or the composer's suggestion
+ * editor) from also reaching the app's own keyboard shortcuts.
+ *
+ * Those editors live in Pierre's shadow roots, so a window or document listener sees the shadow
+ * host as the event's target, not the editable element, and its "is the reviewer typing?" check
+ * (`isTypingTarget`) says no: typing "a" or "/" into a suggestion then opened a picker or the
+ * search and took the focus, cutting the text off mid-word. The innermost target is still in
+ * `composedPath()`, so a key from an editable element stops here. Keys held with Ctrl or Cmd go
+ * on, because the app's chords (the palette, back and forward) are meant to work while typing,
+ * and so do the modifier keys themselves, which type nothing: Pierre's editor listens for Shift
+ * on the document to anchor a shift-extended selection.
+ *
+ * A native listener on the diff's frame rather than React's `onKeyDown`: React looks a key's
+ * handlers up from the target it is handed, which for a key typed in a shadow root should be the
+ * host and is not in every DOM; stopping at the frame also keeps the key from React's root
+ * listener, not only from the window. Pierre's editor has handled the key on the editable
+ * element itself by then.
+ */
+function keepTypedKeysInEditor(event: KeyboardEvent): void {
+  if (event.metaKey || event.ctrlKey || MODIFIER_KEYS.has(event.key)) return;
+  const origin = event.composedPath()[0];
+  if (origin instanceof HTMLElement && origin.isContentEditable) {
+    event.stopPropagation();
+  }
+}
+
+/**
+ * Keeps Pierre's scroll content as tall as the annotations drawn into it, by returning the ref
+ * callback each annotation's outermost element takes.
+ *
+ * Pierre 1.3.1 measures an item again when the slot content portalled into it changes size (a
+ * `ResizeObserver` on its sticky container reconciles the item heights), but that path never
+ * renders, and only a render resizes the scroll content to the new total. React draws a new
+ * annotation's content after Pierre has already measured the empty slot, so a composer opening,
+ * its suggestion editor arriving or a thread landing would hang off the bottom of the diff,
+ * clipped and out of reach, until a window resize happened to render.
+ *
+ * So each annotation is observed here, and so is the item host it sits in (Pierre's
+ * `diffs-container`), and any change in either size queues one Pierre render on the next frame,
+ * by which time Pierre's own observer has measured. Both, because neither alone sees every
+ * change: a growing annotation grows its host in the same layout, but a shrinking one leaves the
+ * host at its old height (split view keeps the other side's matching row) until a Pierre render
+ * re-pairs the rows — and that later shrink of the host is again measured without a render.
+ */
+function useRenderOnAnnotationResize(
+  viewRef: RefObject<CodeViewHandle<Annotation> | null>
+): (node: HTMLElement | null) => (() => void) | undefined {
+  const observerRef = useRef<ResizeObserver | null>(null);
+  // How many observed annotations each host holds, so a host is let go with its last one.
+  const hostsRef = useRef(new Map<Element, number>());
+  return useCallback(
+    (node: HTMLElement | null) => {
+      if (node === null || typeof ResizeObserver === 'undefined') {
+        return undefined;
+      }
+      // One observer for everything; `render()` queues on Pierre's own frame, so several sizes
+      // changing together still cost a single render.
+      observerRef.current ??= new ResizeObserver(() => {
+        viewRef.current?.getInstance()?.render();
+      });
+      const observer = observerRef.current;
+      const hosts = hostsRef.current;
+      const host = node.closest(DIFFS_TAG_NAME);
+      observer.observe(node);
+      if (host !== null) {
+        hosts.set(host, (hosts.get(host) ?? 0) + 1);
+        observer.observe(host);
+      }
+      return () => {
+        observer.unobserve(node);
+        if (host === null) return;
+        const left = (hosts.get(host) ?? 1) - 1;
+        if (left > 0) {
+          hosts.set(host, left);
+          return;
+        }
+        hosts.delete(host);
+        observer.unobserve(host);
+      };
+    },
+    [viewRef]
+  );
+}
+
 /**
  * The review diff: Pierre's `CodeView` with comment threads injected as line annotations.
  *
@@ -191,6 +285,11 @@ export function PierreReviewDiff({
   // composer's suggestion editor seeds from. `null` while that fetch is in flight, which keeps
   // the suggestion editor withheld (see `ComposerProps.fileContents`'s own doc comment).
   const [composerContents, setComposerContents] = useState<string | null>(null);
+  // The open composer's draft (its note, the suggestion typed into it, a save in flight),
+  // held here rather than in the composer: Pierre keys a file's annotation slots by position,
+  // so a thread or finding landing before the composer remounts it (see
+  // `createComposerDraft`). Kept when the composer is re-aimed; emptied when it closes.
+  const [composerDraft] = useState(createComposerDraft);
   // A comment whose `Apply now` save succeeded but whose immediate apply attempt failed — see
   // `submitAndApplyNow`. Keyed by comment id, read once by the `ReviewThread` that eventually
   // renders for it (via `initialApplyError`) so the failure shows there with the same
@@ -241,6 +340,8 @@ export function PierreReviewDiff({
   // apart from the ones that must not (see `decideEditSave`).
   const saveRequestRef = useRef<string | null>(null);
   const viewRef = useRef<CodeViewHandle<Annotation> | null>(null);
+  // Put on every annotation's outermost element, so Pierre resizes around it as it grows.
+  const observeAnnotation = useRenderOnAnnotationResize(viewRef);
   // The positioning frame for the floating selection bar, which is absolutely placed inside it.
   const containerRef = useRef<HTMLDivElement>(null);
   // A patch's hunks alone don't carry the rest of the file — this loader fetches it from the
@@ -294,9 +395,10 @@ export function PierreReviewDiff({
 
   // Parsed here rather than left to `DiffSurface` because the file list is read outside
   // item-building too — the pencil gate and the stale-`editing` effect below both need it — and
-  // handing the result back down keeps that one parse shared. `'review'` namespaces the worker
-  // pool's render cache for this patch.
-  const parsed = useParsedPatchFiles(patch, only, 'review');
+  // handing the result back down keeps that one parse shared. The prefix namespaces the worker
+  // pool's render cache for this patch's contents — see `reviewCacheKeyPrefix`.
+  const cacheKeyPrefix = useMemo(() => reviewCacheKeyPrefix(patch), [patch]);
+  const parsed = useParsedPatchFiles(patch, only, cacheKeyPrefix);
   const files = parsed.files;
 
   // Edit mode at all requires a run that's done and not yet reviewed — mirrors how
@@ -338,15 +440,17 @@ export function PierreReviewDiff({
         const closeComposer = () => {
           setComposing(null);
           setComposerContents(null);
+          composerDraft.reset();
         };
         return (
-          <div className={styles.annotation}>
+          <div ref={observeAnnotation} className={styles.annotation}>
             <ReviewComposer
               line={composing?.line ?? 0}
               startLine={annMeta.startLine}
               file={annMeta.file}
               fileContents={composerContents}
               destination={destination}
+              draft={composerDraft}
               onCancel={closeComposer}
               // Closed only once the write resolves, so a rejected POST leaves
               // the composer open with the note still in it and the reason shown
@@ -383,7 +487,7 @@ export function PierreReviewDiff({
       }
       if (annMeta.kind === 'findings') {
         return (
-          <div className={styles.annotation}>
+          <div ref={observeAnnotation} className={styles.annotation}>
             {annMeta.findings.map((f) => (
               <div key={f.id} className={styles.finding} data-tone="warning">
                 <div className={styles.findingHead}>
@@ -407,7 +511,7 @@ export function PierreReviewDiff({
         );
       }
       return (
-        <div className={styles.annotation}>
+        <div ref={observeAnnotation} className={styles.annotation}>
           {annMeta.comments.map((c) => (
             <ReviewThread
               key={c.id}
@@ -433,6 +537,7 @@ export function PierreReviewDiff({
     [
       composing,
       composerContents,
+      composerDraft,
       destination,
       onAdd,
       onResolve,
@@ -440,6 +545,7 @@ export function PierreReviewDiff({
       onApply,
       applyAndInvalidate,
       applyNowFailures,
+      observeAnnotation,
     ]
   );
 
@@ -454,13 +560,15 @@ export function PierreReviewDiff({
         ...(startLine === undefined ? {} : { startLine }),
       });
       // Cleared first so a previous compose's contents can't briefly seed this one's
-      // suggestion editor while the new fetch is in flight.
+      // suggestion editor while the new fetch is in flight. A re-aimed composer keeps its
+      // note but not the last save's error, which was about the old range.
       setComposerContents(null);
+      composerDraft.set({ error: null });
       void ensureLoaded(file).then((result) => {
         setComposerContents(result?.contents ?? null);
       });
     },
-    [ensureLoaded]
+    [ensureLoaded, composerDraft]
   );
 
   const renderGutterUtility = useCallback(
@@ -757,15 +865,27 @@ export function PierreReviewDiff({
 
   // Escape is the keyboard way out of an armed bar. Deliberately the only dismissal besides
   // invoking an action: outside-click and scroll-following are not wired, and the bar not
-  // following scroll is a known, accepted limitation.
+  // following scroll is a known, accepted limitation. The key is claimed, so the app's
+  // window-level Escape (which honours `defaultPrevented`) does not close the page as well.
   useEffect(() => {
     if (armed === null) return undefined;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setArmed(null);
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setArmed(null);
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [armed]);
+
+  // Keys typed into Pierre's editors stay out of the app's shortcuts — see
+  // `keepTypedKeysInEditor`. The frame is always rendered, so this attaches once.
+  useEffect(() => {
+    const frame = containerRef.current;
+    if (frame === null) return undefined;
+    frame.addEventListener('keydown', keepTypedKeysInEditor);
+    return () => frame.removeEventListener('keydown', keepTypedKeysInEditor);
+  }, []);
 
   // A file leaving the rendered set takes its armed bar with it — a review page swaps `only`
   // without remounting, so a bar left standing would act on a file no longer on screen.

@@ -4,7 +4,11 @@ import { EditProvider } from '@pierre/diffs/react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'bun:test';
 
-import { ReviewComposer, ReviewThread } from './ReviewThread';
+import {
+  createComposerDraft,
+  ReviewComposer,
+  ReviewThread,
+} from './ReviewThread';
 import { createReviewEditor } from '@/lib/pierreEditor';
 
 // Minimal but type-complete `ReviewComment` — only the fields a given test cares about vary.
@@ -423,6 +427,19 @@ describe('ReviewComposer — the suggestion editor', () => {
     expect(cancelled).toBe(true);
   });
 
+  // The app's window-level Escape closes the task page unless the key was already claimed, so
+  // cancelling a comment must claim it or one press would close the page as well.
+  it('claims the Escape it cancels on', () => {
+    renderComposer();
+    const notClaimed = fireEvent.keyDown(
+      screen.getByPlaceholderText(
+        'What should change? This goes back with the work.'
+      ),
+      { key: 'Escape' }
+    );
+    expect(notClaimed).toBe(false);
+  });
+
   it('shows the range in its header when a startLine is given', () => {
     renderComposer({ startLine: 4, line: 7 });
     expect(screen.getByText('Comment on lines 4–7')).toBeDefined();
@@ -575,6 +592,65 @@ describe('ReviewComposer — `Apply now`', () => {
   it('offers no Apply now button when there is nowhere to apply into', () => {
     renderComposer({ fileContents: 'a\nb\nc\n' });
     expect(screen.queryByRole('button', { name: 'Apply now' })).toBeNull();
+  });
+});
+
+describe('ReviewComposer — a draft kept outside it', () => {
+  // `PierreReviewDiff` keeps the draft in a store so a composer Pierre remounts (a thread
+  // landing before it on the file) comes back with it. A suggestion typed over this range's
+  // seed is kept with that seed, so it counts again in the remounted composer.
+  it('picks up the note and a suggestion typed over the same seed', () => {
+    const draft = createComposerDraft();
+    draft.set({ body: 'Name it total', suggestion: { seed: 'b', text: 'B' } });
+    renderComposer({
+      fileContents: 'a\nb\nc\n',
+      onApply: () => Promise.resolve(),
+      draft,
+    });
+    expect(
+      screen.getByRole<HTMLTextAreaElement>('textbox', {
+        name: 'Comment on line 2',
+      }).value
+    ).toBe('Name it total');
+    expect(screen.getByRole('button', { name: 'Suggest' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Apply now' })).toBeDefined();
+  });
+
+  it('drops a suggestion typed over another seed (a new range starts over)', () => {
+    const draft = createComposerDraft();
+    draft.set({ suggestion: { seed: 'a', text: 'A' } });
+    renderComposer({
+      fileContents: 'a\nb\nc\n',
+      onApply: () => Promise.resolve(),
+      draft,
+    });
+    expect(screen.getByRole('button', { name: 'Add comment' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Apply now' })).toBeNull();
+  });
+
+  it('writes typing and a failed save into the store, and reset empties it', async () => {
+    const draft = createComposerDraft();
+    renderComposer({
+      draft,
+      onSubmit: () => Promise.reject(new Error('network down')),
+    });
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'Comment on line 2' }),
+      { target: { value: 'looks good' } }
+    );
+    expect(draft.get().body).toBe('looks good');
+    fireEvent.click(screen.getByRole('button', { name: 'Add comment' }));
+    expect(draft.get().busy).toBe(true);
+    await waitFor(() => expect(draft.get().busy).toBe(false));
+    expect(draft.get().error).toBe('network down');
+    draft.reset();
+    expect(draft.get()).toEqual({
+      body: '',
+      suggestion: null,
+      busy: false,
+      error: null,
+    });
+    expect(draft.focusedFor).toBeNull();
   });
 });
 
