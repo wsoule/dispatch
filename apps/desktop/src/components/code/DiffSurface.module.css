@@ -1,0 +1,29 @@
+/* DiffSurface (DiffSurface.tsx): the CodeView scroll container and the loading, parse-error
+   and empty states around it. Tokens only. */
+
+/* The default class of the CodeView element itself, which must stay the scroll container:
+   CodeView reads its own scrollTop to pick the virtualized row window, so no ancestor may
+   take overflow: auto instead. flex: 1 sizes it off a flex-column parent with a resolved
+   height (a percentage height can collapse to zero through stretched ancestors). */
+.view {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Loading, error and empty: fill the slot the diff would take (a block parent through
+   height: 100%, a flex column through flex: 1) and centre the message in it. */
+.state {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  height: 100%;
+  min-height: 0;
+  padding: var(--s-4);
+  color: var(--text-2);
+  text-align: center;
+}

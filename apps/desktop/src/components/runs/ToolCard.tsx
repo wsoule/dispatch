@@ -1,4 +1,5 @@
 import type { NormalizedEntry } from '@dispatch/client';
+import { CodeBlock } from '@dispatch/ui';
 import {
   FilePen,
   FilePlus,
@@ -12,7 +13,7 @@ import {
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 
-import { ScrollArea } from '@/ui/scroll-area';
+import styles from './ToolCard.module.css';
 
 // Reads a string field off a tool entry's `toolInput` (typed `unknown` — it's whatever the
 // executor forwarded from the SDK), returning undefined for anything that isn't a present
@@ -29,45 +30,45 @@ function field(input: unknown, key: string): string | undefined {
 // A red/green block diff for an Edit's old->new strings. Not a real line-level LCS diff — the
 // SDK already hands us the exact old and new blocks an edit replaces, and showing them stacked
 // (removed then added) is how Claude Code itself renders an edit, so this mirrors that with no
-// diffing needed.
+// diffing needed. Each line carries its sign as text, so the diff reads without its tints.
 function EditDiff({ oldStr, newStr }: { oldStr: string; newStr: string }) {
   const removed = oldStr === '' ? [] : oldStr.split('\n');
   const added = newStr === '' ? [] : newStr.split('\n');
   return (
-    <ScrollArea className="rounded-card border-border max-h-64 border-[0.5px]">
-      <pre className="font-mono text-[12px] leading-snug">
+    <div className={styles.scroll} data-slot="edit-diff">
+      <pre className={styles.diff}>
         {removed.map((line, i) => (
           <div
             key={`r${i}`}
-            className="bg-state-failed-surface text-state-failed px-2 whitespace-pre-wrap"
+            data-tone="danger"
+            data-diff="del"
+            className={styles.line}
           >
-            <span className="opacity-60 select-none">- </span>
+            <span className={styles.sign}>- </span>
             {line}
           </div>
         ))}
         {added.map((line, i) => (
           <div
             key={`a${i}`}
-            className="bg-state-review-surface text-state-review px-2 whitespace-pre-wrap"
+            data-tone="success"
+            data-diff="ins"
+            className={styles.line}
           >
-            <span className="opacity-60 select-none">+ </span>
+            <span className={styles.sign}>+ </span>
             {line}
           </div>
         ))}
       </pre>
-    </ScrollArea>
+    </div>
   );
 }
 
-// A capped, scrollable mono block for a tool's raw text payload (a Write's file contents, a
-// fallback JSON dump) so a large payload never blows out the transcript's height.
-function CodeBlock({ text }: { text: string }) {
+// A tool's raw text payload (a Write's file contents, a fallback JSON dump) in the library
+// CodeBlock, capped so a large payload never blows out the transcript's height, with Copy.
+function Payload({ text, language }: { text: string; language?: string }) {
   return (
-    <ScrollArea className="bg-surface-secondary rounded-card border-border max-h-64 border-[0.5px]">
-      <pre className="p-2 font-mono text-[12px] leading-snug whitespace-pre-wrap">
-        {text}
-      </pre>
-    </ScrollArea>
+    <CodeBlock code={text} language={language} maxHeight={240} wrap copy />
   );
 }
 
@@ -118,7 +119,7 @@ export function toolView(entry: NormalizedEntry): ToolView {
         icon: FilePlus,
         verb: 'Write',
         target: filePath,
-        body: content !== undefined ? <CodeBlock text={content} /> : undefined,
+        body: content !== undefined ? <Payload text={content} /> : undefined,
       };
     }
     case 'Read': {
@@ -180,7 +181,10 @@ export function toolView(entry: NormalizedEntry): ToolView {
       return {
         icon: Wrench,
         verb: name,
-        body: json !== undefined ? <CodeBlock text={json} /> : undefined,
+        body:
+          json !== undefined ? (
+            <Payload text={json} language="JSON" />
+          ) : undefined,
       };
     }
   }

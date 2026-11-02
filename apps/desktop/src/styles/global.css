@@ -88,22 +88,8 @@ button {
   background: transparent;
 }
 
-/* Keyframes for ui/ai/ primitives (tasks 6-24): a staggered pixel-grid opacity pulse and a
-   shimmering gradient sweep across loading labels. Defined globally because Tailwind's
-   `animate-[name_...]` arbitrary values reference a `@keyframes` name, not the rule itself. */
-@keyframes pixel-on {
-  0%,
-  100% {
-    opacity: 0.15;
-  }
-  18%,
-  42% {
-    opacity: 1;
-  }
-  62% {
-    opacity: 0.15;
-  }
-}
+/* Keyframes that Tailwind's `animate-[name_...]` arbitrary values reference by name (they
+   name a `@keyframes` rule, not a class), so they stay global until B16 retires Tailwind. */
 
 /* The working dot: a stepped dim, cheap on the GPU (`animate-status-pulse`). */
 @keyframes status-pulse {
@@ -122,18 +108,6 @@ button {
   }
   100% {
     background-position: -50%;
-  }
-}
-
-/* Hard on/off blink for the streaming-text caret block, rather than a fade. */
-@keyframes caret-blink {
-  0%,
-  49% {
-    opacity: 1;
-  }
-  50%,
-  100% {
-    opacity: 0;
   }
 }
 

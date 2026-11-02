@@ -1,0 +1,248 @@
+/* The GitHub PR review panel (PrReviewPanel.tsx): a --surface box holding
+   the PR's status header (title, link out, status chips, diffstat), the
+   agent's findings, the conversation cards, and the review composer (the
+   global .textarea and library Buttons). Error words take the danger tone's
+   ink through the global .toneText. Tokens only. */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.titleIcon {
+  flex: none;
+  color: var(--text-3);
+}
+
+.title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs);
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "#7 ↗": the PR on GitHub, quiet until hovered. */
+.prLink {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-1);
+  margin-left: auto;
+  border-radius: var(--r-xs);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+}
+
+.prLink:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Row metadata (a time, a severity, a diffstat): small, quiet, tabular. */
+.meta {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.diffstat {
+  margin-left: var(--s-1);
+}
+
+.end {
+  margin-left: auto;
+}
+
+/* A file path and line: machine-read, so Geist Mono. */
+.path {
+  flex: none;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.heading {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+}
+
+/* One conversation entry: a sunken card under its author line. */
+.entry {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--sunken);
+}
+
+.entryHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--fs-xs);
+}
+
+.author {
+  color: var(--text-2);
+  font-weight: var(--fw-medium);
+}
+
+.entryBody {
+  font-size: var(--fs);
+}
+
+.finding {
+  min-width: 0;
+  font-size: var(--fs);
+}
+
+.findingHead {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.findingMark {
+  display: inline-flex;
+  flex: none;
+  align-self: center;
+}
+
+.findingTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: var(--fw-medium);
+  overflow-wrap: anywhere;
+}
+
+.detail {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-long);
+  overflow-wrap: anywhere;
+}
+
+.error {
+  margin: 0;
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.closed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  color: var(--text-2);
+  font-size: var(--fs);
+}
+
+.closed p {
+  margin: 0;
+}
+
+.closedLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.start {
+  display: inline-flex;
+  align-self: flex-start;
+}
+
+/* The global .textarea, full width, with room for two lines. */
+.textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 10px;
+  line-height: var(--lh);
+  resize: vertical;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}
+
+/* The fork gate: the warning tone's soft tint with --text words (text on a
+   tint is never the tone itself), the name of the fork's owner in medium. */
+.fork {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--tone-line);
+  border-radius: var(--r);
+  background: var(--tone-soft);
+}
+
+.forkText {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs);
+}
+
+.owner {
+  font-weight: var(--fw-medium);
+}

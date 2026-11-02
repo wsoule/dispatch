@@ -577,7 +577,9 @@ function stubRect(
 
 /** The element the bar is positioned inside: the wrapper `PierreReviewDiff` renders. */
 function positioningFrame(): HTMLElement {
-  const frame = document.querySelector<HTMLElement>('.relative');
+  const frame = document.querySelector<HTMLElement>(
+    '[data-slot="review-diff"]'
+  );
   if (frame === null) throw new Error('no positioning frame rendered');
   return frame;
 }
@@ -688,7 +690,7 @@ function renderForSelection(
 }
 
 /**
- * The whole patch in one scroller, with no `only` — how `RunReviewView` renders this. Every file
+ * The whole patch in one scroller, with no `only` — how `ReviewMode` renders this. Every file
  * shares one `CodeView`, so a line number on its own does not say which file it belongs to.
  */
 function renderWholePatch(onAddToChat: (snippet: Snippet) => void) {
@@ -1154,13 +1156,55 @@ describe('PierreReviewDiff — the viewed tick in each file header', () => {
       />
     );
 
-    const a = await screen.findByRole('checkbox', { name: 'Mark a.ts viewed' });
-    const b = await screen.findByRole('checkbox', { name: 'Mark b.ts viewed' });
-    expect(a.getAttribute('aria-checked')).toBe('true');
-    expect(b.getAttribute('aria-checked')).toBe('false');
+    // The library Checkbox is a native input named by its label, so `checked` is the state.
+    const a = await screen.findByRole<HTMLInputElement>('checkbox', {
+      name: 'Mark a.ts viewed',
+    });
+    const b = await screen.findByRole<HTMLInputElement>('checkbox', {
+      name: 'Mark b.ts viewed',
+    });
+    expect(a.type).toBe('checkbox');
+    expect(a.checked).toBe(true);
+    expect(b.checked).toBe(false);
 
     fireEvent.click(b);
     expect(toggled).toEqual(['b.ts']);
+  });
+
+  // The tick sits inside the file header, which folds the file on a click. A tick whose click
+  // reached the header would fold the file as well as marking it, so the click stops at the box.
+  // React's stopPropagation acts at React's root, so what this proves is that the click never
+  // reaches the page (document listeners, React handlers above the tick); a native listener on
+  // a DOM ancestor would still fire, and @pierre/diffs 1.3.1 attaches none to its header.
+  it('stops a tick at the box, so the page never sees the click', async () => {
+    const toggled: string[] = [];
+    render(
+      <PierreReviewDiff
+        patch={TWO_FILE_PATCH}
+        comments={[]}
+        viewed={new Set()}
+        onToggleViewed={(file) => toggled.push(file)}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
+      />
+    );
+    const box = await screen.findByRole('checkbox', {
+      name: 'Mark a.ts viewed',
+    });
+    // The page around the tick: a document listener, which React's stop reaches.
+    let headerClicks = 0;
+    const onHeaderClick = () => {
+      headerClicks += 1;
+    };
+    document.addEventListener('click', onHeaderClick);
+    try {
+      fireEvent.click(box);
+    } finally {
+      document.removeEventListener('click', onHeaderClick);
+    }
+
+    expect(toggled).toEqual(['a.ts']);
+    expect(headerClicks).toBe(0);
   });
 
   it('shows no tick on a surface without viewed state', () => {

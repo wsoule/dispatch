@@ -1,4 +1,5 @@
 import type { DiffFile, DiffResult } from '@dispatch/client';
+import { EmptyState, SkeletonBlock } from '@dispatch/ui';
 import type { CodeViewHandle } from '@pierre/diffs/react';
 import { FileTree, useFileTree } from '@pierre/trees/react';
 import { CircleAlert, FileX } from 'lucide-react';
@@ -6,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { normalizeDiffFilePath, toTreeGitStatus } from '../../lib/pierreTree';
 import { DiffSurface } from '../code/DiffSurface';
-import { Skeleton } from '@/ui/skeleton';
+import styles from './RunDiffView.module.css';
 
 // The changed-files tree for a run's diff, git-status decorated (added/modified/deleted/
 // renamed). A separate component (rather than inlined) because `useFileTree`'s model is
@@ -73,12 +74,8 @@ function ChangedFilesTree({
   return (
     <FileTree
       model={model}
-      header={
-        <span className="text-muted-foreground flex h-9 items-center px-3 text-[12px] font-medium">
-          Changed files
-        </span>
-      }
-      className="size-full"
+      header={<span className={styles.treeHeader}>Changed files</span>}
+      className={styles.tree}
     />
   );
 }
@@ -109,45 +106,42 @@ export function RunDiffView({
     viewRef.current?.scrollTo({ type: 'item', id: path, align: 'start' });
   }, []);
 
+  // Loading keeps the two-column frame, a skeleton in each column, so the pane does not jump
+  // when the diff arrives.
   if (diffLoading) {
     return (
-      <div className="grid h-full min-h-0 grid-cols-[14rem_1fr] gap-3">
-        <Skeleton className="rounded-card" />
-        <Skeleton className="rounded-card" />
+      <div className={styles.grid} data-run-diff="loading">
+        <SkeletonBlock height="100%" label="Loading the changed files" />
+        <SkeletonBlock height="100%" label="Loading the diff" />
       </div>
     );
   }
   if (diffError !== null) {
     return (
-      <div className="text-muted-foreground flex flex-col items-center justify-center gap-2 py-10 text-center">
-        <CircleAlert className="size-5" />
-        <p className="font-book text-[13px]">
-          Couldn&rsquo;t load the diff: {diffError}
-        </p>
-      </div>
+      <EmptyState icon={<CircleAlert size={22} strokeWidth={1.8} />}>
+        Couldn&rsquo;t load the diff: {diffError}
+      </EmptyState>
     );
   }
   if (diff === undefined) return null;
 
   return (
-    // h-full + min-h-0, not min-h-80: this sits inside a flex pane, and with
-    // only a minimum it grew to the diff's full height instead of the pane's.
-    // Its overflow-auto columns then had nothing bounding them, so a long diff
-    // simply ran off the bottom with no way to scroll to the rest.
-    <div className="grid h-full min-h-0 grid-cols-[14rem_1fr] gap-3">
-      <div className="rounded-card border-border min-h-0 overflow-auto border-[0.5px]">
+    // `height: 100%` + `min-height: 0` (RunDiffView.module.css `.grid`): this sits inside a
+    // flex pane, and with only a minimum height it grew to the diff's full height, so a long
+    // diff ran off the bottom with no way to scroll to the rest.
+    <div className={styles.grid}>
+      <div className={styles.treeColumn}>
         {diff.files.length === 0 ? (
-          <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
-            <FileX className="size-4" />
-            <p className="font-book text-[13px]">No file changes recorded.</p>
-          </div>
+          <EmptyState icon={<FileX size={22} strokeWidth={1.8} />}>
+            No file changes recorded.
+          </EmptyState>
         ) : (
           <ChangedFilesTree files={diff.files} onFileFocus={handleFileFocus} />
         )}
       </div>
-      {/* A flex column, not `overflow-auto`: the scroller has to be `CodeView` itself, and
-          `flex-1` sizes it off this column directly rather than through a percentage. */}
-      <div className="rounded-card border-border flex min-h-0 flex-col overflow-hidden border-[0.5px]">
+      {/* A flex column, not `overflow: auto`: the scroller has to be `CodeView` itself, and
+          its `flex: 1` sizes it off this column directly rather than through a percentage. */}
+      <div className={styles.diffColumn}>
         <DiffSurface
           patch={diff.patch}
           emptyLabel="No changes to show for this run."

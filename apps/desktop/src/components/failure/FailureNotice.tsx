@@ -1,9 +1,9 @@
 import { explainFailure } from '@dispatch-foo/core/browser';
-import { Button } from '@dispatch/ui';
+import { Button, cx, Disclosure, Notice } from '@dispatch/ui';
 import { CircleAlert } from 'lucide-react';
 import { useState } from 'react';
 
-import { RawDetails } from '../gr8r/RawText';
+import { RawText } from '../gr8r/RawText';
 import { useOptionalShellActions } from '../shell/ShellActionsContext';
 import styles from './FailureNotice.module.css';
 
@@ -23,7 +23,8 @@ interface FailureNoticeProps {
 
 /**
  * A failure as one plain sentence and the fix that applies: Settings → Setup for a
- * missing tool or a sign-in, otherwise Try again and Ask the agent to fix it.
+ * missing tool or a sign-in, otherwise Try again and Ask the agent to fix it. It is the
+ * library's danger Notice (role alert), with the raw error behind a Details fold.
  */
 export function FailureNotice({
   error,
@@ -94,26 +95,31 @@ export function FailureNotice({
   );
 
   return (
-    <div
-      role="alert"
-      data-slot="failure-notice"
-      data-tone="danger"
-      className={styles.notice}
-    >
-      <div className={styles.sentence}>
-        <CircleAlert
-          aria-hidden="true"
-          className={styles.icon}
-          size={14}
-          strokeWidth={1.8}
-        />
-        <span>{sentence}</span>
+    <Notice tone="danger" role="alert" data-slot="failure-notice">
+      <div className={styles.content}>
+        <p className={styles.sentence}>
+          <CircleAlert
+            aria-hidden="true"
+            className={styles.icon}
+            size={14}
+            strokeWidth={1.8}
+          />
+          <span>{sentence}</span>
+        </p>
+        <div className={styles.actions}>{actions}</div>
+        {actionError !== null && (
+          <p className={cx('toneText', styles.actionError)} data-tone="danger">
+            {actionError}
+          </p>
+        )}
+        {showDetails && (
+          <div className={styles.details}>
+            <Disclosure summary="Details">
+              <RawText className={styles.raw}>{error}</RawText>
+            </Disclosure>
+          </div>
+        )}
       </div>
-      <div className={styles.actions}>{actions}</div>
-      {actionError !== null && (
-        <p className={styles.actionError}>{actionError}</p>
-      )}
-      {showDetails && <RawDetails text={error} />}
-    </div>
+    </Notice>
   );
 }

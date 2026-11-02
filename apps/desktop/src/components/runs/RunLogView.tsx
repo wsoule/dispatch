@@ -1,5 +1,6 @@
 import { foldSubagents, providerById } from '@dispatch-foo/core/browser';
 import type { LiveSegment, NormalizedEntry, RunMeta } from '@dispatch/client';
+import { Button, Chip, cx, Notice, Spinner } from '@dispatch/ui';
 import {
   Info,
   Mail,
@@ -10,8 +11,10 @@ import {
 } from 'lucide-react';
 import { memo, useMemo, useState } from 'react';
 
+import { useElapsed } from '../../hooks/useElapsed';
 import { useStickToBottom } from '../../hooks/useStickToBottom';
 import { isFromA2A } from '../../lib/a2a';
+import { changedFilesFromLog } from '../../lib/changedFiles';
 import type { DecideAvailability } from '../../lib/daemonAuth';
 import type { RunQuestion, RunScopeRequest } from '../../lib/gates';
 import type { PendingApproval } from '../../lib/pendingApprovals';
@@ -24,23 +27,18 @@ import {
   postFailWorkLabel,
 } from '../../lib/runState';
 import { kindLabel } from '../../lib/threadSources';
+import { PromptBar } from '../chat/PromptBar';
 import { askAgentToFix, FailureNotice } from '../failure/FailureNotice';
+import { ShimmerLabel } from '../transcript/ShimmerLabel';
 import { ApprovalCard } from './ApprovalCard';
 import { ChangedFilesCard } from './ChangedFilesCard';
 import { Markdown } from './Markdown';
 import { QuestionCard } from './QuestionCard';
+import styles from './RunLogView.module.css';
 import { ScopeRequestCard } from './ScopeRequestCard';
 import { SubagentTree } from './SubagentTree';
 import { TranscriptRow } from './TranscriptRow';
 import { WorkFold } from './WorkFold';
-import { changedFilesFromLog } from '@/lib/changedFiles';
-import { cn } from '@/lib/utils';
-import { LoadingState } from '@/ui/ai/loading-state';
-import { Pill } from '@/ui/ai/pill';
-import { PromptBar } from '@/ui/ai/prompt-bar';
-import { Alert, AlertDescription } from '@/ui/alert';
-import { Button } from '@/ui/button';
-import { Textarea } from '@/ui/textarea';
 
 // The two states where the composer talks to a still-running agent (send a follow-up
 // message) rather than resuming a finished one (request changes) — deliberately excludes
@@ -54,6 +52,31 @@ const NO_LIVE: readonly LiveSegment[] = [];
 
 // The agent-facing prompt to answer with msg_reply; a person reading the chat has no use for it.
 const WAITING_NOTE = 'The sender is waiting.';
+
+const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
+
+/** In-flight agent work with nothing on screen to show for it yet: a spinner, the label
+ * shimmering (plain under reduced motion), and how long the run has been going, ticking
+ * once a second in tabular figures. The spinner stays out of the accessibility tree, since
+ * the label beside it already says what is happening. */
+function WorkingRow({
+  label,
+  startedAt,
+}: {
+  label: string;
+  startedAt: number;
+}) {
+  const elapsed = useElapsed(startedAt);
+  return (
+    <div className={styles.working} data-slot="run-working">
+      <Spinner label="" />
+      <span className={styles.workingLabel}>
+        <ShimmerLabel>{label}</ShimmerLabel>
+      </span>
+      <span className={cx(styles.elapsed, 'num')}>{elapsed}</span>
+    </div>
+  );
+}
 
 // `about` names the message, so a list of these links reads apart for a screen reader.
 function OpenThread({
@@ -69,7 +92,7 @@ function OpenThread({
     <button
       type="button"
       aria-label={about === undefined ? undefined : `Open thread: ${about}`}
-      className="text-muted-foreground hover:text-foreground ml-auto text-[12px] font-normal hover:underline"
+      className={styles.openThread}
       onClick={() => onOpen(messageId)}
     >
       Open thread
@@ -110,9 +133,9 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
         ? text
         : `${digest.channel === null ? '' : `#${digest.channel} · `}${digest.kind} from ${digest.from}: ${digest.summary}`;
     return (
-      <div className="text-muted-foreground font-book flex items-center gap-1.5 px-1 text-[12px]">
-        <Mail className="size-3 shrink-0" />
-        <span className="min-w-0 flex-1 truncate" title={line}>
+      <div className={styles.digest}>
+        <Mail className={styles.digestIcon} {...ICON} size={12} />
+        <span className={styles.digestLine} title={line}>
           {line}
         </span>
         {link(
@@ -130,14 +153,14 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
   if (toUser) {
     const sender = entry.fromLabel ?? 'an agent';
     return (
-      <div className="bg-surface-quaternary border-border-strong rounded-card flex w-full flex-col gap-0.5 border-[0.5px] px-3 py-2">
-        <div className="flex items-center gap-1.5 text-[12px] font-medium text-(--text-secondary)">
-          <Megaphone className="size-3" />
+      <div className={styles.toYou}>
+        <div className={styles.heading}>
+          <Megaphone {...ICON} size={12} />
           To you
-          <span className="text-muted-foreground font-book">from {sender}</span>
+          <span className={styles.from}>from {sender}</span>
           {link(entry.messageId, sender, `to you from ${sender}`)}
         </div>
-        <Markdown content={text} className="font-book text-[13px]" />
+        <Markdown content={text} className={styles.messageText} />
       </div>
     );
   }
@@ -163,23 +186,11 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
       ? sender
       : `↳ ${sender ?? 'another agent'}`;
   return (
-    <div
-      className={cn(
-        'flex max-w-[80%] flex-col gap-0.5 rounded-card p-3',
-        own
-          ? 'bg-surface-inset self-end'
-          : 'bg-state-waiting-surface self-start'
-      )}
-    >
-      <div
-        className={cn(
-          'flex items-center gap-1.5 text-[12px] font-medium',
-          own ? 'text-muted-foreground' : 'text-state-waiting'
-        )}
-      >
+    <div className={styles.bubble} data-align={own ? 'end' : 'start'}>
+      <div className={styles.heading}>
         {heading}
-        {badge !== undefined && <Pill>{badge}</Pill>}
-        {delivered?.urgent === true && <Pill>Urgent</Pill>}
+        {badge !== undefined && <Chip>{badge}</Chip>}
+        {delivered?.urgent === true && <Chip>Urgent</Chip>}
         {link(
           entry.messageId,
           sender,
@@ -187,17 +198,15 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
         )}
       </div>
       {plain ? (
-        <p className="font-book text-[13px] break-words whitespace-pre-wrap">
-          {delivered?.body ?? text}
-        </p>
+        <p className={styles.plainText}>{delivered?.body ?? text}</p>
       ) : (
         <Markdown
           content={delivered?.body ?? text}
-          className="font-book text-[13px]"
+          className={styles.messageText}
         />
       )}
       {notes.length > 0 && (
-        <div className="text-muted-foreground font-book text-[12px]">
+        <div className={styles.notes}>
           {notes.map((line, i) => (
             <p key={i}>{line}</p>
           ))}
@@ -357,40 +366,37 @@ export function RunLogView({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
+    <div className={styles.root}>
       {/* The fan-out, above the transcript rather than in it: a run with thirty sub-agents is
           one event in its own story, but each of the thirty is a thing you want to watch, and
           a list of them scrolling by inside the log would be unreadable. Outside the scroller
           so it never covers the log; it caps its own height and scrolls within itself. */}
       {subagents.length > 0 && (
-        <SubagentTree nodes={subagents} className="mx-1 shrink-0" />
+        <SubagentTree nodes={subagents} className={styles.subagents} />
       )}
       <div
         ref={scrollRef}
         role="region"
         aria-label="Run log"
-        className="min-h-0 flex-1 overflow-y-auto px-1"
+        className={styles.scroller}
       >
-        <div
-          ref={contentRef}
-          className="mx-auto flex min-h-full w-full max-w-(--chat-lane-w) flex-col gap-3"
-        >
+        <div ref={contentRef} className={styles.lane}>
           {meta.resumedFrom !== undefined && (
-            <div className="flex items-center gap-3 py-1">
-              <span className="bg-border/70 h-px flex-1" />
-              <span className="border-border/70 bg-background text-muted-foreground font-book flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px]">
-                <Info className="size-3 shrink-0" />
+            <div className={styles.resumed}>
+              <span className={styles.rule} />
+              <span className={styles.resumedNote}>
+                <Info {...ICON} size={12} />
                 Resumed from run {meta.resumedFrom} — earlier conversation lives
                 there.
               </span>
-              <span className="bg-border/70 h-px flex-1" />
+              <span className={styles.rule} />
             </div>
           )}
           {groups.length === 0 &&
             !writing &&
             (meta.state === 'provisioning' || meta.state === 'running' ? (
-              <div className="flex flex-1 items-center justify-center">
-                <LoadingState
+              <div className={styles.centre}>
+                <WorkingRow
                   label={
                     meta.state === 'provisioning'
                       ? 'Waiting for the run to start…'
@@ -400,9 +406,9 @@ export function RunLogView({
                 />
               </div>
             ) : (
-              <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 text-center">
-                <MessageSquare className="size-5" />
-                <p className="font-book text-[13px]">No log entries yet.</p>
+              <div className={cx(styles.centre, styles.empty)}>
+                <MessageSquare size={20} strokeWidth={1.8} aria-hidden />
+                <p className={styles.emptyText}>No log entries yet.</p>
               </div>
             ))}
           {/* Three levels of emphasis. What the agent SAID is the transcript's spine and gets
@@ -475,32 +481,32 @@ export function RunLogView({
               Cleared by the server the moment a later review completes. */}
           {meta.reviewedAt === undefined &&
             meta.reviewFailure !== undefined && (
-              <div className="bg-state-failed-surface text-state-failed rounded-card font-book flex items-start gap-2 px-3 py-2 text-[12px]">
-                <Info className="size-3.5 shrink-0 translate-y-0.5" />
-                <span className="whitespace-pre-wrap">
+              <Notice tone="danger" data-slot="review-failure">
+                <span className={styles.preWrap}>
                   {meta.reviewFailure.action} failed:{' '}
                   {meta.reviewFailure.reason}
                 </span>
-              </div>
+              </Notice>
             )}
 
           {/* The run failed but its branch kept moving — the orphaned agent process
               survived and committed. Distinguishes "dead $0 run" from "the work actually
-              landed, go look at the branch". */}
+              landed, go look at the branch". Info, not success: it always sits right under
+              the red failure notice and tells the person to go and look, so it is never a
+              green box beside a red one. */}
           {orphanWork !== null && (
-            <div className="bg-state-review-surface text-state-review rounded-card font-book flex items-start gap-2 px-3 py-2 text-[12px]">
-              <Info className="size-3.5 shrink-0 translate-y-0.5" />
+            <Notice tone="info" data-slot="orphan-work">
               {orphanWork}
-            </div>
+            </Notice>
           )}
 
           {/* A live run that has not printed anything for a moment is indistinguishable from a
               wedged one without this. Only while genuinely running — never on a paused or
               finished run, where a spinner would be a lie. Suppressed when the empty-state
-              LoadingState above is already showing the same "Working…" label, and while the
+              WorkingRow above is already showing the same "Working…" label, and while the
               agent's words are arriving, which say it is working better than a spinner. */}
           {meta.state === 'running' && groups.length > 0 && !writing && (
-            <LoadingState
+            <WorkingRow
               label="Working…"
               startedAt={Date.parse(meta.createdAt)}
             />
@@ -532,12 +538,11 @@ export function RunLogView({
                 />
               ))
             ) : (
-              <div className="bg-surface-quaternary text-muted-foreground rounded-card border-border font-book flex items-start gap-2 border-[0.5px] px-3 py-2 text-[12px]">
-                <Info className="size-3.5 shrink-0 translate-y-0.5" />
+              <Notice tone="default" data-slot="approval-pending">
                 {/* A window that cannot decide cannot read open gates, so it says why. */}
                 {scopeDecide.explanation ??
                   'This run is waiting on an approval that has not reached this window yet; it will appear here shortly.'}
-              </div>
+              </Notice>
             ))}
         </div>
       </div>
@@ -565,19 +570,14 @@ export function RunLogView({
       )}
 
       {error !== null && (
-        <Alert
-          variant="destructive"
-          className="bg-state-failed-surface rounded-card border-none px-3 py-2"
-        >
-          <AlertDescription className="text-state-failed font-book text-[12px]">
-            {error}
-          </AlertDescription>
-        </Alert>
+        <Notice tone="danger" role="alert" data-slot="send-error">
+          {error}
+        </Notice>
       )}
 
       {(canSend || terminal) && (
-        <div className="shadow-hairline-top flex flex-col gap-1.5 pt-3">
-          <span className="text-muted-foreground font-book text-[12px]">
+        <div className={styles.composer}>
+          <span className={styles.hint}>
             {!terminal
               ? 'Talk to the agent. It reads this while it works.'
               : canContinue
@@ -590,9 +590,11 @@ export function RunLogView({
             // PromptBar primitive's single fixed "Send" action can't express, so this branch
             // keeps its own buttons rather than forcing a primitive built for one action onto a
             // composer that genuinely has two.
-            <div className="flex gap-2">
-              <Textarea
+            <div className={styles.terminal}>
+              <textarea
+                className={cx('textarea', styles.draft)}
                 rows={2}
+                aria-label="Describe what should change"
                 placeholder="Describe what should change…"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
@@ -603,25 +605,25 @@ export function RunLogView({
                   }
                 }}
                 disabled={sending}
-                className="min-h-0 flex-1 resize-none"
               />
               {canContinue && (
                 <Button
                   variant="secondary"
                   disabled={sending}
                   onClick={() => void continueRun()}
-                  className="self-end"
+                  className={styles.action}
+                  icon={<Play {...ICON} />}
                 >
-                  <Play className="size-3.5" />
                   Continue
                 </Button>
               )}
               <Button
+                variant="primary"
                 disabled={sending}
                 onClick={() => void submit()}
-                className="self-end"
+                className={styles.action}
+                icon={<MessageSquarePlus {...ICON} />}
               >
-                <MessageSquarePlus className="size-3.5" />
                 Request changes
               </Button>
             </div>

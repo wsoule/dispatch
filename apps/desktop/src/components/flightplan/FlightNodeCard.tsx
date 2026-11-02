@@ -12,8 +12,8 @@ import { StatusIcon } from '../tasks/StatusIcon';
 import { NODE_HEIGHT, NODE_WIDTH } from './flightLayout';
 import type { FlightNodeState } from './flightPlan';
 import type { SentenceTone } from './flightSentences';
+import { useElapsed } from '@/hooks/useElapsed';
 import { cn } from '@/lib/utils';
-import { useElapsed } from '@/ui/ai/use-elapsed';
 
 /** A node's DOM id, for the canvas's `aria-activedescendant` and scrolling it into view. */
 export function flightNodeDomId(id: string): string {

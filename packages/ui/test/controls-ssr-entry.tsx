@@ -55,6 +55,23 @@ const html = renderToString(
         },
       ]}
     />
+    <RadioGroup
+      label="Verdict"
+      orientation="horizontal"
+      hintAs="tooltip"
+      size="sm"
+      value="comment"
+      onChange={noop}
+      data-testid="verdict"
+      options={[
+        {
+          value: 'comment',
+          label: 'Comment',
+          hint: 'Feedback only; the run stays open',
+        },
+        { value: 'approve', label: 'Approve' },
+      ]}
+    />
     <Select
       label="Tier"
       value="admin"

@@ -1,0 +1,71 @@
+/* The changed-files card at the end of a settled run (ChangedFilesCard.tsx): a soft
+   --surface-2 card under a --border, one row per file the run edited with its +/- line
+   counts. Tokens only. */
+
+.card {
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface-2);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 28px;
+  padding: 0 var(--s-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.file {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  height: 28px;
+  padding: 0 var(--s-2);
+  border-radius: var(--r-sm);
+}
+
+.icon {
+  flex: none;
+  color: var(--text-2);
+}
+
+/* The path: Geist Mono (a machine-read string), truncated with the full path in its
+   title. */
+.path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-2xs);
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stat {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  margin-inline-start: auto;
+  font-size: var(--fs-2xs);
+}
+
+/* Forced colours: the card keeps its edge. */
+@media (forced-colors: active) {
+  .card {
+    border-color: CanvasText;
+  }
+}

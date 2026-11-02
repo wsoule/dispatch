@@ -7,8 +7,8 @@ import { runKindLabel } from '../../../lib/runKind';
 import { isTerminalRunState } from '../../../lib/runState';
 import { formatShortDate } from '../../../lib/taskDates';
 import { RunStatePill } from '../../runs/RunStatePill';
+import { formatElapsed, useElapsed } from '@/hooks/useElapsed';
 import { Pill, SelectPill } from '@/ui/ai/pill';
-import { formatElapsed, useElapsed } from '@/ui/ai/use-elapsed';
 import {
   DropdownMenu,
   DropdownMenuContent,

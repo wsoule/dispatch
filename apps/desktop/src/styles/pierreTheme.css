@@ -1,25 +1,36 @@
 /* Maps this app's tokens (tokens.css) onto the custom properties @pierre/diffs
-   and @pierre/trees read inside their Shadow DOM (see RunReviewView.tsx) —
-   shadow roots isolate style rules but not inherited custom-property values,
-   so a var() declared here on :root reaches inside both packages like any
-   other inherited property.
+   and @pierre/trees read inside their Shadow DOM (DiffSurface, RunDiffView,
+   PierreReviewDiff) — shadow roots isolate style rules but not inherited
+   custom-property values, so a var() declared here on :root reaches inside
+   both packages like any other inherited property.
 
-   Each side of a light/dark pair points at the same self-flipping token, so
-   tokens.css's own dark-mode overrides carry through without restating
-   literal hex values here. The diff sits directly on the panel surface, the
-   gutter is closed by a half-pixel hairline, and the accent is the indigo the
-   rest of the app reserves for focus and selection chrome. */
-:root {
+   Each side of a light/dark pair points at the same self-flipping Gr8r
+   token, so tokens.css's own dark-mode overrides carry through without
+   restating literal hex values here. The diff sits directly on the card
+   surface (--surface), the gutter is closed by a half-pixel --border
+   hairline, insertions, deletions and modified lines take the green, red
+   and blue hues, and the accent is the purple the rest of the app keeps for
+   focus, selection and links (never a status).
+
+   The --diffs-* half is also set on Pierre's host element, diffs-container:
+   @pierre/diffs writes its shiki theme's own colours onto that host from a
+   `:host` rule inside the shadow root (pierre-dark's #0a0a0a background,
+   among others), which beats a value merely inherited from :root. A rule
+   from the page that targets the host itself outranks a `:host` rule, so
+   the app's tokens win there. @pierre/trees reads `*-override` slots it
+   never sets itself, so inheritance from :root is enough for them. */
+:root,
+diffs-container {
   /* @pierre/diffs (PatchDiff) — background, foreground, fonts, and the
      addition/deletion/modified accent colors used for line highlights and
      the changed-file header. Code stays mono; the file header is sans. */
-  --diffs-light-bg: var(--surface-panel);
-  --diffs-dark-bg: var(--surface-panel);
-  --diffs-light: var(--text-primary);
-  --diffs-dark: var(--text-primary);
+  --diffs-light-bg: var(--surface);
+  --diffs-dark-bg: var(--surface);
+  --diffs-light: var(--text);
+  --diffs-dark: var(--text);
   --diffs-font-family: var(--font-mono);
   --diffs-header-font-family: var(--font-sans);
-  --diffs-font-size: var(--text-mini);
+  --diffs-font-size: var(--fs-xs);
   --diffs-light-addition-color: var(--green);
   --diffs-dark-addition-color: var(--green);
   --diffs-light-deletion-color: var(--red);
@@ -28,22 +39,23 @@
   --diffs-dark-modified-color: var(--blue);
   /* The line between the number gutter and the code: Pierre's default is a 2px
      band of the background; a half-pixel hairline is the app's rule. */
-  --diffs-gap-style: 0.5px solid var(--border-default);
-  --diffs-bg-separator-override: var(--surface-secondary);
-  --diffs-fg-number-override: var(--text-ghost);
+  --diffs-gap-style: 0.5px solid var(--border);
+  --diffs-bg-separator-override: var(--surface-2);
+  --diffs-fg-number-override: var(--text-3);
 
   /* @pierre/trees (FileTree) — these are single override slots rather than
      light/dark pairs, so each one aliases to a design token that already
      resolves to the right value for the current scheme. */
-  --trees-bg-override: var(--surface-panel);
-  --trees-fg-override: var(--text-primary);
-  --trees-fg-muted-override: var(--text-muted);
-  --trees-bg-muted-override: var(--surface-hover);
-  --trees-border-color-override: var(--border-subtle);
-  --trees-border-radius-override: var(--radius-control);
+  --trees-bg-override: var(--surface);
+  --trees-fg-override: var(--text);
+  --trees-fg-muted-override: var(--text-2);
+  --trees-bg-muted-override: var(--surface-2);
+  --trees-border-color-override: var(--divider);
+  --trees-border-radius-override: var(--r-sm);
   --trees-accent-override: var(--accent);
-  /* Pierre would otherwise mix the accent into the selected row; selection
-     stays neutral grey and the accent is kept for the focus ring. */
-  --trees-selected-bg-override: var(--surface-selected);
-  --trees-selected-fg-override: var(--text-primary);
+  /* Pierre would otherwise mix the accent into the selected row; the
+     selected row stays a neutral fill (--surface-3, a step past the hover
+     fill) and the accent is kept for the focus ring. */
+  --trees-selected-bg-override: var(--surface-3);
+  --trees-selected-fg-override: var(--text);
 }

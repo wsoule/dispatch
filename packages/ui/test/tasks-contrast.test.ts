@@ -311,6 +311,7 @@ const LANE_FILES = [
   'tasks/view-toolbar.module.css',
   'tasks/search-field.module.css',
   'tasks/copy-value.module.css',
+  'tasks/code-block.module.css',
   'tasks/chip.module.css',
   'tasks/checkbox.module.css',
   'tasks/switch.module.css',

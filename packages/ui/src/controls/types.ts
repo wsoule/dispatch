@@ -110,6 +110,16 @@ export interface RadioGroupProps extends DataAttributes {
       row that picks as a whole, the checked one on the hover fill with an
       accent edge (a decision card's answers). */
   variant?: 'plain' | 'cards';
+  /** How an option's `hint` shows. text (default): a quiet line under the
+      label. tooltip: no visible line; a Tooltip on the option's label
+      (its ring and words) shows the hint on hover and while its radio has
+      keyboard focus, and a visually hidden copy stays the radio's
+      description (a one-row footer with no room for the lines, such as
+      the review verdict bar). */
+  hintAs?: 'text' | 'tooltip';
+  /** md (default) is the form row; sm a compact 24px row with 12.5px
+      words, for a one-row footer. */
+  size?: 'sm' | 'md';
   /** auto (default): an arrow key moves and picks, as native radios do.
       manual: an arrow key only moves focus (the change it makes is not
       reported and the checked option stays); Space, Enter or a click

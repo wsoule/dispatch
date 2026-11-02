@@ -227,8 +227,6 @@ import { TerminalsView } from './views/TerminalsView';
 import { ThreadsView } from './views/ThreadsView';
 import { TimelineView } from './views/TimelineView';
 import { type OverseerFocus, TwoViewOverseer } from './views/TwoViewOverseer';
-// The legacy views' tooltips share its zero delay until they move onto Gr8r's Tooltip.
-import { TooltipProvider } from '@/ui/tooltip';
 
 // The hosts a task page and a Flight Plan draw from, provided together so the shell's
 // provider stack stays one level deep.
@@ -2547,81 +2545,79 @@ function App() {
   );
 
   return (
-    <TooltipProvider>
-      <ShellActionsProvider value={shellActions}>
-        <DeepLinkProvider value={deepLinkActions}>
-          <SavedViewsProvider value={savedViews}>
-            <PeopleProvider people={data.people} me={data.me}>
-              <SurfaceHosts
-                taskPage={taskPageHost}
-                flightPlan={flightPlanHost}
-                planning={planning}
-              >
-                <div className="bg-frame relative flex h-screen flex-col overflow-hidden">
-                  {twoViewsFrame}
+    <ShellActionsProvider value={shellActions}>
+      <DeepLinkProvider value={deepLinkActions}>
+        <SavedViewsProvider value={savedViews}>
+          <PeopleProvider people={data.people} me={data.me}>
+            <SurfaceHosts
+              taskPage={taskPageHost}
+              flightPlan={flightPlanHost}
+              planning={planning}
+            >
+              <div className="bg-frame relative flex h-screen flex-col overflow-hidden">
+                {twoViewsFrame}
 
-                  <TaskComposerSlideOver
-                    open={composerMode !== null}
-                    mode={composerMode ?? 'describe'}
-                    onModeChange={changeComposerMode}
-                    projectName={activeProject?.name}
-                    statuses={data.config?.statuses ?? []}
-                    milestones={data.milestones}
-                    initialStatus={createPreset?.status}
-                    labels={labelCatalogue}
-                    labelDefinitions={data.config?.labels}
-                    onCreate={(input) => data.handleCreate(input)}
-                    onDraft={startDraftAndOpen}
-                    onCapture={
-                      quickCaptureAvailable
-                        ? rawData.handleCaptureInbox
-                        : undefined
-                    }
-                    onUploadAttachments={data.handleUploadAttachments}
-                    daemon={
-                      daemonDown
-                        ? {
-                            starting: data.portLoading,
-                            errorDetail: data.portErrorDetail,
-                            onRetry: data.retryEnsureDispatchd,
-                          }
-                        : null
-                    }
-                    onClose={closeComposer}
+                <TaskComposerSlideOver
+                  open={composerMode !== null}
+                  mode={composerMode ?? 'describe'}
+                  onModeChange={changeComposerMode}
+                  projectName={activeProject?.name}
+                  statuses={data.config?.statuses ?? []}
+                  milestones={data.milestones}
+                  initialStatus={createPreset?.status}
+                  labels={labelCatalogue}
+                  labelDefinitions={data.config?.labels}
+                  onCreate={(input) => data.handleCreate(input)}
+                  onDraft={startDraftAndOpen}
+                  onCapture={
+                    quickCaptureAvailable
+                      ? rawData.handleCaptureInbox
+                      : undefined
+                  }
+                  onUploadAttachments={data.handleUploadAttachments}
+                  daemon={
+                    daemonDown
+                      ? {
+                          starting: data.portLoading,
+                          errorDetail: data.portErrorDetail,
+                          onRetry: data.retryEnsureDispatchd,
+                        }
+                      : null
+                  }
+                  onClose={closeComposer}
+                />
+
+                {addProjectOpen && (
+                  <AddProjectDialog
+                    onAdd={async (path) => {
+                      await handleAddProject(path);
+                    }}
+                    onClose={() => setAddProjectOpen(false)}
                   />
+                )}
 
-                  {addProjectOpen && (
-                    <AddProjectDialog
-                      onAdd={async (path) => {
-                        await handleAddProject(path);
-                      }}
-                      onClose={() => setAddProjectOpen(false)}
-                    />
-                  )}
+                <CommandPalette
+                  isOpen={navState.paletteOpen}
+                  entries={paletteEntries}
+                  timeline={activeProject === null ? null : planning.timeline}
+                  onNavigate={navigate}
+                  searchDocs={searchDocs}
+                />
 
-                  <CommandPalette
-                    isOpen={navState.paletteOpen}
-                    entries={paletteEntries}
-                    timeline={activeProject === null ? null : planning.timeline}
-                    onNavigate={navigate}
-                    searchDocs={searchDocs}
+                {/* After the palette in the tree, so the sheet the
+                      reducer stacks over it draws on top. */}
+                {navState.shortcutsOpen && (
+                  <ShortcutSheet
+                    groups={shortcutGroups}
+                    onClose={() => dispatchNav({ type: 'closeShortcuts' })}
                   />
-
-                  {/* After the palette in the tree, so the sheet the
-                        reducer stacks over it draws on top. */}
-                  {navState.shortcutsOpen && (
-                    <ShortcutSheet
-                      groups={shortcutGroups}
-                      onClose={() => dispatchNav({ type: 'closeShortcuts' })}
-                    />
-                  )}
-                </div>
-              </SurfaceHosts>
-            </PeopleProvider>
-          </SavedViewsProvider>
-        </DeepLinkProvider>
-      </ShellActionsProvider>
-    </TooltipProvider>
+                )}
+              </div>
+            </SurfaceHosts>
+          </PeopleProvider>
+        </SavedViewsProvider>
+      </DeepLinkProvider>
+    </ShellActionsProvider>
   );
 }
 

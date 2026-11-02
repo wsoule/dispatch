@@ -1,0 +1,54 @@
+/* ReviewThreadIndex (ReviewThreadIndex.tsx): every thread on the review, grouped by file
+   under the "Review" section header. Each group is the file's path (Geist Mono: a
+   machine-read string), then per thread its line link and pending word over the card. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+}
+
+.empty {
+  margin: 0;
+  font-size: var(--fs);
+  line-height: var(--lh);
+  color: var(--text-3);
+}
+
+.file {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.path {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.threadHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.line {
+  font-variant-numeric: tabular-nums;
+}
+
+.pending {
+  font-size: var(--fs-xs);
+}

@@ -87,3 +87,23 @@ test('Ask the agent to fix it quotes the failure', () => {
     'npm ERR! missing script: test'
   );
 });
+
+test('it is one danger alert carrying the failure-notice hook', () => {
+  render(<FailureNotice error="TypeError: x is undefined" />);
+  const alert = screen.getByRole('alert');
+  expect(alert.getAttribute('data-slot')).toBe('failure-notice');
+  expect(alert.getAttribute('data-tone')).toBe('danger');
+  expect(alert.textContent).toContain('TypeError: x is undefined');
+});
+
+test('the Details fold names the raw error it opens', () => {
+  render(<FailureNotice error={'boom\nat line 2'} />);
+  const details = screen.getByRole('button', { name: 'Details' });
+  expect(details.getAttribute('aria-expanded')).toBe('false');
+  fireEvent.click(details);
+  expect(details.getAttribute('aria-expanded')).toBe('true');
+  const panel = document.getElementById(
+    details.getAttribute('aria-controls') ?? ''
+  );
+  expect(panel?.textContent).toContain('at line 2');
+});

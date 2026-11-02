@@ -366,6 +366,222 @@ describe('RadioGroup', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
+  // The review verdict bar's one-row footer: no room for hint lines, so
+  // each hint is a Tooltip on its option's label, and a hidden copy stays
+  // the radio's description.
+  describe('hintAs="tooltip"', () => {
+    function Tips({
+      onChange = () => undefined,
+      activation,
+    }: {
+      onChange?: (value: string) => void;
+      activation?: 'auto' | 'manual';
+    }) {
+      const [value, setValue] = useState<string | null>('comment');
+      return (
+        <RadioGroup
+          label="Verdict"
+          orientation="horizontal"
+          hintAs="tooltip"
+          size="sm"
+          activation={activation}
+          value={value}
+          onChange={(next) => {
+            setValue(next);
+            onChange(next);
+          }}
+          options={[
+            {
+              value: 'comment',
+              label: 'Comment',
+              hint: 'Feedback only; the run stays open',
+            },
+            {
+              value: 'approve',
+              label: 'Approve',
+              hint: 'Ready to land as it is',
+            },
+            { value: 'changes', label: 'Request changes' },
+          ]}
+        />
+      );
+    }
+
+    // The tip is aria-hidden (rendered in place), so the query looks past
+    // that.
+    const tip = () => screen.queryByRole('tooltip', { hidden: true });
+
+    test('draws no hint line; the hidden copy is the radio’s description', () => {
+      render(<Tips />);
+      const comment = screen.getByRole('radio', { name: 'Comment' });
+      const hint = document.getElementById(
+        comment.getAttribute('aria-describedby') ?? ''
+      );
+      expect(hint?.textContent).toBe('Feedback only; the run stays open');
+      // Visually hidden (the global .srOnly), never a visible line.
+      expect(hint?.className).toBe('srOnly');
+      expect(hint?.closest('label')).toBeNull();
+      expect(
+        screen.getByRole('radio', {
+          description: 'Feedback only; the run stays open',
+        })
+      ).toBe(comment);
+      // Nothing shows until asked, and no option gains a tab stop of its
+      // own (the radios keep the group's one).
+      expect(tip()).toBeNull();
+      expect(
+        screen.getByRole('radiogroup').querySelectorAll('[tabindex]')
+      ).toHaveLength(0);
+      // An option without a hint has no description and no tooltip.
+      expect(
+        screen
+          .getByRole('radio', { name: 'Request changes' })
+          .hasAttribute('aria-describedby')
+      ).toBe(false);
+    });
+
+    test('keyboard focus on a radio shows its hint; Escape hides it', () => {
+      const pageEsc = mock((_event: KeyboardEvent) => undefined);
+      const onKey = (event: KeyboardEvent) => {
+        if (event.key === 'Escape') pageEsc(event);
+      };
+      document.addEventListener('keydown', onKey);
+      try {
+        render(<Tips />);
+        const approve = screen.getByRole('radio', { name: 'Approve' });
+        act(() => approve.focus());
+        expect(tip()?.textContent).toBe('Ready to land as it is');
+        // Still described once, by the hidden copy, while the tip shows.
+        expect(approve.getAttribute('aria-describedby')).not.toContain(
+          tip()?.id ?? 'none'
+        );
+        expect(
+          screen.getByRole('radio', { description: 'Ready to land as it is' })
+        ).toBe(approve);
+        fireEvent.keyDown(approve, { key: 'Escape' });
+        expect(tip()).toBeNull();
+        expect(document.activeElement).toBe(approve);
+        expect(pageEsc).not.toHaveBeenCalled();
+        // Moving on hides it and shows the next radio's.
+        act(() => approve.blur());
+        act(() => approve.focus());
+        expect(tip()?.textContent).toBe('Ready to land as it is');
+        const comment = screen.getByRole('radio', { name: 'Comment' });
+        act(() => comment.focus());
+        expect(
+          screen.getAllByRole('tooltip', { hidden: true }).map((t) => t.id)
+        ).toHaveLength(1);
+        expect(tip()?.textContent).toBe('Feedback only; the run stays open');
+        act(() => comment.blur());
+        expect(tip()).toBeNull();
+      } finally {
+        document.removeEventListener('keydown', onKey);
+      }
+    });
+
+    test('hovering the option’s label shows its hint after the delay', async () => {
+      // Let any earlier tooltip's warm window run out.
+      await act(() => new Promise<void>((resolve) => setTimeout(resolve, 450)));
+      render(<Tips />);
+      const label = screen
+        .getByRole('radio', { name: 'Approve' })
+        .closest('label');
+      expect(label).not.toBeNull();
+      if (label === null) return;
+      fireEvent.pointerEnter(label, { pointerType: 'mouse' });
+      expect(tip()).toBeNull();
+      await act(() => new Promise<void>((resolve) => setTimeout(resolve, 350)));
+      expect(tip()?.textContent).toBe('Ready to land as it is');
+      // A press hides it, and picks as before.
+      fireEvent.pointerDown(label);
+      expect(tip()).toBeNull();
+    });
+
+    test('picking, arrows and manual activation are unchanged', () => {
+      const onChange = mock((_value: string) => undefined);
+      const { unmount } = render(<Tips onChange={onChange} />);
+      fireEvent.click(screen.getByRole('radio', { name: 'Approve' }));
+      expect(onChange.mock.calls).toEqual([['approve']]);
+      unmount();
+      const manual = mock((_value: string) => undefined);
+      render(<Tips onChange={manual} activation="manual" />);
+      const comment = screen.getByRole<HTMLInputElement>('radio', {
+        name: 'Comment',
+      });
+      const approve = screen.getByRole<HTMLInputElement>('radio', {
+        name: 'Approve',
+      });
+      fireEvent.keyDown(comment, { key: 'ArrowRight' });
+      // The focus shows the radio's tooltip: a state update, so in act.
+      act(() => approve.focus());
+      fireEvent.click(approve);
+      fireEvent.keyUp(approve, { key: 'ArrowRight' });
+      expect(manual).not.toHaveBeenCalled();
+      expect(comment.checked).toBe(true);
+      fireEvent.keyDown(approve, { key: 'Enter' });
+      expect(manual.mock.calls).toEqual([['approve']]);
+    });
+
+    test('hintAs="text" (the default) keeps the visible line and no tooltip', () => {
+      render(
+        <RadioGroup
+          label="Scope"
+          value="team"
+          onChange={() => undefined}
+          options={[{ value: 'team', label: 'Team', hint: 'Everyone sees it' }]}
+        />
+      );
+      const team = screen.getByRole('radio', { name: 'Team' });
+      const hint = document.getElementById(
+        team.getAttribute('aria-describedby') ?? ''
+      );
+      expect(hint?.textContent).toBe('Everyone sees it');
+      expect(hint?.className).not.toContain('srOnly');
+      act(() => team.focus());
+      expect(tip()).toBeNull();
+    });
+  });
+
+  test('size sets data-size on the radiogroup: md by default, sm when asked', () => {
+    const { rerender } = render(
+      <RadioGroup
+        label="Verdict"
+        value={null}
+        onChange={() => undefined}
+        options={[{ value: 'ok', label: 'OK' }]}
+      />
+    );
+    const group = screen.getByRole('radiogroup', { name: 'Verdict' });
+    expect(group.getAttribute('data-size')).toBe('md');
+    rerender(
+      <RadioGroup
+        label="Verdict"
+        size="sm"
+        value={null}
+        onChange={() => undefined}
+        options={[{ value: 'ok', label: 'OK' }]}
+      />
+    );
+    expect(group.getAttribute('data-size')).toBe('sm');
+    // The sheet: sm keeps the 24px row with 12.5px words.
+    const css = readFileSync(
+      path.join(
+        import.meta.dir,
+        '..',
+        'src',
+        'controls',
+        'radio-group.module.css'
+      ),
+      'utf8'
+    )
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\s+/g, ' ');
+    expect(css).toContain(
+      ".group[data-size='sm'] .row { gap: 6px; font-size: var(--fs-sm); }"
+    );
+    expect(css).toMatch(/\.row \{[^}]*min-height: 24px;/);
+  });
+
   describe('manual activation', () => {
     function Manual({ onChange }: { onChange: (value: string) => void }) {
       const [value, setValue] = useState<string | null>('deny');

@@ -1,30 +1,19 @@
 import type { RunMeta, RunState } from '@dispatch/client';
+import { Chip, cx } from '@dispatch/ui';
 
-import { deriveRunDisposition, runDispositionLabel } from '../../lib/runState';
+import {
+  deriveRunDisposition,
+  runDispositionLabel,
+  runStateLabel,
+} from '../../lib/runState';
+import { StateMark } from '../status/StateMark';
+import styles from './RunStatePill.module.css';
 import type { FeedState } from '@/lib/feedState';
-import { cn } from '@/lib/utils';
-import { Pill } from '@/ui/ai/pill';
-import { StateMark } from '@/ui/chrome/state-mark';
-
-// A run's states are fixed by the orchestrator (spec-exact strings), never
-// project-configurable, so unlike `StatusIcon`'s tracker statuses this can map
-// them exhaustively with no fallback. The whose-move vocabulary's words, not
-// process states: a run parked on an approval says "Approve" (the ask), a
-// finished one says "Review".
-const RUN_STATE_LABEL: Record<RunState, string> = {
-  provisioning: 'Provisioning',
-  running: 'Working',
-  'awaiting-approval': 'Approve',
-  finished: 'Review',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-  'interrupted-dirty': 'Interrupted',
-};
 
 /**
- * Which state color each `RunState` paints with, as a `FeedState` so this pill and the dense
- * surfaces that group by state can never disagree about what "waiting on you" looks like. The
- * colors themselves are the `--state-*` tokens in styles/tokens.css.
+ * Which feed state each `RunState` is drawn as, so this pill and the dense surfaces that group
+ * by state can never disagree about what "waiting on you" looks like. StateMark turns it into
+ * a glyph and a `data-tone` (`feedStateTone`).
  *
  * One row differs from `deriveFeedState` on purpose: `cancelled` is neutral here, not a
  * failure. The two answer different questions. The Control room asks "does a human owe this
@@ -51,12 +40,13 @@ interface RunStatePillProps {
 }
 
 /** The run-state chip shared by the Tasks board card, the Runs rail, and the run detail
- * header — one place owns the RunState -> label/color mapping so every surface agrees. A
- * 24px `Pill` led by the 14px `StateMark`, on Linear's chip grammar: no dot, no pulse.
+ * header — one place owns the RunState -> label/tone mapping so every surface agrees. A
+ * library `Chip` led by the 14px `StateMark` glyph (its hue through `data-tone`), with the
+ * words from `runStateLabel`, so the colour is never the only cue.
  *
  * Takes the whole `RunMeta` rather than just `state` because `RunState` alone cannot say what
  * a run needs from a human: two runs on `finished` differ on whether anyone reviewed them, and
- * two on `failed` differ on whether a session remains to continue from. The disposition pill
+ * two on `failed` differ on whether a session remains to continue from. The disposition chip
  * beside the state answers that (see `deriveRunDisposition`), and deriving it here rather than
  * at each call site is what keeps every surface agreeing — a run reading "Needs review" in
  * the Runs rail but bare "Finished" on a board card is exactly the inconsistency this exists
@@ -67,7 +57,7 @@ export function RunStatePill({
   className,
 }: RunStatePillProps) {
   const state = meta.state;
-  const label = RUN_STATE_LABEL[state];
+  const label = runStateLabel(state);
   const badge = runDispositionLabel(
     deriveRunDisposition(meta),
     meta.reviewAction
@@ -83,7 +73,7 @@ export function RunStatePill({
         title={name}
         data-slot="run-state-mark"
         data-run-state={state}
-        className={cn('inline-flex shrink-0 items-center', className)}
+        className={cx(styles.mark, className)}
       >
         <StateMark state={tone} variant="dot" pulse />
       </span>
@@ -94,13 +84,15 @@ export function RunStatePill({
     <span
       data-slot="run-state-pill"
       data-run-state={state}
-      className={cn('inline-flex items-center gap-1', className)}
+      className={cx(styles.pill, className)}
     >
-      <Pill>
-        <StateMark state={tone} pulse />
-        {label}
-      </Pill>
-      {badge !== null && <Pill className="text-muted-foreground">{badge}</Pill>}
+      <Chip>
+        <span className={styles.chipBody}>
+          <StateMark state={tone} pulse />
+          {label}
+        </span>
+      </Chip>
+      {badge !== null && <Chip tone="muted">{badge}</Chip>}
     </span>
   );
 }

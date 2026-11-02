@@ -1,0 +1,91 @@
+/* CodeBlock: code or machine output in Geist Mono (12px --text) on a
+   recessed well (--sunken in a 1px --border at --r), under an optional
+   header row holding the filename (Geist Mono), the language (a quiet
+   sans label) and the quiet Copy button at its end. No syntax colour.
+   Long lines scroll sideways (a thin scrollbar) unless data-wrap; a
+   maxHeight (inline, from the prop) makes the body scroll down too. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  min-height: var(--h-sm);
+}
+
+.filename {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.language {
+  flex: none;
+  color: var(--text-3);
+  font-family: var(--font-body);
+  font-size: var(--fs-2xs);
+}
+
+/* The Copy button sits at the header's end, whatever is before it. */
+.copy {
+  flex: none;
+  margin-inline-start: auto;
+}
+
+.pre {
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--sunken);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  white-space: pre;
+  tab-size: 2;
+  scrollbar-width: thin;
+}
+
+.code {
+  display: block;
+  font: inherit;
+}
+
+/* One line of the code; an empty one holds a space, so it keeps its
+   height. */
+.line {
+  display: block;
+}
+
+/* Wrapped: long lines break (anywhere, so a long token or URL breaks
+   too) instead of scrolling sideways. */
+.root[data-wrap='true'] .pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Forced colours: the well keeps its edge, and the quiet button (no box
+   at rest) gets one, so both stay shapes. */
+@media (forced-colors: active) {
+  .pre {
+    border-color: CanvasText;
+  }
+
+  .copy {
+    border-color: ButtonText;
+  }
+}

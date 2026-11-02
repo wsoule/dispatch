@@ -17,6 +17,7 @@ interface SsrResult {
   primitives: string;
   board: string;
   lists: string;
+  codeBlocks: string;
 }
 
 function serverRender(): SsrResult {
@@ -264,5 +265,29 @@ describe('task family server render', () => {
     expect(html).toMatch(
       /<span[^>]*data-tone="default"><span[^>]*>boot.rs<\/span><button type="button"[^>]*aria-label="Remove boot.rs" data-chip-remove="">/
     );
+  });
+  test('code blocks render their lines, header and caps with no client state', () => {
+    const html = result.codeBlocks;
+    // The host hook and the slot on the root; the cap on the body; the
+    // blank line as a space; no final blank line.
+    expect(html).toMatch(/<div data-testid="fence" data-slot="code-block"/);
+    expect(html).toContain('style="max-height:240px"');
+    expect(html).toMatch(
+      /<pre[^>]*><code[^>]*><span[^>]*>const a = 1;\n<\/span><span[^>]*> \n<\/span><span[^>]*>const b = 2;<\/span><\/code><\/pre>/
+    );
+    // The header: filename (with its title), the language label, Copy.
+    expect(html).toContain('title="src/app.ts"');
+    expect(html).toContain('>TypeScript</span>');
+    expect(html).toContain('aria-label="Copy code"');
+    expect(html).toContain('data-state="idle"');
+    expect(html).toContain('aria-live="polite"');
+    // The wrapped block: data-wrap, and no header, button or live region.
+    expect(html).toMatch(
+      /<div data-slot="code-block" class="[^"]*" data-wrap="true"><pre/
+    );
+    expect(html.match(/<button/g)).toHaveLength(1);
+    // Nothing is measured on the server: no tab stop on a body.
+    expect(html).not.toContain('tabindex');
+    expect(html).not.toContain('data-scrollable');
   });
 });

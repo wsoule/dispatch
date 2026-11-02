@@ -1,5 +1,5 @@
 import { untrustedFenced } from '@dispatch-foo/core/browser';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 import { useEffect } from 'react';
 
@@ -17,7 +17,9 @@ describe('Markdown', () => {
     );
     const mounted = () => ({
       link: container.querySelector('a'),
-      block: container.querySelector('[data-slot="markdown"] .my-2'),
+      block: container.querySelector(
+        '[data-slot="markdown"] [data-slot="code-block"]'
+      ),
     });
     const before = mounted();
     expect(before.link).not.toBeNull();
@@ -72,6 +74,39 @@ describe('Markdown', () => {
     expect(container.textContent).toContain('TypeScript');
   });
 
+  test('a fence carries a Copy code button', () => {
+    render(<Markdown content={'```ts\nconst x = 1;\n```'} />);
+    const copy = screen.getByRole('button', { name: 'Copy code' });
+    expect(copy.closest('[data-slot="code-block"]')).not.toBeNull();
+  });
+
+  // The label names the language the fence says: a JavaScript fence is not
+  // TypeScript (the old tokenizer's TS-for-JS stand-in is gone with it).
+  test.each([
+    ['js', 'JavaScript'],
+    ['mjs', 'JavaScript'],
+    ['javascript', 'JavaScript'],
+    ['jsx', 'JSX'],
+    ['tsx', 'TSX'],
+    ['ts', 'TypeScript'],
+  ])('a %s fence is labelled %s', (slug, label) => {
+    const { container } = render(
+      <Markdown content={`\`\`\`${slug}\nconst x = 1;\n\`\`\``} />
+    );
+    const block = container.querySelector('[data-slot="code-block"]');
+    // The header holds the label; the body holds only the code.
+    const header = block?.textContent?.replace('const x = 1;', '') ?? '';
+    expect(header).toContain(label);
+    if (label !== 'TypeScript') expect(header).not.toContain('TypeScript');
+  });
+
+  test('a fence with an unmapped language tag shows the tag as written', () => {
+    const { container } = render(
+      <Markdown content={'```bash\nbun test\n```'} />
+    );
+    expect(container.textContent).toContain('bash');
+  });
+
   test('a multi-line fenced block keeps every line', () => {
     const source = 'function add(a, b) {\n  return a + b;\n}';
     const { container } = render(
@@ -98,7 +133,7 @@ describe('Markdown', () => {
     expect(container.querySelector('pre')).toBeNull();
   });
 
-  test('the prose variant carries the 15px long-form class; the default inherits', () => {
+  test('the prose variant carries the 15px long-form scope; the default inherits', () => {
     const { container } = render(
       <Markdown content="A description." variant="prose" />
     );
@@ -108,6 +143,7 @@ describe('Markdown', () => {
 
     const inline = render(<Markdown content="A line." />);
     const inlineRoot = inline.container.querySelector('[data-slot="markdown"]');
+    expect(inlineRoot?.getAttribute('data-variant')).toBe('inline');
     expect(inlineRoot?.className).not.toContain('dispatch-md-prose');
   });
 

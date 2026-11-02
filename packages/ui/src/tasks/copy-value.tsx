@@ -3,7 +3,7 @@
 import { Check, Copy } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 
-import { COPIED_MS, writeClipboard } from '../lib/clipboard';
+import { COPIED_MS, selectContents, writeClipboard } from '../lib/clipboard';
 import { dataAttributes } from '../lib/data-attributes';
 import { Button } from './button';
 import { cx } from './class-names';
@@ -11,18 +11,6 @@ import styles from './copy-value.module.css';
 import type { CopyValueProps } from './types';
 
 type CopyState = 'idle' | 'copied' | 'failed';
-
-/* Selects the text of `node`, so a refused copy can still be done by
-   hand with Ctrl/Cmd + C. */
-function selectContents(node: HTMLElement | null): void {
-  if (node === null || typeof window === 'undefined') return;
-  const selection = window.getSelection();
-  if (selection === null) return;
-  const range = document.createRange();
-  range.selectNodeContents(node);
-  selection.removeAllRanges();
-  selection.addRange(range);
-}
 
 /* A value to copy (a token, a pairing code, an invite link): the value in
    a recessed code well, Geist Mono by default, then a small secondary

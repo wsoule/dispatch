@@ -1,11 +1,17 @@
 import type { ApiClient, ImpactSubjectKind } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
-import { Chip, EmptyState, Skeleton, Tooltip } from '@dispatch/ui';
+import {
+  Chip,
+  EmptyState,
+  Panel,
+  Skeleton,
+  StatsStrip,
+  Tooltip,
+} from '@dispatch/ui';
 import { useQuery } from '@tanstack/react-query';
-import { Minus, TrendingDown, TrendingUp, Waypoints } from 'lucide-react';
+import { Waypoints } from 'lucide-react';
 
 import { DEFAULT_REVIEW_CAP, summarizeImpact } from '../../lib/impactSummary';
-import { Panel } from '../gr8r/Panel';
 import styles from './ImpactPanel.module.css';
 
 // The scanner only understands .ts/.tsx imports, so a scanner-backed result
@@ -43,7 +49,9 @@ function reasonMessage(reason: string | undefined): string | null {
 
 /**
  * Compact blast-radius surface: count, deepest hop, the direct-vs-downstream
- * split, which backend(s) answered, and review-scope coverage. Embedded in
+ * split (a library StatsStrip of Direct, Downstream and Total, in neutral
+ * ink: a bigger reach is no status), which backend(s) answered, and
+ * review-scope coverage. Embedded in
  * the Review case panel, task detail, and the Git file pane — each passes
  * its own subject and this owns the fetch/loading/error states, mirroring
  * `SessionDetailModal`'s pattern for a self-contained data panel.
@@ -99,11 +107,17 @@ export function ImpactPanel({
   // would fall through to a bare header forever instead of a loading state.
   const pending = !isError && data === undefined;
 
+  // The header count is an exact number, so a capped reach (whose total is
+  // only a lower bound, "5+" in the stat strip) shows none: the Capped chip
+  // and the Total cell say it instead of a count that reads as exact.
+  const headerCount =
+    resolved && !resolved.reach.truncated ? resolved.summary.total : undefined;
+
   return (
     <Panel
-      title="Impact"
+      heading="Impact"
       className={className}
-      count={resolved ? resolved.summary.total : undefined}
+      count={headerCount}
       actions={
         resolved ? (
           <ImpactBadges
@@ -136,7 +150,10 @@ export function ImpactPanel({
       )}
 
       {!pending && !isError && resolved && resolved.summary.total > 0 && (
-        <ImpactBody summary={resolved.summary} />
+        <ImpactBody
+          summary={resolved.summary}
+          truncated={resolved.reach.truncated}
+        />
       )}
     </Panel>
   );
@@ -183,89 +200,32 @@ function ImpactBadges({
   );
 }
 
-type Direction = 'up' | 'down' | 'flat';
-
-// Reads the direct-vs-downstream split as a direction: more downstream than direct means
-// the reach keeps fanning out past the immediate dependents ('up'), more direct means it's
-// mostly contained to one hop ('down'), equal is 'flat'. Derived straight from the two
-// counts `summarizeImpact` already computed, not a fabricated trend.
-function blastDirection(direct: number, downstream: number): Direction {
-  return downstream > direct ? 'up' : downstream < direct ? 'down' : 'flat';
-}
-
-const DELTA = {
-  up: { tone: 'success', Icon: TrendingUp },
-  down: { tone: 'danger', Icon: TrendingDown },
-  flat: { tone: 'muted', Icon: Minus },
-} as const;
-
-const CHART_W = 264;
-const CHART_H = 64;
-
-/** The line through the two counts, direct then downstream, scaled into the chart box. */
-function linePoints(direct: number, downstream: number): [number, number][] {
-  const max = Math.max(direct, downstream);
-  const min = Math.min(direct, downstream);
-  const y = (value: number): number =>
-    max === min
-      ? CHART_H / 2
-      : CHART_H - ((value - min) / (max - min)) * CHART_H;
-  return [
-    [0, y(direct)],
-    [CHART_W, y(downstream)],
-  ];
-}
-
+/** The body of a nonzero reach: the summary line ("30 files · 5 hops"), the
+ *  three counts as a stat strip, then the analysis and coverage caveats. A
+ *  capped reach's total is a lower bound, so it carries the same `+` the
+ *  summary line does. */
 function ImpactBody({
   summary,
+  truncated,
 }: {
   summary: ReturnType<typeof summarizeImpact>;
+  truncated: boolean;
 }) {
-  const direction = blastDirection(summary.direct, summary.downstream);
-  const { tone, Icon } = DELTA[direction];
-  const [[x1, y1], [x2, y2]] = linePoints(summary.direct, summary.downstream);
   return (
     <>
-      <div className={styles.card}>
-        <div className={styles.cardHead}>
-          <div className={styles.cardText}>
-            <p className={styles.cardTitle}>Blast radius</p>
-            <p className={styles.cardSummary}>{summary.label}</p>
-          </div>
-          <span className={styles.delta} data-tone={tone}>
-            <Icon size={12} strokeWidth={1.8} aria-hidden="true" />
-            {summary.downstream} downstream
-          </span>
-        </div>
-        <figure className={styles.chart}>
-          <figcaption className={styles.chartHead}>
-            <span>
-              {summary.direct} direct → {summary.downstream} downstream
-            </span>
-            <span>files</span>
-          </figcaption>
-          <svg
-            viewBox={`0 0 ${CHART_W} ${CHART_H}`}
-            preserveAspectRatio="none"
-            className={styles.line}
-            aria-hidden="true"
-            focusable="false"
-          >
-            <path
-              d={`M${x1},${y1} L${x2},${y2} L${CHART_W},${CHART_H} L0,${CHART_H} Z`}
-              className={styles.area}
-            />
-            <path
-              d={`M${x1},${y1} L${x2},${y2}`}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.5}
-              strokeLinecap="round"
-              vectorEffect="non-scaling-stroke"
-            />
-          </svg>
-        </figure>
-      </div>
+      <p className={styles.summary}>{summary.label}</p>
+      <StatsStrip
+        label="Blast radius"
+        cells={[
+          { id: 'direct', label: 'Direct', value: summary.direct },
+          { id: 'downstream', label: 'Downstream', value: summary.downstream },
+          {
+            id: 'total',
+            label: 'Total',
+            value: truncated ? `${summary.total}+` : summary.total,
+          },
+        ]}
+      />
       {summary.analysisNote && (
         <p className={styles.hint}>{summary.analysisNote}</p>
       )}

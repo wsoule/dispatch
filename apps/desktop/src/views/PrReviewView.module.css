@@ -1,0 +1,122 @@
+/* Reviewing one repo pull request full-page (PrReviewView.tsx): the
+   PageHead and a search-less ViewToolbar (Back, the Files and Review toggles)
+   over a three-column grid: the file tree (about 14rem), the diff (the
+   rest) and the review rail (about 20rem). The diff column never scrolls
+   itself: Pierre's CodeView owns that scroll. Tokens only. */
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.head {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4) var(--s-2);
+  border-bottom: 1px solid var(--divider);
+}
+
+.unavailable {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The three columns; a closed side column is dropped from the template. */
+.body {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: 14rem minmax(0, 1fr) 20rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.body[data-files='closed'] {
+  grid-template-columns: minmax(0, 1fr) 20rem;
+}
+
+.body[data-rail='closed'] {
+  grid-template-columns: 14rem minmax(0, 1fr);
+}
+
+.body[data-files='closed'][data-rail='closed'] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Bounded, not scrolled: the tree scrolls its own list. */
+.files {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--divider);
+}
+
+/* A flex column with a real height for CodeView; never overflow: auto. */
+.diff {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.line {
+  margin: 0;
+  padding: var(--s-3) var(--s-4);
+  color: var(--text-2);
+  font-size: var(--fs);
+}
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-height: 0;
+  padding: var(--s-3);
+  overflow-y: auto;
+  border-left: 1px solid var(--divider);
+}
+
+.railLine {
+  margin: 0;
+  font-size: var(--fs);
+}
+
+.note {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+
+/* A phone-width window: the side columns stack above and below the diff
+   rather than squeezing it, each capped and scrolling itself, so the diff
+   keeps the middle row and still no ancestor of it scrolls. */
+@media (width <= 720px) {
+  .body,
+  .body[data-files='closed'],
+  .body[data-rail='closed'],
+  .body[data-files='closed'][data-rail='closed'] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .files {
+    grid-row: 1;
+    max-height: 30vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--divider);
+  }
+
+  .diff {
+    grid-row: 2;
+  }
+
+  .rail {
+    grid-row: 3;
+    max-height: 40vh;
+    border-left: 0;
+    border-top: 1px solid var(--divider);
+  }
+}

@@ -6,7 +6,7 @@ import type { ReactNode } from 'react';
 import { ShimmerLabel } from './ShimmerLabel';
 import styles from './transcript.module.css';
 
-type ToolChipState = 'running' | 'done' | 'failed';
+export type ToolChipState = 'running' | 'done' | 'failed';
 
 type ToolChipProps = {
   icon: LucideIcon;

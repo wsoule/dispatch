@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { formatElapsed } from './use-elapsed';
+import { formatElapsed } from './useElapsed';
 
 describe('formatElapsed', () => {
   test('formats seconds under a minute as m:ss', () => {

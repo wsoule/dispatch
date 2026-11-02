@@ -471,11 +471,14 @@ test("a teammate's line sits with the other senders, and only the viewer's own a
     null,
     'human:wyat'
   );
-  const bubble = (heading: string) =>
-    screen.getByText(heading).parentElement?.className ?? '';
-  expect(bubble('human:bob')).toContain('self-start');
-  expect(bubble('human:bob')).not.toContain('self-end');
-  expect(bubble('You')).toContain('self-end');
+  // The bubble's side, through its data-align hook (CSS-module class names are not stable).
+  const side = (heading: string) =>
+    screen
+      .getByText(heading)
+      .closest('[data-align]')
+      ?.getAttribute('data-align');
+  expect(side('human:bob')).toBe('start');
+  expect(side('You')).toBe('end');
 });
 
 // A window below decide can read a thread only if it took part, and all a run
@@ -685,9 +688,7 @@ function chipState(target: string): 'running' | 'done' | 'failed' {
   const chip = screen.getByText(target).closest('[data-slot="tool-chip"]');
   if (chip === null) throw new Error(`no chip shows ${target}`);
   if (chip.getAttribute('data-state') === 'failed') return 'failed';
-  return chip.querySelector('[class*="shimmer-text"]') === null
-    ? 'done'
-    : 'running';
+  return chip.querySelector('[data-shimmer]') === null ? 'done' : 'running';
 }
 
 function call(
@@ -912,4 +913,26 @@ test("a live CLI agent's output is drawn block by block", () => {
     />
   );
   expect(drawn()).toHaveLength(1);
+});
+
+// Work an orphaned agent landed after the failure is a pointer to the branch,
+// not a success: it sits right under the red failure notice, so it is info
+// (blue), never a green box beside a red one.
+test('work landed after a failure is an info notice under the failure', () => {
+  const { container } = renderLog(
+    meta({
+      state: 'failed',
+      error: 'Not logged in',
+      survey: {
+        postFailCommits: [
+          { sha: 'abc1234', subject: 'fix the parser', date: '2026-08-04' },
+        ],
+      },
+    } as Partial<RunMeta>)
+  );
+  const notice = container.querySelector('[data-slot="orphan-work"]');
+  expect(notice?.getAttribute('data-tone')).toBe('info');
+  expect(notice?.textContent).toContain('fix the parser');
+  const failure = container.querySelector('[data-slot="failure-notice"]');
+  expect(failure?.getAttribute('data-tone')).toBe('danger');
 });

@@ -38,7 +38,7 @@ import { ActivityTimeline } from './ActivityTimeline';
 import { OutcomeCard } from './OutcomeCard';
 import type { TaskPageModel } from './pageModel';
 import { FilesTouched } from './RunStrip';
-import { formatElapsed } from '@/ui/ai/use-elapsed';
+import { formatElapsed } from '@/hooks/useElapsed';
 
 function Figure({ label, children }: { label: string; children: ReactNode }) {
   return (

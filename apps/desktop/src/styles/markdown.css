@@ -1,11 +1,19 @@
 /* Styling for rendered agent markdown (see components/runs/Markdown.tsx). Scoped to
-   `.dispatch-md` so it never leaks into the rest of the app, and driven by the same semantic
-   CSS variables as everything else so it themes light/dark automatically. Kept as hand-written
-   CSS (rather than Tailwind classes on every element) because the elements are produced by
-   react-markdown, not written in JSX — there's nowhere to hang utility classes. */
+   `.dispatch-md` so it never leaks into the rest of the app, and drawn only with the Gr8r
+   tokens (tokens.css) so it themes light/dark automatically. Kept as one hand-written sheet
+   (rather than a module per element) because the elements are produced by react-markdown,
+   not written in JSX: there is nowhere to hang module classes. Code fences are the library
+   CodeBlock (data-slot="code-block"), which draws its own frame: this sheet only spaces it,
+   and the inline-code rule below skips anything inside a <pre>. */
 
 .dispatch-md {
   overflow-wrap: anywhere;
+}
+
+/* A fence's vertical rhythm. Declared before the first/last-child rules below so a fence
+   that opens or closes the message still sits flush with its edge. */
+.dispatch-md [data-slot='code-block'] {
+  margin: var(--s-2) 0;
 }
 
 .dispatch-md > :first-child {
@@ -18,6 +26,16 @@
 
 .dispatch-md p {
   margin: 0.4em 0;
+}
+
+/* Inline code: Geist Mono a little smaller than the line, on the quiet fill. Scoped away from
+   <pre> so it never reaches a fence's code. */
+.dispatch-md :not(pre) > code {
+  padding: 0.1em var(--s-1);
+  border-radius: var(--r-xs);
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
 }
 
 /* A live text drawn block by block (StreamingText's `blocks`) keeps the gap one Markdown
@@ -45,11 +63,11 @@
 }
 
 .dispatch-md li::marker {
-  color: var(--muted-foreground);
+  color: var(--text-2);
 }
 
-/* GFM task lists (`- [ ] …`): the bullet gives way to a 14px checkbox on the chip ring, the
-   same box Linear draws for a checklist in a description. */
+/* GFM task lists (`- [ ] …`): the bullet gives way to a 14px checkbox with the 3:1 control
+   edge, the same box Linear draws for a checklist in a description. */
 .dispatch-md ul.contains-task-list {
   padding-left: 0;
   list-style: none;
@@ -67,14 +85,24 @@
   width: 14px;
   height: 14px;
   margin: 0.35em 0 0;
-  border: 0.5px solid var(--border-chip);
-  border-radius: 4px;
-  background: var(--surface-quaternary);
+  border: 1px solid var(--control-border);
+  border-radius: var(--r-xs);
+  background: var(--surface);
 }
 
 .dispatch-md li.task-list-item > input[type='checkbox']:checked {
   border-color: var(--accent);
   background: var(--accent);
+}
+
+/* Forced colours would repaint the checked fill as Canvas, so a done item would look open:
+   keep the fill in the system highlight. */
+@media (forced-colors: active) {
+  .dispatch-md li.task-list-item > input[type='checkbox']:checked {
+    border-color: Highlight;
+    background: Highlight;
+    forced-color-adjust: none;
+  }
 }
 
 .dispatch-md h1,
@@ -103,7 +131,7 @@
 }
 
 .dispatch-md a {
-  color: var(--accent);
+  color: var(--accent-ink);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -111,8 +139,8 @@
 .dispatch-md blockquote {
   margin: 0.4em 0;
   padding-left: 0.8em;
-  border-left: 2px solid var(--border-chip);
-  color: var(--muted-foreground);
+  border-left: 2px solid var(--border);
+  color: var(--text-2);
 }
 
 .dispatch-md hr {
@@ -135,7 +163,7 @@
 }
 
 .dispatch-md th {
-  background: var(--surface-quaternary);
+  background: var(--surface-2);
   font-weight: 500;
 }
 
@@ -147,7 +175,7 @@
   font-size: 15px;
   font-weight: 450;
   line-height: 24px;
-  color: var(--foreground);
+  color: var(--text);
 }
 
 .dispatch-md-prose h1,

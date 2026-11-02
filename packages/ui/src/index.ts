@@ -32,8 +32,8 @@ export {
 } from './components/theme-toggle';
 
 // ---- tasks family (src/tasks): primitives (the disclosure, the search
-// field, the copy value, the section header and the progress pie among
-// them), the list item and the panel a host's own lists are built from,
+// field, the copy value, the code block, the section header and the
+// progress pie among them), the list item and the panel a host's own lists are built from,
 // the grouped task table and its row windows (useRowWindows, for a
 // host's own grouped lists), deadlines, stats strip and registers. Props
 // are typed in ./tasks/types.
@@ -42,6 +42,7 @@ export { Checkbox } from './tasks/checkbox';
 export { cx } from './tasks/class-names';
 export { Checklist } from './tasks/checklist';
 export { Chip, ChipButton } from './tasks/chip';
+export { CodeBlock } from './tasks/code-block';
 export {
   type CollapsedStorage,
   parseCollapsed,
@@ -110,6 +111,7 @@ export type {
   ChipButtonProps,
   ChipProps,
   ChipTone,
+  CodeBlockProps,
   CopyValueProps,
   DeadlineGroup,
   DeadlineItem,

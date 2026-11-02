@@ -333,6 +333,18 @@ describe('Spinner', () => {
   });
 });
 
+// CodeBlock's copy result is a word and an icon (Copy, Copied, Couldn't
+// copy), never a status colour: the code is one text colour (no syntax
+// colour, by design) and nothing in it reads a hue, a tone or the accent.
+describe('CodeBlock', () => {
+  test('draws no status hue, tone or accent', () => {
+    const sheet = css('tasks/code-block.module.css');
+    expect(sheet).not.toMatch(/var\(--(red|amber|green|blue|gray|accent)/);
+    expect(sheet).not.toMatch(/var\(--tone/);
+    expect(sheet).not.toContain('data-tone');
+  });
+});
+
 describe('Register', () => {
   test('rows and cells emit their status tone', () => {
     const view = render(

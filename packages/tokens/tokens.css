@@ -100,7 +100,8 @@
   --teal-bg: #e3f4f7;
   --teal-border: color-mix(in srgb, var(--teal) 34%, var(--teal-bg));
 
-  /* Violet survives for syntax highlighting only (ui/ai/code-block.tsx). */
+  /* Violet is decorative only (project colours, labels, avatars): the syntax
+     highlighting it once coloured left with ui-legacy's ai/code-block (B8). */
   --violet: #6e5ce6;
   --violet-bg: #efecfd;
   --violet-border: color-mix(in srgb, var(--violet) 34%, var(--violet-bg));

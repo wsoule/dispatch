@@ -1,30 +1,36 @@
 import type { NormalizedEntry } from '@dispatch/client';
-import { Bot, Brain, Check, Copy } from 'lucide-react';
-import { useState } from 'react';
+import {
+  Button,
+  COPIED_MS,
+  cx,
+  Disclosure,
+  writeClipboard,
+} from '@dispatch/ui';
+import { Bot, Check, Copy } from 'lucide-react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 import { cardRaw } from '../../lib/cardContent';
+import { type GutterTone, gutterTone } from '../../lib/transcriptGutter';
 import { CardErrorBoundary } from '../shell/CardErrorBoundary';
+import { StreamingText } from '../transcript/StreamingText';
+import { ThinkingTrace } from '../transcript/ThinkingTrace';
+import { ToolChip, type ToolChipState } from '../transcript/ToolChip';
 import { Markdown } from './Markdown';
 import { toolView } from './ToolCard';
-import type { GutterTone } from '@/lib/transcriptGutter';
-import { gutterTone } from '@/lib/transcriptGutter';
-import { cn } from '@/lib/utils';
-import { IconButton } from '@/ui/ai/icon-button';
-import { StreamingText } from '@/ui/ai/streaming-text';
-import type { ToolChipState } from '@/ui/ai/tool-chips';
-import { ToolChip } from '@/ui/ai/tool-chips';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/ui/collapsible';
+import styles from './TranscriptRow.module.css';
 
-const TONE: Record<GutterTone, string> = {
-  muted: 'text-muted-foreground',
-  normal: 'text-foreground',
-  accent: 'text-accent-foreground',
-  good: 'text-state-review',
-  bad: 'text-state-failed',
+/** How a system line's words are coloured, from its gutter tone: a status (a command
+ * that succeeded or failed) through `data-tone` and the global `.toneText`, the rest as
+ * a plain text colour. */
+const TONE_TEXT: Record<
+  GutterTone,
+  { className: string; tone?: 'success' | 'danger' }
+> = {
+  muted: { className: styles.muted },
+  normal: { className: styles.normal },
+  accent: { className: styles.accent },
+  good: { className: 'toneText', tone: 'success' },
+  bad: { className: 'toneText', tone: 'danger' },
 };
 
 /**
@@ -56,15 +62,13 @@ function TranscriptRowContent({
   entry: NormalizedEntry;
   /** True only while the run is genuinely still producing output (`meta.state === 'running'`)
    * for its current last entry, or a tool call still waiting on its result — see
-   * `RunLogView`. Drives `StreamingText`'s reveal, `Thinking`'s active shimmer and a tool
+   * `RunLogView`. Drives `StreamingText`'s reveal, `ThinkingTrace`'s shimmer and a tool
    * chip's running state; never inferred from anything but the run's real state. */
   live?: boolean;
 }) {
-  const tone = gutterTone(entry);
-
   if (entry.kind === 'tool') {
     return (
-      <div className="min-w-0">
+      <div className={styles.row}>
         <ToolRow entry={entry} live={live} />
       </div>
     );
@@ -72,7 +76,7 @@ function TranscriptRowContent({
 
   if (entry.kind === 'agent') {
     return (
-      <div className="min-w-0">
+      <div className={styles.row}>
         <AgentRow entry={entry} />
       </div>
     );
@@ -80,7 +84,7 @@ function TranscriptRowContent({
 
   if (entry.kind === 'thinking') {
     return (
-      <div className="min-w-0">
+      <div className={styles.row}>
         <ThinkingEntryRow entry={entry} live={live} />
       </div>
     );
@@ -93,7 +97,7 @@ function TranscriptRowContent({
     // A CLI agent's joined stdout (`chunk`) holds everything it has printed and grows with
     // every read, so it is drawn block by block: a read re-parses the open block only.
     return (
-      <div className="min-w-0 px-1 py-0.5">
+      <div className={styles.text}>
         <StreamingText
           text={entry.text ?? ''}
           streaming
@@ -106,22 +110,21 @@ function TranscriptRowContent({
 
   // Only 'assistant'/'system'/'usage'/'message' reach here — 'tool' and 'thinking' both
   // returned above.
-  const isProse = entry.kind === 'assistant';
+  if (entry.kind === 'assistant') {
+    return (
+      <div className={cx(styles.text, styles.reply)}>
+        <AssistantProse text={entry.text ?? ''} />
+        <AssistantFooter text={entry.text ?? ''} ts={entry.ts} />
+      </div>
+    );
+  }
 
+  const tone = TONE_TEXT[gutterTone(entry)];
   return (
-    <div className="group/assistant min-w-0 px-1 py-0.5">
-      {isProse ? (
-        <>
-          <AssistantProse text={entry.text ?? ''} />
-          <AssistantFooter text={entry.text ?? ''} ts={entry.ts} />
-        </>
-      ) : (
-        <span
-          className={cn('text-[12px] leading-relaxed font-book', TONE[tone])}
-        >
-          {entry.text ?? ''}
-        </span>
-      )}
+    <div className={styles.text}>
+      <span className={cx(styles.system, tone.className)} data-tone={tone.tone}>
+        {entry.text ?? ''}
+      </span>
     </div>
   );
 }
@@ -137,37 +140,45 @@ function clockTime(ts: string): string | undefined {
 }
 
 // T3 Code's reply footer: copy and the time, hidden until the reply is hovered or the copy
-// button takes focus, so a settled transcript stays quiet.
+// button takes focus, so a settled transcript stays quiet. "Copied" holds for the library's
+// confirmation window, then the button offers the copy again.
 function AssistantFooter({ text, ts }: { text: string; ts: string }) {
   const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
   const time = clockTime(ts);
+
+  async function copy() {
+    if (!(await writeClipboard(text))) return;
+    setCopied(true);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(false), COPIED_MS);
+  }
+
   return (
-    <div
-      data-slot="assistant-footer"
-      className="text-muted-foreground -mb-1 flex h-5 items-center gap-1 opacity-0 transition-opacity duration-200 group-hover/assistant:opacity-100 focus-within:opacity-100"
-    >
-      <IconButton
-        label={copied ? 'Copied' : 'Copy reply'}
-        className="size-5"
-        onClick={() => {
-          void navigator.clipboard?.writeText(text).then(() => setCopied(true));
-        }}
-      >
-        {copied ? (
-          <Check aria-hidden className="text-green size-3.5" />
-        ) : (
-          <Copy aria-hidden className="size-3.5" />
-        )}
-      </IconButton>
+    <div data-slot="assistant-footer" className={styles.footer}>
+      <Button
+        variant="quiet"
+        size="sm"
+        aria-label={copied ? 'Copied' : 'Copy reply'}
+        icon={
+          copied ? (
+            <Check size={14} strokeWidth={1.8} aria-hidden />
+          ) : (
+            <Copy size={14} strokeWidth={1.8} aria-hidden />
+          )
+        }
+        onClick={() => void copy()}
+      />
       {time !== undefined && (
-        <span className="font-book text-[12px] tabular-nums">{time}</span>
+        <span className={cx(styles.time, 'num')}>{time}</span>
       )}
     </div>
   );
 }
 
-// The agent's own prose: unboxed, slightly softened foreground, relaxed leading. The chat
-// lane (RunLogView) gives it its measure.
+// The agent's own prose: unboxed, at the long-read leading. The chat lane (RunLogView)
+// gives it its measure.
 function AssistantProse({
   text,
   streaming = false,
@@ -176,11 +187,7 @@ function AssistantProse({
   streaming?: boolean;
 }) {
   return (
-    <Markdown
-      content={text}
-      streaming={streaming}
-      className="font-book text-foreground/90 text-[13px] leading-relaxed"
-    />
+    <Markdown content={text} streaming={streaming} className={styles.prose} />
   );
 }
 
@@ -199,6 +206,43 @@ function toolChipState(entry: NormalizedEntry, live: boolean): ToolChipState {
   return live ? 'running' : 'done';
 }
 
+/** A ToolChip row that opens in place to `body`: the library Disclosure (no chrome of its
+ * own) hands the row its aria-expanded and aria-controls, and the body sits indented under
+ * the row's label. With no body the row is a plain chip. */
+function FoldRow({
+  chip,
+  body,
+  open,
+  onOpenChange,
+}: {
+  chip: (trigger?: {
+    expanded: boolean;
+    'aria-controls': string;
+    onClick: () => void;
+  }) => ReactNode;
+  body: ReactNode;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  if (body === undefined) return <div className={styles.plain}>{chip()}</div>;
+  return (
+    <Disclosure
+      variant="plain"
+      open={open}
+      onOpenChange={onOpenChange}
+      trigger={({ open: shown, props }) =>
+        chip({
+          expanded: shown,
+          'aria-controls': props['aria-controls'],
+          onClick: props.onClick,
+        })
+      }
+    >
+      <div className={styles.body}>{body}</div>
+    </Disclosure>
+  );
+}
+
 /**
  * A tool call: its chip summary, expandable to the full input via the same detail ToolCard
  * always rendered (a diff, file contents, raw args).
@@ -209,35 +253,27 @@ function toolChipState(entry: NormalizedEntry, live: boolean): ToolChipState {
 function ToolRow({ entry, live }: { entry: NormalizedEntry; live: boolean }) {
   const view = toolView(entry);
   const [open, setOpen] = useState(view.defaultOpen ?? false);
-  const hasBody = view.body !== undefined;
   const state = toolChipState(entry, live);
 
-  const chip = (
-    <ToolChip
-      variant="row"
-      expandable={hasBody}
-      icon={view.icon}
-      label={view.verb}
-      meta={view.target}
-      state={state}
-    />
-  );
-
-  if (!hasBody) {
-    return <div className="flex min-w-0">{chip}</div>;
-  }
-
   return (
-    <Collapsible
+    <FoldRow
       open={open}
       onOpenChange={setOpen}
-      className="flex min-w-0 flex-col gap-1"
-    >
-      <CollapsibleTrigger render={chip} />
-      <CollapsibleContent className="ms-7 min-w-0 pb-1">
-        {view.body}
-      </CollapsibleContent>
-    </Collapsible>
+      body={view.body}
+      chip={(trigger) => (
+        <ToolChip
+          variant="row"
+          expandable={trigger !== undefined}
+          expanded={trigger?.expanded}
+          aria-controls={trigger?.['aria-controls']}
+          onClick={trigger?.onClick}
+          icon={view.icon}
+          label={view.verb}
+          meta={view.target}
+          state={state}
+        />
+      )}
+    />
   );
 }
 
@@ -287,57 +323,48 @@ function AgentRow({ entry }: { entry: NormalizedEntry }) {
   ].filter((part): part is string => part !== null);
   const body =
     typeof prompt === 'string' && prompt !== '' ? (
-      <Markdown
-        content={prompt}
-        className="font-book max-w-[68ch] text-[13px]"
-      />
+      <Markdown content={prompt} className={styles.agentBody} />
     ) : agent?.phase === 'finished' &&
       (agent.summary !== undefined || totals.length > 0) ? (
-      <div className="font-book flex max-w-[68ch] flex-col gap-1 text-[13px]">
+      <div className={styles.agentReport}>
         {agent.summary !== undefined && (
-          <Markdown content={agent.summary} className="font-book text-[13px]" />
+          <Markdown content={agent.summary} className={styles.agentBody} />
         )}
         {totals.length > 0 && (
-          <span className="text-muted-foreground font-book text-[12px] tabular-nums">
-            {totals.join(' · ')}
-          </span>
+          <span className={cx(styles.totals, 'num')}>{totals.join(' · ')}</span>
         )}
       </div>
     ) : undefined;
 
-  const chip = (
-    <ToolChip
-      variant="row"
-      expandable={body !== undefined}
-      icon={Bot}
-      label={agentVerb(entry)}
-      meta={
-        <span className="max-w-[40ch] truncate font-sans">
-          {label}
-          {agent?.type !== undefined ? ` · ${agent.type}` : ''}
-        </span>
-      }
-      state={state}
-    />
-  );
-  if (body === undefined) return <div className="flex min-w-0">{chip}</div>;
   return (
-    <Collapsible
+    <FoldRow
       open={open}
       onOpenChange={setOpen}
-      className="flex min-w-0 flex-col gap-1"
-    >
-      <CollapsibleTrigger render={chip} />
-      <CollapsibleContent className="ms-7 min-w-0 pb-1">
-        {body}
-      </CollapsibleContent>
-    </Collapsible>
+      body={body}
+      chip={(trigger) => (
+        <ToolChip
+          variant="row"
+          expandable={trigger !== undefined}
+          expanded={trigger?.expanded}
+          aria-controls={trigger?.['aria-controls']}
+          onClick={trigger?.onClick}
+          icon={Bot}
+          label={agentVerb(entry)}
+          meta={
+            <span className={styles.agentMeta}>
+              {label}
+              {agent?.type !== undefined ? ` · ${agent.type}` : ''}
+            </span>
+          }
+          state={state}
+        />
+      )}
+    />
   );
 }
 
-/** One `thinking` entry as T3 Code's thinking row: a brain icon and a label that shines
- * while `live`, opening in place to the agent's raw reasoning. Collapsed by default so
- * verbose reasoning never crowds the timeline. */
+/** One `thinking` entry: ThinkingTrace, folded by default so verbose reasoning never
+ * crowds the timeline; the fold state lives here so it survives the row re-rendering. */
 function ThinkingEntryRow({
   entry,
   live,
@@ -345,30 +372,13 @@ function ThinkingEntryRow({
   entry: NormalizedEntry;
   live: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const text = entry.text ?? '';
-  const chip = (
-    <ToolChip
-      variant="row"
-      expandable={text !== ''}
-      icon={Brain}
-      label={live ? 'Thinking' : 'Thought'}
-      state={live ? 'running' : 'done'}
-    />
-  );
-  if (text === '') return <div className="flex min-w-0">{chip}</div>;
+  const [collapsed, setCollapsed] = useState(true);
   return (
-    <Collapsible
-      open={open}
-      onOpenChange={setOpen}
-      className="flex min-w-0 flex-col gap-1"
-    >
-      <CollapsibleTrigger render={chip} />
-      <CollapsibleContent className="ms-7 min-w-0 pb-1">
-        <p className="text-muted-foreground font-book max-h-96 overflow-auto text-[12px] leading-relaxed whitespace-pre-wrap">
-          {text}
-        </p>
-      </CollapsibleContent>
-    </Collapsible>
+    <ThinkingTrace
+      text={entry.text ?? ''}
+      live={live}
+      collapsed={collapsed}
+      onToggle={() => setCollapsed((value) => !value)}
+    />
   );
 }

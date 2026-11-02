@@ -5,6 +5,7 @@ import {
   Checkbox,
   Chip,
   ChipButton,
+  CodeBlock,
   CopyValue,
   Disclosure,
   FilterChips,
@@ -380,6 +381,21 @@ const lists = (
   </>
 );
 
+// Code blocks (B8): a fence with a header (filename, language, Copy), a
+// blank line and a cap; a wrapped one with no header at all.
+const codeBlocks = (
+  <>
+    <CodeBlock
+      code={'const a = 1;\n\nconst b = 2;\n'}
+      filename="src/app.ts"
+      language="TypeScript"
+      maxHeight={240}
+      data-testid="fence"
+    />
+    <CodeBlock code="echo done" copy={false} wrap />
+  </>
+);
+
 console.log(
   JSON.stringify({
     hasWindow: typeof window !== 'undefined',
@@ -395,5 +411,6 @@ console.log(
     primitives: renderToString(primitives),
     board: renderToString(board),
     lists: renderToString(lists),
+    codeBlocks: renderToString(codeBlocks),
   })
 );

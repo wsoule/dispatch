@@ -406,6 +406,7 @@ the types for the rest.
 |          | `ChipButton` (a chip that is a button, a toggle with `selected`, or a link with `href`; below)                                    | `children`                                                          |
 |          | `SearchField` (a search box with a clear button; Escape clears; below)                                                            | `value`, `onChange`, `label`                                        |
 |          | `CopyValue` (a value in a code well with a Copy button; below)                                                                    | `value`, `label`                                                    |
+|          | `CodeBlock` (code in a Geist Mono well: filename, language label, Copy, wrap, `maxHeight`; no syntax colour; below)               | `code`                                                              |
 |          | `TaskGroupTable` (grouped issue list; selection, drag and slots below)                                                            | `sections`                                                          |
 |          | `ViewToolbar` (list toolbar: an optional search, the host's Filter / Sort / Group, end actions), `ToolbarBadge`                   | `controls` (`search` optional)                                      |
 |          | `FilterChips` ("Project is …" chips joined by "and", + Filter, Clear all)                                                         | `chips`                                                             |
@@ -465,25 +466,26 @@ helper.
 host's `data-testid` and `data-slot` hooks. `Button` (as a button and as a
 link), `Popover`, `Dialog`, `ConfirmDialog`, `PickerPopover`, `SlideOver`,
 `Disclosure`, `Menu`, `Select`, `RadioGroup`, `Chip`, `ChipButton`, `Switch`,
-`Checkbox`, `Notice`, `SearchField`, `CopyValue`, `Register`, `RegisterRow`,
-`RegisterCell`, `SectionHeader`, `ListItem`, `Panel` and `PanelRow` take them
-and spread them, untouched, on their root element: the `<button>` or the link,
-the popover's and the picker's `role="dialog"` layer (not the trigger), the
-dialog's and the slide-over's panel (the `role="dialog"` or `role="alertdialog"`
-element), the disclosure's wrapper, the open menu's root layer (not the trigger;
-its submenus sit inside it), the open `Select` list's layer (not the trigger),
-the `role="radiogroup"` element, the chip (or the chip button's `<button>` or
-link), the switch's `role="switch"` button, the checkbox's `<label>` (which
-holds the input), the notice's box, the search field's wrapper (which holds the
-input), the copy value's `<code>` element (whose text is exactly the value, so
-`data-testid="issued-token"` reads it), the register's root, the row's `<li>`,
-the cell, the section header's row, the list item's root (the wrapper of an
-`as="button"` row with trailing controls), the panel's root and the panel row's
-`<div>`. The component's own `data-*` attributes (`data-variant`,
-`data-picker-popup`, `data-popover`, `data-state`, `data-open`, `data-tone`,
-`data-stack`, `data-disabled`, the list item's `data-slot`) win over a host's of
-the same name. A host's link component receives them in `UiLinkProps` and
-spreads them onto its anchor.
+`Checkbox`, `Notice`, `SearchField`, `CopyValue`, `CodeBlock`, `Register`,
+`RegisterRow`, `RegisterCell`, `SectionHeader`, `ListItem`, `Panel` and
+`PanelRow` take them and spread them, untouched, on their root element: the
+`<button>` or the link, the popover's and the picker's `role="dialog"` layer
+(not the trigger), the dialog's and the slide-over's panel (the `role="dialog"`
+or `role="alertdialog"` element), the disclosure's wrapper, the open menu's root
+layer (not the trigger; its submenus sit inside it), the open `Select` list's
+layer (not the trigger), the `role="radiogroup"` element, the chip (or the chip
+button's `<button>` or link), the switch's `role="switch"` button, the
+checkbox's `<label>` (which holds the input), the notice's box, the search
+field's wrapper (which holds the input), the copy value's `<code>` element
+(whose text is exactly the value, so `data-testid="issued-token"` reads it), the
+code block's root, the register's root, the row's `<li>`, the cell, the section
+header's row, the list item's root (the wrapper of an `as="button"` row with
+trailing controls), the panel's root and the panel row's `<div>`. The
+component's own `data-*` attributes (`data-variant`, `data-picker-popup`,
+`data-popover`, `data-state`, `data-open`, `data-tone`, `data-stack`,
+`data-disabled`, the list item's and the code block's `data-slot`) win over a
+host's of the same name. A host's link component receives them in `UiLinkProps`
+and spreads them onto its anchor.
 
 **Switch, Checkbox and Notice.** `Switch` with `hideLabel` keeps its label for
 assistive tech only (a `.srOnly` span) and draws just the track, for a settings
@@ -623,6 +625,48 @@ the only one) says what happened. A long value wraps anywhere so it can be read
 whole; `truncate` keeps one line with an ellipsis and the whole value in the
 `title`. The host's `data-*` hooks land on the `<code>` element, whose text is
 exactly the value.
+
+### CodeBlock
+
+`CodeBlock` shows `code` (the only required prop) as a `<pre><code>` on a
+recessed well: `--sunken` in a 1px `--border` at `--r`, Geist Mono at `--fs-xs`
+in `--text`. Each line is a block span (an empty line holds a space, so a blank
+line keeps its height; the final line breaks draw no blank line at the end, and
+the code's text keeps its newlines, so a hand copy does too). Long lines scroll
+sideways under a thin scrollbar unless `wrap`, which breaks them anywhere (a
+long token or URL too) and sets `data-wrap` on the root. `maxHeight` caps the
+body (a number is px, a string any CSS length such as `"50vh"`) and the body
+scrolls down past it. A body that scrolls takes a tab stop while it does
+(measured after layout and on resize; WebKit gives a scrolling box none of its
+own), marked by the global `:focus-visible` ring, and is then a `region` named
+by the filename, else "\<language> code", else "Code", so the stop is never
+unnamed; a short one takes none of these.
+
+There is **no syntax colour, by design** (owner decision 2026-11-02, B8, L30):
+the code is one text colour, and `language` is only a label in the header
+("TypeScript", "json"), never a tokenizer switch. A host maps a fence's language
+tag to whatever words it wants shown. The header row holds `filename` (Geist
+Mono, `--text`, truncated with the whole name in its `title`), the `language`
+label (sans, `--fs-2xs`, `--text-3`) and, at its end, the Copy button; it is
+left out when none of them is shown (`copy={false}` with no filename or
+language).
+
+`copy` (default true) draws a quiet small `Button` reading "Copy" with a copy
+icon, named `copyLabel` ("Copy code" by default). A press writes `code` exactly
+(final newline and all) with `writeClipboard`; the button then reads "Copied"
+(and is named so) with a tick for `COPIED_MS` (1600ms), or "Couldn't copy" for
+as long when the clipboard is missing or refused, with the code selected so
+Ctrl/⌘ C still works, as `CopyValue` does. A polite live region says what
+happened, the timer is cleared on unmount, and the button carries `data-state`
+(`idle`, `copied`, `failed`). There is no motion. Forced colours keep the well's
+edge (`CanvasText`) and give the quiet button one. The host's `data-*` hooks
+land on the root, which carries `data-slot="code-block"` and `className`.
+
+Sites: every Markdown fence in the desktop's `runs/Markdown.tsx`, and the
+desktop ToolCard's write contents and JSON fallback for a tool call it has no
+view for. A host stylesheet that styles `pre` or `code` inside its prose (a
+Markdown scope) should leave `[data-slot='code-block']` alone, since its
+selectors outweigh the module's.
 
 ### NavTabs groups
 
@@ -1683,9 +1727,18 @@ the moment they are picked (approve or deny a tool call): an arrow key only
 moves focus (the change the browser makes is not reported, so the checked option
 stays), and Space, Enter (which submits no form) or a click picks, the checked
 option too (reported again, as a button press would be); the default `auto` lets
-an arrow key move and pick, as native radios do. A hint shown as a `Tooltip`
-(`noteAs`) and a `size` step are not built yet; they land with their first
-consumer, the desktop's review verdict bar.
+an arrow key move and pick, as native radios do. `hintAs="tooltip"` (default
+`text`, the visible line) is for a row with no room for hint lines, such as the
+desktop's review verdict bar: each option's `hint` is not drawn as a line; a
+`Tooltip` on the option's label (its ring and words) shows it on hover and while
+the radio has keyboard focus (Escape from the radio hides it, as from any
+tooltip's trigger), and the radio keeps `aria-describedby` on a visually hidden
+copy (`.srOnly`, outside the label), so the description is there while the
+tooltip, which is aria-hidden, is closed, and is read once while it shows.
+Picking, the arrow keys, `activation`, `variant` and `orientation` are
+unchanged, and no option gains a tab stop of its own. `size` is `md` (default)
+or `sm`, a compact row for a one-row footer: the 24px row stays (the target
+size) with `--fs-sm` words and tighter gaps; the radiogroup carries `data-size`.
 
 `Menu` is an action menu. `label` names the `role="menu"`; `items` are action
 rows (`shortcut`, `destructive`, `disabled`), radio rows (`kind: 'radio'`,

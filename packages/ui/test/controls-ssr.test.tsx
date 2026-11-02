@@ -59,4 +59,25 @@ describe('controls family server render', () => {
     expect(html).toContain('Reason box');
     expect(html).not.toContain('Never shown');
   });
+  test('a tooltip-hint group renders the hint hidden, no tip and the sm size', () => {
+    const html = result.html;
+    expect(html).toMatch(
+      /<div data-testid="verdict" role="radiogroup" aria-label="Verdict"[^>]*data-size="sm"/
+    );
+    // The default size is md.
+    expect(html).toMatch(/aria-label="Scope"[^>]*data-size="md"/);
+    // The radio is described by the hidden copy, outside its label.
+    const described =
+      /aria-describedby="([^"]+)"[^>]*value="comment"|value="comment"[^>]*aria-describedby="([^"]+)"/.exec(
+        html
+      );
+    const hintId = described?.[1] ?? described?.[2] ?? 'none';
+    expect(html).toContain(
+      `</label><span id="${hintId}" class="srOnly">Feedback only; the run stays open</span>`
+    );
+    // No tip on the server (it shows on hover or focus only), and no
+    // extra tab stop around the label.
+    expect(html).not.toContain('role="tooltip"');
+    expect(html).not.toContain('tabindex');
+  });
 });

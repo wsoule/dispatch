@@ -1,12 +1,10 @@
 import type { ReviewComment } from '@dispatch/client';
+import { Button, cx, SectionHeader } from '@dispatch/ui';
 import { useMemo } from 'react';
 
 import type { ReviewDestination } from './ReviewThread';
 import { ReviewThread } from './ReviewThread';
-import { Button } from '@/ui/button';
-import { SectionLabel } from '@/ui/chrome/SectionLabel';
-
-const META_CLASS = 'text-[12px] font-book text-muted-foreground tabular-nums';
+import styles from './ReviewThreadIndex.module.css';
 
 interface ReviewThreadIndexProps {
   comments: ReviewComment[];
@@ -52,38 +50,37 @@ export function ReviewThreadIndex({
   }, [comments]);
 
   return (
-    <div className="flex flex-col gap-4">
-      <SectionLabel rule count={comments.length}>
-        Review
-      </SectionLabel>
+    <div className={styles.root}>
+      {/* The count is part of the heading's words, so it reads "Review 3". */}
+      <SectionHeader name="Review" count={comments.length} rule />
 
       {comments.length === 0 ? (
-        <p className="text-muted-foreground font-book text-[13px]">
-          {EMPTY_HINT[destination]}
-        </p>
+        <p className={styles.empty}>{EMPTY_HINT[destination]}</p>
       ) : (
         [...byFile.entries()].map(([path, list]) => (
-          <div key={path}>
-            <div className="text-muted-foreground mb-1 truncate font-mono text-[12px]">
+          <div key={path} className={styles.file}>
+            <div className={styles.path} title={path}>
               {path}
             </div>
             {list.map((c) => (
-              <div key={c.id}>
-                <div className="flex items-center gap-1.5 px-1">
+              <div key={c.id} className={styles.thread}>
+                <div className={styles.threadHead}>
                   <Button
-                    type="button"
-                    variant="ghost"
-                    size="xs"
+                    variant="quiet"
+                    size="sm"
                     disabled={onJumpTo === undefined}
                     onClick={() => onJumpTo?.(c)}
-                    className="font-book h-auto px-0 text-[12px] tabular-nums"
+                    className={styles.line}
                   >
                     {c.startLine !== undefined && c.startLine !== c.line
                       ? `L${c.startLine}–${c.line}`
                       : `L${c.line}`}
                   </Button>
                   {c.pending && (
-                    <span className={`${META_CLASS} text-state-waiting`}>
+                    <span
+                      className={cx(styles.pending, 'toneText')}
+                      data-tone="warning"
+                    >
                       pending
                     </span>
                   )}

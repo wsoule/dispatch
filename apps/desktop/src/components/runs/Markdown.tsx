@@ -1,3 +1,4 @@
+import { CodeBlock, cx } from '@dispatch/ui';
 import type { ReactNode } from 'react';
 import { memo, useMemo } from 'react';
 import type { Components } from 'react-markdown';
@@ -5,38 +6,35 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { LinkedImage, MarkdownLink } from './LinkedImage';
-import { cn } from '@/lib/utils';
-import type { CodeBlockLanguage } from '@/ui/ai/code-block';
-import { CodeBlock } from '@/ui/ai/code-block';
 
-// Maps a fenced code block's language tag to one of `CodeBlock`'s four supported tokenizer
-// languages. `CodeBlock` only knows ts/tsx/css/json — this is a TypeScript monorepo, so `ts` is
-// a reasonable default for anything it doesn't recognize (bash, python, yaml, …): the tokenizer
-// just won't color keywords it doesn't know, never throws.
-const LANGUAGE_ALIASES: Record<string, CodeBlockLanguage> = {
-  ts: 'ts',
-  mts: 'ts',
-  cts: 'ts',
-  typescript: 'ts',
-  js: 'ts',
-  mjs: 'ts',
-  cjs: 'ts',
-  javascript: 'ts',
-  tsx: 'tsx',
-  jsx: 'tsx',
-  json: 'json',
-  jsonc: 'json',
-  css: 'css',
-  scss: 'css',
-  less: 'css',
+// Display labels for the fence slugs agents write most, shown in CodeBlock's header. Only a
+// label: CodeBlock never tokenizes or colours code. A slug missing here shows as written.
+const LANGUAGE_LABELS: Record<string, string> = {
+  ts: 'TypeScript',
+  mts: 'TypeScript',
+  cts: 'TypeScript',
+  typescript: 'TypeScript',
+  js: 'JavaScript',
+  mjs: 'JavaScript',
+  cjs: 'JavaScript',
+  javascript: 'JavaScript',
+  tsx: 'TSX',
+  jsx: 'JSX',
+  json: 'JSON',
+  jsonc: 'JSON',
+  css: 'CSS',
+  scss: 'CSS',
+  less: 'CSS',
 };
 
-// Reads the `language-xxx` slug remark tags a fenced block's `<code>` element with, and
-// resolves it to a `CodeBlock` language.
-function resolveLanguage(codeClassName: string | undefined): CodeBlockLanguage {
+// Reads the `language-xxx` slug remark tags a fenced block's `<code>` element with and turns
+// it into CodeBlock's header label: the mapped name, else the raw slug, else none (a fence
+// with no language tag shows no label).
+function languageLabel(codeClassName: string | undefined): string | undefined {
   const match = /language-([\w-]+)/.exec(codeClassName ?? '');
   const slug = match?.[1]?.toLowerCase();
-  return (slug !== undefined && LANGUAGE_ALIASES[slug]) || 'ts';
+  if (slug === undefined || slug === '') return undefined;
+  return LANGUAGE_LABELS[slug] ?? slug;
 }
 
 // Minimal structural view of a hast node — just enough to walk a fenced block's subtree for
@@ -76,7 +74,7 @@ function preCodeChild(node: unknown): HastLike | undefined {
 }
 
 // A hast element's className property can be a string or an array of strings — normalize to
-// one space-joined string for `resolveLanguage`.
+// one space-joined string for `languageLabel`.
 function hastClassName(node: HastLike | undefined): string | undefined {
   const className = node?.properties?.className;
   if (typeof className === 'string') return className;
@@ -95,11 +93,8 @@ const STATIC_COMPONENTS = {
   a: ({ children, href }) => (
     <MarkdownLink href={href}>{children}</MarkdownLink>
   ),
-  code: ({ children }) => (
-    <code className="bg-surface-quaternary rounded-[4px] px-1 py-0.5 font-mono text-[0.85em]">
-      {children}
-    </code>
-  ),
+  // Inline code only (fences are taken at `pre` below); styles/markdown.css draws it.
+  code: ({ children }) => <code>{children}</code>,
   // Every `<pre>` react-markdown emits wraps a fenced (or indented) code block, so
   // the whole block is swapped for `CodeBlock` here. The source text and language
   // come from the hast `node`, not the rendered `children` — see `hastText`.
@@ -107,12 +102,10 @@ const STATIC_COMPONENTS = {
     const codeElement = preCodeChild(node);
     const code = hastText(codeElement ?? node).replace(/\n$/, '');
     return (
-      <div className="my-2">
-        <CodeBlock
-          code={code}
-          language={resolveLanguage(hastClassName(codeElement))}
-        />
-      </div>
+      <CodeBlock
+        code={code}
+        language={languageLabel(hastClassName(codeElement))}
+      />
     );
   },
 } satisfies Components;
@@ -123,9 +116,9 @@ const REMARK_PLUGINS = [remarkGfm];
 // like Claude Code's own output (headings, lists, tables, **bold**, `inline code`, and fenced
 // ```code blocks```) instead of the flat pre-wrapped text it was before. Element styling for
 // everything but code fences lives in styles/markdown.css under the `.dispatch-md` scope; code
-// fences render through the `CodeBlock` primitive in static mode (the whole block arrives at
-// once — nothing here streams it in), which owns its own frame and tokenizing — no rehype
-// highlighter runs, so the `code` renderer below only ever handles inline code. Fenced blocks
+// fences render through the library `CodeBlock` (its own frame, a language label and a Copy
+// button, no syntax colour) and markdown.css only spaces them. No rehype highlighter runs, so
+// the `code` renderer below only ever handles inline code. Fenced blocks
 // are intercepted at the `pre` level instead (react-markdown only emits `<pre>` around a code
 // block), where the raw source is lifted straight off the hast node.
 //
@@ -169,7 +162,7 @@ export const Markdown = memo(function Markdown({
       data-slot="markdown"
       data-variant={variant}
       data-streaming={streaming || undefined}
-      className={cn(
+      className={cx(
         'dispatch-md',
         variant === 'prose' && 'dispatch-md-prose',
         className

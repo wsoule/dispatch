@@ -89,9 +89,9 @@ describe('SnippetComposer', () => {
   });
 });
 
-// The frame is the prompt bar's: a quaternary card with a half-pixel border, and the
-// attachment chips are pills.
-test('attachments render as pills on the prompt-bar frame', () => {
+// The attachments are the library's removable Chips: the label is the chip's
+// words and the × is its only button, named for the snippet it takes back.
+test('attachments render as removable chips', () => {
   render(
     <SnippetComposer
       targets={[{ id: 'a', label: 'Agent', canAct: true }]}
@@ -100,6 +100,26 @@ test('attachments render as pills on the prompt-bar frame', () => {
       onSend={() => Promise.resolve()}
     />
   );
-  const chip = screen.getByText('src/a.ts (2-4)').closest('[data-slot=pill]');
-  expect(chip).not.toBeNull();
+  const remove = screen.getByRole('button', { name: 'Remove src/a.ts (2-4)' });
+  const chip = remove.closest('[data-tone]');
+  expect(chip?.textContent).toBe('src/a.ts (2-4)');
+  expect(chip?.querySelectorAll('button')).toHaveLength(1);
+});
+
+// A native select, so every offered target is an option from the first
+// render, without opening anything.
+test('the targets are options of the "Send to" select on mount', () => {
+  render(
+    <SnippetComposer
+      targets={TARGETS}
+      attachments={[]}
+      onRemoveAttachment={() => {}}
+      onSend={() => Promise.resolve()}
+    />
+  );
+  const select = screen.getByRole('combobox', { name: 'Send to' });
+  expect(select.tagName).toBe('SELECT');
+  expect(
+    screen.getAllByRole('option').map((option) => option.textContent)
+  ).toEqual(["This run's agent", 'Side conversation']);
 });

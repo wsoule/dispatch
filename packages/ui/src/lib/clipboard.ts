@@ -1,5 +1,6 @@
-// The clipboard write and the confirmation window every copy control in
-// the package shares (MermaidSource's "Copy Mermaid", CopyValue).
+// The clipboard write, the confirmation window and the select-by-hand
+// fallback every copy control in the package shares (MermaidSource's
+// "Copy Mermaid", CopyValue, CodeBlock).
 
 /** How long a copy control says Copied (or why it could not) before it
     returns to idle: 1600ms. */
@@ -22,4 +23,19 @@ export async function writeClipboard(text: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Selects the text of `node`, so a copy the clipboard refused can still be
+ * done by hand with Ctrl/Cmd + C (CopyValue's value, CodeBlock's code).
+ * Does nothing on a server render, without a node or without a selection.
+ */
+export function selectContents(node: HTMLElement | null): void {
+  if (node === null || typeof window === 'undefined') return;
+  const selection = window.getSelection();
+  if (selection === null) return;
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  selection.removeAllRanges();
+  selection.addRange(range);
 }

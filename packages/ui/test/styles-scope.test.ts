@@ -154,6 +154,8 @@ describe('the issue list modules are scoped', () => {
     // The list item and the panel a host's own lists are built from (B7).
     'tasks/list-item.module.css',
     'tasks/panel.module.css',
+    // The code block (B8): Markdown fences and a tool call's JSON.
+    'tasks/code-block.module.css',
     'edit/picker-popover.module.css',
     // The overlays: they sit in the browser's top layer, so nothing in
     // them may reach a host element either.

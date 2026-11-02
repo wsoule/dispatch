@@ -10,10 +10,7 @@ import { deriveRunDisposition } from './runState';
 /**
  * The one vocabulary every dense surface in the app groups and colors by, and the
  * app-domain derivation that turns runs and merge-queue entries into it. Both halves
- * live here now, and `@/lib/feedState` is the one import path app code uses. The
- * copy in @dispatch/ui-legacy (`ui-legacy/src/lib/feedState.ts`) stays only for the
- * legacy `chrome/state-mark` its remaining callers still draw, until they move to
- * `components/status/StateMark`.
+ * live here now, and `@/lib/feedState` is the one import path app code uses.
  *
  * The organizing rule: a state names whose move it is AND what the move is.
  * The tone comes from the tier (`feedStateTone`: warning = your move, danger =

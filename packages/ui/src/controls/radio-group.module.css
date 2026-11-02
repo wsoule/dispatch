@@ -195,6 +195,36 @@
   padding: 0 12px 10px 35px;
 }
 
+/* ---- sm: a compact row for a one-row footer (the review verdict bar) ---- */
+
+/* The 24px row stays (the target size), with 12.5px words and tighter
+   gaps; the hint and the body line up with the words as in md. */
+.group[data-size='sm'] {
+  gap: var(--s-1);
+}
+
+.group[data-size='sm'][data-orientation='horizontal'] {
+  gap: var(--s-1) var(--s-3);
+}
+
+.group[data-size='sm'] .row {
+  gap: 6px;
+  font-size: var(--fs-sm);
+}
+
+.group[data-size='sm'] .hint,
+.group[data-size='sm'] .body {
+  padding-left: 21px;
+}
+
+.group[data-size='sm'].cards .head {
+  padding: 2px 8px;
+}
+
+.group[data-size='sm'].cards .body {
+  padding: 0 8px 6px 29px;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .ring {
     transition:

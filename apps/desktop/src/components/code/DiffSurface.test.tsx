@@ -2,9 +2,12 @@ import type { FileDiffMetadata } from '@pierre/diffs';
 import type { CodeViewHandle } from '@pierre/diffs/react';
 import { render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, mock } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { ReactNode } from 'react';
 import { createRef, isValidElement } from 'react';
 
+import styles from './DiffSurface.module.css';
 import {
   DEFAULT_DIFF_DISPLAY_SETTINGS,
   DIFF_DISPLAY_STORAGE_KEY,
@@ -95,6 +98,10 @@ describe('DiffSurface — states around the diff', () => {
 
     expect(screen.queryByText('Empty.')).toBeNull();
     expect(renderedFiles()).toEqual([]);
+    // In-flight network work: the library Spinner, named for what it waits on.
+    expect(
+      screen.getByRole('status', { name: 'Loading the diff' })
+    ).toBeTruthy();
   });
 });
 
@@ -200,19 +207,28 @@ describe('DiffSurface — what reaches CodeView', () => {
   it('renders the CodeView element itself as the scroll container', () => {
     const { container } = render(<DiffSurface patch={TWO_FILE_PATCH} />);
 
-    // The default has to keep `overflow-auto` on this exact element: `CodeView` reads its own
-    // `scrollTop` to pick the virtualized row window.
-    expect(container.firstElementChild?.className).toBe(
-      'min-h-0 w-full flex-1 overflow-auto'
+    // The default has to keep `overflow: auto` on this exact element: `CodeView` reads its own
+    // `scrollTop` to pick the virtualized row window. CSS modules resolve to `{}` under Bun, so
+    // the class is pinned by identity and the rule by reading the sheet itself.
+    expect(codeViewProps?.className).toBe(styles.view);
+    expect(container.childElementCount).toBe(1);
+    const sheet = readFileSync(
+      join(import.meta.dir, 'DiffSurface.module.css'),
+      'utf8'
     );
+    const view = /\.view\s*\{([^}]*)\}/.exec(sheet)?.[1] ?? '';
+    expect(view).toContain('overflow: auto');
+    expect(view).toContain('min-height: 0');
+    expect(view).toContain('flex: 1');
   });
 
   it('lets a caller restyle that scroll container', () => {
     const { container } = render(
-      <DiffSurface patch={TWO_FILE_PATCH} className="h-full overflow-auto" />
+      <DiffSurface patch={TWO_FILE_PATCH} className="caller-scroller" />
     );
 
-    expect(container.firstElementChild?.className).toBe('h-full overflow-auto');
+    expect(codeViewProps?.className).toBe('caller-scroller');
+    expect(container.firstElementChild?.className).toBe('caller-scroller');
   });
 
   // The worker pool reuses a rendered diff by cache key, and Pierre defaults an unkeyed file's

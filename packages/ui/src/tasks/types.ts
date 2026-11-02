@@ -1001,6 +1001,34 @@ export interface CopyValueProps extends DataAttributes {
   truncate?: boolean;
 }
 
+/* ---- code block -------------------------------------------------------- */
+
+/**
+ * A block of code or machine output (a Markdown fence, a tool call's JSON)
+ * in a recessed Geist Mono well, with an optional header naming the file
+ * and the language, and a quiet Copy button. No syntax colour, by design.
+ * A host's `data-*` hooks land on the root.
+ */
+export interface CodeBlockProps extends DataAttributes {
+  /** The text shown and copied, exactly; split on newlines into lines. */
+  code: string;
+  /** A display label in the header ("TypeScript", "json"). Only a label:
+      nothing is tokenized or coloured by it. */
+  language?: string;
+  /** The file the code comes from, in the header in Geist Mono. */
+  filename?: string;
+  /** Draw the Copy button. Default true. */
+  copy?: boolean;
+  /** The Copy button's accessible name. Default "Copy code". */
+  copyLabel?: string;
+  /** Caps the body's height; it scrolls inside past it. A number means
+      px; a string is any CSS length ("50vh"). */
+  maxHeight?: number | string;
+  /** Wrap long lines instead of scrolling sideways. Default false. */
+  wrap?: boolean;
+  className?: string;
+}
+
 /* ---- list toolbar, filter chips, bulk bar ------------------------------ */
 
 export interface ViewToolbarSearch {
