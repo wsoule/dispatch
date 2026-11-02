@@ -1,0 +1,50 @@
+/* MermaidDiagram: the drawn diagram is one wide button (press to open it larger) that
+   scrolls sideways when the SVG is wider than the message, with the global
+   :focus-visible ring drawn inside it; the SVG sits centred. The expanded copy in the
+   Dialog fills the dialog's width up to most of the window's height. pele's own colours
+   come from the --pele-* tokens markdown.css maps onto the `.pele` class. */
+
+.diagram {
+  display: block;
+  width: 100%;
+  padding: var(--s-2);
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: zoom-in;
+}
+
+.diagram:focus-visible {
+  outline-offset: -2px;
+}
+
+.mount {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.mount svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.expanded {
+  display: flex;
+  justify-content: center;
+}
+
+.expanded svg {
+  width: 100%;
+  max-height: 80vh;
+}
+
+@media (forced-colors: active) {
+  .diagram {
+    border-color: CanvasText;
+  }
+}

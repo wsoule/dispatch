@@ -148,6 +148,104 @@ describe('CodeBlock', () => {
     expect(block.getAttribute('data-language-tag')).toBe('ts');
   });
 
+  test('tokens draw each line as the host’s runs, carrying their custom properties', () => {
+    const { container } = render(
+      <CodeBlock
+        code={'const a = 1;\n\nb'}
+        copy={false}
+        tokens={[
+          [
+            { content: 'const', vars: { '--shiki-light': 'red' } },
+            { content: ' a = 1;' },
+          ],
+          [],
+          [{ content: 'b', vars: { '--shiki-dark': 'blue' } }],
+        ]}
+      />
+    );
+    const code = container.querySelector('pre > code');
+    // The text, and so a hand copy, is the code exactly.
+    expect(code?.textContent).toBe('const a = 1;\n \nb');
+    const runs = [...container.querySelectorAll('[data-code-token]')];
+    expect(runs.map((run) => run.textContent)).toEqual([
+      'const',
+      ' a = 1;',
+      'b',
+    ]);
+    expect(
+      (runs[0] as HTMLElement).style.getPropertyValue('--shiki-light')
+    ).toBe('red');
+    expect((runs[1] as HTMLElement).getAttribute('style')).toBeNull();
+    expect(
+      (runs[2] as HTMLElement).style.getPropertyValue('--shiki-dark')
+    ).toBe('blue');
+    // The blank line keeps its space and its height.
+    expect(code?.children[1]?.textContent).toBe(' \n');
+  });
+
+  test('tokens that do not draw the code are ignored: the plain lines show', () => {
+    const { container, rerender } = render(
+      <CodeBlock
+        code={'one\ntwo'}
+        copy={false}
+        tokens={[[{ content: 'one' }]]}
+      />
+    );
+    expect(container.querySelector('[data-code-token]')).toBeNull();
+    expect(container.querySelector('code')?.textContent).toBe('one\ntwo');
+    rerender(
+      <CodeBlock
+        code={'one\ntwo'}
+        copy={false}
+        tokens={[[{ content: 'one' }], [{ content: 'tw' }]]}
+      />
+    );
+    expect(container.querySelector('[data-code-token]')).toBeNull();
+  });
+
+  test('actions sit in the header before Copy, and a header shows for them alone', () => {
+    mockClipboard(() => Promise.resolve());
+    const { getByRole, container, rerender } = render(
+      <CodeBlock
+        code="x"
+        language="json"
+        actions={<button type="button">Wrap lines</button>}
+      />
+    );
+    const wrap = getByRole('button', { name: 'Wrap lines' });
+    const copy = getByRole('button', { name: 'Copy code' });
+    const header = copy.parentElement;
+    expect(wrap.parentElement?.parentElement).toBe(header);
+    expect(wrap.parentElement?.nextElementSibling).toBe(copy);
+    expect(header?.closest('pre')).toBeNull();
+    rerender(
+      <CodeBlock
+        code="x"
+        copy={false}
+        actions={<button type="button">Wrap lines</button>}
+      />
+    );
+    const block = root(container);
+    expect(block.children).toHaveLength(2);
+    expect(block.lastElementChild?.tagName).toBe('PRE');
+    const css = readCss('tasks/code-block.module.css').replace(/\s+/g, ' ');
+    expect(css).toContain('.actions + .copy { margin-inline-start: 0; }');
+  });
+
+  test('children draw in place of the code, and Copy still writes the code', async () => {
+    const writeText = mock((_text: string) => Promise.resolve());
+    mockClipboard(writeText);
+    const { container, getByRole, getByTestId } = render(
+      <CodeBlock code={'graph TD\n  A --> B'} language="mermaid">
+        <div data-testid="diagram">A diagram</div>
+      </CodeBlock>
+    );
+    expect(container.querySelector('pre')).toBeNull();
+    expect(getByTestId('diagram').parentElement).toBe(root(container));
+    await click(getByRole('button', { name: 'Copy code' }));
+    expect(writeText).toHaveBeenCalledWith('graph TD\n  A --> B');
+  });
+
   test('className adds to the root', () => {
     const { container } = render(<CodeBlock code="x" className="host-fence" />);
     expect(root(container).classList.contains('host-fence')).toBe(true);
@@ -323,11 +421,12 @@ describe('code-block.module.css', () => {
     expect(flat).toMatch(/\.line \{ display: block; \}/);
   });
 
-  test('no syntax colour, no motion, no dropped ring, and forced colours keep the edges', () => {
+  test('no colour of its own, no motion, no dropped ring, and forced colours keep the edges', () => {
     expect(flat).not.toMatch(/(?:transition|animation):/);
     expect(flat).not.toMatch(/outline:\s*(none|0)\b/);
     expect(flat).not.toContain('uppercase');
-    // One text colour for all of the code: no token classes.
+    // One text colour for all of the code: a host's highlighter colours
+    // its runs from its own sheet, so the module names no hue.
     expect(flat).not.toMatch(/--(red|green|blue|amber|violet|teal)\b/);
     expect(flat).toMatch(
       /@media \(forced-colors: active\) \{ \.pre \{ border-color: CanvasText; \} \.copy \{ border-color: ButtonText; \} \}/

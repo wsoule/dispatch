@@ -1,6 +1,6 @@
 {
   "name": "@dispatch/desktop",
-  "version": "0.50.0",
+  "version": "0.51.0",
   "private": true,
   "license": "FSL-1.1-ALv2",
   "type": "module",
@@ -34,11 +34,16 @@
     "@tauri-apps/plugin-notification": "catalog:",
     "@tauri-apps/plugin-process": "catalog:",
     "@tauri-apps/plugin-updater": "catalog:",
+    "dompurify": "catalog:",
+    "katex": "catalog:",
     "lucide-react": "catalog:",
+    "pele": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-markdown": "catalog:",
-    "remark-gfm": "catalog:"
+    "remark-gfm": "catalog:",
+    "remark-math": "catalog:",
+    "shiki": "catalog:"
   },
   "devDependencies": {
     "@dispatch-foo/core": "workspace:*",

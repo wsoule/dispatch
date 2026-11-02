@@ -18,6 +18,7 @@ interface SsrResult {
   board: string;
   lists: string;
   codeBlocks: string;
+  codeBlocksHosted: string;
   checkboxChecklist: string;
 }
 
@@ -290,6 +291,21 @@ describe('task family server render', () => {
     // Nothing is measured on the server: no tab stop on a body.
     expect(html).not.toContain('tabindex');
     expect(html).not.toContain('data-scrollable');
+  });
+
+  test('hosted code blocks render highlighted runs, actions and a stand-in body', () => {
+    const html = result.codeBlocksHosted;
+    // The runs, their custom property inline, and the plain line after.
+    expect(html).toMatch(
+      /<span[^>]*><span data-code-token="" style="--shiki-light:red">let<\/span><span data-code-token="">\s?a<\/span>\n<\/span>/
+    );
+    // The host action sits in the header, ahead of the code.
+    expect(html.indexOf('Wrap lines')).toBeLessThan(html.indexOf('<pre'));
+    // The diagram block draws its stand-in and no <pre>.
+    expect(html).toMatch(
+      /<div data-slot="code-block"[^>]*><div[^>]*><span[^>]*>mermaid<\/span><\/div><div data-testid="diagram"><\/div><\/div>/
+    );
+    expect(html.match(/<pre/g)).toHaveLength(1);
   });
 
   test('a checklist with onToggle renders its rows as checkboxes, met ones checked', () => {

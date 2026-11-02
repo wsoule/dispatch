@@ -3,17 +3,31 @@
    tokens (tokens.css) so it themes light/dark automatically. Kept as one hand-written sheet
    (rather than a module per element) because the elements are produced by react-markdown,
    not written in JSX: there is nowhere to hang module classes. Code fences are the library
-   CodeBlock (data-slot="code-block"), which draws its own frame: this sheet only spaces it,
-   and the inline-code rule below skips anything inside a <pre>. */
+   CodeBlock (data-slot="code-block"), which draws its own frame: this sheet only spaces it
+   and colours its Shiki runs, and the inline-code rule below skips anything inside a <pre>.
+   main v0.51.0's extras (Shiki fences, Mermaid diagrams through pele, KaTeX math, tables
+   that scroll in place) are drawn on the same tokens. */
 
 .dispatch-md {
   overflow-wrap: anywhere;
 }
 
 /* A fence's vertical rhythm. Declared before the first/last-child rules below so a fence
-   that opens or closes the message still sits flush with its edge. */
+   that opens or closes the message still sits flush with its edge. It also declares the
+   default of the Shiki colours read further down (a run in the theme's own default colour
+   carries neither variable and reads as --text). */
 .dispatch-md [data-slot='code-block'] {
+  --shiki-light: var(--text);
+  --shiki-dark: var(--text);
+
   margin: var(--s-2) 0;
+}
+
+/* A wide table scrolls inside its own box instead of widening the message. */
+.dispatch-md-table {
+  max-width: 100%;
+  margin: 0.5em 0;
+  overflow-x: auto;
 }
 
 .dispatch-md > :first-child {
@@ -150,7 +164,6 @@
 }
 
 .dispatch-md table {
-  margin: 0.5em 0;
   border-collapse: collapse;
   font-size: 0.95em;
 }
@@ -192,10 +205,52 @@
   margin: 0.5em 0;
 }
 
+/* A fence's syntax colour (MarkdownCodeFence, highlight.ts). Shiki hands each run both
+   themes as `--shiki-light` and `--shiki-dark` (GitHub's high-contrast pair, 4.5:1 or more
+   on the well in its own theme), and the theme picks one, so a switch recolours a fence
+   without highlighting it again. */
+.dispatch-md [data-code-token] {
+  color: var(--shiki-light);
+}
+
+:root[data-theme='dark'] .dispatch-md [data-code-token] {
+  color: var(--shiki-dark);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme='system'] .dispatch-md [data-code-token] {
+    color: var(--shiki-dark);
+  }
+}
+
+/* Forced colours: the runs take the system text colour like the rest of the code. */
+@media (forced-colors: active) {
+  .dispatch-md [data-code-token] {
+    color: CanvasText;
+  }
+}
+
+/* Mermaid diagrams (pele, MermaidDiagram) read their colours from these, so they theme with
+   the app: text in --text and --text-2, lines and node edges at the 3:1 control edge, node
+   fills on the card surfaces, the accent for highlights and red for a critical path. */
+.pele {
+  --pele-bg: transparent;
+  --pele-fg: var(--text);
+  --pele-muted: var(--text-2);
+  --pele-line: var(--text-2);
+  --pele-surface: var(--surface);
+  --pele-surface-alt: var(--surface-3);
+  --pele-border: var(--control-border);
+  --pele-accent: var(--accent);
+  --pele-critical: var(--red);
+  --pele-font: var(--font-sans);
+}
+
 /* While a reply streams, each new block fades in once instead of popping. Gated on
    `data-streaming` so a settled transcript never replays it. */
 @media (prefers-reduced-motion: no-preference) {
-  .dispatch-md[data-streaming] > * {
+  .dispatch-md[data-streaming] > *,
+  .dispatch-md[data-streaming] [data-slot='code-block'] {
     transition: opacity 600ms ease-out;
 
     @starting-style {

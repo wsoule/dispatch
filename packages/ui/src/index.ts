@@ -112,6 +112,7 @@ export type {
   ChipProps,
   ChipTone,
   CodeBlockProps,
+  CodeBlockToken,
   CopyValueProps,
   DeadlineGroup,
   DeadlineItem,

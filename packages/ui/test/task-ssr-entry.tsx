@@ -397,6 +397,32 @@ const codeBlocks = (
   </>
 );
 
+// A highlighted fence with a host action, and one whose body a diagram
+// stands in for (the desktop's Markdown fences, merged from main v0.51.0).
+const codeBlocksHosted = (
+  <>
+    <CodeBlock
+      code={'let a\nb'}
+      copy={false}
+      tokens={[
+        [
+          { content: 'let', vars: { '--shiki-light': 'red' } },
+          { content: ' a' },
+        ],
+        [{ content: 'b' }],
+      ]}
+      actions={
+        <button type="button" aria-pressed="false">
+          Wrap lines
+        </button>
+      }
+    />
+    <CodeBlock code="graph TD" language="mermaid" copy={false}>
+      <div data-testid="diagram" />
+    </CodeBlock>
+  </>
+);
+
 // A checklist a person ticks (B9, ReviewMode's criteria): Checkbox rows, one
 // met (checked) and one not, the second reported by its index.
 const checkboxChecklist = (
@@ -426,6 +452,7 @@ console.log(
     board: renderToString(board),
     lists: renderToString(lists),
     codeBlocks: renderToString(codeBlocks),
+    codeBlocksHosted: renderToString(codeBlocksHosted),
     checkboxChecklist: renderToString(checkboxChecklist),
   })
 );

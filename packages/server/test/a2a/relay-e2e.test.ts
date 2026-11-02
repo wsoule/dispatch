@@ -177,10 +177,15 @@ describe('daemons reached through an A2A relay', () => {
       expect(wrong.status).toBe(401);
 
       // A leaves the relay: A's URLs are 404, as for a stranger; B still serves.
+      const logged = r.lines.length;
       expect(
         (await a.call('/api/a2a/relay', { method: 'DELETE' })).status
       ).toBe(200);
       await waitFor(() => !relayStatus(a).connected, 5000);
+      // A hangs up at once, but the relay drops A only when the close frame
+      // reaches it; a call it routes to A before then fails 503, not 404.
+      const left = `relay: tenant ${loadOrCreateSigningKey(a.root).kid.slice(0, 8)} disconnected`;
+      await waitFor(() => r.lines.slice(logged).includes(left), 5000);
       expect(
         (await rawFetch(`${sa.tenantUrl}/.well-known/agent-card.json`)).status
       ).toBe(404);

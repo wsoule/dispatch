@@ -1012,10 +1012,23 @@ export interface CopyValueProps extends DataAttributes {
 /* ---- code block -------------------------------------------------------- */
 
 /**
+ * One run of a highlighted line: its text, and the custom properties a
+ * host's stylesheet colours it from (a highlighter's per-theme colours,
+ * such as `--shiki-light` and `--shiki-dark`). CodeBlock sets no colour of
+ * its own: the run is a `[data-code-token]` span carrying `vars` as its
+ * inline style, and the host's sheet reads them.
+ */
+export interface CodeBlockToken {
+  content: string;
+  vars?: Readonly<Record<`--${string}`, string>>;
+}
+
+/**
  * A block of code or machine output (a Markdown fence, a tool call's JSON)
  * in a recessed Geist Mono well, with an optional header naming the file
- * and the language, and a quiet Copy button. No syntax colour, by design.
- * A host's `data-*` hooks land on the root.
+ * and the language, host controls and a quiet Copy button. No colour of
+ * its own: syntax colour comes only from a host's highlighter, through
+ * `tokens`. A host's `data-*` hooks land on the root.
  */
 export interface CodeBlockProps extends DataAttributes {
   /** The text shown and copied, exactly; split on newlines into lines. */
@@ -1034,6 +1047,17 @@ export interface CodeBlockProps extends DataAttributes {
   maxHeight?: number | string;
   /** Wrap long lines instead of scrolling sideways. Default false. */
   wrap?: boolean;
+  /** `code` as the host's highlighter split it: one array of runs per
+      line. Drawn only when it holds exactly the lines the block draws and
+      each line's runs join to that line's text; otherwise the plain lines
+      are. */
+  tokens?: ReadonlyArray<ReadonlyArray<CodeBlockToken>>;
+  /** Host controls in the header, before Copy (a wrap toggle, a switch
+      between the code and a diagram drawn from it). */
+  actions?: ReactNode;
+  /** Drawn in place of the code (a diagram drawn from it). The header and
+      Copy stay, and Copy still writes `code`. */
+  children?: ReactNode;
   className?: string;
 }
 

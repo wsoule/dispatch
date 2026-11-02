@@ -20,7 +20,21 @@ function portOf(href: string): number | null {
 }
 
 export function useTestAuth(handle: ServerHandle): void {
-  tokensByPort.set(handle.port, handle.tokens.appToken);
+  const { port } = handle;
+  const token = handle.tokens.appToken;
+  tokensByPort.set(port, token);
+  // The mapping lasts as long as the daemon: once it stops, the kernel can
+  // hand its port to a server in a later test (a fixture A2A peer, say),
+  // which must not be sent this dead daemon's token.
+  const stop = handle.stop.bind(handle);
+  handle.stop = async () => {
+    try {
+      await stop();
+    } finally {
+      // A newer daemon registered on the same port keeps its own mapping.
+      if (tokensByPort.get(port) === token) tokensByPort.delete(port);
+    }
+  };
   if (installed) return;
   installed = true;
   globalThis.fetch = (async (input: unknown, init?: RequestInit) => {

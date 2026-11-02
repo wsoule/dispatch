@@ -566,8 +566,10 @@ describe('signed responses and outbound signing (T40)', () => {
         { to: ['a2a:signed'], kind: 'message', body: 'Hello, signed peer.' },
         { address: 'human:test', canDecide: true }
       );
-      // A transient first failure on a loaded CI runner waits out a 30 s
-      // backoff; retry it at once instead, and log why it failed.
+      // A failed first attempt would wait out a 30 s backoff; retry it at
+      // once instead, and log why it failed. (The failures once seen here
+      // were not load: testAuth.ts kept a stopped daemon's token for a port
+      // this peer then reused, and the peer refuses any bearer.)
       await waitFor(() => {
         const row = handle.a2a.store!.getOutbound(message.id, 'signed');
         if (row?.state === 'queued' && row.nextAttemptAt !== null) {

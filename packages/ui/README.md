@@ -408,7 +408,7 @@ the types for the rest.
 |          | `ChipButton` (a chip that is a button, a toggle with `selected`, or a link with `href`; below)                                    | `children`                                                          |
 |          | `SearchField` (a search box with a clear button; Escape clears; below)                                                            | `value`, `onChange`, `label`                                        |
 |          | `CopyValue` (a value in a code well with a Copy button; below)                                                                    | `value`, `label`                                                    |
-|          | `CodeBlock` (code in a Geist Mono well: filename, language label, Copy, wrap, `maxHeight`; no syntax colour; below)               | `code`                                                              |
+|          | `CodeBlock` (code in a Geist Mono well: filename, language label, actions, Copy, wrap, `maxHeight`, host `tokens`; below)         | `code`                                                              |
 |          | `TaskGroupTable` (grouped issue list; selection, drag and slots below)                                                            | `sections`                                                          |
 |          | `ViewToolbar` (list toolbar: an optional search, the host's Filter / Sort / Group, end actions), `ToolbarBadge`                   | `controls` (`search` optional)                                      |
 |          | `FilterChips` ("Project is …" chips joined by "and", + Filter, Clear all)                                                         | `chips`                                                             |
@@ -644,14 +644,24 @@ own), marked by the global `:focus-visible` ring, and is then a `region` named
 by the filename, else "\<language> code", else "Code", so the stop is never
 unnamed; a short one takes none of these.
 
-There is **no syntax colour, by design** (owner decision 2026-11-02, B8, L30):
-the code is one text colour, and `language` is only a label in the header
-("TypeScript", "json"), never a tokenizer switch. A host maps a fence's language
-tag to whatever words it wants shown. The header row holds `filename` (Geist
+CodeBlock has **no colour of its own**: `language` is only a label in the header
+("TypeScript", "json"), never a tokenizer switch, and a host maps a fence's
+language tag to whatever words it wants shown. Syntax colour comes only from a
+host's highlighter (main v0.51.0 brought Shiki to the desktop's Markdown
+fences): `tokens` is `code` as the highlighter split it, one array of
+`CodeBlockToken` runs (`{ content, vars }`) per line. Each run is a
+`[data-code-token]` span carrying `vars` (custom properties only, such as
+`--shiki-light` and `--shiki-dark`) as its inline style, and the host's own
+sheet reads them, declares their defaults and checks their contrast. `tokens`
+draws only when it holds exactly the lines the block draws and each line's runs
+join to that line's text, so a stale highlight never shows text the block does
+not hold; otherwise the plain lines draw. The header row holds `filename` (Geist
 Mono, `--text`, truncated with the whole name in its `title`), the `language`
-label (sans, `--fs-2xs`, `--text-3`) and, at its end, the Copy button; it is
-left out when none of them is shown (`copy={false}` with no filename or
-language).
+label (sans, `--fs-2xs`, `--text-3`), the host's `actions` (a wrap toggle, a
+code or diagram switch) and, at its end, the Copy button; it is left out when
+none of them is shown (`copy={false}` with no filename, language or actions).
+`children` draws in place of the code (a diagram drawn from it): the header
+stays and Copy still writes `code`.
 
 `copy` (default true) draws a quiet small `Button` reading "Copy" with a copy
 icon, named `copyLabel` ("Copy code" by default). A press writes `code` exactly

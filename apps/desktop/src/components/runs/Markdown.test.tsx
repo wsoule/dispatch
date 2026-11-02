@@ -1,5 +1,5 @@
 import { untrustedFenced } from '@dispatch-foo/core/browser';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 import { useEffect } from 'react';
 
@@ -70,8 +70,28 @@ describe('Markdown', () => {
     );
     expect(container.textContent).toContain('const x = 1;');
     expect(container.textContent).not.toContain('[object Object]');
-    // Rendered through the CodeBlock primitive, which labels the language in its header.
+    // Rendered through the CodeBlock primitive, which labels the language in its header
+    // and carries the slug as authored on its root.
     expect(container.textContent).toContain('TypeScript');
+    expect(
+      container
+        .querySelector('[data-slot="code-block"]')
+        ?.getAttribute('data-language')
+    ).toBe('ts');
+  });
+
+  test('a fence wraps its lines on demand, and the toggle says so', () => {
+    const { container } = render(
+      <Markdown content={'```bash\nbun test\n```'} />
+    );
+    const block = container.querySelector('[data-slot="code-block"]');
+    const toggle = screen.getByRole('button', { name: 'Wrap lines' });
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    expect(block?.hasAttribute('data-wrap')).toBe(false);
+    fireEvent.click(toggle);
+    const on = screen.getByRole('button', { name: 'Stop wrapping' });
+    expect(on.getAttribute('aria-pressed')).toBe('true');
+    expect(block?.getAttribute('data-wrap')).toBe('true');
   });
 
   test('a fence carries a Copy code button', () => {
@@ -174,6 +194,61 @@ describe('Markdown', () => {
     );
     expect(container.querySelector('img')).toBeNull();
     expect(container.textContent).toContain('![b](https://evil/b.gif)');
+  });
+
+  test('$$…$$ is math, a single dollar stays prose', () => {
+    const { container } = render(
+      <Markdown
+        content={'costs $5 to $10, and $$a^2$$ inline\n\n$$\nx = 1\n$$'}
+      />
+    );
+    const math = container.querySelectorAll('[data-slot="markdown-math"]');
+    expect(math).toHaveLength(2);
+    expect(math[0]?.getAttribute('data-display')).toBeNull();
+    expect(math[0]?.getAttribute('role')).toBe('math');
+    expect(math[1]?.getAttribute('data-display')).toBe('true');
+    expect(container.textContent).toContain('costs $5 to $10');
+    // Math is not a fence: no code block, no inline code.
+    expect(container.querySelector('[data-slot="code-block"]')).toBeNull();
+  });
+
+  test('a mermaid fence shows its source while the reply streams', () => {
+    const { container } = render(
+      <Markdown content={'```mermaid\ngraph TD\n  A --> B\n```'} streaming />
+    );
+    expect(container.querySelector('[data-slot="mermaid-diagram"]')).toBeNull();
+    expect(
+      container.querySelector('[data-slot="code-block"] pre')
+    ).not.toBeNull();
+    expect(container.textContent).toContain('A --> B');
+  });
+
+  test('a mermaid fence draws a diagram once settled, with a code toggle', () => {
+    const { container } = render(
+      <Markdown content={'```mermaid\ngraph TD\n  A --> B\n```'} />
+    );
+    const block = container.querySelector('[data-slot="code-block"]');
+    // The diagram stands in for the code inside the same CodeBlock, whose Copy stays.
+    expect(
+      block?.querySelector('[data-slot="mermaid-diagram"]')
+    ).not.toBeNull();
+    expect(block?.querySelector('pre')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Copy code' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Wrap lines' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show code' }));
+    expect(container.querySelector('[data-slot="mermaid-diagram"]')).toBeNull();
+    expect(container.textContent).toContain('A --> B');
+    expect(screen.getByRole('button', { name: 'Show diagram' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Wrap lines' })).toBeTruthy();
+  });
+
+  test('a wide table sits in its own scroll box', () => {
+    const { container } = render(
+      <Markdown content={'| a | b |\n| - | - |\n| 1 | 2 |'} />
+    );
+    expect(
+      container.querySelector('.dispatch-md-table > table')
+    ).not.toBeNull();
   });
 
   test('keeps a custom image mounted across rerenders with the same renderer', () => {
