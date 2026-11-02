@@ -1,39 +1,17 @@
 import { labelColorIndex } from '@dispatch-foo/core/browser';
 import type { LabelDefinition } from '@dispatch-foo/core/browser';
-import { type AvatarHue, avatarHue } from '@dispatch/ui';
 
-// A label's color: the project's label registry (config `labels:`, synced
-// from Linear) when it names one, else a decorative hue hashed from the name
-// (the library's `avatarHue`: violet, teal, rose or orange, never a status
-// hue). The registry lands as custom properties on the document root, so a
-// memoized row that paints `colorForLabel` repaints when it loads without
-// re-rendering; a component that needs the hex itself (a Chip's swatch mark)
-// reads `labelHex` and re-renders through `subscribeLabelColors`.
+// A label's registry color: the project's label registry (config `labels:`,
+// synced from Linear) names a hex for some labels. A component that draws a
+// label's swatch (LabelChip, a board card's label picker) reads it through
+// `labelColors` and re-renders through `subscribeLabelColors` when the
+// registry loads or changes; a label the registry has no color for draws a
+// decorative hue hashed from its name (the library's `avatarHue`) instead.
 
-// The custom property holding one label's registry color. Labels match
-// case-insensitively, the way the Linear sync matches them.
-function labelVar(label: string): string {
-  const key = label.toLowerCase();
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < key.length; i++) {
-    hash ^= key.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return `--label-color-${hash.toString(36)}`;
-}
-
-// The decorative fallback per hue, spelled out so every var name is a literal.
-const HUE_COLOR: Readonly<Record<AvatarHue, string>> = {
-  violet: 'var(--violet)',
-  teal: 'var(--teal)',
-  rose: 'var(--rose)',
-  orange: 'var(--orange)',
-};
-
-/** The color a chip draws for `label`: the registry's, else the hashed
- * decorative hue. */
-export function colorForLabel(label: string): string {
-  return `var(${labelVar(label)}, ${HUE_COLOR[avatarHue(label)]})`;
+// The registry's key for one label. Labels match case-insensitively, the way
+// the Linear sync matches them.
+function labelKey(label: string): string {
+  return label.toLowerCase();
 }
 
 /** The label registry's colors as last applied: an immutable snapshot, replaced
@@ -45,14 +23,13 @@ export interface LabelColors {
   hex(label: string): string | undefined;
 }
 
-function snapshotOf(byVar: ReadonlyMap<string, string>): LabelColors {
-  return { hex: (label) => byVar.get(labelVar(label)) };
+function snapshotOf(byKey: ReadonlyMap<string, string>): LabelColors {
+  return { hex: (label) => byKey.get(labelKey(label)) };
 }
 
-// The applied registry (custom property name -> hex), its snapshot and the
+// The applied registry's snapshot (lowercased label -> hex inside) and the
 // components waiting on it.
-let registry = new Map<string, string>();
-let snapshot = snapshotOf(registry);
+let snapshot = snapshotOf(new Map());
 const listeners = new Set<() => void>();
 
 /** The registry's hex for `label` (matched case-insensitively), or undefined
@@ -77,21 +54,15 @@ export function subscribeLabelColors(onChange: () => void): () => void {
 
 /**
  * Publishes the open project's label colors (null while config loads clears
- * them). The registry only holds hex colors, so every value is safe CSS.
+ * them) to every subscriber. The registry only holds hex colors.
  */
 export function applyLabelColors(
-  labels: readonly LabelDefinition[] | null,
-  root: HTMLElement = document.documentElement
+  labels: readonly LabelDefinition[] | null
 ): void {
   const next = new Map<string, string>();
   for (const [ref, color] of labelColorIndex(labels ?? [])) {
-    next.set(labelVar(ref), color);
+    next.set(labelKey(ref), color);
   }
-  for (const name of registry.keys()) {
-    if (!next.has(name)) root.style.removeProperty(name);
-  }
-  for (const [name, color] of next) root.style.setProperty(name, color);
-  registry = next;
   snapshot = snapshotOf(next);
   for (const listener of listeners) listener();
 }

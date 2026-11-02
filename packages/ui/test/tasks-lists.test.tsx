@@ -2,6 +2,8 @@ import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 
 import {
+  Checklist,
+  type ChecklistItem,
   type DeadlineGroup,
   DeadlineList,
   Register,
@@ -331,5 +333,102 @@ describe('review additions', () => {
     expect(fewer.getAttribute('aria-expanded')).toBe('true');
     fireEvent.click(fewer);
     expect(view.getAllByRole('link')).toHaveLength(2);
+  });
+});
+
+describe('Checklist onToggle', () => {
+  // The second criterion has no id: it is reported by its index, the way
+  // ReviewMode stores a run's criteria ticks.
+  const criteria: ChecklistItem[] = [
+    { id: 'hashed', label: 'Events are hashed', met: true },
+    { label: 'Sampling is configurable', met: false, note: 'Per project' },
+  ];
+
+  test('each item is a checkbox named by its label, checked when met', () => {
+    const view = render(
+      <Checklist
+        label="Review checklist"
+        items={criteria}
+        onToggle={() => undefined}
+      />
+    );
+    const list = view.getByRole('list', { name: 'Review checklist' });
+    const rows = view.getAllByRole('listitem');
+    expect(rows.map((row) => row.getAttribute('data-met'))).toEqual([
+      'true',
+      'false',
+    ]);
+    expect(rows.every((row) => list.contains(row))).toBe(true);
+    const boxes = view.getAllByRole('checkbox') as HTMLInputElement[];
+    expect(boxes).toHaveLength(2);
+    expect(
+      view.getByRole('checkbox', { name: 'Events are hashed' })
+    ).toBeTruthy();
+    // The note sits after the label inside the Checkbox's <label>, so it
+    // follows the label in the box's name.
+    expect(
+      view.getByRole('checkbox', { name: /^Sampling is configurable/ })
+    ).toBeTruthy();
+    expect(boxes.map((box) => box.checked)).toEqual([true, false]);
+    // No state words and no amber chip in this mode.
+    expect(rows[1].textContent).toContain('Per project');
+    expect(list.textContent).not.toContain('Met');
+    expect(list.textContent).not.toContain('Missing');
+    expect(list.querySelector('[data-tone]')).toBeNull();
+  });
+
+  test('a tick reports the item id (or its index) and the next state', () => {
+    const onToggle = mock((_id: string, _met: boolean) => undefined);
+    const view = render(
+      <Checklist
+        label="Review checklist"
+        items={criteria}
+        onToggle={onToggle}
+      />
+    );
+    fireEvent.click(view.getByRole('checkbox', { name: 'Events are hashed' }));
+    fireEvent.click(
+      view.getByRole('checkbox', { name: /^Sampling is configurable/ })
+    );
+    expect(onToggle.mock.calls).toEqual([
+      ['hashed', false],
+      ['1', true],
+    ]);
+  });
+
+  test('controlled by met: a tick the host refuses leaves the box as it was', () => {
+    const view = render(
+      <Checklist
+        label="Review checklist"
+        items={criteria}
+        onToggle={() => undefined}
+      />
+    );
+    const box = view.getByRole('checkbox', {
+      name: /^Sampling is configurable/,
+    }) as HTMLInputElement;
+    fireEvent.click(box);
+    expect(box.checked).toBe(false);
+    view.rerender(
+      <Checklist
+        label="Review checklist"
+        items={criteria.map((item) => ({ ...item, met: true }))}
+        onToggle={() => undefined}
+      />
+    );
+    expect(box.checked).toBe(true);
+  });
+
+  test('without onToggle it stays the read-only rubric (no checkbox)', () => {
+    const view = render(<Checklist label="Rubric" items={criteria} />);
+    expect(view.getByRole('list', { name: 'Rubric' })).toBeTruthy();
+    expect(view.queryAllByRole('checkbox')).toHaveLength(0);
+    const rows = view.getAllByRole('listitem');
+    expect(rows.map((row) => row.getAttribute('data-met'))).toEqual([
+      'true',
+      'false',
+    ]);
+    expect(rows[0].textContent).toContain('Met');
+    expect(rows[1].textContent).toContain('Missing');
   });
 });

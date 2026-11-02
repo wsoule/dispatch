@@ -1,0 +1,61 @@
+/* EnrichReview (EnrichReview.tsx): the drafted "Add detail" proposal inside a
+   neutral library Notice. The note, then 12px / 500 sub-headings over the drafted
+   prose and criteria, then the Apply / Discard row. Tokens only. */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.note {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.part {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.heading {
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 1.4;
+  color: var(--text-2);
+}
+
+.prose {
+  margin: 0;
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+/* The drafted criteria keep their bullets: they read as a list to apply. */
+.criteria {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  margin: 0;
+  padding-left: var(--s-4);
+  list-style: disc;
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}

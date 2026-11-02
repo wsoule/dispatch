@@ -1,0 +1,286 @@
+/* The task detail sections (FindingsPanel, FixLoopSection, MemoryReachSection,
+   ReceiptsSection, TaskLessonsSection, VerificationSection): the layout they share
+   under the library TaskDetailSection head. Comment cards on --surface with the soft
+   --border and the card radius, 12px sentence-case sub-headings, quiet 12px meta
+   lines. Tokens only; status words take their colour from the global .toneText
+   hook, never from a raw hue here. */
+
+/* The column under a section head. */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+/* A run of cards under one sub-heading (a severity, a ledger kind). */
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* A sub-heading: sentence case, 12px / 500 in the secondary ink, with its
+   count after it like a word. */
+.groupHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 1.4;
+  color: var(--text-2);
+}
+
+/* A count beside a sub-heading or in a section's meta slot. */
+.count {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-regular);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+}
+
+/* A comment card: one finding, receipt or memory entry. */
+.card {
+  min-width: 0;
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.cardTitle {
+  min-width: 0;
+  font-size: var(--fs);
+  font-weight: var(--fw-medium);
+  line-height: var(--lh);
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+/* A quiet line under a card's title: a file location, a provenance. */
+.cardLine {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+  color: var(--text-2);
+}
+
+/* A card's prose. Scope grants and findings carry absolute paths, which have no
+   break opportunity of their own. */
+.cardBody {
+  margin: var(--s-1) 0 0;
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-2);
+}
+
+/* The receipt's source task id at the card head's right edge. */
+.source {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* FindingsPanel's ruling form under a finding while the fix loop is capped. */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+}
+
+.ruling {
+  min-height: 0;
+  resize: vertical;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* A quiet 12px line: a hint, an error (toned by .toneText), a load failure. */
+.note {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  color: var(--text-2);
+}
+
+/* FixLoopSection: the status bar over its hint lines. */
+.fixLoop {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.barIcon {
+  color: var(--text-3);
+}
+
+.lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-inline: var(--s-2);
+}
+
+/* The failure text behind an errored loop, in the body ink. */
+.detail {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+/* The start button's loader turns only when motion is welcome; it stays still
+   otherwise (the disabled button already says it is starting). */
+@media (prefers-reduced-motion: no-preference) {
+  .spin {
+    animation: section-spin 1s linear infinite;
+  }
+}
+
+@keyframes section-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* MemoryReachSection: an entry's title and provenance are the summary that
+   unfolds its body. */
+.summary {
+  cursor: pointer;
+}
+
+.markdown {
+  margin-top: var(--s-1);
+  font-size: var(--fs);
+  color: var(--text-2);
+}
+
+/* TaskLessonsSection: plain two-line rows, no cards. */
+.lessons {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+
+.lesson {
+  font-size: var(--fs);
+  line-height: var(--lh);
+}
+
+.lessonTitle {
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+/* VerificationSection: whether the run was exercised, then the checks. */
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs);
+}
+
+.exercised {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: var(--fw-medium);
+}
+
+/* "Not exercised" carries no status hue: the quiet text step. */
+.exercised:not([data-tone]) {
+  color: var(--text-3);
+}
+
+.summaryLine {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.checks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  font-size: var(--fs);
+  line-height: var(--lh);
+}
+
+.glyph {
+  display: inline-flex;
+  flex: none;
+  margin-top: 2px;
+}
+
+.checkBody {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  color: var(--text);
+}
+
+/* A failed check's expected / actual pair: a two-column grid of label and
+   value. */
+.pair {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  column-gap: var(--s-2);
+  margin: 0;
+  font-size: var(--fs);
+  color: var(--text-3);
+}
+
+.pair dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.expected {
+  color: var(--text-2);
+}
+
+.artifacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

@@ -18,6 +18,7 @@ interface SsrResult {
   board: string;
   lists: string;
   codeBlocks: string;
+  checkboxChecklist: string;
 }
 
 function serverRender(): SsrResult {
@@ -289,5 +290,27 @@ describe('task family server render', () => {
     // Nothing is measured on the server: no tab stop on a body.
     expect(html).not.toContain('tabindex');
     expect(html).not.toContain('data-scrollable');
+  });
+
+  test('a checklist with onToggle renders its rows as checkboxes, met ones checked', () => {
+    const html = result.checkboxChecklist;
+    expect(html).toMatch(/^<ul[^>]* aria-label="Review checklist">/);
+    // One li per item with data-met, each holding the Checkbox's label.
+    expect(html.match(/<li[^>]* data-met="(true|false)"><label/g)).toHaveLength(
+      2
+    );
+    const inputs = html.match(/<input[^>]*>/g) ?? [];
+    expect(inputs).toHaveLength(2);
+    expect(inputs.every((input) => input.includes('type="checkbox"'))).toBe(
+      true
+    );
+    // Controlled by met: the met item is checked, the other is not.
+    expect(inputs[0]).toContain('checked=""');
+    expect(inputs[1]).not.toContain('checked');
+    expect(html).toContain('Events are hashed');
+    expect(html).toContain('Sampling is configurable');
+    // No rubric state column in this mode.
+    expect(html).not.toContain('Missing');
+    expect(html).not.toContain('>Met<');
   });
 });

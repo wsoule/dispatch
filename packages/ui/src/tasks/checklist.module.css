@@ -1,10 +1,12 @@
-/* The rubric checklist: one --r-lg panel, items split by --divider rules.
-   Met = a neutral (--text) disc with a tick knocked out in the surface,
-   like a complete milestone's mark: a met item is a settled fact, and a
-   column of green would drown the one item that needs action (and a green
-   fill reads as a red one without red-green vision). Missing = a dashed
-   amber ring and an amber "Missing" chip: the only hue in the list
-   (docs/architecture.md §8.2: met = default, missing = warning). */
+/* The checklist: one --r-lg panel, items split by --divider rules.
+   Read only (the rubric): met = a neutral (--text) disc with a tick
+   knocked out in the surface, like a complete milestone's mark: a met item
+   is a settled fact, and a column of green would drown the one item that
+   needs action (and a green fill reads as a red one without red-green
+   vision). Missing = a dashed amber ring and an amber "Missing" chip: the
+   only hue in the list (docs/architecture.md §8.2: met = default, missing
+   = warning). With onToggle: .tickItem rows, each a Checkbox, at the
+   end of this file. */
 .list {
   overflow: hidden;
   border: 1px solid var(--border);
@@ -20,7 +22,8 @@
   padding: 10px 12px;
 }
 
-.item + .item {
+.item + .item,
+.tickItem + .tickItem {
   border-top: 1px solid var(--divider);
 }
 
@@ -85,6 +88,30 @@
   white-space: nowrap;
 }
 
+/* Rows a person ticks (onToggle): the library Checkbox is the whole row,
+   so the box (its accent fill, its focus ring, its forced-colours edge) is
+   the state and there is no mark, state column or hue: a person's own
+   ticks are not a status. The label is widened to the row so a click
+   anywhere on the line ticks the box; 6px above and below its 28px line
+   give the rubric's row height. A ticked row's words step down to
+   --text-2, never the only signal (the filled box says it). The label
+   does not wrap its parts: Checkbox's own flex-wrap would drop a long
+   criterion onto a line of its own under the box in a narrow column (the
+   review's 300px aside), so here the words shrink and wrap beside it. */
+.tickItem {
+  padding: 6px 12px;
+}
+
+.tickItem > label {
+  display: flex;
+  flex-wrap: nowrap;
+  width: 100%;
+}
+
+.tickItem[data-met='true'] > label {
+  color: var(--text-2);
+}
+
 /* Forced colours drop backgrounds: a met mark keeps its fill and its
    knocked-out tick. */
 @media (forced-colors: active) {
@@ -101,5 +128,9 @@
 @media (width <= 768px) {
   .item {
     padding: 10px;
+  }
+
+  .tickItem {
+    padding: 6px 10px;
   }
 }

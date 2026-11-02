@@ -37,8 +37,8 @@ import type { TaskPageView } from './useTaskPageModel';
 // TaskRail held that the properties do not cover. Work (the dispatch card with its
 // readiness checks and the "Add detail" pass, the latest run, the attachments), a
 // container's sub-issues with their mini Flight Plan, the run's pull request, the linked
-// docs and the stack. Each is a @dispatch/ui TaskDetailSection hosting Dispatch's legacy
-// pieces as children until Phase 7 restyles them.
+// docs and the stack. Each is a @dispatch/ui TaskDetailSection hosting Dispatch's own
+// blocks (built on @dispatch/ui) as children.
 
 export interface TaskPageRailProps {
   page: TaskPageModel;
@@ -298,7 +298,7 @@ export function TaskPageRail({
                 <FlightPlanMini plan={plan} />
               </button>
             )}
-            <div className={styles.legacy}>
+            <div className={styles.block}>
               <SubtasksBlock
                 title="Sub-issues"
                 parent={item}
@@ -329,21 +329,19 @@ export function TaskPageRail({
         </TaskDetailSection>
       )}
       {client !== null && page.host.openDoc !== undefined && (
-        <TaskDetailSection title="Docs">
-          <div className={styles.legacy}>
-            <TaskDocsBlock
-              client={client}
-              port={project.port}
-              taskId={taskId}
-              canLink={canEdit}
-              onOpenDoc={(id) => page.host.openDoc?.(id, null)}
-            />
-          </div>
-        </TaskDetailSection>
+        // TaskDocsBlock is its own "Docs" TaskDetailSection (its New spec and Link doc
+        // actions sit in the heading row), so the rail places it without a wrapper.
+        <TaskDocsBlock
+          client={client}
+          port={project.port}
+          taskId={taskId}
+          canLink={canEdit}
+          onOpenDoc={(id) => page.host.openDoc?.(id, null)}
+        />
       )}
       {hasStack && (
         <TaskDetailSection title="Stack">
-          <div className={styles.legacy}>
+          <div className={styles.block}>
             <StackRail
               tasks={tasks}
               taskId={taskId}

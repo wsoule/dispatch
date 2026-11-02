@@ -12,6 +12,7 @@ import { afterEach, describe, expect, mock, test } from 'bun:test';
 import type { ReactNode } from 'react';
 
 import type { TaskTab } from '../../../lib/appNav';
+import { readCriteriaChecks } from '../../../lib/reviewCriteria';
 import { linearWorkflowConfig } from '../../settings/fixtures.test-helper';
 import type { ShellActions } from '../../shell/ShellActionsContext';
 import {
@@ -219,6 +220,55 @@ describe('the mode follows the task', () => {
     expect(tab('Review').textContent).toBe('ReviewWaiting on you');
   });
 
+  test('the review’s criteria tick as checkboxes, kept per run', async () => {
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1', { status: 'review' })],
+        runs: [run({ state: 'finished' })],
+        body: BODY,
+      })
+    );
+    const list = await screen.findByRole('list', {
+      name: 'Acceptance criteria',
+    });
+    const box = within(list).getByRole('checkbox', { name: 'tests pass' });
+    expect((box as HTMLInputElement).checked).toBe(false);
+    act(() => {
+      fireEvent.click(box);
+    });
+    expect((box as HTMLInputElement).checked).toBe(true);
+    expect([...readCriteriaChecks('r-1')]).toEqual([0]);
+    act(() => {
+      fireEvent.click(box);
+    });
+    expect(readCriteriaChecks('r-1').size).toBe(0);
+  });
+
+  test('a ticked criterion keeps the page’s keys: s from its checkbox opens the status picker', async () => {
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1', { status: 'review' })],
+        runs: [run({ state: 'finished' })],
+        body: BODY,
+      })
+    );
+    const list = await screen.findByRole('list', {
+      name: 'Acceptance criteria',
+    });
+    const box = within(list).getByRole('checkbox', { name: 'tests pass' });
+    act(() => {
+      box.focus();
+      fireEvent.click(box);
+    });
+    expect(document.activeElement).toBe(box);
+    await settle(() => {
+      box.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 's', bubbles: true })
+      );
+    });
+    expect(await screen.findByRole('listbox')).toBeTruthy();
+  });
+
   test('landed work opens on its summary', () => {
     mount(
       fakeHost(newLog(), {
@@ -259,13 +309,29 @@ describe('the mode follows the task', () => {
       fakeHost(newLog(), {
         tasks: [
           task('t-1', { kind: 'milestone', status: 'working' }),
-          task('t-2', { parent: 't-1' }),
+          task('t-2', { parent: 't-1', priority: 'high' }),
         ],
       })
     );
     fireEvent.click(tab('Spec'));
     expect(modeOf()).toBe('spec');
     const section = screen.getByRole('region', { name: /^Sub-issues/ });
+    expect(within(section).getByText('Title of t-2')).toBeTruthy();
+    // The rail's section heads the block: its own header is a fold button, not a
+    // second "Sub-issues" heading, and a press on its words folds the list.
+    expect(
+      screen.getAllByRole('heading', { name: /^Sub-issues/ })
+    ).toHaveLength(1);
+    const fold = within(section).getByRole('button', {
+      name: 'Sub-issues 0 of 1 done',
+    });
+    expect(fold.getAttribute('aria-expanded')).toBe('true');
+    // The priority glyph is aria-hidden; the row says the priority in words.
+    expect(within(section).getByText('High')).toBeTruthy();
+    fireEvent.click(within(fold).getByText('Sub-issues'));
+    expect(fold.getAttribute('aria-expanded')).toBe('false');
+    expect(within(section).queryByText('Title of t-2')).toBeNull();
+    fireEvent.click(fold);
     expect(within(section).getByText('Title of t-2')).toBeTruthy();
     expect(
       within(section).getByRole('button', {
@@ -481,6 +547,25 @@ describe('keyboard', () => {
     const field = screen.getByLabelText('Due date');
     fireEvent.keyDown(field, { key: 's' });
     expect(screen.queryByRole('listbox')).toBeNull();
+    await settle(() => press('s'));
+    expect(await screen.findByRole('listbox')).toBeTruthy();
+  });
+
+  test('a key typed inside a dialog on the page (an open popover) is left alone', async () => {
+    mount(fakeHost(newLog(), { tasks: [task('t-1')] }));
+    // A popover's panel, as the library Popover draws it: role="dialog" inside the page.
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    const inside = document.createElement('button');
+    dialog.append(inside);
+    document.querySelector('[data-slot=task-page]')?.append(dialog);
+    await settle(() => {
+      inside.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 's', bubbles: true })
+      );
+    });
+    expect(screen.queryByRole('listbox')).toBeNull();
+    dialog.remove();
     await settle(() => press('s'));
     expect(await screen.findByRole('listbox')).toBeTruthy();
   });

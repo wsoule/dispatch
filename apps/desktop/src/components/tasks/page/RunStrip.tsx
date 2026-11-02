@@ -1,20 +1,14 @@
 import type { RunMeta } from '@dispatch/client';
-import { Check } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { Chip, cx, type PickerOption, PickerPopover } from '@dispatch/ui';
+import { type ReactNode, useMemo } from 'react';
 
 import { modelLabel } from '../../../lib/models';
 import { runKindLabel } from '../../../lib/runKind';
-import { isTerminalRunState } from '../../../lib/runState';
+import { isTerminalRunState, runStateLabel } from '../../../lib/runState';
 import { formatShortDate } from '../../../lib/taskDates';
 import { RunStatePill } from '../../runs/RunStatePill';
+import styles from './RunStrip.module.css';
 import { formatElapsed, useElapsed } from '@/hooks/useElapsed';
-import { Pill, SelectPill } from '@/ui/ai/pill';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/ui/dropdown-menu';
 
 function LiveElapsed({ since }: { since: string }) {
   const label = useElapsed(Date.parse(since));
@@ -29,33 +23,39 @@ function Duration({ run }: { run: RunMeta }) {
   return <>{Number.isNaN(ms) ? '—' : formatElapsed(ms)}</>;
 }
 
+/** One vital: the figure in tabular digits on the secondary ink, its word after it in the
+ * quiet ink, and the word again as the hover title. */
 function Stat({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <span
-      className="font-book flex items-baseline gap-1 text-[12px] tabular-nums"
-      title={label}
-    >
-      <span className="text-(--text-secondary)">{children}</span>
-      <span className="text-muted-foreground">{label}</span>
+    <span className={styles.stat} title={label}>
+      <span className={cx(styles.statValue, 'num')}>{children}</span>
+      <span className={styles.statLabel}>{label}</span>
     </span>
   );
 }
 
-/** A run's id, with its kind after it when it only checked the work (review, verify). */
+/** The kind a run is named by after its id, when it only checked the work (review,
+ * verify); null for an execute run, the usual kind. */
+function kindSuffix(run: RunMeta): string | null {
+  return (run.kind ?? 'execute') === 'execute' ? null : runKindLabel(run.kind);
+}
+
+/** A run's id in Geist Mono (a machine-read string), with its kind after it when it only
+ * checked the work. */
 function RunName({ run }: { run: RunMeta }) {
+  const kind = kindSuffix(run);
   return (
-    <>
-      <span className="truncate tracking-(--id-tracking)">{run.id}</span>
-      {(run.kind ?? 'execute') !== 'execute' && (
-        <span className="text-muted-foreground shrink-0">
-          {runKindLabel(run.kind)}
-        </span>
-      )}
-    </>
+    <span className={styles.runName}>
+      <span className={cx(styles.runId, 'mono')}>{run.id}</span>
+      {kind !== null && <span className={styles.runKind}>{kind}</span>}
+    </span>
   );
 }
 
-/** Which run the Run and Review modes show, when the task has had more than one. */
+/** Which run the Run and Review modes show, when the task has had more than one: plain
+ * text for a single run, else one "Run" picker listing every run led by its compact state
+ * mark (named by the state, so "the failed one" is findable without opening each run) with
+ * its last update. */
 function RunPicker({
   runs,
   selected,
@@ -65,37 +65,41 @@ function RunPicker({
   selected: RunMeta;
   onSelect: (runId: string) => void;
 }) {
+  const options = useMemo<PickerOption[]>(
+    () =>
+      runs.map((r) => {
+        const kind = kindSuffix(r);
+        return {
+          value: r.id,
+          label: kind === null ? r.id : `${r.id} ${kind}`,
+          hint: formatShortDate(r.updatedAt),
+          // The mark is a role="img" named by the state, so the option reads it too.
+          mark: { kind: 'node', node: <RunStatePill meta={r} compact /> },
+          keywords: [runStateLabel(r.state)],
+        };
+      }),
+    [runs]
+  );
   if (runs.length < 2) {
     return (
-      <span className="text-muted-foreground font-book flex min-w-0 items-center gap-1.5 text-[12px]">
+      <span className={styles.single}>
         <RunName run={selected} />
       </span>
     );
   }
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={<SelectPill aria-label="Run" className="max-w-56" />}
-      >
-        <span className="flex min-w-0 items-center gap-1.5">
-          <RunName run={selected} />
-        </span>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-72">
-        {runs.map((r) => (
-          <DropdownMenuItem key={r.id} onClick={() => onSelect(r.id)}>
-            <RunStatePill meta={r} compact />
-            <span className="font-book flex min-w-0 flex-1 items-center gap-1.5 text-[13px]">
-              <RunName run={r} />
-            </span>
-            <span className="text-muted-foreground font-book text-[12px]">
-              {formatShortDate(r.updatedAt)}
-            </span>
-            {r.id === selected.id && <Check className="size-3" />}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <PickerPopover
+      label="Run"
+      searchable={false}
+      appearance="quiet"
+      value={selected.id}
+      options={options}
+      trigger={<RunName run={selected} />}
+      onChange={(value) => {
+        // Picking a run only switches the view: nothing to save, so no promise.
+        if (value !== null) onSelect(value);
+      }}
+    />
   );
 }
 
@@ -121,15 +125,19 @@ export function RunStrip({
 }) {
   const model = modelLabel(run.model);
   return (
-    <div
-      data-slot="run-strip"
-      className="flex min-h-8 flex-wrap items-center gap-x-3 gap-y-1"
-    >
+    <div data-slot="run-strip" className={styles.strip}>
       <RunStatePill meta={run} />
-      <span className="font-book truncate text-[12px] text-(--text-secondary)">
+      <span className={styles.executor}>
         {run.executor}
         {model !== undefined && (
-          <span className="text-muted-foreground"> · {model}</span>
+          <span className={styles.model}>
+            {' · '}
+            {/* A model the catalogue does not name prints its raw id: mono, as any
+                machine-read string; a catalogue label ("Opus 5") stays in Geist. */}
+            <span className={model === run.model ? 'mono' : undefined}>
+              {model}
+            </span>
+          </span>
         )}
       </span>
       <RunPicker runs={runs} selected={run} onSelect={onSelectRun} />
@@ -141,34 +149,30 @@ export function RunStrip({
       )}
       {run.turns !== undefined && <Stat label="turns">{run.turns}</Stat>}
       {detail}
-      {actions !== undefined && (
-        <div className="ml-auto flex items-center gap-1.5">{actions}</div>
-      )}
+      {actions !== undefined && <div className={styles.actions}>{actions}</div>}
     </div>
   );
 }
 
 /** The files a run has claimed so far — seeded from the task's writes, grown from its
- * worktree — as mono pills, the first few shown. */
+ * worktree — as chips with the path in Geist Mono, the first eight shown. */
 export function FilesTouched({ files }: { files: readonly string[] }) {
   if (files.length === 0) return null;
   const shown = files.slice(0, 8);
   return (
     <div
       data-slot="files-touched"
-      className="flex min-w-0 flex-wrap items-center gap-1"
+      className={styles.files}
       aria-label="Files touched"
     >
-      <span className="text-muted-foreground mr-1 text-[12px] font-medium">
-        Files
-      </span>
+      <span className={styles.filesLabel}>Files</span>
       {shown.map((f) => (
-        <Pill key={f} className="max-w-64 font-mono font-normal" title={f}>
-          <span className="truncate">{f}</span>
-        </Pill>
+        <Chip key={f} title={f}>
+          <span className={cx(styles.path, 'mono')}>{f}</span>
+        </Chip>
       ))}
       {files.length > shown.length && (
-        <span className="text-muted-foreground font-book text-[12px]">
+        <span className={cx(styles.more, 'num')}>
           +{files.length - shown.length} more
         </span>
       )}

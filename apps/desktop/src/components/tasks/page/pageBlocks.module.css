@@ -1,0 +1,380 @@
+/* The task page's spec blocks, shared by OutcomeCard, SubtasksBlock,
+   TaskDocsBlock, AttachmentsRow, WritesEditor and ContainerIcon. Tokens
+   only; a status colour comes from data-tone (--tone, --tone-ink,
+   --tone-soft), never a hue by name. */
+
+/* ---- OutcomeCard: how a finished task ended -------------------------- */
+
+.outcome {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+}
+
+@media (width >= 640px) {
+  .outcome {
+    flex-direction: row;
+    align-items: center;
+  }
+}
+
+/* The outcome's glyph in a 36px disc on its tone's soft tint, the glyph in
+   the tone's ink. Landed work (no status tone) is the filled neutral done
+   mark: the disc in the secondary ink, the glyph knocked out of it. */
+.outcomeMark {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-full);
+  background: var(--tone-soft);
+  color: var(--tone-ink);
+}
+
+.outcomeMark[data-tone='default'] {
+  background: var(--tone);
+  color: var(--on-tone);
+}
+
+.outcomeBody {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.outcomeTitle {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-section);
+  color: var(--text);
+}
+
+.outcomeDetail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px var(--s-2);
+  min-width: 0;
+  font-size: var(--fs);
+  color: var(--text-2);
+}
+
+.outcomeReason {
+  overflow-wrap: anywhere;
+}
+
+.outcomeFacts {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.outcomeActions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* Forced colours: the disc keeps its edge when its fill is dropped. */
+@media (forced-colors: active) {
+  .outcomeMark {
+    border: 1px solid CanvasText;
+  }
+}
+
+/* ---- SubtasksBlock: a container's children -------------------------- */
+
+.subtasks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+/* The header row: the fold button, then the "+" at the far end. */
+.subtasksHead {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  min-width: 0;
+  min-height: 28px;
+}
+
+/* One quiet button holding the chevron, the title, the pie and the count,
+   in the group header's voice (12.5px / 500, the secondary ink), so a
+   press on any of them folds the list. */
+.subtasksToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 var(--s-1);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+
+.subtasksToggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .subtasksToggle:hover {
+    color: var(--text);
+  }
+}
+
+/* The chevron points down while open and right while folded. */
+.subtasksChevron {
+  flex: none;
+}
+
+.subtasksToggle[aria-expanded='false'] .subtasksChevron {
+  transform: rotate(-90deg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .subtasksChevron {
+    transition: transform var(--dur) var(--ease);
+  }
+}
+
+.subtasksAdd {
+  margin-left: auto;
+}
+
+/* "1/3" after the pie, in tabular figures and the quiet ink; the pie says
+   it for assistive tech. */
+.subtasksCount {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--fw-regular);
+}
+
+.subtaskRows {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* The row's crumb: its status glyph and its id. */
+.subtaskKey {
+  display: inline-flex;
+  gap: var(--s-1);
+  align-items: center;
+  vertical-align: middle;
+}
+
+.subtaskTrailing {
+  display: inline-flex;
+  gap: var(--s-1);
+  align-items: center;
+  min-width: 0;
+}
+
+/* ---- TaskDocsBlock: the docs a task links -------------------------- */
+
+.docList {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.docPicker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+/* One doc: its role, its title (underlined on hover) and its badges, on a
+   28px quiet button with the focus ring. */
+.docRow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 var(--s-1);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.docRow:hover .docTitle {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.docRow:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.docRole {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.docTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A doc's state ("personal", "unreviewed", "accepted"): a small neutral
+   badge on the hover fill. */
+.docBadge {
+  flex: none;
+  padding: 0 var(--s-1);
+  border-radius: var(--r-xs);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-2xs);
+  line-height: 16px;
+}
+
+.docError {
+  font-size: var(--fs-xs);
+  color: var(--tone-ink);
+}
+
+.docNote {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+/* ---- AttachmentsRow and WritesEditor: rows of chips ----------------- */
+
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* An attachment chip's words: a quiet button that opens the file, its
+   label truncating at 240px. */
+.chipOpen {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.chipOpen:hover .chipOpenText {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.chipOpen:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.chipOpenText {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "Uploading…" beside its spinner, in the quiet ink. */
+.uploading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+/* The add-a-path field, inline with the chips: a plus glyph before a
+   borderless Geist Mono input (a glob is machine-read) that takes the rest
+   of the row. The glyph steps up to the text ink while the field has
+   focus; the field's own focus ring is the indicator. */
+.writeAdd {
+  display: flex;
+  flex: 1 1 160px;
+  align-items: center;
+  gap: var(--s-1);
+  min-width: 160px;
+  height: 24px;
+  color: var(--text-2);
+}
+
+.writeAdd:focus-within {
+  color: var(--text);
+}
+
+.writeInput {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0 2px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.writeInput::placeholder {
+  color: var(--text-3);
+  font-family: var(--font-body);
+}
+
+.writeInput:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* ---- ContainerIcon: a container's glyph ----------------------------- */
+
+.containerEmoji {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: var(--fs-xs);
+  line-height: 1;
+}
+
+/* The kind's or Linear's glyph in the quiet ink; a container's own colour
+   comes in as an inline style and wins. */
+.containerGlyph {
+  flex: none;
+  color: var(--text-2);
+}

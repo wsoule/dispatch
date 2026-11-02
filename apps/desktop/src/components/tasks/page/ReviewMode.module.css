@@ -1,0 +1,232 @@
+/* Review mode (ReviewMode.tsx): the run's strip, verdict and change request on top, then the
+   diff (with the review chat under it) beside the review checklist. The root is its own
+   inline-size container: at 760px of its width and wider the checklist is a 300px column on
+   the right of the diff; narrower, it stacks above the diff, capped at 40% of the height and
+   scrolling inside itself. Tokens only; status words take their hue from data-tone. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  height: 100%;
+  min-height: 0;
+  container-type: inline-size;
+}
+
+/* With no run yet, the library EmptyState centred in the pane. */
+.fill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 0;
+  padding: var(--s-4);
+}
+
+.head {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+/* The diff's size in the strip: "+12 −3 in 2 files". */
+.stat {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+.quiet {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+
+.landed {
+  font-size: var(--fs-xs);
+}
+
+/* Land and its "More ways to land" chevron, joined into one split button: the outer
+   corners keep their radius, the inner ones are square, and a divider rule parts them (the
+   chevron overlaps the main button's edge by 1px so a bordered variant draws one rule). */
+.split {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.split .splitMain {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.split .splitMore {
+  margin-left: -1px;
+  border-left-color: var(--divider);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+/* The change request: a full-width box that grows by hand, Send and Cancel under it. */
+.changes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.changes > textarea {
+  width: 100%;
+  padding: 6px 10px;
+  line-height: var(--lh);
+  resize: vertical;
+}
+
+.changeActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}
+
+/* A host's own PR view in place of the diff. */
+.pr {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The diff column and the checklist: stacked (checklist first) until the container query. */
+.body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-height: 0;
+}
+
+.main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--s-2);
+  order: 2;
+  min-width: 0;
+  min-height: 0;
+}
+
+.diff {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.aside {
+  flex: none;
+  order: 1;
+  max-height: 40%;
+  overflow-y: auto;
+}
+
+@container (min-width: 760px) {
+  .body {
+    flex-direction: row;
+  }
+
+  .main {
+    order: 1;
+  }
+
+  .aside {
+    order: 2;
+    width: 300px;
+    max-height: none;
+  }
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 24px;
+}
+
+/* A side section's quiet heading ("Acceptance criteria", "Changed files"). */
+.heading {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+}
+
+/* The criteria ticked so far, "2/5": a count, never a status colour. */
+.count {
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+
+.files {
+  display: flex;
+  flex-direction: column;
+  margin: 0 -6px;
+  padding: 0;
+  list-style: none;
+}
+
+/* A changed file: its status letter and path, a click scrolls the diff to it. */
+.file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.file:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+@media (hover: hover) {
+  .file:hover {
+    background: var(--surface-2);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .file {
+    transition: background-color var(--dur) ease;
+  }
+}
+
+.fileStatus {
+  flex: none;
+  width: 12px;
+  color: var(--text-3);
+}
+
+.filePath {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

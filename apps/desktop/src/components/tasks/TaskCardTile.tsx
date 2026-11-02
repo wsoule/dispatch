@@ -12,7 +12,6 @@ import type {
 } from '@dispatch/client';
 import {
   AssigneePicker,
-  avatarHue,
   Button,
   Chip,
   cx,
@@ -56,6 +55,7 @@ import { type PeopleDirectory, usePeople } from '../people/PeopleContext';
 import { MergeLadderPill } from '../runs/MergeLadderDot';
 import { RunStatePill } from '../runs/RunStatePill';
 import { AssigneeAvatar } from './AssigneeAvatar';
+import { LabelChip } from './LabelChip';
 import { LandingBadge } from './LandingBadge';
 import { StatusIcon } from './StatusIcon';
 import styles from './TaskCardTile.module.css';
@@ -209,20 +209,6 @@ function withCreatedLabel(
     return null;
   }
   return [...labels, label];
-}
-
-/** One label as a Chip: its registry colour as a swatch, else a decorative hue from the
- * name. `data-slot="label-pill"` is the hook tests and e2e read. */
-function LabelChip({ label, hex }: { label: string; hex: string | undefined }) {
-  return hex === undefined ? (
-    <Chip data-slot="label-pill" hue={avatarHue(label)}>
-      {label}
-    </Chip>
-  ) : (
-    <Chip data-slot="label-pill" mark={{ kind: 'swatch', color: hex }}>
-      {label}
-    </Chip>
-  );
 }
 
 /**

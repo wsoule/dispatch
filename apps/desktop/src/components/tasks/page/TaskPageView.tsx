@@ -2,6 +2,7 @@ import type { TaskListItem } from '@dispatch-foo/core/browser';
 import type { ApiClient } from '@dispatch/client';
 import {
   Button,
+  cx,
   EmptyState,
   type NavTabItem,
   NavTabs,
@@ -249,11 +250,19 @@ function TaskPageLoaded({
       if (root === null || !(target instanceof HTMLElement)) return;
       if (event.defaultPrevented) return;
       if (target !== document.body && !root.contains(target)) return;
-      if (isTypingTagName(target.tagName, target.isContentEditable)) return;
+      // A ticked criterion's checkbox keeps focus but takes no letters, so it does not count.
       if (
-        target.closest(
-          '[role="menu"], [role="listbox"], [role="dialog"], [data-slot="popover-content"]'
-        ) !== null
+        isTypingTagName(
+          target.tagName,
+          target.isContentEditable,
+          target instanceof HTMLInputElement ? target.type : undefined
+        )
+      ) {
+        return;
+      }
+      if (
+        target.closest('[role="menu"], [role="listbox"], [role="dialog"]') !==
+        null
       ) {
         return;
       }
@@ -482,7 +491,7 @@ function TaskPageLoaded({
       ref={rootRef}
       data-slot="task-page"
       data-mode={view}
-      className={fills ? `${styles.root} ${styles.fill}` : styles.root}
+      className={cx(styles.root, fills ? styles.fill : undefined)}
     >
       <div className={styles.pane}>
         <TaskDetail

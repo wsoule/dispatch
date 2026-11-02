@@ -3,6 +3,7 @@ import { renderToString } from 'react-dom/server';
 import {
   BulkBar,
   Checkbox,
+  Checklist,
   Chip,
   ChipButton,
   CodeBlock,
@@ -396,6 +397,19 @@ const codeBlocks = (
   </>
 );
 
+// A checklist a person ticks (B9, ReviewMode's criteria): Checkbox rows, one
+// met (checked) and one not, the second reported by its index.
+const checkboxChecklist = (
+  <Checklist
+    label="Review checklist"
+    items={[
+      { id: 'hashed', label: 'Events are hashed', met: true },
+      { label: 'Sampling is configurable', met: false },
+    ]}
+    onToggle={() => undefined}
+  />
+);
+
 console.log(
   JSON.stringify({
     hasWindow: typeof window !== 'undefined',
@@ -412,5 +426,6 @@ console.log(
     board: renderToString(board),
     lists: renderToString(lists),
     codeBlocks: renderToString(codeBlocks),
+    checkboxChecklist: renderToString(checkboxChecklist),
   })
 );

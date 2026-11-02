@@ -1,0 +1,37 @@
+/* Run mode (RunMode.tsx): the run strip and its files on top, then the transcript filling the
+   rest of the pane and scrolling inside itself. With no run yet, `.fill` centres the library
+   EmptyState in the pane. Tokens only. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  height: 100%;
+  min-height: 0;
+}
+
+/* The strip and the files it touched: never squeezed by the transcript. */
+.head {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* The transcript (or its loading rows) takes the room left. */
+.log {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.fill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 0;
+  padding: var(--s-4);
+}

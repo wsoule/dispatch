@@ -1,7 +1,8 @@
 import type { TaskAttachment } from '@dispatch-foo/core/browser';
 import type { ApiClient } from '@dispatch/client';
+import { Button, Chip, Spinner } from '@dispatch/ui';
 import { useQuery } from '@tanstack/react-query';
-import { Paperclip, X } from 'lucide-react';
+import { Paperclip } from 'lucide-react';
 import type { RefObject } from 'react';
 import { useCallback, useRef, useState } from 'react';
 
@@ -13,11 +14,10 @@ import {
 } from '../../../lib/attachments';
 import { isTauri, openPath } from '../../../lib/tauri';
 import { useToasts } from '../../shell/Toasts';
-import { IconButton } from '@/ui/ai/icon-button';
-import { PillButton } from '@/ui/ai/pill';
+import styles from './pageBlocks.module.css';
 
 /**
- * The upload half of the row, shared with the page's paste/drop handlers: splits off
+ * The upload half of the row, held by its host (the page rail, the drawer): splits off
  * files over the daemon's cap (one toast naming them) and sends the rest one request
  * each, so a failure names its file and the others still land. No manual refetch — the
  * daemon's `task.changed` broadcast refreshes the doc.
@@ -69,7 +69,7 @@ export interface AttachmentsRowProps {
   port: number | undefined;
   /** False on an archived task: the chips still open, but nothing can be added or removed. */
   editable: boolean;
-  /** Shared with the page so a paste or drop anywhere on it feeds the same upload. */
+  /** The host's `useAttachmentUpload`, so its `uploading` flag outlives the row. */
   upload: (files: File[]) => Promise<void>;
   uploading: boolean;
   /** Exposes the hidden file input so another control (the comment composer's paperclip)
@@ -78,9 +78,10 @@ export interface AttachmentsRowProps {
 }
 
 /**
- * The icon row under the description (linear-reference §8): one pill per attachment
- * — a paperclip glyph, `name · size`, an `×` — plus the Attach button over a hidden
- * multi-file input, and a muted `Uploading…` while a send is in flight. A pill opens
+ * The icon row under the description (linear-reference §8): one chip per attachment
+ * — a paperclip glyph and `name · size` that open the file, and an `×` — plus the Attach
+ * button over a hidden multi-file input, and a spinner with `Uploading…` while a send is
+ * in flight. A chip opens
  * the file: in Tauri through the daemon machine's path once a HEAD confirms the blob
  * is there (`open` would otherwise resolve on a missing file), in a browser through
  * a blob URL. Either way a missing blob (a teammate's frontmatter without the bytes)
@@ -174,44 +175,40 @@ export function AttachmentsRow({
   if (!canAttach && attachments.length === 0) return null;
 
   return (
-    <div
-      data-slot="attachments-row"
-      className="flex flex-wrap items-center gap-1.5"
-    >
+    <div data-slot="attachments-row" className={styles.chipRow}>
       {attachments.map((attachment) => (
-        <span
+        // The chip stays a span: its words are a button that opens the file, and the
+        // × (only while the task is editable) is the chip's own remove button.
+        <Chip
           key={attachment.name}
           data-slot="attachment-chip"
-          className="inline-flex items-center gap-0.5"
+          onRemove={canAttach ? () => void remove(attachment) : undefined}
+          removeLabel={`Remove ${attachment.name}`}
         >
-          <PillButton
+          <button
+            type="button"
+            className={styles.chipOpen}
             title={attachment.name}
             onClick={() => void open(attachment)}
           >
-            <Paperclip />
-            <span className="max-w-[240px] truncate">
+            <Paperclip size={12} strokeWidth={1.8} aria-hidden />
+            <span className={styles.chipOpenText}>
               {attachmentLabel(attachment)}
             </span>
-          </PillButton>
-          {canAttach && (
-            <IconButton
-              label={`Remove ${attachment.name}`}
-              onClick={() => void remove(attachment)}
-            >
-              <X />
-            </IconButton>
-          )}
-        </span>
+          </button>
+        </Chip>
       ))}
       {canAttach && (
         <>
-          <IconButton
-            label="Attach"
+          <Button
+            size="sm"
+            variant="quiet"
+            aria-label="Attach"
+            title="Attach"
             disabled={uploading}
+            icon={<Paperclip size={14} strokeWidth={1.8} aria-hidden />}
             onClick={() => fileInput.current?.click()}
-          >
-            <Paperclip />
-          </IconButton>
+          />
           <input
             ref={fileInput}
             type="file"
@@ -228,10 +225,8 @@ export function AttachmentsRow({
         </>
       )}
       {uploading && (
-        <span
-          data-slot="attachments-uploading"
-          className="text-muted-foreground font-book text-[12px]"
-        >
+        <span data-slot="attachments-uploading" className={styles.uploading}>
+          <Spinner size="xs" label="" />
           Uploading…
         </span>
       )}

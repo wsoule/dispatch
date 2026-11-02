@@ -3,11 +3,11 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   countOpenFindings,
+  findingTone,
   findingWarnings,
   groupOpenFindingsBySeverity,
   partitionFindings,
   ruleKeyOf,
-  severityColor,
   severityLabel,
 } from './findings';
 
@@ -75,11 +75,11 @@ describe('severityLabel', () => {
   });
 });
 
-describe('severityColor', () => {
-  test('red and amber for the two that need attention; minor stays muted', () => {
-    expect(severityColor('critical')).toBe('var(--red)');
-    expect(severityColor('important')).toBe('var(--amber)');
-    expect(severityColor('minor')).toBe('var(--text-muted)');
+describe('findingTone', () => {
+  test('danger and warning for the two that need attention; minor stays muted', () => {
+    expect(findingTone('critical')).toBe('danger');
+    expect(findingTone('important')).toBe('warning');
+    expect(findingTone('minor')).toBe('muted');
   });
 });
 

@@ -1,0 +1,112 @@
+/* RunStrip (RunStrip.tsx): a run's vitals on one 32px line that wraps when narrow — the
+   state pill, executor and model, the run picker, the stats, then the actions pushed to the
+   right edge — and FilesTouched, the run's files as a wrapping row of chips. Tokens only. */
+
+.strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1) var(--s-3);
+  min-height: 32px;
+}
+
+.executor {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model {
+  color: var(--text-3);
+}
+
+/* One stat: the figure on the secondary ink, its word quieter after it. */
+.stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s-1);
+  font-size: var(--fs-xs);
+}
+
+.statValue {
+  color: var(--text-2);
+}
+
+.statLabel {
+  color: var(--text-3);
+}
+
+/* The run's id (and its kind) in a picker trigger or as plain text. */
+.runName {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  max-width: 14rem;
+}
+
+.runId {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runKind {
+  flex: none;
+  color: var(--text-3);
+}
+
+/* A task with one run names it in quiet text, with nothing to pick. */
+.single {
+  display: inline-flex;
+  min-width: 0;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+/* The actions wrap onto a second line on a phone rather than run past the column (Review's
+   Request changes, Re-run and the Land split button are wider than 390 px together). */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
+}
+
+.files {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.filesLabel {
+  margin-right: var(--s-1);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+}
+
+/* A long path truncates inside its chip; the chip's title carries it whole. */
+.path {
+  display: inline-block;
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.more {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}

@@ -345,6 +345,20 @@ describe('isTypingTagName', () => {
     expect(isTypingTagName('DIV', false)).toBe(false);
   });
 
+  // A checkbox (a review criterion) or a button input takes no letters, so with its type
+  // given it is not typing; radio and range keep their arrow keys, and an input whose type
+  // is not given counts as before.
+  test('an INPUT counts by its type when one is given', () => {
+    expect(isTypingTagName('INPUT', false, 'checkbox')).toBe(false);
+    expect(isTypingTagName('INPUT', false, 'button')).toBe(false);
+    expect(isTypingTagName('INPUT', false, 'submit')).toBe(false);
+    expect(isTypingTagName('INPUT', false, 'text')).toBe(true);
+    expect(isTypingTagName('INPUT', false, 'search')).toBe(true);
+    expect(isTypingTagName('INPUT', false, 'radio')).toBe(true);
+    expect(isTypingTagName('INPUT', false, 'range')).toBe(true);
+    expect(isTypingTagName('INPUT', false)).toBe(true);
+  });
+
   // A native <select>'s typeahead jumps to the option starting with the letter pressed
   // (SnippetComposer still has one), so a focused select is typing: a bare `g` there picks
   // an option instead of arming the global chord.

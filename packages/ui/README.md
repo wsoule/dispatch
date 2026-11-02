@@ -322,7 +322,9 @@ The other shared vocabularies:
   keeps the surrounding colour. It replaces a raw hue read (`color: var(--red)`)
   for words; the words still say the status. `Checklist` (the rubric) keeps a
   met item a neutral disc with a tick, like done, so a missing item's dashed
-  amber ring and "Missing" chip are the only hue in the list.
+  amber ring and "Missing" chip are the only hue in the list. With `onToggle`
+  its items are `Checkbox` rows a person ticks (ReviewMode's criteria) and carry
+  no hue at all: a person's own ticks are not a status.
 - `TaskStateKind` (Linear's state types): `triage`, `backlog`, `unstarted`,
   `started`, `completed`, `canceled`, drawn by `StateGlyph` in the `--st-*`
   colours (in progress a blue half disc, done a green disc with a tick, triage
@@ -414,7 +416,7 @@ the types for the rest.
 |          | `DeadlineList`, `StatsStrip`, `ProgressRule`                                                                                      | `groups`; `cells`; `done`/`total`                                   |
 |          | `Register`, `RegisterRow` (`pressed` on a button row), `RegisterCell` (`span="row"` takes the whole row)                          | `columns`, `label`, `children`                                      |
 |          | `Notice` (`role` status, alert or note), `EmptyState` (a centred icon, optional `label` title, the sentence, an action)           | see `tasks/types.ts`                                                |
-|          | `NavTabs` (`items`, or `groups` for a grouped vertical sub-nav; below), `Checklist`                                               | `label` and `items` or `groups`; `items`                            |
+|          | `NavTabs` (`items`, or `groups` for a grouped vertical sub-nav; below), `Checklist` (the rubric; `onToggle` for Checkbox rows)    | `label` and `items` or `groups`; `items` (`onToggle` optional)      |
 |          | `Disclosure` (a fold: a trigger and the panel it shows or hides; below)                                                           | `children`                                                          |
 |          | `SectionHeader` (a heading row over a band of rows: fold chevron, tone, count, actions, "+"; Lists below)                         | `name`                                                              |
 |          | `ProgressPie` (Linear's ring and pie, done of total; Status vocabulary above)                                                     | `done`, `total`, `label`                                            |
@@ -1522,8 +1524,11 @@ Comments, Activity, `children`.
 - **Acceptance criteria** (and any other host section) are `children`: a
   `TaskDetailSection` (title, `count`, `meta` such as "2 of 3 met") holding a
   `Checklist`, after Activity in the main column at the sections' heading level.
-  `sectionMeta` puts a control in a built-in heading (an Edit button on
-  Description, "+ Add" on the relations).
+  Without `onToggle` it is the read-only rubric (Met, or an amber Missing chip);
+  with `onToggle(id, met)` each item is a `Checkbox` row a person ticks
+  (ReviewMode's criteria), checked when `met`, reported by its `id` or, with
+  none, by `String(index)`. `sectionMeta` puts a control in a built-in heading
+  (an Edit button on Description, "+ Add" on the relations).
 - **Description.** `content` is the host's rendered body (its markdown). With
   `clampContent` it is clamped to `clampLines` too, by height with a fade over
   the last lines (its blocks have line heights of their own), with the same Show

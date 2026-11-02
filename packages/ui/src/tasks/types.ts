@@ -486,9 +486,17 @@ export interface ChecklistProps {
   items: ChecklistItem[];
   /** Accessible name of the list, e.g. "Rubric". */
   label?: string;
-  /** Right-aligned state words; defaults to Met / Missing. */
+  /** Right-aligned state words; defaults to Met / Missing. Read-only mode
+      only: a list with onToggle has no state column. */
   metLabel?: string;
   missingLabel?: string;
+  /** Lets a person tick the list: each item is a Checkbox row named by its
+      label, checked when `met`, and a tick calls `onToggle(id, next)`
+      (the host stores it and passes the new `met` back). `id` is the
+      item's `id`, or `String(index)` when the item has none (ReviewMode
+      stores its criteria ticks by index). Without it the list is the
+      read-only rubric (a met disc, a "Missing" chip). */
+  onToggle?: (id: string, met: boolean) => void;
 }
 
 /* ---- list item, panel -------------------------------------------------- */

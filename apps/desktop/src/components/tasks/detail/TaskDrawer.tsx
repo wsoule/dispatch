@@ -25,9 +25,9 @@ import { ICON, useTaskDetailProps } from './useTaskDetailProps';
 // whichever main view is showing; Enter, o and the drawer's "Open" go to the
 // full page (page/TaskPageView). The drawer's own markup is @dispatch/ui only,
 // fed by adapters/taskDetail through useTaskDetail and useTaskDetailProps (the
-// pieces the page shares); Dispatch's legacy Work pieces (the dispatch card,
-// the run strip, the sub-issues, the attachments) sit inside it as children
-// until Phase 7 restyles them. It mounts in the shell's peek slot while
+// pieces the page shares); Dispatch's own Work blocks (the dispatch card,
+// the run strip, the sub-issues, the attachments) sit inside it as children.
+// It mounts in the shell's peek slot while
 // `navState.peek` is a task; Esc (SlideOver's) closes it.
 
 export interface TaskDrawerProps {

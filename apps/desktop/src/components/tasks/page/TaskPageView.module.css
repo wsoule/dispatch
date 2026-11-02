@@ -88,8 +88,8 @@
   gap: var(--s-3);
 }
 
-/* A legacy block (the sub-issues, the docs, the stack) kept to the rail's width. */
-.legacy {
+/* A Dispatch block in a rail section (the sub-issues, the stack) kept to the rail's width. */
+.block {
   min-width: 0;
 }
 

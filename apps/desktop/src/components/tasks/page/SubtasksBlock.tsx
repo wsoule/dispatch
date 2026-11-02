@@ -1,28 +1,28 @@
 import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
 import { isDoneStatus } from '@dispatch-foo/core/browser';
 import type { RunMeta } from '@dispatch/client';
+import { Button, ListItem, PriorityGlyph, ProgressPie } from '@dispatch/ui';
 import { ChevronDown, Plus } from 'lucide-react';
 import { useState } from 'react';
 
-import { colorForLabel } from '../../../lib/labelColor';
+import { toTaskPriority } from '../../../adapters/rows';
 import { isTerminalRunState } from '../../../lib/runState';
 import { formatShortDate } from '../../../lib/taskDates';
+import { priorityLabel } from '../../../lib/taskDisplay';
 import { RunStatePill } from '../../runs/RunStatePill';
 import { useShellActions } from '../../shell/ShellActionsContext';
 import { AssigneeAvatar } from '../AssigneeAvatar';
-import { PriorityIcon } from '../PriorityIcon';
+import { LabelChip, useLabelColors } from '../LabelChip';
 import { StatusIcon } from '../StatusIcon';
-import { cn } from '@/lib/utils';
-import { IconButton } from '@/ui/ai/icon-button';
-import { ListRow } from '@/ui/ai/list-row';
-import { LabelPill } from '@/ui/ai/pill';
-import { ProgressGlyph } from '@/ui/chrome';
+import styles from './pageBlocks.module.css';
 
-// The `▾ Sub-tasks ◔ 1/3` block under the description: a 12px/500 header with a collapse
-// chevron, the progress pie and count, and a `+` that opens the task creator with this
-// milestone preset; then one 36px `ListRow` per child (priority, id, status, title, label pills,
-// a live run mark, the assignee, the day it last moved). Also used, titled `Blocks`, for a
-// task whose completion unblocks others.
+// The `▾ Sub-tasks ◔ 1/3` block under the description: a header row whose one fold button
+// holds the chevron, the title, the progress pie and the count (a press anywhere on them
+// folds the list), and a `+` that opens the task creator with this milestone preset; then
+// one list row per child (priority, title, status and id, label chips, a live run mark,
+// the assignee, the day it last moved). The header is a button, not a heading: its hosts
+// already head it (the rail's "Sub-issues" section, the drawer's "Work"). Also used,
+// titled `Blocks`, for a task whose completion unblocks others.
 export function SubtasksBlock({
   title = 'Sub-tasks',
   parent,
@@ -44,74 +44,93 @@ export function SubtasksBlock({
   createPreset?: { milestone: string };
 }) {
   const shell = useShellActions();
+  const colors = useLabelColors();
   const [collapsed, setCollapsed] = useState(false);
   const done = tasks.filter((doc) =>
     isDoneStatus(doc.meta.status, model)
   ).length;
   return (
-    <section data-slot="subtasks-block" className="flex flex-col gap-1">
-      <div className="flex h-7 items-center gap-1.5">
+    <section data-slot="subtasks-block" className={styles.subtasks}>
+      <div className={styles.subtasksHead}>
         <button
           type="button"
+          className={styles.subtasksToggle}
           aria-expanded={!collapsed}
           onClick={() => setCollapsed((c) => !c)}
-          className="text-muted-foreground rounded-control focus-visible:ring-ring flex h-7 items-center gap-1.5 px-1 text-[12px] font-medium outline-none hover:text-(--text-secondary) focus-visible:ring-2"
         >
           <ChevronDown
-            className={cn(
-              'size-3 transition-transform duration-100',
-              collapsed && '-rotate-90'
-            )}
+            className={styles.subtasksChevron}
+            size={14}
+            strokeWidth={1.8}
+            aria-hidden
           />
           {title}
-          <ProgressGlyph
-            fraction={tasks.length === 0 ? 0 : done / tasks.length}
-            className="text-muted-foreground size-3.5"
+          {/* The pie says the count for assistive tech; the digits after it are visual. */}
+          <ProgressPie
+            done={done}
+            total={tasks.length}
+            size={14}
+            label={`${done} of ${tasks.length} done`}
           />
-          <span
-            className="font-book tabular-nums"
-            aria-label={`${done} of ${tasks.length} done`}
-          >
+          <span className={styles.subtasksCount} aria-hidden="true">
             {done}/{tasks.length}
           </span>
         </button>
         {createPreset !== undefined && (
-          <IconButton
-            label={`Add sub-task to ${parent.meta.title}`}
-            className="ml-auto"
+          <Button
+            variant="quiet"
+            size="sm"
+            className={styles.subtasksAdd}
+            aria-label={`Add sub-task to ${parent.meta.title}`}
+            title={`Add sub-task to ${parent.meta.title}`}
+            icon={<Plus size={14} strokeWidth={1.8} aria-hidden />}
             onClick={() =>
               shell.openCreateTask({ milestone: createPreset.milestone })
             }
-          >
-            <Plus />
-          </IconButton>
+          />
         )}
       </div>
       {!collapsed && (
-        <div className="-mx-3 flex flex-col">
+        <div className={styles.subtaskRows}>
           {tasks.map((child) => {
             const run = latestRunByTaskId.get(child.meta.id);
             const live = run !== undefined && !isTerminalRunState(run.state);
             return (
-              <ListRow
+              <ListItem
                 key={child.meta.id}
                 data-row-id={child.meta.id}
-                leading={<PriorityIcon priority={child.meta.priority} />}
-                id={child.meta.id}
-                status={<StatusIcon status={child.meta.status} />}
-                title={child.meta.title}
-                trailing={
+                leading={
                   <>
+                    <PriorityGlyph
+                      priority={toTaskPriority(child.meta.priority)}
+                    />
+                    {/* The glyph is aria-hidden; the words say the priority. */}
+                    <span className="srOnly">
+                      {priorityLabel(child.meta.priority)}
+                    </span>
+                  </>
+                }
+                title={child.meta.title}
+                crumb={
+                  <span className={styles.subtaskKey}>
+                    <StatusIcon status={child.meta.status} />
+                    <span className="mono">{child.meta.id}</span>
+                  </span>
+                }
+                trailing={
+                  <span className={styles.subtaskTrailing}>
                     {child.meta.labels.map((label) => (
-                      <LabelPill key={label} color={colorForLabel(label)}>
-                        {label}
-                      </LabelPill>
+                      <LabelChip
+                        key={label}
+                        label={label}
+                        hex={colors.hex(label)}
+                      />
                     ))}
                     {live && run !== undefined && (
                       <RunStatePill meta={run} compact />
                     )}
                     <AssigneeAvatar assignee={child.meta.assignee} />
-                  </>
+                  </span>
                 }
                 date={formatShortDate(child.meta.updated)}
                 onClick={

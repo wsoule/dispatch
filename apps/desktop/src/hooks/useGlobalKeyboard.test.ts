@@ -250,4 +250,33 @@ describe('isTypingTarget', () => {
     );
     expect(commands).toEqual(['new-task']);
   });
+
+  // A ticked review criterion keeps focus on its checkbox, which takes no letters: the
+  // app's bare keys still work from it, while a text input keeps them.
+  test('a checkbox or button input is not typing; a text input is', () => {
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    const press = document.createElement('input');
+    press.type = 'button';
+    const text = document.createElement('input');
+    text.type = 'text';
+    document.body.append(box, press, text);
+    expect(isTypingTarget(box)).toBe(false);
+    expect(isTypingTarget(press)).toBe(false);
+    expect(isTypingTarget(text)).toBe(true);
+    const { commands } = mount();
+    for (const target of [box, text]) {
+      target.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'c',
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+    }
+    expect(commands).toEqual(['new-task']);
+    box.remove();
+    press.remove();
+    text.remove();
+  });
 });

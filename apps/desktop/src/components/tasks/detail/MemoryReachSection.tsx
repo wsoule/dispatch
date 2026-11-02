@@ -1,9 +1,10 @@
 import type { ApiClient } from '@dispatch/client';
+import { cx, TaskDetailSection } from '@dispatch/ui';
 import { useQuery } from '@tanstack/react-query';
 
 import { entryProvenance, memoryQueryKey } from '../../../lib/memory';
 import { Markdown } from '../../runs/Markdown';
-import { MainSection } from './MainSection';
+import styles from './sections.module.css';
 
 // The daemon's largest list page; a full page may mean more reach the task.
 const LIST_LIMIT = 200;
@@ -28,7 +29,11 @@ export function MemoryReachSection({
   });
   if (error !== null) {
     return (
-      <p data-slot="load-error" className="text-red font-book text-[12px]">
+      <p
+        data-slot="load-error"
+        className={cx('toneText', styles.note)}
+        data-tone="danger"
+      >
         Couldn&rsquo;t load memory: {error.message}
       </p>
     );
@@ -36,42 +41,34 @@ export function MemoryReachSection({
   const entries = data?.entries ?? [];
   if (entries.length === 0) return null;
   return (
-    <MainSection
+    <TaskDetailSection
       title="Memory"
-      trailing={
-        <span className="text-muted-foreground font-book text-[12px] tabular-nums">
+      headingLevel={3}
+      meta={
+        <span className="num">
           {entries.length >= LIST_LIMIT
             ? `first ${LIST_LIMIT}`
             : entries.length}
         </span>
       }
     >
-      <ul className="flex flex-col gap-2">
+      <ul className={styles.list}>
         {entries.map((entry) => (
-          <li
-            key={entry.id}
-            data-slot="memory-entry"
-            className="bg-surface-quaternary rounded-card border-border-strong border-[0.5px] p-3"
-          >
+          <li key={entry.id} data-slot="memory-entry" className={styles.card}>
             {/* The body stays collapsed under its title, so the list stays dense. */}
             <details>
-              <summary className="cursor-pointer">
+              <summary className={styles.summary}>
                 {/* Titles are author-written, so they render as plain text. */}
-                <span className="text-foreground text-[13px] font-medium break-words">
-                  {entry.title}
-                </span>
-                <span className="text-muted-foreground font-book mt-0.5 block text-[12px]">
+                <span className={styles.cardTitle}>{entry.title}</span>
+                <span className={styles.cardLine}>
                   {entryProvenance(entry)}
                 </span>
               </summary>
-              <Markdown
-                content={entry.body}
-                className="text-muted-foreground font-book mt-1 text-[13px]"
-              />
+              <Markdown content={entry.body} className={styles.markdown} />
             </details>
           </li>
         ))}
       </ul>
-    </MainSection>
+    </TaskDetailSection>
   );
 }

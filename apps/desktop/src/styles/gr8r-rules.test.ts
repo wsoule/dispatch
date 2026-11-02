@@ -12,8 +12,8 @@ import path from 'node:path';
 // scan (apps/planner/test/gr8r-tokens.test.ts in Better-Tracker). The Gr8r code (GR8R_SCOPE,
 // not the sheets) is also held to the Phase 7 ratchet: it imports neither the legacy library
 // nor `cn`; every `var(--name)` it reads resolves to tokens.css, an app stylesheet other than
-// the bridge and the Tailwind entry (legacy-bridge.css, tailwind.css), a property the file
-// sets itself, or a runtime `--label-color-<hash>` property; and it never builds a name from
+// the bridge and the Tailwind entry (legacy-bridge.css, tailwind.css), or a property the file
+// sets itself; and it never builds a name from
 // the bridge's `--project-color-`, `--state-` or `--status-` families, nor any name from a
 // template expression (`var(--${tone}-ink)`), which no static scan can resolve.
 
@@ -44,17 +44,8 @@ const GR8R_SCOPE: readonly string[] = [
   'components/shell/Toasts.test.tsx',
   'components/shell/toastContract.ts',
   'components/shell/toastContract.test.ts',
-  'components/tasks/detail/TaskDrawer.tsx',
-  'components/tasks/detail/TaskDrawer.module.css',
-  'components/tasks/detail/TaskDrawer.test.tsx',
-  'components/tasks/detail/taskDetailProps.module.css',
-  'components/tasks/detail/useTaskDetail.ts',
-  'components/tasks/detail/useTaskDetailProps.tsx',
-  'components/tasks/page/TaskPageRail.tsx',
-  'components/tasks/page/TaskPageView.tsx',
-  'components/tasks/page/TaskPageView.module.css',
-  'components/tasks/page/TaskPageView.test.tsx',
-  'components/tasks/page/useTaskPageModel.ts',
+  'components/tasks/detail',
+  'components/tasks/page',
   'components/timeline/TimelineBanners.tsx',
   'components/timeline/TimelineBanners.module.css',
   'components/timeline/TimelineBanners.test.tsx',
@@ -256,6 +247,19 @@ const GR8R_SCOPE: readonly string[] = [
   'lib/transcriptGutter.test.ts',
   'styles/markdown.css',
   'styles/pierreTheme.css',
+  'components/tasks/EnrichReview.tsx',
+  'components/tasks/EnrichReview.module.css',
+  'components/tasks/StackRail.tsx',
+  'components/tasks/StackRail.module.css',
+  'components/tasks/TaskPreviewTab.tsx',
+  'components/tasks/TaskPreviewTab.module.css',
+  'components/tasks/TaskPreviewTab.test.tsx',
+  'components/tasks/LabelChip.tsx',
+  'lib/findings.ts',
+  'lib/findings.test.ts',
+  'lib/fixLoopStatus.ts',
+  'lib/fixLoopStatus.test.ts',
+  'lib/reviewCriteria.ts',
 ];
 
 /** Test files whose hex literals are Linear-supplied data, not colours of their own: a
@@ -453,8 +457,7 @@ function selfSet(text: string): Set<string> {
 }
 
 /** "file: name" for every `var(--name` read that resolves nowhere: not among the declared
-    names (tokens.css plus the app stylesheets), not set by the file itself, and not one of the
-    runtime `--label-color-<hash>` properties lib/labelColor.ts registers. */
+    names (tokens.css plus the app stylesheets) and not set by the file itself. */
 function unresolvedVars(
   files: Source[],
   declared: ReadonlySet<string>
@@ -465,12 +468,7 @@ function unresolvedVars(
       [...text.matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1] ?? '')
     );
     return [...reads]
-      .filter(
-        (name) =>
-          !declared.has(name) &&
-          !own.has(name) &&
-          !name.startsWith('--label-color-')
-      )
+      .filter((name) => !declared.has(name) && !own.has(name))
       .map((name) => `${file}: ${name}`);
   });
 }

@@ -83,6 +83,9 @@ describe('MemoryReachSection', () => {
 
   it('says when memory could not be read', async () => {
     renderSection(() => Promise.reject(new Error('memory is unavailable')));
-    expect(await screen.findByText(/memory is unavailable/)).toBeTruthy();
+    const error = await screen.findByText(/memory is unavailable/);
+    // The failure reads in the danger tone's words (the global .toneText hook).
+    expect(error.getAttribute('data-slot')).toBe('load-error');
+    expect(error.getAttribute('data-tone')).toBe('danger');
   });
 });

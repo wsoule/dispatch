@@ -253,6 +253,16 @@ export function resolveListKeyCommand(
   return LIST_KEYS[input.key] ?? null;
 }
 
+/** `<input>` types that take no typed text, only their own press (Space toggles a checkbox,
+ * Enter or Space presses a button), so a letter landing on one is free for a shortcut. Radio
+ * and range inputs are left out: their arrow keys belong to them. */
+const KEYLESS_INPUT_TYPES: ReadonlySet<string> = new Set([
+  'checkbox',
+  'button',
+  'submit',
+  'reset',
+]);
+
 /** The actual "does this tag name/contenteditable-ness count as typing" decision —
  * `isTypingTarget` (hooks/useGlobalKeyboard.ts) is the thin DOM-touching wrapper that pulls
  * `tagName`/`isContentEditable` off a real `EventTarget` and calls this; kept separate so the
@@ -261,17 +271,19 @@ export function resolveListKeyCommand(
  * concurrency `<input>` is the motivating case) should build its `isTyping` this way rather
  * than hardcoding `false`. A focused native `<select>` counts too: its typeahead jumps to the
  * option whose label starts with the letter pressed, so a bare `g` or digit there picks an
- * option rather than firing a global chord. */
+ * option rather than firing a global chord. An `<input>` whose `inputType` is given and takes
+ * no text (a checkbox, a button) does not count: a ticked review criterion keeps focus on its
+ * box, and the page's and the app's letter keys must still work from there. Without
+ * `inputType`, every `<input>` counts, as before. */
 export function isTypingTagName(
   tagName: string,
-  isContentEditable: boolean
+  isContentEditable: boolean,
+  inputType?: string
 ): boolean {
-  return (
-    tagName === 'INPUT' ||
-    tagName === 'TEXTAREA' ||
-    tagName === 'SELECT' ||
-    isContentEditable
-  );
+  if (tagName === 'INPUT') {
+    return inputType === undefined || !KEYLESS_INPUT_TYPES.has(inputType);
+  }
+  return tagName === 'TEXTAREA' || tagName === 'SELECT' || isContentEditable;
 }
 
 /** True for tag names that are their own interactive controls — a keydown landing on one

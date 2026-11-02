@@ -1,0 +1,65 @@
+/* The task view's Preview tab (TaskPreviewTab.tsx): an empty state centred
+   in the tab, skeleton rows while it loads, or the running preview under a
+   bar with its command (mono) and the Reload and Stop actions. */
+.center {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 100%;
+  padding: var(--s-4);
+}
+
+.loading {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--s-1) 0;
+}
+
+.frame {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  padding: 6px var(--s-3);
+  border-bottom: 1px solid var(--divider);
+}
+
+.command {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  margin-left: auto;
+}
+
+/* The previewed app is a foreign page that may assume a light canvas and
+   paint no background of its own: the frame gives it the browser's light
+   Canvas (white) in either theme, as a new tab would. */
+.iframe {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: Canvas;
+  color-scheme: light;
+}

@@ -156,6 +156,8 @@ describe('the issue list modules are scoped', () => {
     'tasks/panel.module.css',
     // The code block (B8): Markdown fences and a tool call's JSON.
     'tasks/code-block.module.css',
+    // The checklist (B9): the rubric and its Checkbox rows.
+    'tasks/checklist.module.css',
     'edit/picker-popover.module.css',
     // The overlays: they sit in the browser's top layer, so nothing in
     // them may reach a host element either.

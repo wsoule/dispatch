@@ -15,7 +15,7 @@ import {
  * composer, `g h` leaves the page) from inside the open list. */
 const OWNS_ITS_KEYS = '[data-picker-popup], [role="menu"]';
 
-/** True while the event's target is a text field, or inside an open picker or menu — the DOM-touching half of
+/** True while the event's target is a text field (a checkbox or a button input is not one), or inside an open picker or menu — the DOM-touching half of
  * `GlobalKeyboardContext.isTyping` that `lib/keyboard.ts` itself stays pure of. Exported so
  * any other keydown-listening container that also holds real form controls (e.g. `BoardView`'s
  * roving-focus track, which wraps a milestone card's concurrency `<input>`) can build its own
@@ -23,8 +23,11 @@ const OWNS_ITS_KEYS = '[data-picker-popup], [role="menu"]';
 export function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   return (
-    isTypingTagName(target.tagName, target.isContentEditable) ||
-    target.closest(OWNS_ITS_KEYS) !== null
+    isTypingTagName(
+      target.tagName,
+      target.isContentEditable,
+      target instanceof HTMLInputElement ? target.type : undefined
+    ) || target.closest(OWNS_ITS_KEYS) !== null
   );
 }
 
