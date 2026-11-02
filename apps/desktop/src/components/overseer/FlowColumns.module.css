@@ -1,0 +1,228 @@
+/* The Overseer's side columns (FlowColumns.tsx): Coming in on the left and
+   Going out on the right of the talk. Unboxed: a head (the name and count
+   in one heading, then the flow chevrons), an optional quiet line, and a
+   thin-scrollbar scroller of groups and rows. Beside the talk a column
+   shows only on a wide `overseer` container (TwoViewOverseer's root) and
+   widens on a wider one; in a sheet it always shows and fills it. The
+   widths keep the legacy window breakpoints: columns from a 1280px window
+   (Tailwind's xl), 340px from 1440px. With the 252px sidebar and the
+   root's 24px (--s-6) padding each side (a container query measures the
+   content box), those windows are 980px and 1140px of content below.
+   Row motion runs only under prefers-reduced-motion: no-preference.
+   Tokens only. */
+.column {
+  display: none;
+  flex: none;
+  flex-direction: column;
+  gap: var(--s-2);
+  width: 300px;
+  min-height: 0;
+}
+
+@container overseer (width >= 980px) {
+  .column {
+    display: flex;
+  }
+}
+
+@container overseer (width >= 1140px) {
+  .column {
+    width: 340px;
+  }
+}
+
+/* Inside the narrow Overseer's slide-over: always shown, full width. */
+.sheetColumn {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The head and the group heads line up with the rows' text. */
+.head,
+.groupHead {
+  padding-inline: var(--s-3);
+}
+
+.groupHead {
+  min-height: 26px;
+}
+
+.scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+/* Coming in's sections (Needs you, posts, drafts, notifications). */
+.inflow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.group,
+.list {
+  display: flex;
+  flex-direction: column;
+}
+
+.setAside {
+  gap: var(--s-1);
+}
+
+/* Quiet lines: the empty state, and today's spend under Going out's head. */
+.empty,
+.spend {
+  margin: 0;
+  padding-inline: var(--s-3);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+}
+
+.spend {
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Three chevrons after a head, pointing the way things travel: faint at
+   rest, brighter while anything flows (the static fallback), and marching
+   one after another under no-preference motion. */
+.chevrons {
+  display: inline-flex;
+  color: var(--text-2);
+  font-size: var(--fs-2xs);
+  line-height: 1;
+}
+
+.chevron {
+  opacity: 0.4;
+}
+
+.chevrons[data-active='true'] .chevron {
+  opacity: 0.7;
+}
+
+/* A live run's dot: the in-progress tone (data-tone="info"); the crumb
+   beside it says the state in words. */
+/* The count after a column's name in the sheet's title (SheetTitle), quiet
+   and tabular like a column head's count. */
+.titleCount {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A paused milestone session: the pause glyph in the muted tone (grey,
+   paused and inactive in the status table). The glyph keeps its shape in
+   forced colours. */
+.pausedMark {
+  flex: none;
+  color: var(--tone);
+}
+
+.liveDot {
+  display: inline-block;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tone);
+}
+
+/* A row on its way out keeps its place but takes no clicks; without motion
+   it simply dims until it goes. */
+.row[data-leaving='true'] {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .chevrons[data-active='true'] .chevron {
+    animation: flow-march 1.2s ease-in-out infinite;
+  }
+
+  .chevrons[data-active='true'] .chevron:nth-child(2) {
+    animation-delay: 200ms;
+  }
+
+  .chevrons[data-active='true'] .chevron:nth-child(3) {
+    animation-delay: 400ms;
+  }
+
+  .liveDot {
+    animation: live-pulse 2s ease-in-out infinite;
+  }
+
+  /* Coming in arrives from the left edge, Going out from the right. */
+  .enterLeft {
+    animation: flow-enter-left 300ms var(--ease) both;
+  }
+
+  .enterRight {
+    animation: flow-enter-right 300ms var(--ease) both;
+  }
+
+  /* Leaving keeps going outward, as long as lib/flowList's LEAVE_MS keeps
+     the row (450ms), and holds its last frame. */
+  .row[data-leaving='true'] {
+    animation: flow-leave-right 450ms var(--ease) forwards;
+  }
+}
+
+@keyframes flow-march {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes live-pulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@keyframes flow-enter-left {
+  from {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+}
+
+@keyframes flow-enter-right {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+
+@keyframes flow-leave-right {
+  to {
+    opacity: 0;
+    transform: translateX(40px);
+  }
+}
+
+/* Forced colours drop the dot's fill: it keeps a CanvasText ring. */
+@media (forced-colors: active) {
+  .liveDot {
+    border: 1px solid CanvasText;
+  }
+}

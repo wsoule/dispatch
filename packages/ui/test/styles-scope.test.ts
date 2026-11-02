@@ -151,6 +151,9 @@ describe('the issue list modules are scoped', () => {
     // (the progress pie among them).
     'tasks/section-header.module.css',
     'tasks/task-glyphs.module.css',
+    // The list item and the panel a host's own lists are built from (B7).
+    'tasks/list-item.module.css',
+    'tasks/panel.module.css',
     'edit/picker-popover.module.css',
     // The overlays: they sit in the browser's top layer, so nothing in
     // them may reach a host element either.

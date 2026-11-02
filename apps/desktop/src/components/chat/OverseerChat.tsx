@@ -6,14 +6,17 @@ import type {
   OverseerRecordView,
 } from '@dispatch/client';
 import {
-  Check,
-  CircleAlert,
-  FileIcon,
-  Search,
-  Shield,
-  Wrench,
-  X,
-} from 'lucide-react';
+  Button,
+  ChipButton,
+  cx,
+  Disclosure,
+  Notice,
+  ProgressPie,
+  SearchField,
+  Spinner,
+  Tooltip,
+} from '@dispatch/ui';
+import { Check, CircleAlert, FileIcon, Shield, Wrench, X } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
@@ -35,27 +38,14 @@ import {
 } from '../../lib/overseerThread';
 import { slashSuggestions } from '../../lib/slashCommands';
 import { askAgentToFix, FailureNotice } from '../failure/FailureNotice';
+import { DecisionCard } from '../gates/DecisionCard';
 import { ToolApprovalCard } from '../gates/ToolApprovalCard';
 import { Markdown } from '../runs/Markdown';
 import { CardErrorBoundary } from '../shell/CardErrorBoundary';
-import { cn } from '@/lib/utils';
-import { IconButton, type IconButtonProps } from '@/ui/ai/icon-button';
-import { PillButton } from '@/ui/ai/pill';
-import { PromptBar } from '@/ui/ai/prompt-bar';
-import { StreamingText } from '@/ui/ai/streaming-text';
-import { ToolChip, ToolChipGroup } from '@/ui/ai/tool-chips';
-import { Button } from '@/ui/button';
-import { ProgressGlyph } from '@/ui/chrome';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/ui/collapsible';
-import { InputGroup, InputGroupAddon, InputGroupInput } from '@/ui/input-group';
-import { Separator } from '@/ui/separator';
-import { Spinner } from '@/ui/spinner';
-import { Textarea } from '@/ui/textarea';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
+import { StreamingText } from '../transcript/StreamingText';
+import { ToolChip, ToolChipGroup } from '../transcript/ToolChip';
+import styles from './OverseerChat.module.css';
+import { PromptBar } from './PromptBar';
 
 // Ways into an empty Overseer: each fills the composer, so the question can be
 // edited before it goes.
@@ -135,10 +125,7 @@ function SentAttachments({
 }) {
   const urls = useAttachmentPreviews(attachments, fetchAttachment);
   return (
-    <ul
-      aria-label="Attachments"
-      className="flex max-w-[85%] flex-wrap justify-end gap-1.5 self-end"
-    >
+    <ul aria-label="Attachments" className={styles.sentFiles}>
       {attachments.map((attachment) => {
         const url = urls[attachment.path];
         return (
@@ -149,13 +136,13 @@ function SentAttachments({
                   src={url}
                   alt={attachment.name}
                   title={attachment.name}
-                  className="rounded-card shadow-hairline max-h-48 max-w-64 object-contain"
+                  className={styles.sentImage}
                 />
               </a>
             ) : (
-              <span className="bg-surface-secondary shadow-hairline rounded-pill text-muted-foreground flex items-center gap-1 px-2 py-0.5 text-[12px]">
-                <FileIcon aria-hidden className="size-3" />
-                <span className="max-w-48 truncate">{attachment.name}</span>
+              <span className={styles.sentFile}>
+                <FileIcon size={14} strokeWidth={1.8} aria-hidden />
+                <span className={styles.sentFileName}>{attachment.name}</span>
               </span>
             )}
           </li>
@@ -165,13 +152,27 @@ function SentAttachments({
   );
 }
 
-/** An inline failure line — a send that dispatchd refused, a decision that threw. */
-function ErrorLine({ children }: { children: ReactNode }) {
+/** An inline failure line — a send that dispatchd refused, a decision that threw:
+ * a danger Notice with an alert mark, so the colour is never the only cue. */
+function ErrorLine({
+  children,
+  role,
+}: {
+  children: ReactNode;
+  role?: 'alert';
+}) {
   return (
-    <div className="bg-state-failed-surface text-state-failed rounded-control flex items-start gap-2 px-3 py-2 text-[13px]">
-      <CircleAlert className="size-3.5 shrink-0 translate-y-0.5" />
-      <span>{children}</span>
-    </div>
+    <Notice tone="danger" role={role}>
+      <span className={styles.errorLine}>
+        <CircleAlert
+          className={styles.errorIcon}
+          size={14}
+          strokeWidth={1.8}
+          aria-hidden
+        />
+        <span>{children}</span>
+      </span>
+    </Notice>
   );
 }
 
@@ -188,7 +189,7 @@ function AgentProse({
   className?: string;
 }) {
   const draw = (shown: string) => (
-    <Markdown content={shown} className={cn('text-[13px]', className)} />
+    <Markdown content={shown} className={cx(styles.prose, className)} />
   );
   return streaming ? (
     <StreamingText text={text} streaming render={draw} />
@@ -197,8 +198,8 @@ function AgentProse({
   );
 }
 
-/** One turn of the overseer conversation: your words verbatim in a pill on the
- * right, the agent's reply as bare Markdown across the column (it's an agent
+/** One turn of the overseer conversation: your words verbatim in a bubble on
+ * the right, the agent's reply as bare Markdown across the column (it's an agent
  * transcript), the time on hover. A `streaming` reply is the running turn's
  * text still arriving: it has no time yet. */
 function OverseerMessageBubble({
@@ -222,7 +223,8 @@ function OverseerMessageBubble({
       <div
         title={when}
         data-testid={streaming ? 'overseer-live' : undefined}
-        className="max-w-full self-stretch px-1"
+        data-speaker="assistant"
+        className={styles.reply}
       >
         <AgentProse text={text} streaming={streaming} />
       </div>
@@ -237,10 +239,7 @@ function OverseerMessageBubble({
         />
       )}
       {text.trim() !== '' && (
-        <p
-          title={when}
-          className="bg-surface-inset rounded-card font-book max-w-[80%] self-end p-3 text-[13px] leading-relaxed whitespace-pre-wrap"
-        >
+        <p title={when} data-speaker="user" className={styles.userBubble}>
           {text}
         </p>
       )}
@@ -250,15 +249,16 @@ function OverseerMessageBubble({
 
 /** Prose the agent wrote between tool calls (or before a Stop): the agent's
  * own voice, so Markdown in its column with no speaker line of its own, and
- * muted, so the reply stays what the eye lands on. */
+ * quiet (the secondary ink), so the reply stays what the eye lands on. */
 function OverseerNarration({ text, at }: { text: string; at: string }) {
   return (
     <div
       title={new Date(at).toLocaleString()}
       data-testid="overseer-narration"
-      className="max-w-full self-stretch px-1"
+      data-speaker="narration"
+      className={styles.reply}
     >
-      <AgentProse text={text} className="text-muted-foreground" />
+      <AgentProse text={text} className={styles.narration} />
     </div>
   );
 }
@@ -277,12 +277,17 @@ interface OverseerConfirmCardProps {
   onDecide: (approve: boolean) => void;
 }
 
+/** The shield every approval card leads with, in the card's warning ink. */
+const APPROVAL_ICON = <Shield size={14} strokeWidth={1.8} aria-hidden />;
+
 /**
  * A queued mutating action awaiting the human — deliberately not a chat
  * bubble: this is the one row in the transcript that's a control, not a
- * record, so it gets its own bordered card with the action's human-readable
- * summary and the approve/deny pair. Denying never runs the underlying
- * mutation; approving runs it server-side before the call resolves.
+ * record, so it is a warning-toned DecisionCard with the action's
+ * human-readable summary and the approve/deny pair as plain buttons (named
+ * "Approve: <summary>" and "Deny: <summary>"), not radio answers. Denying
+ * never runs the underlying mutation; approving runs it server-side before
+ * the call resolves.
  */
 function OverseerConfirmCard({
   action,
@@ -292,46 +297,75 @@ function OverseerConfirmCard({
   onDecide,
 }: OverseerConfirmCardProps) {
   return (
-    <div className="bg-state-waiting-surface rounded-card flex flex-col gap-2 self-stretch border-[0.5px] border-(--state-waiting-edge) px-3 py-2.5">
-      <div className="text-state-waiting flex items-center gap-1.5 text-[12px] font-medium">
-        <Shield className="size-3.5" />
-        Needs your approval
-        <span className="text-muted-foreground font-book">{action.tool}</span>
-      </div>
-      <p className="font-book text-[13px]">{action.summary}</p>
+    <DecisionCard
+      tone="warning"
+      icon={APPROVAL_ICON}
+      question="Needs your approval"
+      // A tool id is machine-read, so it keeps the mono face (Q5).
+      detail={<span className="mono">{action.tool}</span>}
+      className={styles.card}
+      data-slot="overseer-confirm"
+      actions={
+        <>
+          <Button
+            size="sm"
+            disabled={locked}
+            onClick={() => onDecide(true)}
+            aria-label={`Approve: ${action.summary}`}
+            icon={
+              deciding ? (
+                <Spinner size="xs" label="" />
+              ) : (
+                <Check size={14} strokeWidth={1.8} />
+              )
+            }
+          >
+            {failure !== null ? 'Retry' : 'Approve'}
+          </Button>
+          <Button
+            size="sm"
+            variant="quiet"
+            disabled={locked}
+            onClick={() => onDecide(false)}
+            aria-label={`Deny: ${action.summary}`}
+            icon={<X size={14} strokeWidth={1.8} />}
+          >
+            Deny
+          </Button>
+        </>
+      }
+    >
+      <p className={styles.summary}>{action.summary}</p>
       {failure !== null && <ErrorLine>{failure}</ErrorLine>}
-      <div className="flex items-center gap-2">
-        <Button
-          disabled={locked}
-          onClick={() => onDecide(true)}
-          aria-label={`Approve: ${action.summary}`}
-        >
-          {deciding ? (
-            <Spinner className="size-3.5" />
-          ) : (
-            <Check className="size-3.5" />
-          )}
-          {failure !== null ? 'Retry' : 'Approve'}
-        </Button>
-        <PillButton
-          disabled={locked}
-          onClick={() => onDecide(false)}
-          aria-label={`Deny: ${action.summary}`}
-        >
-          <X className="size-3.5" />
-          Deny
-        </PillButton>
-      </div>
-    </div>
+    </DecisionCard>
   );
 }
 
 /** An icon button with its short name in a tooltip, for the batch card's per-row answers. */
-function TipIconButton({ tip, ...props }: IconButtonProps & { tip: string }) {
+function TipIconButton({
+  tip,
+  label,
+  icon,
+  disabled,
+  onClick,
+}: {
+  tip: string;
+  /** The button's accessible name ("Approve: <summary>"). */
+  label: string;
+  icon: ReactNode;
+  disabled: boolean;
+  onClick: () => void;
+}) {
   return (
-    <Tooltip>
-      <TooltipTrigger render={<IconButton {...props} />} />
-      <TooltipContent>{tip}</TooltipContent>
+    <Tooltip content={tip}>
+      <Button
+        variant="quiet"
+        size="sm"
+        aria-label={label}
+        icon={icon}
+        disabled={disabled}
+        onClick={onClick}
+      />
     </Tooltip>
   );
 }
@@ -352,61 +386,77 @@ function OverseerConfirmBatch({
 }) {
   const tools = new Set(actions.map((a) => a.action.tool));
   const label =
-    tools.size === 1
-      ? `${actions[0].action.tool} ×${actions.length}`
-      : `${actions.length} actions`;
+    tools.size === 1 ? (
+      <>
+        <span className="mono">{actions[0].action.tool}</span>
+        {` ×${actions.length}`}
+      </>
+    ) : (
+      `${actions.length} actions`
+    );
   return (
-    <div
+    <DecisionCard
+      tone="warning"
+      icon={APPROVAL_ICON}
+      question="Needs your approval"
+      detail={label}
+      className={styles.card}
       data-testid="overseer-confirm-batch"
-      className="bg-state-waiting-surface rounded-card flex flex-col self-stretch border-[0.5px] border-(--state-waiting-edge)"
+      actions={
+        <>
+          <Button
+            size="sm"
+            disabled={locked}
+            onClick={() => onDecideAll(true)}
+            icon={<Check size={14} strokeWidth={1.8} />}
+          >
+            {actions.length === 2
+              ? 'Approve both'
+              : `Approve all ${actions.length}`}
+          </Button>
+          <Button
+            size="sm"
+            variant="quiet"
+            disabled={locked}
+            onClick={() => onDecideAll(false)}
+            icon={<X size={14} strokeWidth={1.8} />}
+          >
+            Deny all
+          </Button>
+        </>
+      }
     >
-      <div className="text-state-waiting flex items-center gap-1.5 px-3 pt-2.5 pb-1.5 text-[12px] font-medium">
-        <Shield className="size-3.5" />
-        Needs your approval
-        <span className="text-muted-foreground font-book">{label}</span>
-      </div>
-      {actions.map(({ action, failure }) => (
-        <div
-          key={action.id}
-          className="flex flex-col gap-1 border-t-[0.5px] border-(--state-waiting-edge) px-3 py-1.5"
-        >
-          <div className="flex items-center gap-2">
-            <p className="font-book min-w-0 flex-1 text-[13px]">
-              {action.summary}
-            </p>
-            <TipIconButton
-              tip="Approve"
-              label={`Approve: ${action.summary}`}
-              disabled={locked}
-              onClick={() => onDecide(action.id, true)}
-            >
-              {decidingId === action.id ? <Spinner /> : <Check />}
-            </TipIconButton>
-            <TipIconButton
-              tip="Deny"
-              label={`Deny: ${action.summary}`}
-              disabled={locked}
-              onClick={() => onDecide(action.id, false)}
-            >
-              <X />
-            </TipIconButton>
-          </div>
-          {failure !== null && <ErrorLine>{failure}</ErrorLine>}
-        </div>
-      ))}
-      <div className="flex items-center gap-2 border-t-[0.5px] border-(--state-waiting-edge) px-3 py-2">
-        <Button disabled={locked} onClick={() => onDecideAll(true)}>
-          <Check className="size-3.5" />
-          {actions.length === 2
-            ? 'Approve both'
-            : `Approve all ${actions.length}`}
-        </Button>
-        <PillButton disabled={locked} onClick={() => onDecideAll(false)}>
-          <X className="size-3.5" />
-          Deny all
-        </PillButton>
-      </div>
-    </div>
+      <ul className={styles.batchRows}>
+        {actions.map(({ action, failure }) => (
+          <li key={action.id} className={styles.batchRow}>
+            <div className={styles.batchLine}>
+              <p className={styles.batchSummary}>{action.summary}</p>
+              <TipIconButton
+                tip="Approve"
+                label={`Approve: ${action.summary}`}
+                disabled={locked}
+                onClick={() => onDecide(action.id, true)}
+                icon={
+                  decidingId === action.id ? (
+                    <Spinner size="xs" label="" />
+                  ) : (
+                    <Check size={14} strokeWidth={1.8} />
+                  )
+                }
+              />
+              <TipIconButton
+                tip="Deny"
+                label={`Deny: ${action.summary}`}
+                disabled={locked}
+                onClick={() => onDecide(action.id, false)}
+                icon={<X size={14} strokeWidth={1.8} />}
+              />
+            </div>
+            {failure !== null && <ErrorLine>{failure}</ErrorLine>}
+          </li>
+        ))}
+      </ul>
+    </DecisionCard>
   );
 }
 
@@ -439,7 +489,7 @@ function OverseerApproveCard({
       question={
         <>
           Wants to run
-          <span className="sr-only"> {approval.summary}</span>
+          <span className="srOnly"> {approval.summary}</span>
         </>
       }
       // The call itself, a command line, so it keeps the code face.
@@ -503,19 +553,17 @@ function OverseerQueuedBubble({
   }
 
   return (
-    <div
-      data-testid="overseer-queued"
-      className="rounded-card text-muted-foreground font-book flex max-w-[80%] flex-col gap-1 self-end border border-dashed p-3 text-[13px]"
-    >
+    <div data-testid="overseer-queued" className={styles.queued}>
       {editing === null ? (
-        <span className="whitespace-pre-wrap">{text}</span>
+        <span className={styles.queuedText}>{text}</span>
       ) : (
-        <Textarea
+        <textarea
           ref={boxRef}
           value={editing}
           disabled={busy}
+          rows={2}
           aria-label="Queued message"
-          className="min-h-0"
+          className={cx('textarea', styles.queuedEdit)}
           onChange={(event) => setEditing(event.target.value)}
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing) return;
@@ -529,8 +577,8 @@ function OverseerQueuedBubble({
           }}
         />
       )}
-      <div className="flex items-center gap-1 text-[11px]">
-        <span className="min-w-0 flex-1">
+      <div className={styles.queuedFoot}>
+        <span className={styles.queuedNote}>
           {waiting
             ? 'Queued · goes with your next message'
             : 'Queued · goes out when this turn ends'}
@@ -538,8 +586,8 @@ function OverseerQueuedBubble({
         {editing === null ? (
           <>
             <Button
-              variant="ghost"
-              size="xs"
+              variant="quiet"
+              size="sm"
               disabled={busy}
               onClick={() => setEditing(text)}
               aria-label="Edit queued message"
@@ -547,8 +595,8 @@ function OverseerQueuedBubble({
               Edit
             </Button>
             <Button
-              variant="ghost"
-              size="xs"
+              variant="quiet"
+              size="sm"
               disabled={busy}
               onClick={() => void remove()}
               aria-label="Remove queued message"
@@ -559,19 +607,20 @@ function OverseerQueuedBubble({
         ) : (
           <>
             <Button
-              variant="ghost"
-              size="xs"
+              variant="quiet"
+              size="sm"
               disabled={busy}
               onClick={() => setEditing(null)}
             >
               Cancel
             </Button>
+            {/* A save shows its words, never a spinner. */}
             <Button
-              size="xs"
-              disabled={busy || editing.trim() === ''}
+              size="sm"
+              disabled={editing.trim() === ''}
+              busy={busy}
               onClick={() => void save()}
             >
-              {busy && <Spinner className="size-3" />}
               Save
             </Button>
           </>
@@ -581,8 +630,19 @@ function OverseerQueuedBubble({
   );
 }
 
+/** The tone each decided action's audit line is drawn in: applied and allowed
+ * succeeded, denied is inactive, failed is a failure. */
+const OUTCOME_TONE = {
+  applied: 'success',
+  allowed: 'success',
+  denied: 'muted',
+  failed: 'danger',
+} as const;
+
 /** A decided action's audit line — kept in the transcript so "what actually
- * happened" survives the card it replaced. */
+ * happened" survives the card it replaced. Its tint and mark come from the
+ * outcome's tone (data-tone); the words ("Applied: …", "Denied: …") say it,
+ * and each outcome has its own mark, so colour is never the only cue. */
 function OverseerOutcomeRow({
   outcome,
   text,
@@ -592,26 +652,27 @@ function OverseerOutcomeRow({
   text: string;
   at: string;
 }) {
+  const Mark =
+    outcome === 'applied' || outcome === 'allowed'
+      ? Check
+      : outcome === 'denied'
+        ? X
+        : CircleAlert;
   return (
     <div
-      className={cn(
-        'rounded-control font-book flex items-start gap-2 self-start px-3 py-1.5 text-[12px]',
-        (outcome === 'applied' || outcome === 'allowed') &&
-          'bg-state-review-surface text-state-review',
-        outcome === 'denied' && 'bg-surface-quaternary text-muted-foreground',
-        outcome === 'failed' && 'bg-state-failed-surface text-state-failed'
-      )}
+      className={styles.outcome}
+      data-tone={OUTCOME_TONE[outcome]}
+      data-outcome={outcome}
     >
-      {outcome === 'applied' || outcome === 'allowed' ? (
-        <Check className="size-3.5 shrink-0 translate-y-0.5" />
-      ) : outcome === 'denied' ? (
-        <X className="size-3.5 shrink-0 translate-y-0.5" />
-      ) : (
-        <CircleAlert className="size-3.5 shrink-0 translate-y-0.5" />
-      )}
+      <Mark
+        className={styles.outcomeMark}
+        size={14}
+        strokeWidth={1.8}
+        aria-hidden
+      />
       <span>
         {text}
-        <span className="text-muted-foreground">
+        <span className={styles.outcomeTime}>
           {' '}
           · {formatRelativeTimeFromIso(at)}
         </span>
@@ -627,7 +688,8 @@ const SHOWN_TOOLS = 6;
 // rows keep following a reader who is a few pixels short of the end.
 const FOLLOW_SLACK_PX = 48;
 
-/** One turn's tool calls as a chip row; the raw results stay behind "details". */
+/** One turn's tool calls as a chip row; the raw results stay behind a
+ * Disclosure ("Details"), in the mono face since they are machine output. */
 function ToolRun({
   calls,
 }: {
@@ -635,39 +697,41 @@ function ToolRun({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <Collapsible
+    <Disclosure
       open={open}
       onOpenChange={setOpen}
-      className="flex min-w-0 flex-col gap-1 self-start"
+      variant="plain"
       data-testid="overseer-tools"
+      trigger={({ props }) => (
+        <div className={styles.toolsHead}>
+          <ToolChipGroup
+            overflowCount={Math.max(0, calls.length - SHOWN_TOOLS)}
+          >
+            {calls.slice(0, SHOWN_TOOLS).map((call, i) => (
+              <ToolChip
+                key={`${call.tool}-${i}`}
+                icon={Wrench}
+                label={call.tool}
+                state={call.state}
+                mono
+              />
+            ))}
+          </ToolChipGroup>
+          <Button variant="quiet" size="sm" {...props}>
+            {open ? 'Hide details' : 'Details'}
+          </Button>
+        </div>
+      )}
     >
-      <div className="flex min-w-0 items-center gap-2">
-        <ToolChipGroup overflowCount={Math.max(0, calls.length - SHOWN_TOOLS)}>
-          {calls.slice(0, SHOWN_TOOLS).map((call, i) => (
-            <ToolChip
-              key={`${call.tool}-${i}`}
-              icon={Wrench}
-              label={call.tool}
-              state={call.state}
-            />
-          ))}
-        </ToolChipGroup>
-        <CollapsibleTrigger render={<Button variant="ghost" size="xs" />}>
-          {open ? 'hide details' : 'details'}
-        </CollapsibleTrigger>
-      </div>
-      <CollapsibleContent
-        render={
-          <ul className="text-muted-foreground flex flex-col gap-1 px-1 font-mono text-[11px] break-all whitespace-pre-wrap" />
-        }
-      >
+      <ul className={styles.toolDetails}>
         {calls.map((call, i) => (
           <li key={`${call.tool}-${i}`}>
-            <span className="text-foreground">{call.tool}</span> {call.text}
+            <span className={styles.toolDetailName}>{call.tool}</span>{' '}
+            {call.text}
           </li>
         ))}
-      </CollapsibleContent>
-    </Collapsible>
+      </ul>
+    </Disclosure>
   );
 }
 
@@ -686,22 +750,12 @@ function contextPercent(record: OverseerRecordView | undefined): number | null {
 /** The status line's context meter: a pie and its percent, the rule on hover. */
 function ContextMeter({ percent }: { percent: number }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            data-testid="overseer-context"
-            className="inline-flex items-center gap-1 align-middle tabular-nums"
-          />
-        }
-      >
-        <ProgressGlyph fraction={percent / 100} />
+    <Tooltip content="How full the agent's context is. When it is full, the agent's next turn starts afresh from a recap of the latest lines.">
+      <span data-testid="overseer-context" className={styles.context}>
+        {/* Decorative: the percent beside it says the same. */}
+        <ProgressPie done={percent} total={100} label="" />
         {percent}% context
-      </TooltipTrigger>
-      <TooltipContent className="max-w-64">
-        How full the agent's context is. When it is full, the agent's next turn
-        starts afresh from a recap of the latest lines.
-      </TooltipContent>
+      </span>
     </Tooltip>
   );
 }
@@ -990,17 +1044,15 @@ export function OverseerChat({
         );
       case 'pending':
         return (
-          <div
-            key={item.key}
-            className="bg-surface-quaternary text-muted-foreground rounded-control font-book flex items-center gap-2 self-start px-3 py-2 text-[13px]"
-          >
-            <Spinner className="text-state-working size-3.5" />
+          <div key={item.key} className={styles.pending}>
+            {/* Live agent work: the info spinner; the words beside it name it. */}
+            <Spinner tone="info" label="" />
             The overseer is working…
           </div>
         );
       case 'failed':
         return (
-          <div key={item.key} className="self-start">
+          <div key={item.key} className={styles.start}>
             <FailureNotice
               error={item.error}
               providerId={overseerProvider}
@@ -1019,32 +1071,29 @@ export function OverseerChat({
             key={item.key}
             role="separator"
             data-testid={`overseer-notice-${item.notice}`}
-            className="text-muted-foreground font-book flex items-center gap-2 py-1 text-[11px]"
+            className={styles.notice}
           >
-            <Separator className="flex-1" />
-            <span className="max-w-[80%] text-center">
+            <span className={styles.noticeRule} aria-hidden="true" />
+            <span className={styles.noticeText}>
               {item.text} · {formatRelativeTimeFromIso(item.at)}
             </span>
-            <Separator className="flex-1" />
+            <span className={styles.noticeRule} aria-hidden="true" />
           </div>
         );
       case 'door':
         return onOpenDoor === undefined ? (
-          <div
-            key={item.key}
-            className="text-muted-foreground font-book self-start px-1 text-[12px]"
-          >
+          <div key={item.key} className={styles.doorLine}>
             {doorLabel(item.door)}
           </div>
         ) : (
-          <PillButton
-            key={item.key}
-            data-testid="overseer-door"
-            onClick={() => onOpenDoor(item.door)}
-            className="self-start"
-          >
-            {doorLabel(item.door)}
-          </PillButton>
+          <div key={item.key} className={styles.start}>
+            <ChipButton
+              data-testid="overseer-door"
+              onClick={() => onOpenDoor(item.door)}
+            >
+              {doorLabel(item.door)}
+            </ChipButton>
+          </div>
         );
       case 'queued':
         return (
@@ -1061,29 +1110,29 @@ export function OverseerChat({
 
   if (overseer.conversationId === null) {
     return (
-      <div className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1">
-          <p className="text-[15px] font-medium">What should we work on?</p>
-          <p className="text-muted-foreground font-book text-[13px]">
+      <div className={styles.opening}>
+        <div className={styles.openingHead}>
+          <p className={styles.openingTitle}>What should we work on?</p>
+          <p className={styles.openingLede}>
             Ask about runs, tasks or the code. Anything that changes the project
             waits for your approval.
           </p>
         </div>
         <div
-          className="flex flex-wrap gap-1.5"
+          className={styles.starters}
           aria-label="Starter questions"
           role="group"
         >
           {STARTERS.map((starter) => (
-            <PillButton
+            <ChipButton
               key={starter.label}
               onClick={() => setDraft(starter.text)}
             >
               {starter.label}
-            </PillButton>
+            </ChipButton>
           ))}
         </div>
-        {sendError !== null && <ErrorLine>{sendError}</ErrorLine>}
+        {sendError !== null && <ErrorLine role="alert">{sendError}</ErrorLine>}
         {aboveComposer}
         {/* Which model the conversation opens on — remembered per device, so
             "always Fable" sticks. An open conversation keeps its model. */}
@@ -1111,41 +1160,48 @@ export function OverseerChat({
   const suggestions = slashSuggestions(draft, overseer.record?.commands ?? []);
 
   return (
-    <div ref={rootRef} className="flex min-h-0 flex-1 flex-col gap-3">
+    <div ref={rootRef} className={styles.chat}>
       {query !== null && (
-        <InputGroup>
-          <InputGroupAddon>
-            <Search aria-hidden />
-          </InputGroupAddon>
-          <InputGroupInput
-            ref={findRef}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') setQuery(null);
-            }}
-            placeholder="Find in this conversation"
-            aria-label="Find in this conversation"
-          />
-          <InputGroupAddon align="inline-end">
-            <span className="font-book tabular-nums">
-              {query.trim() === ''
-                ? ''
-                : `${thread.length} ${thread.length === 1 ? 'match' : 'matches'}`}
-            </span>
-            <Button
-              variant="ghost"
-              size="xs"
-              aria-label="Close find"
-              onClick={() => setQuery(null)}
-            >
-              Done
-            </Button>
-          </InputGroupAddon>
-        </InputGroup>
+        // Escape closes the bar at once, text or not, as it always has: it is
+        // caught on the way down (capture), before SearchField's own Escape
+        // would only clear the field, and stopped here so nothing behind the
+        // chat (a focus, the app's keyboard) takes the same Escape.
+        <div
+          className={styles.find}
+          onKeyDownCapture={(event) => {
+            if (event.key !== 'Escape' || event.defaultPrevented) return;
+            event.preventDefault();
+            event.stopPropagation();
+            setQuery(null);
+          }}
+        >
+          <div className={styles.findField}>
+            <SearchField
+              value={query}
+              onChange={setQuery}
+              label="Find in this conversation"
+              placeholder="Find in this conversation"
+              inputRef={findRef}
+              size="sm"
+            />
+          </div>
+          <span className={styles.findCount}>
+            {query.trim() === ''
+              ? ''
+              : `${thread.length} ${thread.length === 1 ? 'match' : 'matches'}`}
+          </span>
+          <Button
+            variant="quiet"
+            size="sm"
+            aria-label="Close find"
+            onClick={() => setQuery(null)}
+          >
+            Done
+          </Button>
+        </div>
       )}
       {overseer.recordError !== null && overseer.record === undefined && (
-        <ErrorLine>{overseer.recordError}</ErrorLine>
+        <ErrorLine role="alert">{overseer.recordError}</ErrorLine>
       )}
 
       <div
@@ -1153,18 +1209,18 @@ export function OverseerChat({
         role="log"
         aria-label="Overseer conversation"
         onScroll={onLogScroll}
-        className="flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto [overflow-wrap:anywhere] [&>*]:shrink-0"
+        className={styles.log}
       >
         {groupConfirmRows(groupToolRows(thread)).map(renderRow)}
       </div>
 
       {aboveComposer}
-      <div className="flex flex-col gap-1.5">
+      <div className={styles.composer}>
         {(sendError ?? decideError) !== null && (
-          <ErrorLine>{sendError ?? decideError}</ErrorLine>
+          <ErrorLine role="alert">{sendError ?? decideError}</ErrorLine>
         )}
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground font-book min-w-0 flex-1 truncate text-[12px]">
+        <div className={styles.statusRow}>
+          <span className={styles.status}>
             {busy && 'Working · what you send now goes when it finishes'}
             {/* The model is named by the composer's picker, not here. */}
             {spend > 0 && (
@@ -1181,11 +1237,10 @@ export function OverseerChat({
           </span>
           {busy && (
             <Button
-              variant="outline"
-              size="xs"
+              size="sm"
               onClick={() => void overseer.stop()}
               data-testid="overseer-stop"
-              className="shrink-0"
+              className={styles.stop}
             >
               Stop
             </Button>

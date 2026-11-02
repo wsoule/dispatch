@@ -1,0 +1,104 @@
+/* One set-aside Overseer conversation (DockedConversation.tsx): a list row in
+   Going out on a wide view, a chip over the composer on a narrow one, with its
+   close button beside it (never inside it). Tokens only. */
+.root {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wide .row {
+  flex: 1;
+  min-width: 0;
+}
+
+.compact {
+  max-width: 256px;
+}
+
+/* The wide row shows its close button on hover or keyboard focus, so a column
+   of set-aside talks stays quiet; a touch screen cannot hover, so it shows it
+   always. */
+.wide .close {
+  opacity: 0;
+}
+
+.wide:hover .close,
+.wide:focus-within .close {
+  opacity: 1;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .wide .close {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .wide .close {
+    transition: opacity var(--dur) var(--ease);
+  }
+}
+
+/* Waiting on you: a 6px dot in the tone's hue (data-tone="warning"). */
+.dot {
+  display: inline-block;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--tone);
+}
+
+@media (forced-colors: active) {
+  .dot {
+    background: CanvasText;
+  }
+}
+
+/* The chip's inside: glyph, the prompt (truncating) and quiet status words. */
+.chipBody {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.chipBody svg {
+  flex: none;
+}
+
+.prompt {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chipStatus {
+  flex: none;
+  color: var(--text-2);
+  font-weight: var(--fw-regular);
+}
+
+/* The tooltip: the prompt over the last reply, at most three lines. */
+.tip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 288px;
+  text-wrap: pretty;
+}
+
+.tipTitle {
+  font-weight: var(--fw-medium);
+}
+
+.tipReply {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}

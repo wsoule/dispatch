@@ -649,6 +649,17 @@ function leaveSettings(state: NavState, delta: -1 | 1): NavState {
   return stepped === state ? { ...state, settings: null, peek: null } : stepped;
 }
 
+/**
+ * Whether Escape has nothing of the app's own to close in this state (no
+ * shortcut sheet, palette, composer, Settings or peek, and no task page to
+ * leave): then the view's own nearest layer takes it instead, such as the
+ * Overseer's focus (the task or talk a side column opened in its middle),
+ * which lives in App's state, not here.
+ */
+export function escapeLeavesNav(state: NavState): boolean {
+  return navReducer(state, { type: 'escape' }) === state;
+}
+
 export function navReducer(state: NavState, action: NavAction): NavState {
   switch (action.type) {
     case 'selectProject':

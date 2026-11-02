@@ -1,5 +1,6 @@
 import type {
   FocusEvent,
+  HTMLAttributes,
   KeyboardEvent,
   MouseEvent,
   PointerEvent,
@@ -133,17 +134,44 @@ export interface ChipProps extends DataAttributes {
   mark?: PickerMark;
   title?: string;
   children: ReactNode;
+  /**
+   * Draws a trailing 14px quiet × button, the chip's only interactive
+   * child (the chip stays a `<span>`), that calls this: a reference or
+   * an attachment the host lets the person take back. Not on ChipButton,
+   * which is a button itself (a button inside a button is invalid).
+   */
+  onRemove?: () => void;
+  /** The × button's accessible name. Default `Remove {children}` when the
+      children are a plain string, else "Remove"; pass one whenever the
+      children are not plain words ("Remove about DIS-12"). */
+  removeLabel?: string;
 }
 
 /**
  * A Chip that does something: a filter or a starter that toggles
  * (`selected`), a door to a place (`href`), a reference to open. Drawn in
  * the chip's look with a hover fill and the focus ring; its accessible name
- * is its visible text.
+ * is its visible text. It takes no `onRemove`: it is a button itself, and
+ * a × button inside it would nest one button in another.
  */
-export interface ChipButtonProps extends ChipProps {
+export interface ChipButtonProps extends Omit<
+  ChipProps,
+  'onRemove' | 'removeLabel'
+> {
   /** A press: a `<button type="button">`, or the link when `href` is set. */
   onClick?: (event: MouseEvent<HTMLElement>) => void;
+  /** Button only: the `<button>` element (a Tooltip's anchor, a host's
+      focus return). The link and the disabled link's text take none. */
+  ref?: Ref<HTMLButtonElement>;
+  /** The id of an element that describes it (a hint, a Tooltip's tip). */
+  'aria-describedby'?: string;
+  /** Button only: hover in and out, a press, focus and blur, what a
+      Tooltip wires on its trigger (`<Tooltip><ChipButton/></Tooltip>`). */
+  onPointerEnter?: (event: PointerEvent<HTMLElement>) => void;
+  onPointerLeave?: (event: PointerEvent<HTMLElement>) => void;
+  onPointerDown?: (event: PointerEvent<HTMLElement>) => void;
+  onFocus?: (event: FocusEvent<HTMLElement>) => void;
+  onBlur?: (event: FocusEvent<HTMLElement>) => void;
   /** Renders through the host's <Link> instead of a button. */
   href?: string;
   /** Button only: a toggle that is on (aria-pressed), drawn in the
@@ -461,6 +489,137 @@ export interface ChecklistProps {
   /** Right-aligned state words; defaults to Met / Missing. */
   metLabel?: string;
   missingLabel?: string;
+}
+
+/* ---- list item, panel -------------------------------------------------- */
+
+/**
+ * One row of a host's own list (a conversation, a draft, a notification,
+ * a thread, a stack step): a 40px row of slots in reading order, the
+ * leading glyph, the title with its crumb, the meta line under them, the
+ * trailing controls and the date. Clickable with `onClick` (focusable,
+ * Enter and Space on the row itself), or a plain `as="button"`. The
+ * host's data-* hooks land on the root.
+ */
+export interface ListItemProps extends DataAttributes {
+  /** The row's words: 13.5px, medium, one line that truncates. */
+  title: ReactNode;
+  /** A 14px glyph before the title (a state mark, an avatar). */
+  leading?: ReactNode;
+  /** A second line under the title, 12px in the secondary ink with
+      tabular figures ("3 replies · Ana"): the row grows to fit it. */
+  meta?: ReactNode;
+  /** Context after the title, printed " › crumb" in the secondary ink;
+      it truncates with the title. */
+  crumb?: ReactNode;
+  /** The host's controls at the end of the row (a chip, a count, a quiet
+      Button). A click or a key inside them stays there: the row never
+      activates from them. With `as="button"` they are drawn beside the
+      button, never inside it. */
+  trailing?: ReactNode;
+  /** At the far right, 12px in the secondary ink with tabular figures
+      ("Sep 13", "running"). */
+  date?: ReactNode;
+  /** An accent dot before the row, with an sr-only "Unread" (the dot is
+      never the only signal), and `data-unread` on the root. */
+  unread?: boolean;
+  /** The row the host has open or picked: the accent tint (and, with
+      `role="option"`, aria-selected). */
+  selected?: boolean;
+  /** The keyboard cursor of a host's list (j/k, aria-activedescendant):
+      the focus ring, drawn whether or not the row holds DOM focus. */
+  active?: boolean;
+  /** 1 nests the row one step under the row before it, with a connector
+      on the border colour at the left. */
+  indent?: 0 | 1;
+  /** The root element. Default 'div'; 'li' inside a host's list;
+      'button' for a plain action row (a native button: Enter and Space
+      are its own). */
+  as?: 'div' | 'li' | 'button';
+  /** The row's role, set by the host's list: 'listitem', 'option' under
+      a host listbox (aria-selected then follows `selected`), 'none'. The
+      slots never carry a role. */
+  role?: string;
+  /** The DOM id, for a host listbox's aria-activedescendant. */
+  domId?: string;
+  /** Overrides the tab stop: a host with a roving tab stop passes -1 to
+      every row but its current one. Default 0 for a clickable row. */
+  tabIndex?: number;
+  /** A click on the row (with the event), or Enter or Space typed on the
+      row itself (with no event), never from its trailing controls. */
+  onClick?: (event?: MouseEvent<HTMLElement>) => void;
+  /** Right-click (desktop): call event.preventDefault() to open the
+      host's own menu. */
+  onContextMenu?: (event: MouseEvent<HTMLElement>) => void;
+  className?: string;
+  /** The row element (the button with `as="button"`): a Tooltip's
+      anchor, a host's focus or scroll target. */
+  ref?: Ref<HTMLElement>;
+  /** The id of an element that describes it (a Tooltip's tip). */
+  'aria-describedby'?: string;
+  /** Hover in and out, a press, focus and blur, on the row element: what
+      a Tooltip wires on its trigger (`<Tooltip><ListItem/></Tooltip>`). */
+  onPointerEnter?: (event: PointerEvent<HTMLElement>) => void;
+  onPointerLeave?: (event: PointerEvent<HTMLElement>) => void;
+  onPointerDown?: (event: PointerEvent<HTMLElement>) => void;
+  onFocus?: (event: FocusEvent<HTMLElement>) => void;
+  onBlur?: (event: FocusEvent<HTMLElement>) => void;
+}
+
+/**
+ * A bordered box with a 40px heading row (heading, count, actions) over
+ * its body: a section embedded in another surface (the Overseer's
+ * columns, an impact summary, the first-task guide card). The host's
+ * data-* hooks land on the root.
+ */
+export interface PanelProps extends DataAttributes {
+  /** The heading at the left of the heading row (13.5px, medium). No
+      heading row without a heading, a count or actions. */
+  heading?: ReactNode;
+  /** A quiet count after the heading, in tabular figures (outside the
+      heading element, so the heading's name stays its words). */
+  count?: number;
+  /** Chips or quiet Buttons at the right end of the heading row. */
+  actions?: ReactNode;
+  /** A status tone: data-tone on the root and a 2px edge in the tone's
+      hue at the left, nothing else (the heading's words say it). Default
+      draws none. */
+  tone?: UiTone;
+  /** The floating card (--shadow-pop): only for a panel that floats over
+      the page, such as the first-task guide. */
+  floating?: boolean;
+  /** No padding and no gap in the body: for a list whose rows pad
+      themselves (PanelRow, ListItem). */
+  flush?: boolean;
+  /** The root element. Default 'section'. */
+  as?: 'section' | 'div';
+  /** The heading element. Default 'h3'. */
+  headingLevel?: 'h2' | 'h3';
+  className?: string;
+  children: ReactNode;
+}
+
+/**
+ * A row inside a Panel, divided from the next by the divider colour.
+ * With `onActivate` the whole row is a `div role="button"` (so the
+ * buttons it holds stay valid HTML), focusable, and activated by a click
+ * or by Enter or Space typed on the row itself. The rest of the props go
+ * to the `<div>`.
+ */
+export interface PanelRowProps
+  extends DataAttributes, Omit<HTMLAttributes<HTMLDivElement>, 'children'> {
+  children: ReactNode;
+  /** Needs attention first: a 2px warning edge (data-tone="warning") and
+      a word that says why (`urgentLabel`, or an sr-only "Urgent"). */
+  urgent?: boolean;
+  /** The visible word an urgent row leads with, in the tone's ink
+      ("Failed", "Needs you"). Without it the row says "Urgent" to
+      assistive tech only, so its own words must say it on screen. */
+  urgentLabel?: string;
+  /** Makes the row a button: a click (not one on a control inside it),
+      or Enter or Space typed on the row itself. */
+  onActivate?: () => void;
+  ref?: Ref<HTMLDivElement>;
 }
 
 /* ---- stats ------------------------------------------------------------- */

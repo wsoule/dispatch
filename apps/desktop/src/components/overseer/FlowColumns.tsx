@@ -3,7 +3,15 @@ import type {
   MilestoneProgress,
   RunMeta,
 } from '@dispatch/client';
-import { createContext, type ReactNode, useContext, useState } from 'react';
+import { Button, cx, ListItem, SectionHeader } from '@dispatch/ui';
+import { CirclePause } from 'lucide-react';
+import {
+  createContext,
+  Fragment,
+  type ReactNode,
+  useContext,
+  useState,
+} from 'react';
 
 import { useRunStep } from '../../hooks/useRunStep';
 import { type FlowRow, useFlowRows } from '../../lib/flowList';
@@ -12,78 +20,65 @@ import { type LiveCeilings, liveCeilingsLabel } from '../../lib/liveSpend';
 import { formatUsd, spendPillLabel } from '../../lib/milestoneSession';
 import { isTerminalRunState } from '../../lib/runState';
 import { GlossaryTerm } from '../guide/GlossaryTerm';
-import { cn } from '@/lib/utils';
-import { GroupHeader } from '@/ui/ai/group-header';
-import { ListRow } from '@/ui/ai/list-row';
-import { Button } from '@/ui/button';
-import { MetaText, SectionLabel } from '@/ui/chrome';
-import { StateMark } from '@/ui/chrome/state-mark';
-import { ScrollArea } from '@/ui/scroll-area';
+import { StateMark } from '../status/StateMark';
+import styles from './FlowColumns.module.css';
 
-// Entering slides in from the column's outer edge; leaving keeps going outward.
-const ENTER_IN = 'animate-in fade-in-0 slide-in-from-left-6 duration-300';
-const ENTER_OUT = 'animate-in fade-in-0 slide-in-from-right-6 duration-300';
-const LEAVE_OUT =
-  'animate-out fade-out-0 slide-out-to-right-10 duration-[450ms] fill-mode-forwards';
-
-/** Three chevrons pointing the way things move; they march while anything flows. */
+/** Three chevrons pointing the way things move; they march while anything
+    flows (only under no-preference motion; brighter but still otherwise). */
 function FlowChevrons({ active }: { active: boolean }) {
   return (
-    <span aria-hidden className="flex font-mono text-[11px] leading-none">
-      {[0, 1, 2].map((i) => (
-        <span
-          key={i}
-          style={active ? { animationDelay: `${i * 200}ms` } : undefined}
-          className={cn(
-            'opacity-40',
-            active && 'motion-safe:animate-flow motion-reduce:opacity-70'
-          )}
-        >
-          ›
-        </span>
-      ))}
+    <span
+      aria-hidden="true"
+      className={styles.chevrons}
+      data-active={active ? 'true' : undefined}
+    >
+      <span className={styles.chevron}>›</span>
+      <span className={styles.chevron}>›</span>
+      <span className={styles.chevron}>›</span>
     </span>
   );
 }
 
-/** A column title with its count and the direction its items travel. */
-// Both point right: in travels toward the talk, out travels away from it.
-function ColumnHead({
-  label,
-  count,
-  term,
-}: {
-  label: string;
-  count: number;
-  term?: GlossaryKey;
-}) {
-  return (
-    <h2 className="contents">
-      <GroupHeader
-        name={
-          term === undefined ? (
-            label
-          ) : (
-            <GlossaryTerm term={term}>{label}</GlossaryTerm>
-          )
-        }
-        count={count}
-        actions={<FlowChevrons active={count > 0} />}
-      />
-    </h2>
-  );
-}
-
 // True inside a narrow window's sheet: the column fills the sheet instead of
-// sitting beside the stream at xl and up.
+// sitting beside the stream once the Overseer is wide enough.
 const InSheet = createContext(false);
 
-/** Renders a column full-width inside a sheet, for windows narrower than xl. */
+/** Renders a column full-width inside a sheet, for a narrow Overseer. The
+    SlideOver's title (SheetTitle) is the column's name and count there, so
+    the column draws no head of its own and its groups stay h3 under that h2. */
 export function ColumnInSheet({ children }: { children: ReactNode }) {
   return <InSheet.Provider value>{children}</InSheet.Provider>;
 }
 
-/** A column: the head pinned on top, the rest scrolling under it. */
+const COLUMN_NAMES = {
+  in: { label: 'Coming in', term: 'comingIn' },
+  out: { label: 'Going out', term: 'goingOut' },
+} as const satisfies Record<string, { label: string; term: GlossaryKey }>;
+
+/** A column's name (its glossary term) and count, as one heading's text: the
+    column head beside the talk, and the SlideOver's title for the sheet, so
+    the sheet names the column once ("Going out 3"), not twice. */
+export function SheetTitle({
+  column,
+  count,
+}: {
+  column: 'in' | 'out';
+  count: number;
+}) {
+  const { label, term } = COLUMN_NAMES[column];
+  return (
+    <>
+      <GlossaryTerm term={term}>{label}</GlossaryTerm>{' '}
+      <span className={styles.titleCount}>{count}</span>
+    </>
+  );
+}
+
+/** A column: the head (its name and count in one heading, the chevrons
+    after it) pinned on top, the rest scrolling under it. Beside the talk it
+    shows only on a wide Overseer (the module's container query); in a sheet
+    it always shows, fills the sheet, and leaves its name to the sheet's
+    title. */
 function Column({
   label,
   term,
@@ -105,28 +100,35 @@ function Column({
     <aside
       aria-label={label}
       data-testid={inSheet ? `${testId}-sheet` : testId}
-      className={
-        inSheet
-          ? 'flex min-h-0 flex-1 flex-col gap-2'
-          : 'hidden min-h-0 w-[300px] shrink-0 flex-col gap-2 min-[1440px]:w-[340px] xl:flex'
-      }
+      className={inSheet ? styles.sheetColumn : styles.column}
     >
-      <ColumnHead label={label} count={count} term={term} />
+      {/* Both point right: in travels toward the talk, out travels away from it. */}
+      {!inSheet && (
+        <SectionHeader
+          as="h2"
+          className={styles.head}
+          name={
+            term === undefined ? (
+              label
+            ) : (
+              <GlossaryTerm term={term}>{label}</GlossaryTerm>
+            )
+          }
+          count={count}
+          actions={<FlowChevrons active={count > 0} />}
+        />
+      )}
       {sub}
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-3">{children}</div>
-      </ScrollArea>
+      <div className={styles.scroll}>
+        <div className={styles.stack}>{children}</div>
+      </div>
     </aside>
   );
 }
 
 /** The quiet line a column shows when nothing is in it. */
 function EmptyLine({ children }: { children: ReactNode }) {
-  return (
-    <p className="px-2">
-      <MetaText>{children}</MetaText>
-    </p>
-  );
+  return <p className={styles.empty}>{children}</p>;
 }
 
 /** What is coming to you: the asks and the "For you" posts, entering from the left. */
@@ -139,20 +141,13 @@ export function InflowColumn({
 }) {
   return (
     <Column
-      label="Coming in"
-      term="comingIn"
+      label={COLUMN_NAMES.in.label}
+      term={COLUMN_NAMES.in.term}
       count={count}
       testId="overseer-inflow"
     >
       {count === 0 && <EmptyLine>Nothing is waiting on you.</EmptyLine>}
-      <div
-        className={cn(
-          'flex flex-col gap-2 motion-reduce:animate-none',
-          ENTER_IN
-        )}
-      >
-        {children}
-      </div>
+      <div className={cx(styles.inflow, styles.enterLeft)}>{children}</div>
     </Column>
   );
 }
@@ -167,18 +162,67 @@ const LANDING: ReadonlySet<MergeQueueEntry['state']> = new Set([
   'merging',
 ]);
 
+/** The runs Going out lists as running: live execute runs. */
+function liveRunsOf(runs: readonly RunMeta[]): RunMeta[] {
+  return runs.filter(
+    (r) => !isTerminalRunState(r.state) && (r.kind ?? 'execute') === 'execute'
+  );
+}
+
+/** The merge queue entries Going out lists as landing. */
+function landingOf(merges: readonly MergeQueueEntry[]): MergeQueueEntry[] {
+  return merges.filter((m) => LANDING.has(m.state));
+}
+
+/** How many things Going out holds (sessions, running, landing, set aside):
+    its head's count, and the sheet's title count (SheetTitle). */
+export function outflowCount({
+  runs,
+  merges,
+  sessions = [],
+  setAside,
+}: {
+  runs: readonly RunMeta[];
+  merges: readonly MergeQueueEntry[];
+  sessions?: readonly MilestoneProgress[];
+  setAside: number;
+}): number {
+  return (
+    sessions.length +
+    liveRunsOf(runs).length +
+    landingOf(merges).length +
+    setAside
+  );
+}
+
+/** What a Going out row takes for its motion: the class that slides it in
+    from the right, and `data-leaving` while it slides back out (the module
+    runs both only under no-preference motion). */
+interface RowMotion {
+  className: string;
+  'data-leaving': 'true' | undefined;
+}
+
 /** One live run: its task, and the step it is on right now. */
-function RunRow({ run, onOpen }: { run: RunMeta; onOpen: () => void }) {
+function RunRow({
+  run,
+  onOpen,
+  motion,
+}: {
+  run: RunMeta;
+  onOpen: () => void;
+  motion: RowMotion;
+}) {
   const step = useRunStep(run.id);
   return (
-    <ListRow
+    <ListItem
+      {...motion}
       role="listitem"
       onClick={onOpen}
+      // The live dot: blue (in progress) through the tone hook, pulsing only
+      // under no-preference motion; the crumb says the state in words.
       leading={
-        <span
-          aria-hidden
-          className="bg-state-working size-1.5 rounded-full motion-safe:animate-pulse"
-        />
+        <span aria-hidden="true" data-tone="info" className={styles.liveDot} />
       }
       title={run.taskTitle}
       crumb={
@@ -190,23 +234,22 @@ function RunRow({ run, onOpen }: { run: RunMeta; onOpen: () => void }) {
   );
 }
 
+/** Draws flow rows, handing each its motion: entering rows slide in from
+    the right edge, leaving rows slide out to it and stop taking clicks. */
 function Rows<T>({
   rows,
   render,
 }: {
   rows: FlowRow<T>[];
-  render: (item: T) => ReactNode;
+  render: (item: T, motion: RowMotion) => ReactNode;
 }) {
   return rows.map((row) => (
-    <div
-      key={row.key}
-      className={cn(
-        'motion-reduce:animate-none',
-        row.leaving ? cn(LEAVE_OUT, 'pointer-events-none') : ENTER_OUT
-      )}
-    >
-      {render(row.item)}
-    </div>
+    <Fragment key={row.key}>
+      {render(row.item, {
+        className: cx(styles.row, styles.enterRight),
+        'data-leaving': row.leaving ? 'true' : undefined,
+      })}
+    </Fragment>
   ));
 }
 
@@ -228,20 +271,39 @@ function SessionRow({
   progress,
   title,
   onOpen,
+  motion,
 }: {
   progress: MilestoneProgress;
   title: string;
   onOpen: () => void;
+  motion: RowMotion;
 }) {
   const live = progress.liveRuns.length;
   const paused = progress.session?.state === 'paused';
   return (
-    <ListRow
+    <ListItem
+      {...motion}
       role="listitem"
       data-testid="overseer-session-row"
       onClick={onOpen}
-      // A paused session still drains its last runs; held, not working.
-      leading={<StateMark state={paused ? 'blocked' : 'working'} pulse />}
+      // A paused session still drains its last runs; held, not working. Paused
+      // is grey in the status table (amber is for blocked), so it takes a
+      // pause glyph in the muted tone rather than the blocked mark.
+      leading={
+        paused ? (
+          <CirclePause
+            size={14}
+            strokeWidth={1.8}
+            aria-hidden
+            data-slot="state-mark"
+            data-state="paused"
+            data-tone="muted"
+            className={styles.pausedMark}
+          />
+        ) : (
+          <StateMark state="working" pulse />
+        )
+      }
       title={title}
       crumb={paused ? 'paused' : `${live} running`}
       date={spendPillLabel(progress.spend)}
@@ -290,10 +352,8 @@ export function OutflowColumn({
   ceilings = null,
 }: OutflowColumnProps) {
   const [merging, setMerging] = useState(false);
-  const live = runs.filter(
-    (r) => !isTerminalRunState(r.state) && (r.kind ?? 'execute') === 'execute'
-  );
-  const landing = merges.filter((m) => LANDING.has(m.state));
+  const live = liveRunsOf(runs);
+  const landing = landingOf(merges);
   const liveRows = useFlowRows(live, (r) => r.id);
   const landingRows = useFlowRows(landing, (m) => m.runId);
   const sessionRows = useFlowRows(sessions, (p) => p.milestoneId);
@@ -308,18 +368,18 @@ export function OutflowColumn({
   };
   return (
     <Column
-      label="Going out"
-      term="goingOut"
+      label={COLUMN_NAMES.out.label}
+      term={COLUMN_NAMES.out.term}
       count={count}
       testId="overseer-outflow"
       sub={
         spend !== null && (
           <p
             data-testid="overseer-spend"
-            className="truncate px-2 pb-1 leading-none"
+            className={styles.spend}
             title={spend}
           >
-            <MetaText>{spend}</MetaText>
+            {spend}
           </p>
         )
       }
@@ -330,16 +390,19 @@ export function OutflowColumn({
         sessionRows.length === 0 &&
         !canMergeAll && <EmptyLine>Nothing is running.</EmptyLine>}
       {sessionRows.length > 0 && (
-        <section className="flex flex-col">
-          <SectionLabel className="px-2 pb-0.5">
-            <GlossaryTerm term="milestone">Milestones</GlossaryTerm>
-          </SectionLabel>
-          <div role="list" className="flex flex-col">
+        <section className={styles.group}>
+          <SectionHeader
+            as="h3"
+            className={styles.groupHead}
+            name={<GlossaryTerm term="milestone">Milestones</GlossaryTerm>}
+          />
+          <div role="list" className={styles.list}>
             <Rows
               rows={sessionRows}
-              render={(progress) => (
+              render={(progress, motion) => (
                 <SessionRow
                   progress={progress}
+                  motion={motion}
                   title={milestoneTitle(progress.milestoneId)}
                   onOpen={() => onOpenTask(progress.milestoneId)}
                 />
@@ -349,28 +412,33 @@ export function OutflowColumn({
         </section>
       )}
       {liveRows.length > 0 && (
-        <section className="flex flex-col">
-          <SectionLabel className="px-2 pb-0.5">Running</SectionLabel>
-          <div role="list" className="flex flex-col">
+        <section className={styles.group}>
+          <SectionHeader as="h3" className={styles.groupHead} name="Running" />
+          <div role="list" className={styles.list}>
             <Rows
               rows={liveRows}
-              render={(run) => (
-                <RunRow run={run} onOpen={() => onOpenTask(run.taskId)} />
+              render={(run, motion) => (
+                <RunRow
+                  run={run}
+                  motion={motion}
+                  onOpen={() => onOpenTask(run.taskId)}
+                />
               )}
             />
           </div>
         </section>
       )}
       {(landingRows.length > 0 || canMergeAll) && (
-        <section className="flex flex-col">
-          <SectionLabel
-            className="h-6 px-2 pb-0.5"
-            trailing={
+        <section className={styles.group}>
+          <SectionHeader
+            as="h3"
+            className={styles.groupHead}
+            name={<GlossaryTerm term="mergeQueue">Landing</GlossaryTerm>}
+            actions={
               canMergeAll && (
                 <Button
-                  variant="ghost"
-                  size="xs"
-                  className="ml-auto"
+                  variant="quiet"
+                  size="sm"
                   disabled={merging}
                   onClick={mergeAll}
                   data-testid="overseer-merge-all"
@@ -379,14 +447,13 @@ export function OutflowColumn({
                 </Button>
               )
             }
-          >
-            <GlossaryTerm term="mergeQueue">Landing</GlossaryTerm>
-          </SectionLabel>
-          <div role="list" className="flex flex-col">
+          />
+          <div role="list" className={styles.list}>
             <Rows
               rows={landingRows}
-              render={(entry) => (
-                <ListRow
+              render={(entry, motion) => (
+                <ListItem
+                  {...motion}
                   role="listitem"
                   onClick={() => onOpenTask(entry.taskId)}
                   title={entry.taskTitle}
@@ -398,9 +465,13 @@ export function OutflowColumn({
         </section>
       )}
       {setAside.length > 0 && (
-        <section className="flex flex-col">
-          <SectionLabel className="px-2 pb-0.5">Set aside</SectionLabel>
-          <div role="list" className="flex flex-col gap-1">
+        <section className={styles.group}>
+          <SectionHeader
+            as="h3"
+            className={styles.groupHead}
+            name="Set aside"
+          />
+          <div role="list" className={cx(styles.list, styles.setAside)}>
             {setAside}
           </div>
         </section>

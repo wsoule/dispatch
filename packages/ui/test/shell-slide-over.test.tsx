@@ -616,6 +616,16 @@ describe('SlideOver modal', () => {
     // No footer: the body is the panel's last child.
     expect(panel.lastElementChild?.querySelector('h2')).not.toBeNull();
   });
+
+  test('size="narrow" marks the panel for the one-column width', () => {
+    render(
+      <SlideOver open onClose={() => undefined} title="Going out" size="narrow">
+        <p>Rows</p>
+      </SlideOver>
+    );
+    const panel = screen.getByRole('dialog', { name: 'Going out' });
+    expect(panel.getAttribute('data-size')).toBe('narrow');
+  });
 });
 
 describe('slide-over.module.css: modal, wide and footer', () => {
@@ -638,6 +648,10 @@ describe('slide-over.module.css: modal, wide and footer', () => {
     expect(rule('.wide')).toContain('width: min(960px, 90vw);');
     const phone = sheet.slice(sheet.indexOf('@media (width <= 640px)'));
     expect(phone).toContain('.wide { width: 100vw; }');
+  });
+
+  test('narrow is min(340px, 100vw): one column of rows, a phone covered', () => {
+    expect(rule('.narrow')).toContain('width: min(340px, 100vw);');
   });
 
   test('the footer is a row under a --divider rule, outside the scroller', () => {

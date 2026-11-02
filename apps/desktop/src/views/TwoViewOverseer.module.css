@@ -1,0 +1,144 @@
+/* The Overseer in Two views (TwoViewOverseer.tsx): Coming in, the talk (or a
+   focus in its place) and Going out, left to right. The root is the `overseer`
+   container: FlowColumns.module.css shows its columns once this view is wide
+   enough (and widens them on a wider one), and the narrow-only pieces here
+   hide at the same width, so the view follows its own width rather than the
+   window's. Tokens only. */
+.root {
+  container: overseer / inline-size;
+  display: flex;
+  gap: var(--s-6);
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  padding: var(--s-3) var(--s-6) var(--s-4);
+}
+
+/* The daemon is starting or unreachable: its notice, padded like the view. */
+.unavailable {
+  padding: var(--s-4) var(--s-6);
+}
+
+/* What a side column opened (a task, someone's talk), in the talk's place. */
+.focus {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+/* It takes focus itself when the opener is gone (a row in the closed sheet);
+   the ring sits inside, the box clipping its overflow. */
+.focus:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* The talk: one centred column. It stays mounted under the `hidden`
+   attribute while a focus holds the middle, so its unsent draft survives. */
+.talk {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 760px;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin-inline: auto;
+}
+
+/* No conversation yet: the composer sits at the bottom, as it will after. */
+.talkAtEnd {
+  justify-content: flex-end;
+}
+
+.talkBar {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-1);
+}
+
+/* "New topic, so a new conversation": a quiet line with Put it back. */
+.setAside {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+
+.setAsideText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A notice's first line: its icon beside the sentence. */
+.noticeLine {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.noticeLine svg {
+  flex: none;
+}
+
+.noticeTitle {
+  font-weight: var(--fw-medium);
+}
+
+/* The attached notice's body: the title, the explanation, the takeover. */
+.noticeStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.firstRun {
+  flex: 1;
+  min-height: 0;
+}
+
+/* The asks door sits centred over the composer. */
+.door {
+  align-self: center;
+}
+
+/* The two doors that open the columns in a slide-over. */
+.columnDoors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Set-aside conversations as chips over the composer, on a narrow view. */
+.dockChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Once the columns sit beside the talk (FlowColumns.module.css), what stands
+   in for them over the composer goes: the column doors, the posts and docked
+   chips (they are in the columns), and the asks door when the asks
+   themselves are in Coming in. 980px of content is the legacy 1280px window
+   (Tailwind's xl) less the 252px sidebar and this root's 24px padding each
+   side, the same width FlowColumns.module.css shows the columns from. */
+@container overseer (width >= 980px) {
+  .columnDoors,
+  .narrowOnly {
+    display: none;
+  }
+}

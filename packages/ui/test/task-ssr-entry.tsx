@@ -8,8 +8,11 @@ import {
   CopyValue,
   Disclosure,
   FilterChips,
+  ListItem,
   NavTabs,
   Notice,
+  Panel,
+  PanelRow,
   PickerPopover,
   ProgressPie,
   Register,
@@ -334,6 +337,49 @@ const board = (
   </>
 );
 
+// A host's own lists (B7): list items (clickable, unread and nested; an
+// option; a button row with a trailing control beside it), a panel with
+// its heading row, tone and rows (urgent, clickable), a removable chip.
+const lists = (
+  <>
+    <ListItem
+      title="Ana replied"
+      crumb="Overseer"
+      meta="3 replies"
+      date="Sep 13"
+      unread
+      indent={1}
+      role="listitem"
+      onClick={() => undefined}
+      data-testid="overseer-notification-row"
+    />
+    {/* ListItem sets aria-selected from `selected` under role option. */}
+    {/* oxlint-disable-next-line jsx-a11y/role-has-required-aria-props */}
+    <ListItem title="Thread 7" role="option" selected domId="thread-7" />
+    <ListItem
+      as="button"
+      title="Docked"
+      data-testid="overseer-docked"
+      trailing={<span data-testid="docked-count">2</span>}
+    />
+    <Panel
+      heading="Coming in"
+      count={2}
+      tone="warning"
+      floating
+      flush
+      actions={<span data-testid="panel-actions" />}
+      data-testid="overseer-inflow"
+    >
+      <PanelRow urgent urgentLabel="Failed" onActivate={() => undefined}>
+        Build the docs
+      </PanelRow>
+      <PanelRow urgent>Merge the fix</PanelRow>
+    </Panel>
+    <Chip onRemove={() => undefined}>boot.rs</Chip>
+  </>
+);
+
 console.log(
   JSON.stringify({
     hasWindow: typeof window !== 'undefined',
@@ -348,5 +394,6 @@ console.log(
     disclosures: renderToString(disclosures),
     primitives: renderToString(primitives),
     board: renderToString(board),
+    lists: renderToString(lists),
   })
 );

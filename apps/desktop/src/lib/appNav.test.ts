@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   DEFAULT_GRAPH_SCOPE,
+  escapeLeavesNav,
   type GlobalView,
   globalViewDestination,
   initialNavState,
@@ -957,5 +958,28 @@ describe('keyAction', () => {
     expect(keyAction('toggle-sidebar')).toBeNull();
     expect(keyAction('new-task')).toBeNull();
     expect(keyAction('open-palette')).toBeNull();
+  });
+});
+
+// App's Escape command hands the Overseer's focus back to the talk only when
+// the app has nothing of its own above it to close first.
+describe('escapeLeavesNav', () => {
+  test('nothing open on the Overseer: Escape is the view’s to take', () => {
+    expect(initialNavState.mainView).toBe('overseer');
+    expect(escapeLeavesNav(initialNavState)).toBe(true);
+  });
+
+  test('a peek, Settings or the palette above it take Escape first', () => {
+    const peeked = navReducer(initialNavState, {
+      type: 'openThread',
+      messageId: 'm-1',
+    });
+    expect(escapeLeavesNav(peeked)).toBe(false);
+    expect(
+      escapeLeavesNav(navReducer(initialNavState, { type: 'openSettings' }))
+    ).toBe(false);
+    expect(
+      escapeLeavesNav(navReducer(initialNavState, { type: 'togglePalette' }))
+    ).toBe(false);
   });
 });

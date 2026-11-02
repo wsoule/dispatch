@@ -16,6 +16,7 @@ interface SsrResult {
   disclosures: string;
   primitives: string;
   board: string;
+  lists: string;
 }
 
 function serverRender(): SsrResult {
@@ -209,6 +210,59 @@ describe('task family server render', () => {
     // The mark picker: no words in the trigger, named by its value.
     expect(html).toMatch(
       /<button[^>]*aria-label="Status: In Progress"[^>]*data-appearance="mark"[^>]*><span[^>]*><span[^>]*><svg/
+    );
+  });
+
+  test('the list parts render: list items, a panel with its rows, a removable chip', () => {
+    const html = result.lists;
+    // ListItem: the slot hooks in reading order, the state on the root,
+    // the unread word, the connector and the crumb.
+    expect(html).toMatch(
+      /<div data-testid="overseer-notification-row" data-slot="list-item" data-unread="true" data-indent="1" data-clickable="true" role="listitem" tabindex="0"/
+    );
+    expect(html).toContain('<span class="srOnly">Unread, </span>');
+    expect(html).toContain(
+      'data-slot="list-item-connector" aria-hidden="true"'
+    );
+    expect(html).toContain(' › <!-- -->Overseer');
+    const order = [...html.matchAll(/data-slot="(list-item-[a-z]+)"/g)].map(
+      (m) => m[1]
+    );
+    expect(order.slice(0, 6)).toEqual([
+      'list-item-connector',
+      'list-item-unread',
+      'list-item-title',
+      'list-item-crumb',
+      'list-item-meta',
+      'list-item-date',
+    ]);
+    // An option says it is selected; its id is the host's.
+    expect(html).toMatch(
+      /data-selected="true"[^>]*id="thread-7" role="option" aria-selected="true"/
+    );
+    // A button row with a trailing control: the wrapper holds the button
+    // and the control beside it, never inside.
+    expect(html).toMatch(
+      /<div data-testid="overseer-docked" data-slot="list-item"[^>]*><button[^>]*type="button"[^>]*>.*?<\/button><span[^>]*data-slot="list-item-trailing"><span data-testid="docked-count">2<\/span><\/span><\/div>/
+    );
+    // Panel: the hook, the tone and floating on the root, the heading row.
+    expect(html).toMatch(
+      /<section data-testid="overseer-inflow" class="[^"]*" data-tone="warning" data-floating="true">/
+    );
+    expect(html).toContain('>Coming in</h3>');
+    expect(html).toMatch(/data-part="count">2<\/span>/);
+    expect(html).toContain('data-testid="panel-actions"');
+    expect(html).toContain('data-part="body" data-flush="true"');
+    // PanelRow: urgent and clickable, the visible word or the sr-only one.
+    expect(html).toMatch(
+      /data-tone="warning" data-urgent="true" role="button" tabindex="0"><span[^>]*data-part="urgent">Failed<\/span>Build the docs/
+    );
+    expect(html).toContain(
+      '<span class="srOnly" data-part="urgent">Urgent, </span>Merge the fix'
+    );
+    // The removable chip: still a span, its one button named.
+    expect(html).toMatch(
+      /<span[^>]*data-tone="default"><span[^>]*>boot.rs<\/span><button type="button"[^>]*aria-label="Remove boot.rs" data-chip-remove="">/
     );
   });
 });

@@ -404,8 +404,10 @@ export interface SlideOverProps extends DataAttributes {
    */
   modal?: boolean;
   /** default 620px (SLIDE_OVER_WIDTH); wide min(960px, 90vw), for a form
-      or reading view with two columns. Both cover a phone. */
-  size?: 'default' | 'wide';
+      or reading view with two columns; narrow min(340px, 100vw), for one
+      column of rows (a list that sits beside the page on a wide window,
+      such as Dispatch's Overseer columns). Each covers a phone. */
+  size?: 'default' | 'wide' | 'narrow';
   /** An action row under the body (Cancel, Create), divided from it by
       a rule: it stays in view while the body scrolls. */
   footer?: ReactNode;

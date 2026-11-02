@@ -1,7 +1,8 @@
-import { cleanup, fireEvent, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { createRef } from 'react';
 import { renderToString } from 'react-dom/server';
 
 import {
@@ -20,6 +21,7 @@ import {
   RegisterRow,
   SegmentedControl,
   Switch,
+  Tooltip,
   type UiLinkProps,
   UiLinkProvider,
 } from '../src/index';
@@ -396,6 +398,86 @@ describe('Chip', () => {
   });
 });
 
+describe('Chip onRemove', () => {
+  // L29: a reference or an attachment the person can take back. The chip
+  // stays a span; its × button is the one control inside it.
+  test('a × button named "Remove …" calls onRemove; the chip stays a span', () => {
+    const onRemove = mock(() => {});
+    const { getByRole, container } = render(
+      <Chip onRemove={onRemove} removeLabel="Remove boot.rs" data-testid="ref">
+        boot.rs
+      </Chip>
+    );
+    const chip = container.firstElementChild;
+    expect(chip?.tagName).toBe('SPAN');
+    expect(chip?.getAttribute('data-testid')).toBe('ref');
+    const remove = getByRole('button', { name: 'Remove boot.rs' });
+    expect(remove.getAttribute('type')).toBe('button');
+    expect(remove.parentElement === chip).toBe(true);
+    expect(container.querySelectorAll('button')).toHaveLength(1);
+    // The icon is decoration: the button's name says what it does.
+    expect(remove.querySelector('svg')?.getAttribute('aria-hidden')).toBe(
+      'true'
+    );
+    expect(remove.textContent).toBe('');
+    fireEvent.click(remove);
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  test('the default name is "Remove" and the chip’s words, or plain "Remove"', () => {
+    const { getByRole, rerender } = render(
+      <Chip onRemove={() => {}}>build.log</Chip>
+    );
+    expect(getByRole('button', { name: 'Remove build.log' })).toBeTruthy();
+    rerender(
+      <Chip onRemove={() => {}}>
+        <span>about DIS-12</span>
+      </Chip>
+    );
+    expect(getByRole('button', { name: 'Remove' })).toBeTruthy();
+    rerender(
+      <Chip onRemove={() => {}} removeLabel="Remove about DIS-12">
+        <span>about DIS-12</span>
+      </Chip>
+    );
+    expect(getByRole('button', { name: 'Remove about DIS-12' })).toBeTruthy();
+  });
+
+  test('no button without onRemove, for any tone', () => {
+    const { container, rerender } = render(<Chip>Locked</Chip>);
+    expect(container.querySelector('button')).toBeNull();
+    rerender(
+      <Chip tone="warning" filled onRemove={() => {}}>
+        Blocked
+      </Chip>
+    );
+    const remove = container.querySelector('[data-chip-remove]');
+    expect(remove?.getAttribute('aria-label')).toBe('Remove Blocked');
+  });
+
+  test('the module: a 14px quiet button on the focus ring, motion under no-preference', () => {
+    const css = readFileSync(
+      path.join(import.meta.dir, '..', 'src', 'tasks', 'chip.module.css'),
+      'utf8'
+    )
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\s+/g, ' ');
+    expect(css).toMatch(/\.remove \{[^}]*width: 14px;[^}]*height: 14px;/);
+    expect(css).toMatch(/\.remove \{[^}]*color: inherit;/);
+    expect(css).toContain(
+      '.remove:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }'
+    );
+    const motion = css.slice(
+      css.indexOf('@media (prefers-reduced-motion: no-preference)')
+    );
+    expect(motion).toContain('.remove { transition:');
+    const hover = css.slice(css.indexOf('@media (hover: hover) {'));
+    expect(hover).toContain(
+      '.remove:hover { background: var(--surface-3); color: var(--text); }'
+    );
+  });
+});
+
 describe('ChipButton', () => {
   test('a button named by its text, in the chip look; a press calls onClick', () => {
     const onClick = mock(() => {});
@@ -501,6 +583,70 @@ describe('ChipButton', () => {
     expect(
       getByRole('button', { name: 'Live' }).querySelector('[data-hue]')
     ).toBeNull();
+  });
+
+  // A Tooltip clones its ref, aria-describedby and pointer and focus
+  // handlers onto its child: a ChipButton passes them to its button, as
+  // Button does, so the tip is placed beside it and shows on focus.
+  test('forwards a ref, the description and the handlers a Tooltip wires', () => {
+    const ref = createRef<HTMLButtonElement>();
+    const onFocus = mock(() => {});
+    const onPointerEnter = mock(() => {});
+    const { getByRole } = render(
+      <ChipButton
+        ref={ref}
+        aria-describedby="door-hint"
+        onFocus={onFocus}
+        onPointerEnter={onPointerEnter}
+      >
+        2 asks wait on you
+      </ChipButton>
+    );
+    const button = getByRole('button', { name: '2 asks wait on you' });
+    expect(ref.current === button).toBe(true);
+    expect(button.getAttribute('aria-describedby')).toBe('door-hint');
+    fireEvent.focus(button);
+    fireEvent.pointerEnter(button);
+    expect(onFocus).toHaveBeenCalledTimes(1);
+    expect(onPointerEnter).toHaveBeenCalledTimes(1);
+  });
+
+  test('a Tooltip around it describes the button, placed beside it', () => {
+    const { getByRole, rerender } = render(
+      <Tooltip content="Open the asks column" defaultOpen>
+        <ChipButton data-testid="overseer-asks-door">2 asks</ChipButton>
+      </Tooltip>
+    );
+    const button = getByRole('button', { name: '2 asks' });
+    const tip = getByRole('tooltip', { hidden: true });
+    expect(button.getAttribute('aria-describedby')).toBe(tip.id);
+    expect(tip.getAttribute('data-placed')).toBe('true');
+    expect(button.getAttribute('data-testid')).toBe('overseer-asks-door');
+    // Keyboard focus shows a closed one, and blur hides it.
+    rerender(
+      <Tooltip content="Open the asks column" key="closed">
+        <ChipButton>2 asks</ChipButton>
+      </Tooltip>
+    );
+    const closed = getByRole('button', { name: '2 asks' });
+    expect(closed.hasAttribute('aria-describedby')).toBe(false);
+    act(() => closed.focus());
+    expect(closed.getAttribute('aria-describedby')).toBe(
+      getByRole('tooltip', { hidden: true }).id
+    );
+    act(() => closed.blur());
+    expect(closed.hasAttribute('aria-describedby')).toBe(false);
+  });
+
+  test('the link form takes the description too', () => {
+    const { getByRole } = render(
+      <ChipButton href="/runs" aria-describedby="runs-hint">
+        Runs
+      </ChipButton>
+    );
+    expect(
+      getByRole('link', { name: 'Runs' }).getAttribute('aria-describedby')
+    ).toBe('runs-hint');
   });
 
   test('renders on the server as a button or a link', () => {

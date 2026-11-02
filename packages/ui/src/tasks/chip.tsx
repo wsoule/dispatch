@@ -1,3 +1,4 @@
+import { X } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import type { AvatarHue } from '../components/initials-avatar';
@@ -33,14 +34,26 @@ const SEMANTIC: ReadonlySet<ChipTone> = new Set<ChipTone>([
    the status), so the colour is never the only cue: the words always say
    it too. A default chip may lead with a decorative `hue` dot or a picker
    `mark` (a label's colour square); both are decoration, the words say
-   what the chip is. The host's data-* hooks land on the chip. */
+   what the chip is. `onRemove` adds a trailing quiet × button (the
+   chip's only interactive child; the chip stays a span) named
+   `removeLabel`. The host's data-* hooks land on the chip. */
 export function Chip(props: ChipProps) {
-  const { tone = 'default', filled = false, dot = false, title } = props;
+  const {
+    tone = 'default',
+    filled = false,
+    dot = false,
+    title,
+    onRemove,
+  } = props;
   const look = chipLook(tone, filled, dot);
   return (
     <span
       {...dataAttributes(props)}
-      className={cx(styles.chip, look.className)}
+      className={cx(
+        styles.chip,
+        look.className,
+        onRemove === undefined ? undefined : styles.removable
+      )}
       data-tone={tone}
       data-filled={look.filled ? '' : undefined}
       title={title}
@@ -54,8 +67,33 @@ export function Chip(props: ChipProps) {
       >
         {props.children}
       </ChipBody>
+      {onRemove === undefined ? null : (
+        <button
+          type="button"
+          className={styles.remove}
+          aria-label={removeLabelFor(props.children, props.removeLabel)}
+          data-chip-remove=""
+          onClick={() => onRemove()}
+        >
+          <X size={12} strokeWidth={1.8} aria-hidden="true" />
+        </button>
+      )}
     </span>
   );
+}
+
+/* The × button's name: the host's, else "Remove" and the chip's words
+   when they are plain text, else plain "Remove" (a host whose chip holds
+   markup passes its own). */
+function removeLabelFor(
+  children: ReactNode,
+  removeLabel: string | undefined
+): string {
+  if (removeLabel !== undefined && removeLabel !== '') return removeLabel;
+  if (typeof children === 'string' || typeof children === 'number') {
+    return `Remove ${children}`;
+  }
+  return 'Remove';
 }
 
 /* Which of the chip's drawings a tone takes (see Chip): the status pill
@@ -126,7 +164,11 @@ function ChipBody({
    button a toggle (aria-pressed), drawn in the accent's selection tint;
    `disabled` disables the button, or turns a link into its text
    marked aria-disabled. A default chip button draws `hue` and `mark` as
-   Chip does. The host's data-* hooks land on the button or the link. */
+   Chip does. The host's data-* hooks and `aria-describedby` land on the
+   button or the link; the button also takes the ref and the pointer and
+   focus handlers a Tooltip wires on its trigger, so
+   <Tooltip><ChipButton/></Tooltip> places and shows. It takes no
+   `onRemove`: a × button inside it would nest a button in a button. */
 export function ChipButton(props: ChipButtonProps) {
   const {
     tone = 'default',
@@ -145,6 +187,7 @@ export function ChipButton(props: ChipButtonProps) {
     'data-tone': tone,
     'data-filled': look.filled ? '' : undefined,
     'data-chip-button': '',
+    'aria-describedby': props['aria-describedby'],
     title,
   };
   const body = (
@@ -175,11 +218,17 @@ export function ChipButton(props: ChipButtonProps) {
   return (
     <button
       {...shared}
+      ref={props.ref}
       type="button"
       className={className}
       disabled={disabled}
       aria-pressed={selected}
       onClick={onClick}
+      onPointerEnter={props.onPointerEnter}
+      onPointerLeave={props.onPointerLeave}
+      onPointerDown={props.onPointerDown}
+      onFocus={props.onFocus}
+      onBlur={props.onBlur}
     >
       {body}
     </button>

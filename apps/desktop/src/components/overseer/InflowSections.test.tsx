@@ -47,7 +47,7 @@ test('Drafts lists every draft, opens one on click and dismisses without opening
   );
   const rows = screen.getAllByTestId('overseer-draft-row');
   // Running first, then ready, then failed: what is still happening leads.
-  expect(rows.map((r) => r.textContent?.split('›')[0])).toEqual([
+  expect(rows.map((r) => r.textContent?.split(' › ')[0])).toEqual([
     'prompt d-run',
     'Add a wishlist',
     'Draft failed',
@@ -199,4 +199,83 @@ test('Notifications offers Hide only when the caller can hide it', () => {
   );
   fireEvent.click(screen.getByTestId('overseer-notifications-hide'));
   expect(hidden).toBe(1);
+});
+
+test('a draft row opens from the keyboard, but Enter on its dismiss button only dismisses', () => {
+  const opened: string[] = [];
+  const dismissed: string[] = [];
+  render(
+    <DraftsSection
+      drafts={[draft('d-run', 'running')]}
+      onOpen={(id) => opened.push(id)}
+      onDismiss={(id) => dismissed.push(id)}
+    />
+  );
+  expect(screen.getByRole('heading', { name: 'Drafts 1' })).toBeTruthy();
+  const row = screen.getByTestId('overseer-draft-row');
+  expect(row.getAttribute('role')).toBe('listitem');
+  fireEvent.keyDown(row, { key: 'Enter' });
+  expect(opened).toEqual(['d-run']);
+  const dismiss = within(row).getByRole('button', { name: 'Dismiss draft' });
+  fireEvent.keyDown(dismiss, { key: 'Enter' });
+  fireEvent.click(dismiss);
+  expect(dismissed).toEqual(['d-run']);
+  expect(opened).toEqual(['d-run']);
+});
+
+test('Notifications: the heading counts unread, and read-all and dismiss never open a row', () => {
+  const opened: string[] = [];
+  let markedAll = 0;
+  render(
+    <NotificationsSection
+      entries={[entry('a', false), entry('b', true)]}
+      unreadCount={1}
+      onMarkAllRead={() => markedAll++}
+      onOpen={(e) => opened.push(e.id)}
+      onDismiss={() => {}}
+      onClearAll={() => {}}
+    />
+  );
+  expect(screen.getByRole('heading', { name: 'Notifications 1' })).toBeTruthy();
+  const [unread, read] = screen.getAllByTestId('overseer-notification-row');
+  // Unread is said in words too, never by the dot alone.
+  expect(unread.getAttribute('data-unread')).toBe('true');
+  expect(unread.textContent).toContain('Unread');
+  expect(read.hasAttribute('data-unread')).toBe(false);
+  fireEvent.click(screen.getByTestId('overseer-notifications-read-all'));
+  const dismiss = within(unread).getByRole('button', {
+    name: 'Dismiss notification',
+  });
+  fireEvent.keyDown(dismiss, { key: 'Enter' });
+  fireEvent.click(dismiss);
+  expect(markedAll).toBe(1);
+  expect(opened).toEqual([]);
+});
+
+test('Notifications folds back with Show fewer, saying whether the list is expanded', () => {
+  const entries = Array.from({ length: 6 }, (_, i) => entry(`${i}`, true));
+  render(
+    <NotificationsSection
+      entries={entries}
+      unreadCount={0}
+      onMarkAllRead={() => {}}
+      onOpen={() => {}}
+      onDismiss={() => {}}
+      onClearAll={() => {}}
+    />
+  );
+  // No unread: the heading is just its word.
+  expect(screen.getByRole('heading', { name: 'Notifications' })).toBeTruthy();
+  const more = screen.getByRole('button', { name: '+1 more' });
+  expect(more.getAttribute('aria-expanded')).toBe('false');
+  const list = document.getElementById(
+    more.getAttribute('aria-controls') ?? ''
+  );
+  expect(list?.getAttribute('role')).toBe('list');
+  fireEvent.click(more);
+  expect(screen.getAllByTestId('overseer-notification-row')).toHaveLength(6);
+  const fewer = screen.getByRole('button', { name: 'Show fewer' });
+  expect(fewer.getAttribute('aria-expanded')).toBe('true');
+  fireEvent.click(fewer);
+  expect(screen.getAllByTestId('overseer-notification-row')).toHaveLength(5);
 });

@@ -417,6 +417,8 @@ the types for the rest.
 |          | `Disclosure` (a fold: a trigger and the panel it shows or hides; below)                                                           | `children`                                                          |
 |          | `SectionHeader` (a heading row over a band of rows: fold chevron, tone, count, actions, "+"; Lists below)                         | `name`                                                              |
 |          | `ProgressPie` (Linear's ring and pie, done of total; Status vocabulary above)                                                     | `done`, `total`, `label`                                            |
+|          | `ListItem` (a row of a host's own list: leading, title and crumb, meta, trailing, date; below)                                    | `title`                                                             |
+|          | `Panel` (a bordered box with a 40px heading row), `PanelRow` (its rows; `onActivate`, `urgent`; below)                            | `children`                                                          |
 | shell    | `AppShell` (sidebar, topbar, phone tab bar; `workspaceSwitcher` makes the brand row a workspace menu, below)                      | `appName`, `brandHref`, `nav`                                       |
 |          | `CommandPaletteProvider` + `CommandPalette`                                                                                       | none; pass `navigate` (the default is `window.location.assign`)     |
 |          | `ToastProvider` + `useToast()` (`useOptionalToast()`: null without a provider)                                                    | none                                                                |
@@ -464,21 +466,24 @@ host's `data-testid` and `data-slot` hooks. `Button` (as a button and as a
 link), `Popover`, `Dialog`, `ConfirmDialog`, `PickerPopover`, `SlideOver`,
 `Disclosure`, `Menu`, `Select`, `RadioGroup`, `Chip`, `ChipButton`, `Switch`,
 `Checkbox`, `Notice`, `SearchField`, `CopyValue`, `Register`, `RegisterRow`,
-`RegisterCell` and `SectionHeader` take them and spread them, untouched, on
-their root element: the `<button>` or the link, the popover's and the picker's
-`role="dialog"` layer (not the trigger), the dialog's and the slide-over's panel
-(the `role="dialog"` or `role="alertdialog"` element), the disclosure's wrapper,
-the open menu's root layer (not the trigger; its submenus sit inside it), the
-open `Select` list's layer (not the trigger), the `role="radiogroup"` element,
-the chip (or the chip button's `<button>` or link), the switch's `role="switch"`
-button, the checkbox's `<label>` (which holds the input), the notice's box, the
-search field's wrapper (which holds the input), the copy value's `<code>`
-element (whose text is exactly the value, so `data-testid="issued-token"` reads
-it), the register's root, the row's `<li>`, the cell and the section header's
-row. The component's own `data-*` attributes (`data-variant`,
+`RegisterCell`, `SectionHeader`, `ListItem`, `Panel` and `PanelRow` take them
+and spread them, untouched, on their root element: the `<button>` or the link,
+the popover's and the picker's `role="dialog"` layer (not the trigger), the
+dialog's and the slide-over's panel (the `role="dialog"` or `role="alertdialog"`
+element), the disclosure's wrapper, the open menu's root layer (not the trigger;
+its submenus sit inside it), the open `Select` list's layer (not the trigger),
+the `role="radiogroup"` element, the chip (or the chip button's `<button>` or
+link), the switch's `role="switch"` button, the checkbox's `<label>` (which
+holds the input), the notice's box, the search field's wrapper (which holds the
+input), the copy value's `<code>` element (whose text is exactly the value, so
+`data-testid="issued-token"` reads it), the register's root, the row's `<li>`,
+the cell, the section header's row, the list item's root (the wrapper of an
+`as="button"` row with trailing controls), the panel's root and the panel row's
+`<div>`. The component's own `data-*` attributes (`data-variant`,
 `data-picker-popup`, `data-popover`, `data-state`, `data-open`, `data-tone`,
-`data-stack`, `data-disabled`) win over a host's of the same name. A host's link
-component receives them in `UiLinkProps` and spreads them onto its anchor.
+`data-stack`, `data-disabled`, the list item's `data-slot`) win over a host's of
+the same name. A host's link component receives them in `UiLinkProps` and
+spreads them onto its anchor.
 
 **Switch, Checkbox and Notice.** `Switch` with `hideLabel` keeps its label for
 assistive tech only (a `.srOnly` span) and draws just the track, for a settings
@@ -583,6 +588,25 @@ accent's selection tint (`--accent-soft` in an `--accent-line` edge,
 or turns a link into its text marked `aria-disabled="true"` (a link cannot be
 disabled). It carries `data-chip-button` and the host's `data-*` hooks.
 
+`ChipButton` passes a Tooltip's wiring to its button, as `Button` does: `ref`
+(the `<button>` element), `aria-describedby`, `onPointerEnter`,
+`onPointerLeave`, `onPointerDown`, `onFocus` and `onBlur`, so
+`<Tooltip><ChipButton/></Tooltip>` places its tip beside the chip and shows it
+on hover and keyboard focus. The link form, and a disabled link's text, take
+`aria-describedby` only (the host's link receives `UiLinkProps`).
+
+`Chip` takes `onRemove` (amended 2026-11-02, B7, L29): a trailing 14px quiet
+button with a 12px lucide × (`aria-hidden`), the chip's only interactive child,
+so the chip stays a `<span>` (a reference or an attachment in a composer, a
+filter value the person can take back). Its name is `removeLabel`, by default
+`Remove {children}` when the children are a plain string and plain "Remove"
+otherwise, so a chip holding markup passes its own ("Remove about DIS-12"). The
+× takes the chip's text colour (a tinted chip's tone ink, the slab's inverse
+text), a hover fill one surface up and the 2px `--focus-ring` outline; it
+carries `data-chip-remove`. `ChipButton` takes no `onRemove`: it is a button
+itself, and a × inside it would nest one button in another (draw a `Chip` with
+`onRemove` beside a separate action instead).
+
 ### CopyValue
 
 `CopyValue` shows `value` in a recessed code well (`--sunken`, `--r-sm`, 12px,
@@ -636,6 +660,83 @@ tracks, a 20px gap between each and 28px of padding): a short register in a
 settings page (three to five narrow columns) stays a table at the app's default
 window size on 480 or 600, where 700 would turn every row into a card (amended
 2026-11-02, B4, as an L35 follow-up: the steps started at 700).
+
+### ListItem
+
+`ListItem` is the row of a host's own list (the Overseer's columns and inbox, a
+docked conversation, threads, memories, a stack; amended 2026-11-02, B7, L27):
+40px, with its slots in reading order, each a `data-slot` hook and none with a
+role: `list-item-leading` (a 14px glyph), `list-item-title` (13.5px medium, one
+line that truncates) holding `list-item-crumb` (printed " › crumb" in
+`--text-2`, truncating with the title), `list-item-meta` (a second line under
+the title; the row grows to fit), `list-item-trailing` (the host's controls) and
+`list-item-date` (at the far right). Meta and date are 12px `--text-2` in
+tabular figures. The root carries `data-slot="list-item"` and the state the
+module draws from: `data-selected` (the accent tint), `data-active` (a host
+list's keyboard cursor, drawn as the focus ring inside the row whether or not it
+holds DOM focus), `data-unread`, `data-indent` and `data-clickable`; hover is
+`--surface-2` on a clickable row only. `unread` draws a 6px accent dot in the
+left gutter (so read and unread titles stay in one column) with an sr-only
+"Unread, " before the title (`list-item-unread`), never the colour alone.
+`indent={1}` moves the row one step in with a connector on `--border`
+(`list-item-connector`, `aria-hidden`).
+
+Keyboard: with `onClick` the row takes a tab stop (`tabIndex` overrides it: a
+host with a roving tab stop passes -1 to every row but its current one), and
+Enter or Space call `onClick()` with no event only when typed on the row itself
+(`event.target === event.currentTarget`) and not already handled
+(`defaultPrevented`); a click calls it with the event unless it started on a
+control inside the row (a link in the title, a box in the leading slot). The
+trailing slot stops its clicks, and a plain Enter or Space typed on a control in
+it, from reaching the row (the legacy hosts did this by hand); every other key
+(Escape, Tab, the app's shortcuts) goes on to the document, so a dialog's focus
+trap and Escape still work from a trailing button. `as` picks the root: `div`
+(default), `li`, or `button` for a plain action row, a native
+`<button type="button">` whose Enter and Space are its own. A button with
+`trailing` is drawn as a wrapper `<div>` (the root: the slot name, the state,
+`className` and the host's `data-*` hooks) holding the button and, beside it,
+the trailing controls, never a button inside a button; the date stays inside the
+button, part of its name.
+
+`role` is the host list's: `listitem`, or `option` under a host listbox, where
+`aria-selected` follows `selected` (no other role carries it); `domId` is the
+DOM id a listbox's `aria-activedescendant` points at. The row element (the
+button with `as="button"`) takes what a Tooltip clones onto its child: `ref`
+(React 19's ref prop), `aria-describedby`, `onPointerEnter`, `onPointerLeave`,
+`onPointerDown`, `onFocus` and `onBlur`, so `<Tooltip><ListItem/></Tooltip>`
+works. Forced colours keep a Highlight edge on a selected row, a CanvasText ring
+on the cursor and on focus, and the unread dot's fill; motion (the hover fill)
+runs only under `prefers-reduced-motion: no-preference`.
+
+### Panel and PanelRow
+
+`Panel` is Gr8r's embedded box (amended 2026-11-02, B7, L28): `--surface` in a
+1px `--border` at `--r-lg`, no shadow, with a 40px heading row ruled off by
+`--divider` over its body. The row holds `heading` (13.5px medium `--text`, in
+an `h3`, or `h2` with `headingLevel`), `count` (quiet `--text-3` tabular text
+after the heading element, so the heading's name stays its words) and `actions`
+at its end; there is no heading row without one of them. The body is padded
+(`--s-3`, with an `--s-2` gap) unless `flush` (a list whose rows pad themselves;
+the body then carries `data-flush`). `tone` sets `data-tone` on the root and
+draws a 2px edge in `--tone` at the left and nothing else (the heading's words
+say it; default draws none). `floating` adds `--shadow-pop` and `data-floating`,
+only for a panel that floats over the page (the first-task guide card). `as` is
+`section` (default) or `div`; `className` adds to the root. The parts carry
+`data-part` hooks (`header`, `count`, `actions`, `body`).
+
+`PanelRow` is a 40px row ruled off from the next by `--divider`; every other
+prop, the `ref` and the host's `data-*` hooks go to its `<div>`. With
+`onActivate` it is a `div` with `role="button"` and `tabIndex={0}` (so the
+buttons it holds stay valid HTML), takes the hover fill and a focus ring inside
+the row, and activates on a click that did not start on a control inside it and
+on Enter or Space typed on the row itself
+(`event.target === event.currentTarget`); a host's `onClick` and `onKeyDown`
+still run first. Without it the row claims no role and no tab stop. `urgent`
+draws a 2px warning edge (`data-tone="warning"`, `data-urgent`) and leads with
+`urgentLabel` in the tone's ink ("Failed"), or an sr-only "Urgent, " when the
+host's own words say it on screen, so the edge is never the only signal. Forced
+colours keep the panel's, the tone's and the urgent row's edges (all borders)
+and draw the focus ring in CanvasText.
 
 ### Lists: selection, drag, slots, toolbar, chips, bulk bar
 
@@ -1321,10 +1422,12 @@ or middle click still opens the link.
   turn. A modal panel stacks over a non-modal one. Presses outside the scrim (a
   toast over it) never close it. The defaults are unchanged: without `modal` a
   desktop drawer stays a peek beside a usable page. `size="wide"` is
-  `min(960px, 90vw)` instead of the default 620px (`SLIDE_OVER_WIDTH`); both
-  cover a phone. `footer` is an action row (Cancel, Create) under a `--divider`
-  rule, outside the scrolling body, so it stays in view while the body scrolls.
-  A host's `data-*` hooks go on the panel.
+  `min(960px, 90vw)` instead of the default 620px (`SLIDE_OVER_WIDTH`), and
+  `size="narrow"` is `min(340px, 100vw)`, for one column of rows (Dispatch's
+  Overseer columns on a narrow window); each covers a phone. `footer` is an
+  action row (Cancel, Create) under a `--divider` rule, outside the scrolling
+  body, so it stays in view while the body scrolls. A host's `data-*` hooks go
+  on the panel.
 - `useModalSurface({ open, onClose, panelRef, initialFocusRef })` is a modal
   `SlideOver`'s behaviour for a host's own panel over a scrim (Dispatch's
   Settings), which has to stay out of the browser's top layer (a fixed overlay

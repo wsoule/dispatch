@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from '@testing-library/react';
 import { afterEach, expect, mock, test } from 'bun:test';
 import type { ReactNode } from 'react';
 
@@ -76,4 +82,44 @@ test('a message about the task opens on its conversation', () => {
       .getByRole('button', { name: 'Conversation · 2' })
       .getAttribute('aria-pressed')
   ).toBe('true');
+});
+
+test("someone's talk opens under a row with their name and a Close button", () => {
+  const host = fakeHost(newLog(), { tasks: [] });
+  let closed = 0;
+  render(
+    <PageProviders host={host}>
+      <OverseerFocusView
+        focus={{ kind: 'address', address: 'agent:ana' }}
+        // The timeline reads the task list and needs messaging on to show.
+        data={
+          {
+            ...host.project,
+            tasks: [],
+            messageAccess: {
+              canDecide: true,
+              canMessage: true,
+              explanation: null,
+            },
+          } as unknown as DispatchProjectData
+        }
+        name={() => 'Ana'}
+        conversationCount={() => 0}
+        onOpenRef={() => {}}
+        onOpenInTasks={() => {}}
+        onClose={() => {
+          closed++;
+        }}
+      />
+    </PageProviders>
+  );
+  expect(screen.getByText('Ana')).toBeTruthy();
+  const close = screen.getByRole('button', { name: 'Close' });
+  // Keyboard focus shows the hint: Close, and the key that does it.
+  act(() => close.focus());
+  const tip = screen.getByRole('tooltip', { hidden: true });
+  expect(tip.textContent).toBe('Close · Esc');
+  expect(tip.querySelector('kbd')?.textContent).toBe('Esc');
+  fireEvent.click(close);
+  expect(closed).toBe(1);
 });

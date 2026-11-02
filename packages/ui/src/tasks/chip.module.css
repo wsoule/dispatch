@@ -123,6 +123,37 @@
   flex-basis: 10px;
 }
 
+/* Chip onRemove: a trailing 14px quiet × button, the chip's only
+   control, in the chip's own text colour (so a tinted chip's × is its
+   tone's ink, the slab's its inverse text). Hover fills it one surface
+   up (a tinted chip's × on the plain surface, keeping its ink at 4.5:1;
+   the slab keeps its fill); focus is the 2px --focus-ring outline. */
+.removable {
+  padding-right: 3px;
+}
+
+.remove {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.remove:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
 /* The dark slab, kept for old callers (prefer a status tone). */
 .inverse {
   --chip-fill: var(--text);
@@ -220,11 +251,35 @@
   }
 }
 
+@media (hover: hover) {
+  .remove:hover {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+
+  .accent .remove:hover,
+  .tinted .remove:hover {
+    background: var(--surface);
+    color: var(--tone-ink);
+  }
+
+  .inverse .remove:hover {
+    background: transparent;
+    color: inherit;
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .button {
     transition:
       background-color var(--dur) ease,
       border-color var(--dur) ease;
+  }
+
+  .remove {
+    transition:
+      background-color var(--dur) ease,
+      color var(--dur) ease;
   }
 }
 

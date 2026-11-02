@@ -135,6 +135,7 @@ import {
 } from './lib/agentPresence';
 import { overseerOf } from './lib/agentRoster';
 import {
+  escapeLeavesNav,
   type GlobalView,
   HOST_VIEWS,
   type HostedPage,
@@ -258,6 +259,11 @@ function SurfaceHosts({
 function App() {
   const queryClient = useQueryClient();
   const [navState, dispatchNav] = useReducer(navReducer, initialNavState);
+  // What a side column of the Overseer opened in its middle (declared here,
+  // before the global keyboard's Escape reads it).
+  const [overseerFocus, setOverseerFocus] = useState<OverseerFocus | null>(
+    null
+  );
   const [showCreate, setShowCreate] = useState(false);
   // What a board column's or list group's "+" pre-fills into the creator (its status, kind
   // and parent container); `null` leaves every field to its default.
@@ -1031,8 +1037,18 @@ function App() {
         return;
       }
       if (command === 'open-palette') dispatchNav({ type: 'togglePalette' });
-      else if (command === 'escape') dispatchNav({ type: 'escape' });
-      else if (command === 'nav-back') dispatchNav({ type: 'back' });
+      else if (command === 'escape') {
+        // This window listener runs before the Overseer's own Escape and
+        // claims the key, so it hands a focus back to the talk itself once
+        // nothing of the app's (a peek, Settings, the palette) sits above it.
+        if (
+          navState.mainView === 'overseer' &&
+          overseerFocus !== null &&
+          escapeLeavesNav(navState)
+        ) {
+          setOverseerFocus(null);
+        } else dispatchNav({ type: 'escape' });
+      } else if (command === 'nav-back') dispatchNav({ type: 'back' });
       else if (command === 'nav-forward') dispatchNav({ type: 'forward' });
       else if (
         command === 'zoom-in' ||
@@ -2161,10 +2177,6 @@ function App() {
   };
   // The thread open on the Threads page.
   const [threadsFocus, setThreadsFocus] = useState<string | null>(null);
-  // What a side column of the Overseer opened in its middle.
-  const [overseerFocus, setOverseerFocus] = useState<OverseerFocus | null>(
-    null
-  );
   // A run address names its task, so a run's post reads as the work it is on.
   const addressName = (address: string) =>
     data.people.find((p) => p.ref === address)?.name ??

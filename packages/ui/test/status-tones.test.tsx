@@ -7,6 +7,8 @@ import {
   Checklist,
   Chip,
   Notice,
+  Panel,
+  PanelRow,
   PriorityGlyph,
   ProgressPie,
   ProgressRule,
@@ -461,6 +463,54 @@ describe('SectionHeader', () => {
       'color: var(--tone);'
     );
     expect(sheet).not.toContain('--accent');
+  });
+});
+
+describe('Panel', () => {
+  test('a tone is data-tone on the root and a 2px edge in --tone; default draws none', () => {
+    const tones: UiTone[] = ['muted', 'accent', ...SEMANTIC];
+    for (const tone of tones) {
+      const view = render(
+        <Panel heading={tone} tone={tone}>
+          <p>Body</p>
+        </Panel>
+      );
+      const root = view.container.firstElementChild;
+      expect([tone, root?.getAttribute('data-tone')]).toEqual([tone, tone]);
+      // The heading's words carry the meaning; the edge is all the tone adds.
+      expect(root?.querySelector('h3')?.textContent).toBe(tone);
+      view.unmount();
+    }
+    const plain = render(
+      <Panel heading="Plain" tone="default">
+        <p>Body</p>
+      </Panel>
+    );
+    expect(plain.container.firstElementChild?.hasAttribute('data-tone')).toBe(
+      false
+    );
+    plain.unmount();
+    const sheet = css('tasks/panel.module.css');
+    expect(rule(sheet, '.panel[data-tone]')).toBe(
+      'border-left: 2px solid var(--tone);'
+    );
+    expect(sheet).not.toContain('--accent');
+  });
+
+  test('an urgent row is warning-toned: the edge in --tone, its word in --tone-ink', () => {
+    const view = render(
+      <PanelRow urgent urgentLabel="Failed">
+        Build the docs
+      </PanelRow>
+    );
+    expect(view.container.firstElementChild?.getAttribute('data-tone')).toBe(
+      'warning'
+    );
+    const sheet = css('tasks/panel.module.css');
+    expect(rule(sheet, ".row[data-urgent='true']")).toContain(
+      'border-left: 2px solid var(--tone);'
+    );
+    expect(rule(sheet, '.urgentLabel')).toContain('color: var(--tone-ink);');
   });
 });
 

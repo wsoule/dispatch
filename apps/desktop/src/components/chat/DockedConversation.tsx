@@ -1,15 +1,20 @@
 import { type ApiClient, ApiError } from '@dispatch/client';
+import {
+  Button,
+  ChipButton,
+  cx,
+  ListItem,
+  Spinner,
+  Tooltip,
+} from '@dispatch/ui';
 import { useQuery } from '@tanstack/react-query';
 import { MessageSquare, X } from 'lucide-react';
 import { useEffect } from 'react';
 
 import { overseerKey } from '../../hooks/useOverseerSession';
-import { cn } from '@/lib/utils';
-import { IconButton } from '@/ui/ai/icon-button';
-import { ListRow } from '@/ui/ai/list-row';
-import { PillButton } from '@/ui/ai/pill';
-import { Spinner } from '@/ui/spinner';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
+import styles from './DockedConversation.module.css';
+
+const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
 
 /** One set-aside Overseer conversation: what it is, where it stands, and a way back. */
 export function DockedConversation({
@@ -42,14 +47,16 @@ export function DockedConversation({
 
   const waiting =
     record.pendingApprovals.length > 0 || record.pendingActions.length > 0;
+  // Waiting on you is a missing input (amber), failed is red; the words beside
+  // the glyph say it too, so the colour is never the only cue.
   const glyph = waiting ? (
-    <span aria-hidden className="bg-state-waiting size-1.5 rounded-full" />
+    <span aria-hidden className={styles.dot} data-tone="warning" />
   ) : record.state === 'running' ? (
-    <Spinner className="size-3" />
+    <Spinner size="xs" label="" />
   ) : record.state === 'failed' ? (
-    <X aria-hidden className="text-state-failed" />
+    <X {...ICON} className="toneText" data-tone="danger" />
   ) : (
-    <MessageSquare aria-hidden />
+    <MessageSquare {...ICON} />
   );
   const status = waiting
     ? 'waiting on you'
@@ -59,61 +66,57 @@ export function DockedConversation({
         ? 'failed'
         : undefined;
   const reply = record.messages.findLast((m) => m.role === 'assistant')?.text;
-  const close = (
-    <IconButton
-      label="Close this set-aside conversation"
-      onClick={onClose}
-      className={cn(
-        !compact &&
-          'opacity-0 group-hover/docked:opacity-100 focus-visible:opacity-100'
-      )}
-    >
-      <X />
-    </IconButton>
+  const tip = (
+    <span className={styles.tip}>
+      <span className={styles.tipTitle}>{record.prompt}</span>
+      <span className={styles.tipReply}>
+        {reply ?? 'Bring this conversation back'}
+      </span>
+    </span>
   );
   const trigger = compact ? (
-    <PillButton
-      data-testid="overseer-docked"
-      onClick={onRestore}
-      className="max-w-64"
-    >
-      {glyph}
-      <span className="min-w-0 truncate">{record.prompt}</span>
-      {status !== undefined && (
-        <span className="text-muted-foreground font-book">{status}</span>
-      )}
-    </PillButton>
+    <ChipButton data-testid="overseer-docked" onClick={onRestore}>
+      <span className={styles.chipBody}>
+        {glyph}
+        <span className={styles.prompt}>{record.prompt}</span>
+        {status !== undefined && (
+          <span className={styles.chipStatus}>{status}</span>
+        )}
+      </span>
+    </ChipButton>
   ) : (
-    <ListRow
-      role="listitem"
+    // A native button row (restore); the list item is the wrapper below, so
+    // the row and its close button belong to the same item.
+    <ListItem
+      as="button"
       data-testid="overseer-docked"
       onClick={onRestore}
       leading={glyph}
       title={record.prompt}
       date={status}
+      className={styles.row}
     />
   );
 
-  // The close button sits beside the row, never inside it: no button within a button.
+  // The close button sits beside the row, never inside it: no button within a
+  // button. Wide, the wrapper is the Set aside list's item (Going out's
+  // role="list"), holding both; compact, the chips over the composer are no list.
   return (
-    <div className="group/docked flex min-w-0 items-center gap-0.5">
-      <Tooltip>
-        <TooltipTrigger
-          render={<div className={cn('min-w-0', !compact && 'flex-1')} />}
-        >
-          {trigger}
-        </TooltipTrigger>
-        <TooltipContent
-          side={compact ? 'top' : 'left'}
-          className="flex max-w-72 flex-col gap-0.5 text-pretty"
-        >
-          <span className="font-medium">{record.prompt}</span>
-          <span className="line-clamp-3 opacity-80">
-            {reply ?? 'Bring this conversation back'}
-          </span>
-        </TooltipContent>
+    <div
+      role={compact ? undefined : 'listitem'}
+      className={cx(styles.root, compact ? styles.compact : styles.wide)}
+    >
+      <Tooltip side={compact ? 'top' : 'left'} content={tip}>
+        {trigger}
       </Tooltip>
-      {close}
+      <Button
+        variant="quiet"
+        size="sm"
+        aria-label="Close this set-aside conversation"
+        icon={<X {...ICON} />}
+        onClick={onClose}
+        className={styles.close}
+      />
     </div>
   );
 }

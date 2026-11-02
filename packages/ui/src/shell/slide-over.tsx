@@ -22,7 +22,8 @@ export const SLIDE_OVER_WIDTH = 620;
 
 /**
  * Gr8r's slide-over drawer: a right-hand panel (min(620px, 100vw), or
- * min(960px, 90vw) with `size="wide"`) lifted by a soft shadow and a 1px
+ * min(960px, 90vw) with `size="wide"`, or min(340px, 100vw) with
+ * `size="narrow"` for one column of rows) lifted by a soft shadow and a 1px
  * left edge, a 46px header bar (breadcrumb, actions, close), a scrolling
  * body that opens with the title, and an optional `footer` action row
  * that stays in view under it.
@@ -155,7 +156,11 @@ export default function SlideOver(props: SlideOverProps): ReactNode {
         aria-hidden={closing ? 'true' : undefined}
         inert={closing}
         tabIndex={-1}
-        className={cx(styles.panel, size === 'wide' ? styles.wide : undefined)}
+        className={cx(
+          styles.panel,
+          size === 'wide' ? styles.wide : undefined,
+          size === 'narrow' ? styles.narrow : undefined
+        )}
         data-state={closing ? 'closing' : 'open'}
         data-modal={isModal ? 'true' : undefined}
         data-size={size}

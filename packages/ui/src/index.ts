@@ -33,7 +33,8 @@ export {
 
 // ---- tasks family (src/tasks): primitives (the disclosure, the search
 // field, the copy value, the section header and the progress pie among
-// them), the grouped task table and its row windows (useRowWindows, for a
+// them), the list item and the panel a host's own lists are built from,
+// the grouped task table and its row windows (useRowWindows, for a
 // host's own grouped lists), deadlines, stats strip and registers. Props
 // are typed in ./tasks/types.
 export { Button } from './tasks/button';
@@ -53,8 +54,10 @@ export {
 export { CopyValue } from './tasks/copy-value';
 export { DeadlineList } from './tasks/deadline-list';
 export { Disclosure } from './tasks/disclosure';
+export { ListItem } from './tasks/list-item';
 export { NavTabs } from './tasks/nav-tabs';
 export { EmptyState, Notice } from './tasks/notice';
+export { Panel, PanelRow } from './tasks/panel';
 export { ProgressRule } from './tasks/progress-rule';
 export { Register, RegisterCell, RegisterRow } from './tasks/register';
 export { SearchField } from './tasks/search-field';
@@ -115,12 +118,15 @@ export type {
   EmptyStateProps,
   FilterChipData,
   FilterChipsProps,
+  ListItemProps,
   NavTabItem,
   NavTabsGroup,
   NavTabsGroupsProps,
   NavTabsItemsProps,
   NavTabsProps,
   NoticeProps,
+  PanelProps,
+  PanelRowProps,
   ProgressPieProps,
   ProgressRuleProps,
   RegisterCellProps,
