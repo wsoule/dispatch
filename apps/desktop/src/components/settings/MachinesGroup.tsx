@@ -81,6 +81,21 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
   const { client } = data;
   const { canOperate } = useSettingsAccess();
   const queryClient = useQueryClient();
+  // The team status the page's other groups read (same key, one fetch). The keys
+  // route answers 409 while board sync is off, so the keys wait for the status and
+  // are never asked for then; a status that could not be read leaves the keys
+  // query to say why.
+  const status = useQuery({
+    queryKey: ['team-status', client?.baseUrl],
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.getTeamStatus();
+    },
+    enabled: client !== null,
+    retry: false,
+  });
+  const syncOff = status.data?.state === 'off';
+  const statusRead = status.data !== undefined || status.isError;
   const key = ['team-keys', client?.baseUrl];
   const keys = useQuery({
     queryKey: key,
@@ -88,7 +103,7 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
       if (client === null) throw new Error('dispatchd client not ready');
       return client.getTeamKeys();
     },
-    enabled: client !== null,
+    enabled: client !== null && statusRead && !syncOff,
     // Sync off and a lower tier are answers, not failures to retry; the
     // 30 s refetch covers a passing error.
     retry: false,
@@ -128,6 +143,8 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
     }
   }
 
+  // No team can be here while board sync is off: nothing to show.
+  if (syncOff) return null;
   if (keys.isPending) {
     return (
       <SettingsGroup title="Machines" keywords="team keys" requires="none">

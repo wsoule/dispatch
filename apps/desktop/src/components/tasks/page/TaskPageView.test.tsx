@@ -317,14 +317,16 @@ describe('the mode follows the task', () => {
     expect(modeOf()).toBe('spec');
     const section = screen.getByRole('region', { name: /^Sub-issues/ });
     expect(within(section).getByText('Title of t-2')).toBeTruthy();
-    // The rail's section heads the block: its own header is a fold button, not a
-    // second "Sub-issues" heading, and a press on its words folds the list.
-    expect(
-      screen.getAllByRole('heading', { name: /^Sub-issues/ })
-    ).toHaveLength(1);
+    // One heading carries the title and the progress: the block's fold button sits
+    // inside the section's heading (no second "Sub-issues" above it), and a press on
+    // its words folds the list.
+    const headings = screen.getAllByRole('heading', { name: /^Sub-issues/ });
+    expect(headings).toHaveLength(1);
     const fold = within(section).getByRole('button', {
       name: 'Sub-issues 0 of 1 done',
     });
+    expect(headings[0]?.contains(fold)).toBe(true);
+    expect(within(section).getAllByText('Sub-issues')).toHaveLength(1);
     expect(fold.getAttribute('aria-expanded')).toBe('true');
     // The priority glyph is aria-hidden; the row says the priority in words.
     expect(within(section).getByText('High')).toBeTruthy();

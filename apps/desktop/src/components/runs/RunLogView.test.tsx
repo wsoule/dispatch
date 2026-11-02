@@ -1,9 +1,12 @@
 import type { NormalizedEntry, RunMeta } from '@dispatch/client';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';
 import { ATTACHED_DAEMON_EXPLANATION } from '../../lib/daemonAuth';
+import type { RunQuestion, RunScopeRequest } from '../../lib/gates';
 import type { PendingApproval } from '../../lib/pendingApprovals';
 import { CONTINUE_PROMPT } from '../../lib/runState';
 import { askAgentToFix } from '../failure/FailureNotice';
@@ -935,4 +938,158 @@ test('work landed after a failure is an info notice under the failure', () => {
   expect(notice?.textContent).toContain('fix the parser');
   const failure = container.querySelector('[data-slot="failure-notice"]');
   expect(failure?.getAttribute('data-tone')).toBe('danger');
+});
+
+// A question and a scope request open together used to pin both cards at full height above
+// the composer, leaving the transcript (and the approval card in it) no height at all in a
+// short window. They now share one capped region that scrolls within itself.
+test('open asks share one capped region above the composer, outside the log', () => {
+  const question: RunQuestion = {
+    id: 'q-1',
+    runId: 'r-abc123',
+    question: 'Which branch should this land on?',
+    options: ['main', 'release'],
+    askedAt: '2026-08-04T00:00:00.000Z',
+    answer: null,
+    answeredAt: null,
+  };
+  const scope: RunScopeRequest = {
+    id: 's-1',
+    runId: 'r-abc123',
+    paths: ['packages/server/src/routes.ts'],
+    reason: 'The route table lives there.',
+    requestedAt: '2026-08-04T00:00:00.000Z',
+    granted: null,
+    decisionReason: null,
+    decidedAt: null,
+    decidedBy: null,
+  };
+  render(
+    <RunLogView
+      meta={meta({ state: 'awaiting-approval' })}
+      entries={[]}
+      pendingApprovals={[]}
+      onApprove={noop}
+      onSendMessage={noop}
+      openQuestions={[question]}
+      onAnswerQuestion={noop}
+      pendingScopeRequest={scope}
+      onDecideScopeRequest={noop}
+      scopeDecide={CAN_DECIDE}
+      onRestartDaemon={noop}
+      onRequestChanges={noop}
+      onOpenMessage={null}
+      me={null}
+      readsAllThreads
+    />
+  );
+  // Named for both kinds of card it holds, not only the questions.
+  const asks = screen.getByRole('region', { name: 'Waiting on you' });
+  // Nothing hidden to scroll to (happy-dom lays nothing out): no extra Tab stop.
+  expect(asks.hasAttribute('tabindex')).toBe(false);
+  expect(asks.getAttribute('data-slot')).toBe('run-asks');
+  expect(
+    within(asks).getByText('Which branch should this land on?')
+  ).toBeDefined();
+  expect(
+    within(asks).getByText('The agent wants to edit outside its scope')
+  ).toBeDefined();
+  // Pinned outside the transcript, so it never scrolls away, and above the composer.
+  const log = screen.getByRole('region', { name: 'Run log' });
+  expect(log.contains(asks)).toBe(false);
+  const hint = screen.getByText(
+    'Talk to the agent. It reads this while it works.'
+  );
+  expect(
+    asks.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING
+  ).toBeTruthy();
+  // The cap: at most half of the body it shares with the log, scrolling within itself,
+  // with an inset focus ring.
+  const css = readFileSync(
+    join(import.meta.dir, 'RunLogView.module.css'),
+    'utf8'
+  ).replace(/\/\*[\s\S]*?\*\//g, '');
+  const rule = css.slice(
+    css.indexOf('\n.asks {'),
+    css.indexOf('}', css.indexOf('\n.asks {'))
+  );
+  expect(rule).toContain('max-block-size: calc((100% - var(--s-3)) / 2);');
+  expect(rule).toContain('overflow-y: auto;');
+  expect(css).toMatch(/\.asks:focus-visible \{[^}]*outline-offset: -2px;/);
+});
+
+test('no open ask, no pinned region', () => {
+  renderLog(meta({ state: 'running' }));
+  expect(screen.queryByRole('region', { name: 'Waiting on you' })).toBeNull();
+});
+
+// Where the cap bites, the cards overflow the region: then, and only then, a keyboard can
+// reach it to scroll the text between the cards' own controls.
+test('the asks region is a Tab stop only while it hides text to scroll to', () => {
+  const Original = globalThis.ResizeObserver;
+  const callbacks: ResizeObserverCallback[] = [];
+  class FakeResizeObserver {
+    constructor(callback: ResizeObserverCallback) {
+      callbacks.push(callback);
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  globalThis.ResizeObserver =
+    FakeResizeObserver as unknown as typeof ResizeObserver;
+  try {
+    render(
+      <RunLogView
+        meta={meta({ state: 'awaiting-approval' })}
+        entries={[]}
+        pendingApprovals={[]}
+        onApprove={noop}
+        onSendMessage={noop}
+        openQuestions={[
+          {
+            id: 'q-1',
+            runId: 'r-abc123',
+            question: 'Which branch should this land on?',
+            options: ['main', 'release'],
+            askedAt: '2026-08-04T00:00:00.000Z',
+            answer: null,
+            answeredAt: null,
+          },
+        ]}
+        onAnswerQuestion={noop}
+        pendingScopeRequest={null}
+        onDecideScopeRequest={noop}
+        scopeDecide={CAN_DECIDE}
+        onRestartDaemon={noop}
+        onRequestChanges={noop}
+        onOpenMessage={null}
+        me={null}
+        readsAllThreads
+      />
+    );
+    const asks = screen.getByRole('region', { name: 'Waiting on you' });
+    expect(asks.hasAttribute('tabindex')).toBe(false);
+    const resize = (scrollHeight: number) => {
+      Object.defineProperty(asks, 'scrollHeight', {
+        configurable: true,
+        value: scrollHeight,
+      });
+      Object.defineProperty(asks, 'clientHeight', {
+        configurable: true,
+        value: 200,
+      });
+      act(() => {
+        for (const callback of callbacks) {
+          callback([], {} as ResizeObserver);
+        }
+      });
+    };
+    resize(480);
+    expect(asks.tabIndex).toBe(0);
+    resize(200);
+    expect(asks.hasAttribute('tabindex')).toBe(false);
+  } finally {
+    globalThis.ResizeObserver = Original;
+  }
 });

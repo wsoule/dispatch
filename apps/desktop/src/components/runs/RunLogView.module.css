@@ -1,7 +1,7 @@
 /* A run's transcript (RunLogView.tsx): the sub-agent tree, the "Run log" scroller with
-   its chat lane, and the composer pinned under it. Message bubbles, the in-flight
-   working row and the terminal run's feedback box live here; transcript rows, notices
-   and the live composer bring their own styles. Tokens only. */
+   its chat lane, the asks pinned under it, and the composer. Message bubbles, the
+   in-flight working row and the terminal run's feedback box live here; transcript rows,
+   notices and the live composer bring their own styles. Tokens only. */
 
 .root {
   display: flex;
@@ -14,6 +14,15 @@
 .subagents {
   flex: none;
   margin: 0 4px;
+}
+
+/* The transcript and the pinned asks under it: everything but the composer. */
+.body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-height: 0;
 }
 
 .scroller {
@@ -229,6 +238,31 @@
 
 .notes > p {
   margin: 0;
+}
+
+/* ---- the pinned asks ----------------------------------------------------- */
+
+/* The open questions and the scope request, pinned above the composer. At most half of
+   the body they share with the transcript (less half the gap between them), scrolling
+   within themselves, so two cards together never leave the transcript (and the approval
+   card in it) less room than they take. A focusable scroller, so the ring is inset: the
+   overflow would clip an outer one. */
+.asks {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--s-3);
+  max-block-size: calc((100% - var(--s-3)) / 2);
+  padding: 0 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.asks:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+  border-radius: var(--r);
 }
 
 /* ---- the composer -------------------------------------------------------- */

@@ -26,6 +26,9 @@ function mount(
     baseUrl: 'http://127.0.0.1:1',
     fetchLicense: mock(() => Promise.resolve(status)),
     installLicense: mock(install),
+    // Board sync is off: there is no team, so the keys are never asked for.
+    getTeamStatus: mock(() => Promise.resolve({ state: 'off' })),
+    getTeamKeys: mock(() => Promise.reject(new Error('board sync is not on'))),
   };
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -101,12 +104,25 @@ test('below the operator tier there is nothing to install with', async () => {
   );
 });
 
+// The keys route answers 409 while board sync is off, so the page asks for
+// the team status first and skips the keys then (no refused request per load).
+test('asks nothing of the team keys while board sync is off', async () => {
+  const client = mount(FREE);
+  expect(await screen.findByText('Free plan: up to 3 people')).toBeTruthy();
+  await waitFor(() => expect(client.getTeamStatus).toHaveBeenCalled());
+  // Let the status settle; the keys query must stay idle after it.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(client.getTeamKeys).not.toHaveBeenCalled();
+  expect(screen.queryByRole('heading', { name: 'Team' })).toBeNull();
+});
+
 // Task 13: a founded team shares one key; these mount with the team keys.
 function mountTeam(status: LicenseStatus, keys: TeamKeys) {
   const client = {
     baseUrl: 'http://127.0.0.1:1',
     fetchLicense: mock(() => Promise.resolve(status)),
     installLicense: mock(() => Promise.resolve(status)),
+    getTeamStatus: mock(() => Promise.resolve({ state: 'member' })),
     getTeamKeys: mock(() => Promise.resolve(keys)),
     shareTeamLicense: mock(() => Promise.resolve({ ok: true })),
   };
@@ -213,4 +229,5 @@ test('names whose key the team uses', async () => {
   expect(
     await screen.findByText("Your team uses bob's key: Acme, 10 people")
   ).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Team' })).toBeTruthy();
 });

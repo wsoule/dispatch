@@ -284,10 +284,14 @@ export function TaskPageRail({
           </div>
         </TaskDetailSection>
       )}
+      {/* Its own section: the block's fold button is the section's one heading,
+          carrying the title and the done/total progress, so neither is said twice. */}
       {page.isContainer && view !== 'plan' && (
-        <TaskDetailSection title="Sub-issues" count={page.children.length}>
-          <div className={styles.work}>
-            {plan !== null && (
+        <SubtasksBlock
+          section
+          title="Sub-issues"
+          lead={
+            plan !== null && (
               <button
                 type="button"
                 className={styles.miniPlan}
@@ -297,20 +301,15 @@ export function TaskPageRail({
               >
                 <FlightPlanMini plan={plan} />
               </button>
-            )}
-            <div className={styles.block}>
-              <SubtasksBlock
-                title="Sub-issues"
-                parent={item}
-                tasks={page.children}
-                model={page.statusModel}
-                latestRunByTaskId={project.latestRunByTaskId}
-                onOpenTask={page.openTask}
-                createPreset={canEdit ? { milestone: taskId } : undefined}
-              />
-            </div>
-          </div>
-        </TaskDetailSection>
+            )
+          }
+          parent={item}
+          tasks={page.children}
+          model={page.statusModel}
+          latestRunByTaskId={project.latestRunByTaskId}
+          onOpenTask={page.openTask}
+          createPreset={canEdit ? { milestone: taskId } : undefined}
+        />
       )}
       {prUrl !== undefined && latestRun !== undefined && (
         <TaskDetailSection title="Links">

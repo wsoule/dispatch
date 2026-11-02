@@ -88,7 +88,12 @@ export function SessionRow({ session, projectName, onClick }: SessionRowProps) {
         </span>
       </RegisterCell>
       <RegisterCell label="Model">
-        <Chip>{model}</Chip>
+        {/* One line, ending in an ellipsis when the column is narrower than the name (a raw
+            id such as claude-sonnet-4-5 is long); the chip's title holds the full id, and
+            the row's own name carries the whole name. */}
+        <Chip title={session.model ?? undefined}>
+          <span className={styles.model}>{model}</span>
+        </Chip>
       </RegisterCell>
       <RegisterCell label="Cost" variant="mono">
         {cost}

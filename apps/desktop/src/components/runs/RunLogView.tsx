@@ -9,7 +9,7 @@ import {
   MessageSquarePlus,
   Play,
 } from 'lucide-react';
-import { memo, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 
 import { useElapsed } from '../../hooks/useElapsed';
 import { useStickToBottom } from '../../hooks/useStickToBottom';
@@ -261,6 +261,42 @@ interface RunLogViewProps {
   readsAllThreads: boolean;
 }
 
+/**
+ * Whether `node` holds more than it shows (its content taller than its box), kept current as
+ * its box and the cards in it change size or come and go. The pinned asks region uses it to
+ * be a Tab stop only while a keyboard has hidden text in it to scroll to: where the body has
+ * no definite height (the task page's Run mode scrolls as one page) its cap never applies and
+ * it never scrolls, so it is no stop at all.
+ */
+function useOverflowsY(node: HTMLElement | null): boolean {
+  const [overflows, setOverflows] = useState(false);
+  useEffect(() => {
+    if (node === null || typeof ResizeObserver === 'undefined') {
+      return undefined;
+    }
+    // Rounded box sizes can differ by a pixel with nothing hidden.
+    const measure = (): void =>
+      setOverflows(node.scrollHeight - node.clientHeight > 1);
+    // The box is capped, so a card growing past the cap changes the content's height and not
+    // the box's: each card is watched too, re-listed as cards are added or removed.
+    const sizes = new ResizeObserver(measure);
+    const watch = (): void => {
+      sizes.disconnect();
+      sizes.observe(node);
+      for (const child of Array.from(node.children)) sizes.observe(child);
+      measure();
+    };
+    const cards = new MutationObserver(watch);
+    cards.observe(node, { childList: true });
+    watch();
+    return () => {
+      cards.disconnect();
+      sizes.disconnect();
+    };
+  }, [node]);
+  return node !== null && overflows;
+}
+
 /** The run's transcript: chat-style normalized log, the approval gate when one is pending, and
  * a message composer whose action switches with the run's own state — "Send" while an agent
  * is actually listening (running/awaiting-approval), "Request changes" once the run is done
@@ -291,6 +327,9 @@ export function RunLogView({
   // Keyed on the run id because this view is reused (not remounted) when the user picks a
   // different run on the left, and each run should open at its latest output.
   const { scrollRef, contentRef, scrollToBottom } = useStickToBottom(meta.id);
+  // The pinned asks region, and whether it scrolls (so whether it takes focus).
+  const [asksNode, setAsksNode] = useState<HTMLDivElement | null>(null);
+  const asksScroll = useOverflowsY(asksNode);
 
   const groups = useMemo(() => groupLogEntries(entries), [entries]);
   const settlesCalls = useMemo(() => reportsToolResults(entries), [entries]);
@@ -336,6 +375,9 @@ export function RunLogView({
     meta.state === 'failed' || meta.state === 'interrupted-dirty'
       ? meta.error
       : undefined;
+  // A scope request still waiting on its answer pins its card above the composer.
+  const scopeOpen =
+    pendingScopeRequest !== null && pendingScopeRequest.granted === null;
 
   async function send(text: string, resume: boolean) {
     setSending(true);
@@ -374,200 +416,221 @@ export function RunLogView({
       {subagents.length > 0 && (
         <SubagentTree nodes={subagents} className={styles.subagents} />
       )}
-      <div
-        ref={scrollRef}
-        role="region"
-        aria-label="Run log"
-        className={styles.scroller}
-      >
-        <div ref={contentRef} className={styles.lane}>
-          {meta.resumedFrom !== undefined && (
-            <div className={styles.resumed}>
-              <span className={styles.rule} />
-              <span className={styles.resumedNote}>
-                <Info {...ICON} size={12} />
-                Resumed from run {meta.resumedFrom} — earlier conversation lives
-                there.
-              </span>
-              <span className={styles.rule} />
-            </div>
-          )}
-          {groups.length === 0 &&
-            !writing &&
-            (meta.state === 'provisioning' || meta.state === 'running' ? (
-              <div className={styles.centre}>
-                <WorkingRow
-                  label={
-                    meta.state === 'provisioning'
-                      ? 'Waiting for the run to start…'
-                      : 'Working…'
-                  }
-                  startedAt={Date.parse(meta.createdAt)}
-                />
+      {/* The transcript and the asks pinned under it share this body; the composer stays
+          below it at its own height. */}
+      <div className={styles.body}>
+        <div
+          ref={scrollRef}
+          role="region"
+          aria-label="Run log"
+          className={styles.scroller}
+        >
+          <div ref={contentRef} className={styles.lane}>
+            {meta.resumedFrom !== undefined && (
+              <div className={styles.resumed}>
+                <span className={styles.rule} />
+                <span className={styles.resumedNote}>
+                  <Info {...ICON} size={12} />
+                  Resumed from run {meta.resumedFrom} — earlier conversation
+                  lives there.
+                </span>
+                <span className={styles.rule} />
               </div>
-            ) : (
-              <div className={cx(styles.centre, styles.empty)}>
-                <MessageSquare size={20} strokeWidth={1.8} aria-hidden />
-                <p className={styles.emptyText}>No log entries yet.</p>
-              </div>
-            ))}
-          {/* Three levels of emphasis. What the agent SAID is the transcript's spine and gets
+            )}
+            {groups.length === 0 &&
+              !writing &&
+              (meta.state === 'provisioning' || meta.state === 'running' ? (
+                <div className={styles.centre}>
+                  <WorkingRow
+                    label={
+                      meta.state === 'provisioning'
+                        ? 'Waiting for the run to start…'
+                        : 'Working…'
+                    }
+                    startedAt={Date.parse(meta.createdAt)}
+                  />
+                </div>
+              ) : (
+                <div className={cx(styles.centre, styles.empty)}>
+                  <MessageSquare size={20} strokeWidth={1.8} aria-hidden />
+                  <p className={styles.emptyText}>No log entries yet.</p>
+                </div>
+              ))}
+            {/* Three levels of emphasis. What the agent SAID is the transcript's spine and gets
               full weight. What it DID is subordinate — a run of tool calls folds behind one
               "Worked for 12s" line, so twelve file reads read as one event rather than twelve.
               What YOU said is a bubble, because finding your own interjections is a different
               job from reading along. */}
-          {groups.map((group, i) =>
-            group.kind === 'tools' ? (
-              <WorkFold
-                key={i}
-                entries={group.entries}
-                live={group.entries.some(isLive)}
-              >
-                {group.entries.map((entry, j) => (
-                  <TranscriptRow key={j} entry={entry} live={isLive(entry)} />
-                ))}
-              </WorkFold>
-            ) : group.entries[0].kind === 'message' ? (
-              <ChatMessageBubble
-                key={i}
-                entry={group.entries[0]}
-                me={me}
-                onOpenMessage={onOpenMessage}
-                readsAllThreads={readsAllThreads}
-              />
-            ) : (
-              <TranscriptRow
-                key={i}
-                entry={group.entries[0]}
-                live={isLive(group.entries[0])}
-              />
-            )
-          )}
+            {groups.map((group, i) =>
+              group.kind === 'tools' ? (
+                <WorkFold
+                  key={i}
+                  entries={group.entries}
+                  live={group.entries.some(isLive)}
+                >
+                  {group.entries.map((entry, j) => (
+                    <TranscriptRow key={j} entry={entry} live={isLive(entry)} />
+                  ))}
+                </WorkFold>
+              ) : group.entries[0].kind === 'message' ? (
+                <ChatMessageBubble
+                  key={i}
+                  entry={group.entries[0]}
+                  me={me}
+                  onOpenMessage={onOpenMessage}
+                  readsAllThreads={readsAllThreads}
+                />
+              ) : (
+                <TranscriptRow
+                  key={i}
+                  entry={group.entries[0]}
+                  live={isLive(group.entries[0])}
+                />
+              )
+            )}
 
-          {/* What the agent is writing right now, after everything it has finished: each text
+            {/* What the agent is writing right now, after everything it has finished: each text
               block it has not ended yet, revealed as it grows through the same Markdown its
               settled row uses. A block leaves here in the render its entry lands in. */}
-          {live.map((segment) => (
-            <TranscriptRow
-              key={`live:${segment.id}`}
-              entry={{ ts: '', kind: 'assistant', text: segment.text }}
-              live
-            />
-          ))}
+            {live.map((segment) => (
+              <TranscriptRow
+                key={`live:${segment.id}`}
+                entry={{ ts: '', kind: 'assistant', text: segment.text }}
+                live
+              />
+            ))}
 
-          {/* What the run edited, once it has settled: T3 Code's end-of-turn card. */}
-          {terminal && <ChangedFilesCard files={changedFiles} />}
+            {/* What the run edited, once it has settled: T3 Code's end-of-turn card. */}
+            {terminal && <ChangedFilesCard files={changedFiles} />}
 
-          {/* Why the run stopped, in the run itself — without this a force-failed run (a
+            {/* Why the run stopped, in the run itself — without this a force-failed run (a
               daemon restart, not the agent's doing) reads as "failed, $0" with zero
               explanation. Rendered at the end of the transcript because the failure is
               chronologically the run's last event. */}
-          {stopError !== undefined && (
-            <FailureNotice
-              error={stopError}
-              providerId={providerById(meta.executor)?.id}
-              // Continue (below) already retries; this hands the error itself to the agent.
-              onAskAgent={
-                meta.sessionId === undefined
-                  ? undefined
-                  : () => onRequestChanges(askAgentToFix(stopError))
-              }
-            />
-          )}
+            {stopError !== undefined && (
+              <FailureNotice
+                error={stopError}
+                providerId={providerById(meta.executor)?.id}
+                // Continue (below) already retries; this hands the error itself to the agent.
+                onAskAgent={
+                  meta.sessionId === undefined
+                    ? undefined
+                    : () => onRequestChanges(askAgentToFix(stopError))
+                }
+              />
+            )}
 
-          {/* A merge or discard that threw partway (a squash conflict, say) leaves the
+            {/* A merge or discard that threw partway (a squash conflict, say) leaves the
               run unreviewed and resumable — but the operator has to be told why, or a
               run that failed to merge looks identical to one nobody has reviewed yet.
               Cleared by the server the moment a later review completes. */}
-          {meta.reviewedAt === undefined &&
-            meta.reviewFailure !== undefined && (
-              <Notice tone="danger" data-slot="review-failure">
-                <span className={styles.preWrap}>
-                  {meta.reviewFailure.action} failed:{' '}
-                  {meta.reviewFailure.reason}
-                </span>
-              </Notice>
-            )}
+            {meta.reviewedAt === undefined &&
+              meta.reviewFailure !== undefined && (
+                <Notice tone="danger" data-slot="review-failure">
+                  <span className={styles.preWrap}>
+                    {meta.reviewFailure.action} failed:{' '}
+                    {meta.reviewFailure.reason}
+                  </span>
+                </Notice>
+              )}
 
-          {/* The run failed but its branch kept moving — the orphaned agent process
+            {/* The run failed but its branch kept moving — the orphaned agent process
               survived and committed. Distinguishes "dead $0 run" from "the work actually
               landed, go look at the branch". Info, not success: it always sits right under
               the red failure notice and tells the person to go and look, so it is never a
               green box beside a red one. */}
-          {orphanWork !== null && (
-            <Notice tone="info" data-slot="orphan-work">
-              {orphanWork}
-            </Notice>
-          )}
+            {orphanWork !== null && (
+              <Notice tone="info" data-slot="orphan-work">
+                {orphanWork}
+              </Notice>
+            )}
 
-          {/* A live run that has not printed anything for a moment is indistinguishable from a
+            {/* A live run that has not printed anything for a moment is indistinguishable from a
               wedged one without this. Only while genuinely running — never on a paused or
               finished run, where a spinner would be a lie. Suppressed when the empty-state
               WorkingRow above is already showing the same "Working…" label, and while the
               agent's words are arriving, which say it is working better than a spinner. */}
-          {meta.state === 'running' && groups.length > 0 && !writing && (
-            <WorkingRow
-              label="Working…"
-              startedAt={Date.parse(meta.createdAt)}
-            />
-          )}
+            {meta.state === 'running' && groups.length > 0 && !writing && (
+              <WorkingRow
+                label="Working…"
+                startedAt={Date.parse(meta.createdAt)}
+              />
+            )}
 
-          {/* The gate belongs in the conversation, at the point it was asked: the turns above it
+            {/* The gate belongs in the conversation, at the point it was asked: the turns above it
               are the context for the decision. Rendered last inside the scroller rather than
               pinned below it, so it scrolls with the transcript and the surrounding work stays
               readable while you decide. */}
-          {meta.state === 'awaiting-approval' &&
-            (pendingApprovals.length > 0 ? (
-              pendingApprovals.map((approval) => (
-                <ApprovalCard
-                  key={approval.requestId}
-                  toolName={approval.toolName}
-                  toolInput={approval.input}
-                  truncated={approval.truncated}
-                  loadFullInput={
-                    onLoadApprovalInput === undefined
-                      ? undefined
-                      : () => onLoadApprovalInput(approval.requestId)
-                  }
-                  frozenSince={meta.updatedAt}
-                  onDecide={(allow, opts) =>
-                    onApprove(approval.requestId, allow, opts)
-                  }
-                  availability={scopeDecide}
-                  onRestartDaemon={onRestartDaemon}
-                />
-              ))
-            ) : (
-              <Notice tone="default" data-slot="approval-pending">
-                {/* A window that cannot decide cannot read open gates, so it says why. */}
-                {scopeDecide.explanation ??
-                  'This run is waiting on an approval that has not reached this window yet; it will appear here shortly.'}
-              </Notice>
-            ))}
+            {meta.state === 'awaiting-approval' &&
+              (pendingApprovals.length > 0 ? (
+                pendingApprovals.map((approval) => (
+                  <ApprovalCard
+                    key={approval.requestId}
+                    toolName={approval.toolName}
+                    toolInput={approval.input}
+                    truncated={approval.truncated}
+                    loadFullInput={
+                      onLoadApprovalInput === undefined
+                        ? undefined
+                        : () => onLoadApprovalInput(approval.requestId)
+                    }
+                    frozenSince={meta.updatedAt}
+                    onDecide={(allow, opts) =>
+                      onApprove(approval.requestId, allow, opts)
+                    }
+                    availability={scopeDecide}
+                    onRestartDaemon={onRestartDaemon}
+                  />
+                ))
+              ) : (
+                <Notice tone="default" data-slot="approval-pending">
+                  {/* A window that cannot decide cannot read open gates, so it says why. */}
+                  {scopeDecide.explanation ??
+                    'This run is waiting on an approval that has not reached this window yet; it will appear here shortly.'}
+                </Notice>
+              ))}
+          </div>
         </div>
+
+        {/* Pinned above the composer, not left in the scroller like the approval gate: the agent
+          is frozen inside a tool call, so it must not be possible to scroll past this. The
+          pinned area takes at most half of the body and scrolls within itself (a named
+          region, focusable while it scrolls, so a keyboard can scroll it too): a question and
+          a scope request together would otherwise squeeze the transcript, and the approval
+          card in it, to nothing. Named for both kinds of card it holds. */}
+        {(openQuestions.length > 0 || scopeOpen) && (
+          <div
+            ref={setAsksNode}
+            role="region"
+            aria-label="Waiting on you"
+            // A Tab stop only while it hides text to scroll to: the cards' own controls
+            // scroll into view on focus, but the text between them would not.
+            tabIndex={asksScroll ? 0 : undefined}
+            className={styles.asks}
+            data-slot="run-asks"
+          >
+            {openQuestions.map((question) => (
+              <QuestionCard
+                key={question.id}
+                question={question.question}
+                options={question.options}
+                askedAt={question.askedAt}
+                onAnswer={(answer) => onAnswerQuestion(question.id, answer)}
+              />
+            ))}
+
+            {scopeOpen && (
+              <ScopeRequestCard
+                paths={pendingScopeRequest.paths}
+                reason={pendingScopeRequest.reason}
+                onDecide={onDecideScopeRequest}
+                availability={scopeDecide}
+                onRestartDaemon={onRestartDaemon}
+              />
+            )}
+          </div>
+        )}
       </div>
-
-      {/* Pinned above the composer, not left in the scroller like the approval gate: the agent
-          is frozen inside a tool call, so it must not be possible to scroll past this. */}
-      {openQuestions.map((question) => (
-        <QuestionCard
-          key={question.id}
-          question={question.question}
-          options={question.options}
-          askedAt={question.askedAt}
-          onAnswer={(answer) => onAnswerQuestion(question.id, answer)}
-        />
-      ))}
-
-      {pendingScopeRequest !== null && pendingScopeRequest.granted === null && (
-        <ScopeRequestCard
-          paths={pendingScopeRequest.paths}
-          reason={pendingScopeRequest.reason}
-          onDecide={onDecideScopeRequest}
-          availability={scopeDecide}
-          onRestartDaemon={onRestartDaemon}
-        />
-      )}
 
       {error !== null && (
         <Notice tone="danger" role="alert" data-slot="send-error">

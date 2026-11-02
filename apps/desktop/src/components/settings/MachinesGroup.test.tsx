@@ -1,5 +1,5 @@
 import { ApiError } from '@dispatch/client';
-import type { TeamKeys } from '@dispatch/client';
+import type { TeamKeys, TeamStatus } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   cleanup,
@@ -74,6 +74,9 @@ const founded: TeamKeys = {
   },
 };
 
+/** The team status the page reads first: sync on, this machine in the team. */
+const SYNC_ON: Pick<TeamStatus, 'state'> = { state: 'member' };
+
 function mount(
   keys: TeamKeys | (() => Promise<TeamKeys>),
   tier: 'request' | 'decide' | 'operator' = 'operator',
@@ -82,6 +85,7 @@ function mount(
   const ok = () => Promise.resolve({ ok: true });
   const client = {
     baseUrl: 'http://127.0.0.1:1',
+    getTeamStatus: mock(() => Promise.resolve(SYNC_ON)),
     getTeamKeys: mock(
       typeof keys === 'function' ? keys : () => Promise.resolve(keys)
     ),
@@ -259,7 +263,48 @@ test('says why when the team keys cannot be read', async () => {
   expect(await screen.findByText(/dispatchd refused/)).toBeTruthy();
 });
 
-test('shows nothing while board sync is off', async () => {
+// The keys route answers 409 while board sync is off: the status says so
+// first, so the keys are never asked for (no refused request per load).
+test('asks nothing of the team keys while board sync is off', async () => {
+  const client = mount(base, 'operator', {
+    getTeamStatus: mock(() => Promise.resolve({ state: 'off' })),
+  });
+  await waitFor(() => expect(client.getTeamStatus).toHaveBeenCalled());
+  await waitFor(() =>
+    expect(screen.queryByText('Reading the team…')).toBeNull()
+  );
+  expect(client.getTeamKeys).not.toHaveBeenCalled();
+  expect(screen.queryByText('7QX2-K9PA-M3TD-0W4R-HB8E-5NCF')).toBeNull();
+});
+
+test('waits for the team status before asking for the keys', async () => {
+  let answer: (status: Pick<TeamStatus, 'state'>) => void = () => {};
+  const client = mount(base, 'operator', {
+    getTeamStatus: mock(
+      () =>
+        new Promise<Pick<TeamStatus, 'state'>>((resolve) => {
+          answer = resolve;
+        })
+    ),
+  });
+  expect(await screen.findByText('Reading the team…')).toBeTruthy();
+  expect(client.getTeamKeys).not.toHaveBeenCalled();
+  answer({ state: 'none' });
+  expect(await screen.findByText('7QX2-K9PA-M3TD-0W4R-HB8E-5NCF')).toBeTruthy();
+  expect(client.getTeamKeys).toHaveBeenCalledTimes(1);
+});
+
+// A status that could not be read leaves the keys to say why.
+test('still reads the keys when the team status cannot be read', async () => {
+  const client = mount(base, 'operator', {
+    getTeamStatus: mock(() => Promise.reject(new Error('status refused'))),
+  });
+  expect(await screen.findByText('7QX2-K9PA-M3TD-0W4R-HB8E-5NCF')).toBeTruthy();
+  expect(client.getTeamKeys).toHaveBeenCalledTimes(1);
+});
+
+// A status read just before sync went off: the keys' refusal still shows nothing.
+test('shows nothing when the keys say board sync is off', async () => {
   const client = mount(() => Promise.reject(new Error('board sync is not on')));
   await waitFor(() => expect(client.getTeamKeys).toHaveBeenCalled());
   expect(screen.queryByText(/board sync is not on/)).toBeNull();

@@ -99,6 +99,21 @@
   min-width: 0;
 }
 
+/* The rail's section (SubtasksBlock `section`): a plain frame that carries
+   the block's hook around the section, header included. */
+.subtasksFrame {
+  min-width: 0;
+}
+
+/* The rail's section body: the lead (the mini Flight Plan) over the rows,
+   spaced like the rail's other blocks. */
+.subtasksSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
 /* The header row: the fold button, then the "+" at the far end. */
 .subtasksHead {
   display: flex;
@@ -139,6 +154,20 @@
   }
 }
 
+/* The rail's section (SubtasksBlock `section`): the fold button is the
+   section heading's content, so it takes the heading's own type (13.5px
+   semibold, the primary ink) and drops the row's height and padding, its
+   chevron at the rail's left edge like the other section titles. */
+.subtasksToggleHeading {
+  height: auto;
+  min-height: 24px;
+  padding: 0 2px 0 0;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+}
+
 /* The chevron points down while open and right while folded. */
 .subtasksChevron {
   flex: none;
@@ -166,18 +195,42 @@
   font-weight: var(--fw-regular);
 }
 
+/* The rows measure their own width (subtask-rows) so a narrow host can
+   drop the label chips below. */
 .subtaskRows {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  container: subtask-rows / inline-size;
 }
 
-/* The row's crumb: its status glyph and its id. */
+/* A row's title line: the title, then its crumb (status glyph and id).
+   The title shrinks and ends in an ellipsis; the crumb keeps its width,
+   so a long title never hides the id in the narrow rail. */
+.subtaskLine {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.subtaskTitle {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The row's crumb: " › ", its status glyph and its id, in the secondary
+   ink like ListItem's own crumb. */
 .subtaskKey {
   display: inline-flex;
+  flex: none;
   gap: var(--s-1);
   align-items: center;
-  vertical-align: middle;
+  color: var(--text-2);
+  font-weight: var(--fw-regular);
 }
 
 .subtaskTrailing {
@@ -185,6 +238,38 @@
   gap: var(--s-1);
   align-items: center;
   min-width: 0;
+}
+
+.subtaskLabels {
+  display: inline-flex;
+  gap: var(--s-1);
+  align-items: center;
+}
+
+/* The chips' stand-in where they do not fit: a tag glyph and their count in
+   the quiet ink, the names in its title and its screen-reader text. */
+.subtaskLabelCount {
+  display: none;
+  flex: none;
+  gap: 2px;
+  align-items: center;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+/* In the task page's ~300px rail the label chips would take the room the
+   title and its id need (the trailing slot never shrinks), squeezing the
+   title to nothing and pushing the id out: there the rows show the tag and
+   count instead. The task's own page and the wider drawer show the chips. */
+@container subtask-rows (width < 360px) {
+  .subtaskLabels {
+    display: none;
+  }
+
+  .subtaskLabelCount {
+    display: inline-flex;
+  }
 }
 
 /* ---- TaskDocsBlock: the docs a task links -------------------------- */

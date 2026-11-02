@@ -1,6 +1,6 @@
 /* The Sessions hub's shared pieces (ExportControl, SessionRow, SpendTable): the export
-   control's saved and error lines, and a session row's status dot. Colours and type come
-   from @dispatch/ui's components and tokens; this sheet only places them. */
+   control's saved and error lines, a session row's model chip and its status dot. Colours
+   and type come from @dispatch/ui's components and tokens; this sheet only places them. */
 
 /* ExportControl: the saved or error line, an optional Reveal in Finder, then the button.
    Spacing is margins rather than a gap, so the always-mounted live region adds no room
@@ -51,6 +51,17 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+}
+
+/* SessionRow's model chip: the model's name on one line, ending in an ellipsis when the
+   column is narrower than it (the chip's own text span shrinks to the chip, which is never
+   wider than its cell); the chip's title holds the full id. */
+.model {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* SessionRow's status cell: a 6px dot in the session's tone beside the status word, so

@@ -1,6 +1,8 @@
 import { Register } from '@dispatch/ui';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import type { Session } from '../../lib/types';
 import { SESSION_COLUMNS, SESSION_HEADER, SessionRow } from './SessionRow';
@@ -103,4 +105,46 @@ test('the row shows cost, tokens and the model', () => {
   renderRow(session);
   expect(screen.getByText('$0.40 · 1.2k tok')).toBeDefined();
   expect(screen.getByText('unknown model')).toBeDefined();
+});
+
+// A raw model id is long: at 1200px it used to wrap to two lines inside its chip. It now
+// stays on one line and ends in an ellipsis, the chip's title holding the full id, and the
+// row's name still carries it whole.
+test('the model chip keeps a raw id on one line, with the full id as its title', () => {
+  renderRow({ ...session, model: 'claude-sonnet-4-5-experimental-build' });
+  const name = screen.getByText('claude-sonnet-4-5-experimental-build');
+  const chip = name.closest('[data-tone]');
+  expect(chip?.getAttribute('title')).toBe(
+    'claude-sonnet-4-5-experimental-build'
+  );
+  expect(
+    screen.getByRole('button', {
+      name: /, claude-sonnet-4-5-experimental-build, /,
+    })
+  ).toBeDefined();
+  const css = readFileSync(
+    join(import.meta.dir, 'sessions.module.css'),
+    'utf8'
+  ).replace(/\/\*[\s\S]*?\*\//g, '');
+  const at = css.indexOf('\n.model {');
+  expect(at).toBeGreaterThan(-1);
+  const rule = css.slice(at, css.indexOf('}', at));
+  for (const declaration of [
+    'overflow: hidden;',
+    'text-overflow: ellipsis;',
+    'white-space: nowrap;',
+  ]) {
+    expect(rule).toContain(declaration);
+  }
+});
+
+// No id to show in full: an unknown model's chip carries no title.
+test('an unknown model chip has no title', () => {
+  renderRow(session);
+  expect(
+    screen
+      .getByText('unknown model')
+      .closest('[data-tone]')
+      ?.hasAttribute('title')
+  ).toBe(false);
 });

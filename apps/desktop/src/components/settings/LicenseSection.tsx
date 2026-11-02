@@ -5,6 +5,7 @@ import { KeyRound } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
+import { useTeamOn } from '../../hooks/useTeamOn';
 import styles from './LicenseSection.module.css';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 
@@ -42,15 +43,22 @@ export function LicenseSection({ data }: LicenseSectionProps) {
     },
     enabled: client !== null,
   });
-  // A founded team shares one key (Task 13); without board sync, or on a
-  // daemon without federation, this query fails and the team rows stay away.
+  // A founded team shares one key (Task 13). The keys route answers 409
+  // while board sync is off (or on a daemon without federation), so the
+  // team status says first whether there is a team to ask about; until it
+  // does, the team rows stay away. Unlike MachinesGroup, a status that
+  // could not be read does not go on to ask for the keys: Machines shows a
+  // keys failure and its reason, this section only ever hides its team
+  // rows on one, and every daemon serving the keys route serves the status
+  // route too, so asking could only add the refused request.
+  const teamOn = useTeamOn(client);
   const team = useQuery({
     queryKey: ['team-keys', client?.baseUrl],
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
       return client.getTeamKeys();
     },
-    enabled: client !== null,
+    enabled: client !== null && teamOn,
     retry: false,
   });
   const [sharing, setSharing] = useState(false);
