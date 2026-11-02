@@ -71,7 +71,8 @@ test('the mark is hidden from assistive tech unless it is labelled', () => {
   expect(named.hasAttribute('aria-hidden')).toBe(false);
 });
 
-// The hue comes from the tier through the data-tone hook, for the glyph and the dot alike.
+// The hue comes from feedStateTone through the data-tone hook, for the glyph and the dot
+// alike.
 test('every state carries its tier tone', () => {
   for (const state of FEED_STATE_ORDER) {
     for (const variant of ['icon', 'dot'] as const) {
@@ -84,6 +85,28 @@ test('every state carries its tier tone', () => {
       unmount();
     }
   }
+});
+
+// The status table, not the tier, fixes two hues: review is green (the agent's work
+// succeeded and waits on a person, plan Q6.2) where an ask is amber, and blocked is amber
+// though it is resting. Each keeps its own glyph, so the hue is never the only cue.
+test('review is green and an ask amber; blocked is amber, ready grey', () => {
+  const tones = (
+    ['review', 'answer', 'approve', 'blocked', 'ready'] as const
+  ).map((state) => {
+    const { container, unmount } = render(<StateMark state={state} />);
+    const mark = container.firstElementChild;
+    const pair = [glyphClass(mark), mark?.getAttribute('data-tone')];
+    unmount();
+    return pair;
+  });
+  expect(tones).toEqual([
+    ['lucide-eye', 'success'],
+    [expect.stringContaining('lucide-message-circle-question'), 'warning'],
+    ['lucide-shield-check', 'warning'],
+    ['lucide-ban', 'warning'],
+    ['lucide-circle-play', 'muted'],
+  ]);
 });
 
 // A closed-out run is nobody's move: a filled neutral mark, never green and never pulsing.

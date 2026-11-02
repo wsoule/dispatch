@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 
 import type { RunDisposition } from './runState';
 import {
+  closedOutMark,
   CONTINUE_PROMPT,
   continueMessage,
   deriveRunDisposition,
@@ -131,6 +132,29 @@ describe('deriveRunDisposition', () => {
       )
     ).toBe('closed');
   });
+});
+
+describe('closedOutMark', () => {
+  // Landed work (merged, or handed on as a PR) draws the check; anything else closed out
+  // draws the bar, so a discarded run never claims its work is in.
+  test.each([
+    ['merge', 'done'],
+    ['pr', 'done'],
+    ['discard', 'closed'],
+    [undefined, 'closed'],
+  ] as [RunMeta['reviewAction'], 'done' | 'closed'][])(
+    '%s -> %s',
+    (reviewAction, expected) => {
+      expect(
+        closedOutMark(
+          run({
+            reviewedAt: '2026-11-02T10:00:00.000Z',
+            ...(reviewAction === undefined ? {} : { reviewAction }),
+          })
+        )
+      ).toBe(expected);
+    }
+  );
 });
 
 describe('continueMessage', () => {

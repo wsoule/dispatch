@@ -168,6 +168,17 @@ export function runStateBucket(meta: RunMeta): RunStateBucket {
   return 'needs-review';
 }
 
+/** The mark of a run a person closed out (`deriveRunDisposition` says `closed`), which has no
+ * feed state: `done` when its work landed (merged, or handed on as a PR), `closed` when it was
+ * discarded or closed with no recorded action, so a discarded run never draws the check that
+ * says its work is in. Both are StateMark's filled neutral disc, never the green of work
+ * still waiting on review. */
+export function closedOutMark(meta: RunMeta): 'done' | 'closed' {
+  return meta.reviewAction === 'merge' || meta.reviewAction === 'pr'
+    ? 'done'
+    : 'closed';
+}
+
 /** A task is blocked by an unmet dependency rather than by anything a run is doing, so it
  * isn't a `RunState` — but it occupies the same slot on a card and deserves the same word
  * language, hence one shared label map keyed by this widened type. */

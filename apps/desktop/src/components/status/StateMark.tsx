@@ -75,12 +75,13 @@ interface StateMarkProps {
 }
 
 /**
- * What tells a row's state apart: one glyph per move (`variant="icon"`) coloured by whose
- * move it is through `data-tone` (`feedStateTone`), or the tone alone as a disc
- * (`variant="dot"`). `done` and `closed` are a filled neutral disc with no tone and no outer
- * stroke (so no ring shows on a tinted row), a check or a bar cut out of it: finished work
- * never reads green beside a red failure. The pulse is exposed as `data-pulse` and animated
- * only by the stylesheet's no-preference motion query.
+ * What tells a row's state apart: one glyph per move (`variant="icon"`) coloured through
+ * `data-tone` (`feedStateTone`: by whose move it is, except review green and blocked amber
+ * as the status table fixes them), or the tone alone as a disc (`variant="dot"`). `done`
+ * and `closed` are a filled neutral disc with no tone and no outer stroke (so no ring shows
+ * on a tinted row), a check or a bar cut out of it: finished work never reads green beside
+ * a red failure. The pulse is exposed as `data-pulse` and animated only by the stylesheet's
+ * no-preference motion query.
  */
 export function StateMark({
   state,

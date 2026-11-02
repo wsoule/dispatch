@@ -33,7 +33,7 @@ import { formatRelativeTimeFromIso } from '../lib/format';
 import { runKindLabel } from '../lib/liveRail';
 import { modelDisplayName } from '../lib/models';
 import type { RunStateBucket } from '../lib/runState';
-import { runStateBucket, runStateLabel } from '../lib/runState';
+import { closedOutMark, runStateBucket, runStateLabel } from '../lib/runState';
 import { subagentSummaryLabel } from '../lib/subagentSummary';
 import styles from './AllAgentsView.module.css';
 
@@ -154,15 +154,6 @@ function outcomeLabel(run: RunMeta): string {
       : 'closed';
   }
   return runStateLabel(run.state).toLowerCase();
-}
-
-/** The mark of a closed-out run, which has no feed state: `done` when its work landed (merged,
- * or handed on as a PR), `closed` when it was discarded or closed with no recorded action, so
- * a discarded run never draws the check that says its work is in. */
-function closedOutMark(run: RunMeta): 'done' | 'closed' {
-  return run.reviewAction === 'merge' || run.reviewAction === 'pr'
-    ? 'done'
-    : 'closed';
 }
 
 /** Turns, spend and fan-out folded into one short progress cell ("12t · $0.42 · 3/8 agents

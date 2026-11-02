@@ -318,6 +318,77 @@ describe('answering a question from its row', () => {
   });
 });
 
+// A scope grant goes out as the choice 'grant'; its receipt names the act
+// ("Granted"), never the raw choice ("Answered “grant”").
+describe('a scope request answered from its row', () => {
+  const RUN = 'r-000001';
+  const gate = {
+    id: 'm-scope',
+    thread: 'm-scope',
+    replyTo: null,
+    from: `run:${RUN}`,
+    to: [ME],
+    kind: 'question',
+    body: 'May I edit a.ts?',
+    refs: [],
+    urgent: false,
+    blocking: true,
+    wake: 'none',
+    choices: ['grant', 'deny'],
+    data: { type: 'scope', paths: ['a.ts'], reason: 'needed for the fix' },
+    createdAt: '2026-10-06T09:00:00.000Z',
+  };
+  const ask = item({
+    id: 'scope:m-scope',
+    kind: 'scope-request',
+    messageId: 'm-scope',
+    summary: 'agent asked to edit outside its scope: a.ts',
+  });
+
+  test('Grant decides the request and leaves a "Granted" receipt', async () => {
+    const decided: { runId: string; granted: boolean }[] = [];
+    const scoped = {
+      ...data,
+      client: { openDecisions: () => Promise.resolve({ items: [gate] }) },
+      handleDecideScopeRequest: (
+        runId: string,
+        _id: string,
+        granted: boolean
+      ) => {
+        decided.push({ runId, granted });
+        return Promise.resolve();
+      },
+    } as unknown as DispatchProjectData;
+    const block = (asks: DecisionItem[]) => (
+      <NeedsYouBlock
+        data={scoped}
+        needs={needsYou(asks, ME)}
+        onOpenRef={() => {}}
+        onOpenDecision={() => {}}
+      />
+    );
+    const queries = new QueryClient();
+    const { rerender } = render(
+      <QueryClientProvider client={queries}>{block([ask])}</QueryClientProvider>
+    );
+    fireEvent.click(
+      await screen.findByRole('radio', { name: /^Grant Recommended/ })
+    );
+    await waitFor(() =>
+      expect(decided).toEqual([{ runId: RUN, granted: true }])
+    );
+    // The ask leaves the open list once decided; its receipt stays in place.
+    rerender(
+      <QueryClientProvider client={queries}>{block([])}</QueryClientProvider>
+    );
+    const receipt = await screen.findByTestId('needs-you-receipt');
+    expect(receipt.textContent).toContain(
+      '✓ Granted · agent asked to edit outside its scope: a.ts'
+    );
+    expect(receipt.textContent).not.toContain('Answered');
+  });
+});
+
 // Layout is not measured here (happy-dom), so the narrow-column rules are
 // read from the module: in the Overseer's inflow (the register stacked
 // under 480px) a long summary wraps onto its own line, two lines at most,

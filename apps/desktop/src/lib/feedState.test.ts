@@ -211,9 +211,10 @@ describe('state metadata', () => {
 
 describe('feedStateTone', () => {
   // The hue comes from the tier: amber your move, red broken, blue the machine's move, grey
-  // resting, except blocked, which is amber like every blocked surface (the AGENTS.md hue
-  // table). Every state is covered, so a new state cannot slip in untoned.
-  test('maps every feed state onto its tier tone, blocked amber', () => {
+  // resting, except where the AGENTS.md hue table fixes it: review is green (the work
+  // succeeded and waits on a person, plan Q6.2) and blocked amber like every blocked
+  // surface. Every state is covered, so a new state cannot slip in untoned.
+  test('maps every feed state onto its tier tone, review green, blocked amber', () => {
     expect(
       Object.fromEntries(
         FEED_STATE_ORDER.map((state) => [state, feedStateTone(state)])
@@ -221,7 +222,7 @@ describe('feedStateTone', () => {
     ).toEqual({
       answer: 'warning',
       approve: 'warning',
-      review: 'warning',
+      review: 'success',
       ruling: 'warning',
       unblock: 'warning',
       failed: 'danger',
@@ -240,5 +241,13 @@ describe('feedStateTone', () => {
     expect(feedStateTone('blocked')).toBe('warning');
     expect(isUrgentState('blocked')).toBe(false);
     expect(isInFlightState('blocked')).toBe(false);
+  });
+
+  // Review takes the green of succeeded work, yet it is still your move: it stays urgent
+  // (a row's emphasis, its place among the asks) and never pulses.
+  test('review is green but still your move', () => {
+    expect(feedStateTone('review')).toBe('success');
+    expect(isUrgentState('review')).toBe(true);
+    expect(isInFlightState('review')).toBe(false);
   });
 });

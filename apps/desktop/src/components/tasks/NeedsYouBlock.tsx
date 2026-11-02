@@ -110,6 +110,7 @@ const VERB: Record<string, string> = {
   'approve-session': 'Allowed for session',
   confirm: 'Approved',
   accept: 'Accepted',
+  grant: 'Granted',
   deny: 'Denied',
   reject: 'Rejected',
   decline: 'Declined',

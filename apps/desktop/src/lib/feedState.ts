@@ -14,9 +14,11 @@ import { deriveRunDisposition } from './runState';
  *
  * The organizing rule: a state names whose move it is AND what the move is.
  * The tone comes from the tier (`feedStateTone`: warning = your move, danger =
- * broken, info = the machine's move, muted = resting), except that `blocked`
- * is amber like every other blocked surface; the glyph names the specific
- * move — see `components/status/StateMark`.
+ * broken, info = the machine's move, muted = resting), except where the
+ * app-wide status table fixes a state's hue: `review` is green (the agent's
+ * work succeeded and waits on a person) and `blocked` is amber like every other
+ * blocked surface. The glyph names the specific move — see
+ * `components/status/StateMark`.
  */
 
 export type FeedState =
@@ -113,15 +115,23 @@ const TIER_TONE: Record<FeedTier, UiTone> = {
   resting: 'muted',
 };
 
-/** The status tone a state is drawn in (`data-tone`), from its tier rather than the state:
- * amber means your move whatever the move is, red broken, blue the machine's move and grey
- * resting. The one exception is `blocked`: the app-wide hue table (AGENTS.md) makes blocked
- * amber wherever it shows, so a task waiting on a dependency is amber too, though it stays
- * in the resting tier for urgency (`isUrgentState`) and grouping. The glyph, not the hue,
- * tells two states of one tone apart. */
+/** The states whose hue the app-wide status table (AGENTS.md) fixes whatever their tier.
+ * `review` is a finished run or draft whose work succeeded and now waits on a person, so it
+ * is green "succeeded" (plan Q6.2), not the amber of an ask. `blocked` is amber wherever
+ * it shows, so a task waiting on a dependency is amber too. Both keep their tier for
+ * urgency (`isUrgentState`) and grouping: review is still your move, blocked still resting. */
+const TABLE_TONE: Partial<Record<FeedState, UiTone>> = {
+  review: 'success',
+  blocked: 'warning',
+};
+
+/** The status tone a state is drawn in (`data-tone`): the table's hue for `review` and
+ * `blocked` (`TABLE_TONE`), else its tier's: amber means your move whatever the move is,
+ * red broken, blue the machine's move and grey resting. The glyph, not the hue, tells two
+ * states of one tone apart. Attention ("needs your input") keeps amber where it is drawn
+ * as attention, not as a state: Needs you counts and chips stay warning. */
 export function feedStateTone(state: FeedState): UiTone {
-  if (state === 'blocked') return 'warning';
-  return TIER_TONE[feedTier(state)];
+  return TABLE_TONE[state] ?? TIER_TONE[feedTier(state)];
 }
 
 /** Queue states that have come to rest — the entry is out of the pipeline either way. */
