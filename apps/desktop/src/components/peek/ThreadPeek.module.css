@@ -1,0 +1,14 @@
+/* One thread in the slide-over (ThreadPeek.tsx): the pane fills the body; the empty, error
+   and loading states sit centred in it. */
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.centred {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: var(--s-4);
+  color: var(--text-3);
+}

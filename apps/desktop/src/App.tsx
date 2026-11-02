@@ -6,7 +6,10 @@ import {
 } from '@dispatch-foo/core/browser';
 import type { DraftRecord } from '@dispatch/client';
 import {
+  BlockBar,
+  EmptyState,
   ShortcutSheet,
+  Spinner,
   toggleShellCollapsed,
   useModKeyLabel,
 } from '@dispatch/ui';
@@ -24,6 +27,7 @@ import {
 
 import { PALETTE_DOCS_LIMIT } from './adapters/palette';
 import { buildProjectsSection, planningProjectMark } from './adapters/shell';
+import styles from './App.module.css';
 import { AwayDigest, useNarratorSince } from './components/chat/AwayDigest';
 import { CapturedNotes } from './components/chat/CapturedNotes';
 import { ForYouPosts } from './components/chat/ForYouPosts';
@@ -102,6 +106,7 @@ import {
 } from './hooks/useFirstTaskGuide';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
 import { useHashRoute } from './hooks/useHashRoute';
+import { useOnOpening } from './hooks/useOnOpening';
 import { useOverseerSession } from './hooks/useOverseerSession';
 import {
   type Planning,
@@ -123,7 +128,12 @@ import {
   describeError,
   withActionFeedback,
 } from './lib/actionFeedback';
-import { orbLabel, orbState, overseerTurnLive } from './lib/agentPresence';
+import {
+  orbLabel,
+  orbState,
+  overseerTurnLive,
+  revokedLocksComposer,
+} from './lib/agentPresence';
 import { overseerOf } from './lib/agentRoster';
 import {
   type GlobalView,
@@ -217,9 +227,8 @@ import { TerminalsView } from './views/TerminalsView';
 import { ThreadsView } from './views/ThreadsView';
 import { TimelineView } from './views/TimelineView';
 import { type OverseerFocus, TwoViewOverseer } from './views/TwoViewOverseer';
-import { PageHeaderShellContext } from '@/ui/ai/page-header';
-import { EmptyState, SectionLabel } from '@/ui/chrome';
-import { Spinner } from '@/ui/spinner';
+import { PageHeaderEmbeddedContext } from '@/ui/ai/page-header';
+// The legacy views' tooltips share its zero delay until they move onto Gr8r's Tooltip.
 import { TooltipProvider } from '@/ui/tooltip';
 
 // The hosts a task page and a Flight Plan draw from, provided together so the shell's
@@ -247,14 +256,6 @@ function SurfaceHosts({
     </TaskPageHostContext.Provider>
   );
 }
-
-// The shell owns the sidebar and the window's drag region; page headers draw neither.
-const TWO_VIEWS_PAGE_HEADER = {
-  sidebarHidden: false,
-  onToggleSidebar: () => {},
-  trafficLightInset: false,
-  dragRegion: false,
-};
 
 function App() {
   const queryClient = useQueryClient();
@@ -1000,13 +1001,11 @@ function App() {
     setQuickCaptureOpen(false);
     setCreatePreset(null);
   }, []);
-  // Settings (⌘, works while typing, or the palette) still opens as the legacy dialog, which
-  // would sit under the composer's scrim and lose its Escape to it: opening Settings closes
-  // the composer. Until B3 makes Settings a place in the main column.
-  const settingsOpen = navState.settings !== null;
-  useEffect(() => {
-    if (settingsOpen) closeComposer();
-  }, [settingsOpen, closeComposer]);
+  // The Settings panel (⌘, works while typing, or the palette and the sidebar) stays out of the
+  // browser's top layer at z-index 40, so the composer's modal SlideOver (z-index 50) would
+  // cover it: opening Settings closes the composer, in the same render, so the composer hands
+  // focus back to its opener before the panel takes it (see useOnOpening).
+  useOnOpening(navState.settings !== null, closeComposer);
 
   const openShortcuts = useCallback(
     () => dispatchNav({ type: 'openShortcuts' }),
@@ -1420,9 +1419,18 @@ function App() {
   // Resolution, first-project and get-started screens take precedence over any view.
   const gateScreen: ReactNode =
     resolutionError !== null ? (
-      <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-        <TriangleAlert className="text-destructive size-5" />
-        <EmptyState message={resolutionError} className="p-0" />
+      <div className={styles.centred}>
+        <EmptyState
+          icon={
+            <TriangleAlert
+              className={styles.alert}
+              size={20}
+              strokeWidth={1.8}
+            />
+          }
+        >
+          {resolutionError}
+        </EmptyState>
       </div>
     ) : noProjectYet || showGetStarted ? (
       <SetupView
@@ -1436,9 +1444,10 @@ function App() {
         }}
       />
     ) : stillResolving ? (
-      <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-        <Spinner className="text-muted-foreground size-5" />
-        <EmptyState message="Loading project…" className="p-0" />
+      <div className={styles.centred}>
+        <EmptyState icon={<Spinner size="lg" label="" />}>
+          Loading project…
+        </EmptyState>
       </div>
     ) : null;
 
@@ -1769,11 +1778,11 @@ function App() {
           <div className="px-4 pt-2">
             <TasksBackButton onBack={closeTwoViewsPage} />
           </div>
-          <EmptyState
-            className="flex-1"
-            heading="Only the operator can open this"
-            description="Terminals act on the host machine as the person running Dispatch."
-          />
+          <div className={styles.centred}>
+            <EmptyState label="Only the operator can open this">
+              Terminals act on the host machine as the person running Dispatch.
+            </EmptyState>
+          </div>
         </div>
       );
     }
@@ -1888,7 +1897,7 @@ function App() {
                 composerTo={null}
                 composerLabel=""
                 onOpenRef={openRef}
-                header={<SectionLabel>Discussion</SectionLabel>}
+                header={<BlockBar title="Discussion" />}
                 emptyText="No discussion yet. Messages that reference this doc show here."
               />
             )}
@@ -1908,10 +1917,9 @@ function App() {
       case 'draft': {
         const draft = data.drafts.find((d) => d.id === page.draftId);
         return draft === undefined || data.config === null ? (
-          <EmptyState
-            className="h-full"
-            message="That draft is no longer available."
-          />
+          <div className={styles.centred}>
+            <EmptyState>That draft is no longer available.</EmptyState>
+          </div>
         ) : (
           <DraftView
             projectName={activeProject?.name}
@@ -2002,7 +2010,12 @@ function App() {
       label: 'Usage',
       icon: Coins,
       intro: 'Every agent session and what it cost.',
-      render: () => <SessionsHubView />,
+      // Embedded: the hosted view keeps only its tabs row under Settings' own title.
+      render: () => (
+        <PageHeaderEmbeddedContext.Provider value>
+          <SessionsHubView />
+        </PageHeaderEmbeddedContext.Provider>
+      ),
     },
     {
       id: 'runs',
@@ -2010,26 +2023,28 @@ function App() {
       icon: Bot,
       intro: 'Every run, including archived ones.',
       render: () => (
-        <AllAgentsView
-          runs={data.visibleRuns}
-          sessions={data.agentSessions}
-          archivedRunCount={archivedRunCount}
-          showArchived={data.showArchived}
-          onSetShowArchived={data.setShowArchived}
-          onArchiveRun={(runId, archived) =>
-            void data.handleArchiveRun(runId, archived)
-          }
-          portLoading={data.portLoading}
-          portError={data.portError}
-          portErrorDetail={data.portErrorDetail}
-          client={data.client}
-          onRetry={data.retryEnsureDispatchd}
-          onJumpToRun={jumpToRun}
-          // The Live page under Tasks; any navigation closes Settings.
-          onOpenLive={() =>
-            dispatchNav({ type: 'setProjectView', view: 'live' })
-          }
-        />
+        <PageHeaderEmbeddedContext.Provider value>
+          <AllAgentsView
+            runs={data.visibleRuns}
+            sessions={data.agentSessions}
+            archivedRunCount={archivedRunCount}
+            showArchived={data.showArchived}
+            onSetShowArchived={data.setShowArchived}
+            onArchiveRun={(runId, archived) =>
+              void data.handleArchiveRun(runId, archived)
+            }
+            portLoading={data.portLoading}
+            portError={data.portError}
+            portErrorDetail={data.portErrorDetail}
+            client={data.client}
+            onRetry={data.retryEnsureDispatchd}
+            onJumpToRun={jumpToRun}
+            // The Live page under Tasks; any navigation closes Settings.
+            onOpenLive={() =>
+              dispatchNav({ type: 'setProjectView', view: 'live' })
+            }
+          />
+        </PageHeaderEmbeddedContext.Provider>
       ),
     },
   ];
@@ -2484,7 +2499,8 @@ function App() {
                 overseer={overseer}
                 about={aboutTask}
                 onOpenOverseer={() => dispatchNav({ type: 'showOverseer' })}
-                disabled={overseer.revoked}
+                disabled={revokedLocksComposer(overseer)}
+                project={activeProject?.path ?? ''}
               />
             }
           />
@@ -2523,77 +2539,73 @@ function App() {
       <ShellActionsProvider value={shellActions}>
         <DeepLinkProvider value={deepLinkActions}>
           <SavedViewsProvider value={savedViews}>
-            <PageHeaderShellContext.Provider value={TWO_VIEWS_PAGE_HEADER}>
-              <PeopleProvider people={data.people} me={data.me}>
-                <SurfaceHosts
-                  taskPage={taskPageHost}
-                  flightPlan={flightPlanHost}
-                  planning={planning}
-                >
-                  <div className="bg-frame relative flex h-screen flex-col overflow-hidden">
-                    {twoViewsFrame}
+            <PeopleProvider people={data.people} me={data.me}>
+              <SurfaceHosts
+                taskPage={taskPageHost}
+                flightPlan={flightPlanHost}
+                planning={planning}
+              >
+                <div className="bg-frame relative flex h-screen flex-col overflow-hidden">
+                  {twoViewsFrame}
 
-                    <TaskComposerSlideOver
-                      open={composerMode !== null}
-                      mode={composerMode ?? 'describe'}
-                      onModeChange={changeComposerMode}
-                      projectName={activeProject?.name}
-                      statuses={data.config?.statuses ?? []}
-                      milestones={data.milestones}
-                      initialStatus={createPreset?.status}
-                      labels={labelCatalogue}
-                      labelDefinitions={data.config?.labels}
-                      onCreate={(input) => data.handleCreate(input)}
-                      onDraft={startDraftAndOpen}
-                      onCapture={
-                        quickCaptureAvailable
-                          ? rawData.handleCaptureInbox
-                          : undefined
-                      }
-                      onUploadAttachments={data.handleUploadAttachments}
-                      daemon={
-                        daemonDown
-                          ? {
-                              starting: data.portLoading,
-                              errorDetail: data.portErrorDetail,
-                              onRetry: data.retryEnsureDispatchd,
-                            }
-                          : null
-                      }
-                      onClose={closeComposer}
+                  <TaskComposerSlideOver
+                    open={composerMode !== null}
+                    mode={composerMode ?? 'describe'}
+                    onModeChange={changeComposerMode}
+                    projectName={activeProject?.name}
+                    statuses={data.config?.statuses ?? []}
+                    milestones={data.milestones}
+                    initialStatus={createPreset?.status}
+                    labels={labelCatalogue}
+                    labelDefinitions={data.config?.labels}
+                    onCreate={(input) => data.handleCreate(input)}
+                    onDraft={startDraftAndOpen}
+                    onCapture={
+                      quickCaptureAvailable
+                        ? rawData.handleCaptureInbox
+                        : undefined
+                    }
+                    onUploadAttachments={data.handleUploadAttachments}
+                    daemon={
+                      daemonDown
+                        ? {
+                            starting: data.portLoading,
+                            errorDetail: data.portErrorDetail,
+                            onRetry: data.retryEnsureDispatchd,
+                          }
+                        : null
+                    }
+                    onClose={closeComposer}
+                  />
+
+                  {addProjectOpen && (
+                    <AddProjectDialog
+                      onAdd={async (path) => {
+                        await handleAddProject(path);
+                      }}
+                      onClose={() => setAddProjectOpen(false)}
                     />
+                  )}
 
-                    {addProjectOpen && (
-                      <AddProjectDialog
-                        onAdd={async (path) => {
-                          await handleAddProject(path);
-                        }}
-                        onClose={() => setAddProjectOpen(false)}
-                      />
-                    )}
+                  <CommandPalette
+                    isOpen={navState.paletteOpen}
+                    entries={paletteEntries}
+                    timeline={activeProject === null ? null : planning.timeline}
+                    onNavigate={navigate}
+                    searchDocs={searchDocs}
+                  />
 
-                    <CommandPalette
-                      isOpen={navState.paletteOpen}
-                      entries={paletteEntries}
-                      timeline={
-                        activeProject === null ? null : planning.timeline
-                      }
-                      onNavigate={navigate}
-                      searchDocs={searchDocs}
-                    />
-
-                    {/* After the palette in the tree, so the sheet the
+                  {/* After the palette in the tree, so the sheet the
                         reducer stacks over it draws on top. */}
-                    {navState.shortcutsOpen && (
-                      <ShortcutSheet
-                        groups={shortcutGroups}
-                        onClose={() => dispatchNav({ type: 'closeShortcuts' })}
-                      />
-                    )}
-                  </div>
-                </SurfaceHosts>
-              </PeopleProvider>
-            </PageHeaderShellContext.Provider>
+                  {navState.shortcutsOpen && (
+                    <ShortcutSheet
+                      groups={shortcutGroups}
+                      onClose={() => dispatchNav({ type: 'closeShortcuts' })}
+                    />
+                  )}
+                </div>
+              </SurfaceHosts>
+            </PeopleProvider>
           </SavedViewsProvider>
         </DeepLinkProvider>
       </ShellActionsProvider>

@@ -1,0 +1,29 @@
+/* The plan's warnings and the license key form (LicenseSection.tsx). */
+.waiting {
+  color: var(--amber);
+}
+
+.form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* Two classes, so the width wins over the field's own 100%. */
+.form .key {
+  flex: 1 1 260px;
+  width: auto;
+  min-width: 260px;
+  font-family: var(--font-mono);
+}
+
+.spaced {
+  margin-top: 6px;
+}
+
+.error {
+  margin: 6px 0 0;
+  font-size: var(--fs-sm);
+  color: var(--red);
+}

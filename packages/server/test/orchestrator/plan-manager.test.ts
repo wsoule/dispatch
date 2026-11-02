@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import { TaskCache } from '../../src/cache.js';
 import { EventBus } from '../../src/events.js';
-import { PlanManager } from '../../src/orchestrator/plan.js';
+import { PlanManager, type PlanRecord } from '../../src/orchestrator/plan.js';
 import type { PlanProposal } from '../../src/orchestrator/planner.js';
 import { FakePlanner } from '../../src/orchestrator/planners/fake.js';
 import {
@@ -124,6 +124,27 @@ describe('PlanManager.startPlan / get', () => {
           (e as { planId: string }).planId === started.id
       )
     ).toBe(true);
+  });
+
+  // A turn that ends badly is announced too, whether the planner threw or
+  // returned a proposal that does not validate.
+  it.each([
+    ['the planner rejects', { ok: false, error: 'planner exploded' }],
+    [
+      'the proposal does not validate',
+      { ok: true, proposal: { tasks: 'none' } as unknown as PlanProposal },
+    ],
+  ] as const)('announces the failed turn when %s', async (_case, script) => {
+    const manager = makeManager(new FakePlanner(script));
+    const announced = new Map<string, PlanRecord>();
+    events.subscribe((event) => {
+      if (event.type !== 'plan.changed') return;
+      announced.set(event.planId, structuredClone(manager.get(event.planId)));
+    });
+
+    const started = await startAndSettle(manager, 'anything');
+    expect(started.state).toBe('failed');
+    expect(announced.get(started.id)).toEqual(manager.get(started.id));
   });
 
   it('throws OrchestratorNotFoundError for an unknown plan id', () => {
@@ -665,6 +686,39 @@ describe('PlanManager multi-turn conversation', () => {
     // The follow-up produces at least the running -> ready broadcast on top of
     // whatever the opening turn already sent.
     expect(received.length).toBeGreaterThan(afterStart);
+  });
+
+  // The desktop reads a plan only when `plan.changed` names it (and again on
+  // a reconnect), with no poll behind it. So every change to a record has to
+  // be followed by a broadcast sent once the record already shows it: the
+  // record as of the last broadcast must be the record as it stands now.
+  it('announces every change once the record already shows it', async () => {
+    const manager = conversationalManager();
+    const announced = new Map<string, PlanRecord>();
+    events.subscribe((event) => {
+      if (event.type !== 'plan.changed') return;
+      announced.set(event.planId, structuredClone(manager.get(event.planId)));
+    });
+
+    const started = manager.startPlan('build a widget');
+    expect(announced.get(started.id)).toEqual(manager.get(started.id));
+    expect(announced.get(started.id)?.state).toBe('running');
+
+    await waitFor(() => manager.get(started.id).state !== 'running');
+    expect(announced.get(started.id)).toEqual(manager.get(started.id));
+    expect(announced.get(started.id)?.state).toBe('ready');
+
+    manager.sendMessage(started.id, 'add a second task');
+    expect(announced.get(started.id)).toEqual(manager.get(started.id));
+    expect(announced.get(started.id)?.state).toBe('running');
+
+    await waitFor(() => manager.get(started.id).state !== 'running');
+    expect(announced.get(started.id)).toEqual(manager.get(started.id));
+    expect(announced.get(started.id)?.proposal).toEqual(DRAFT_TWO);
+
+    manager.confirm(started.id, DRAFT_TWO);
+    expect(announced.get(started.id)).toEqual(manager.get(started.id));
+    expect(announced.get(started.id)?.confirmedAt).toBeString();
   });
 
   it('404s a follow-up message to an unknown plan', () => {

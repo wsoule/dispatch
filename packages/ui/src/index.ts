@@ -126,7 +126,8 @@ export type {
 // ---- shell family (src/shell): the app frame and overlays (architecture
 // §8.3) — AppShell, SignedOutFrame, command palette + shortcuts, toasts,
 // slide-over, dialog and confirmation, tooltip, spinner, property list,
-// alert strip, skeletons, key caps. Props are typed in ./shell/types.
+// alert strip, skeletons, key caps, and useModalSurface (a host's own panel
+// over a scrim, on the overlay stack). Props are typed in ./shell/types.
 export { default as AlertStrip } from './shell/alert-strip';
 export { ConfirmDialog, Dialog } from './shell/dialog';
 export { default as AppShell, toggleShellCollapsed } from './shell/app-shell';
@@ -152,6 +153,7 @@ export {
   SkeletonText,
 } from './shell/skeleton';
 export { default as SlideOver, SLIDE_OVER_WIDTH } from './shell/slide-over';
+export { useModalSurface } from './shell/modal-surface';
 export { Spinner } from './shell/spinner';
 export { ToastProvider, useOptionalToast, useToast } from './shell/toast';
 export { Tooltip } from './shell/tooltip';
@@ -167,6 +169,8 @@ export type {
   FooterLink,
   KbdKeysProps,
   KbdProps,
+  ModalSurface,
+  ModalSurfaceOptions,
   PaletteItem,
   PaletteSectionCap,
   PaletteView,
@@ -379,6 +383,8 @@ export { PickerMarkView, type PickerMarkViewProps } from './edit/picker-mark';
 export { PickerPopover } from './edit/picker-popover';
 export { Popover } from './edit/popover';
 export {
+  type BesidePlacement,
+  placeBeside,
   type Placement,
   type PlacementInput,
   placePopover,
@@ -439,3 +445,35 @@ export type {
   TaskSearchResult,
   TextAreaEditorProps,
 } from './edit/types';
+
+// ---- controls family (src/controls): general-purpose form controls — text
+// field and area, the labelled Field, radio group, the form Select (a
+// PickerPopover with the field look) — and Menu, an action menu whose
+// trigger props go to a render function (spread them onto a Button); the
+// open menu and each open submenu are layers of the overlay stack
+// (shell/layer.ts). The overlay primitives (Dialog, ConfirmDialog, Popover,
+// Tooltip, Spinner, Disclosure) are the shell, edit and tasks ones above.
+// Props are typed in ./controls/types.
+export { Field } from './controls/field';
+export { Menu } from './controls/menu';
+export { RadioGroup } from './controls/radio-group';
+export { Select } from './controls/select';
+export { TextArea } from './controls/text-area';
+export { TextField } from './controls/text-field';
+export type {
+  FieldProps,
+  MenuActionItem,
+  MenuEntry,
+  MenuGroup,
+  MenuProps,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuSubmenu,
+  MenuTriggerProps,
+  RadioGroupProps,
+  RadioOption,
+  SelectProps,
+  TextAreaProps,
+  TextFieldProps,
+  TextFieldVariant,
+} from './controls/types';

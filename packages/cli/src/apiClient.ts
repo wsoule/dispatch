@@ -117,6 +117,10 @@ export interface NormalizedEntry {
   from?: 'user' | 'agent';
   fromLabel?: string;
   toUser?: boolean;
+  // A message entry whose message this caller may not read (the shared
+  // agent token reads none): it keeps its place with no text, and nothing
+  // prints it. Mirrors NormalizedEntry.redacted server-side.
+  redacted?: true;
 }
 
 export interface RunDetail {

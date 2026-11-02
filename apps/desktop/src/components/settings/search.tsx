@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 import { Children, createContext, isValidElement, useContext } from 'react';
 
+import styles from './settings.module.css';
+
 // Settings search filters the real rows rather than a separate index, so a
 // row can never be missing from search or point at a setting that moved.
 // The shell provides the query; each page, group and row narrows it with its
@@ -105,7 +107,7 @@ export function SettingsSearchable({
   const visible = useSearchVisible(text);
   if (!visible) return null;
   return (
-    <div data-settings-row="" className="contents">
+    <div data-settings-row="" className={styles.contents}>
       {children}
     </div>
   );

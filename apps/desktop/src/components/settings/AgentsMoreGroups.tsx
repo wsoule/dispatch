@@ -1,11 +1,10 @@
 import type { ConfigPatch, DispatchConfig } from '@dispatch-foo/core/browser';
+import { Button, TextArea, TextField } from '@dispatch/ui';
 import { Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
+import styles from './AgentsMoreGroups.module.css';
 import { SettingsGroup, SettingsRow } from './SettingsGroup';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
-import { Textarea } from '@/ui/textarea';
 
 interface Props {
   config: DispatchConfig;
@@ -60,20 +59,17 @@ export function CliAgents({ config, onSave, canOperate }: Props) {
         <SettingsRow
           key={id}
           title={id}
-          subtitle={
-            <span className="font-mono">{e.command?.run.join(' ')}</span>
-          }
+          subtitle={<span className="mono">{e.command?.run.join(' ')}</span>}
           locked={!canOperate}
           control={
             canOperate ? (
               <Button
-                variant="ghost"
+                variant="quiet"
                 size="sm"
+                icon={<Trash2 size={14} strokeWidth={1.8} />}
                 aria-label={`Remove ${id}`}
                 onClick={() => void onSave({ executors: { [id]: null } })}
-              >
-                <Trash2 />
-              </Button>
+              />
             ) : undefined
           }
         />
@@ -90,32 +86,33 @@ export function CliAgents({ config, onSave, canOperate }: Props) {
         stacked={canOperate}
       >
         {canOperate && (
-          <div className="flex flex-col gap-2">
-            <Input
+          <div className={styles.form}>
+            <TextField
               id="cli-agent-name"
               aria-label="Agent name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Name, e.g. gemini"
             />
-            <Textarea
+            <TextArea
               aria-label="Command, one argument per line"
               value={argv}
               onChange={(e) => setArgv(e.target.value)}
               placeholder={'gemini\n-p\n{prompt}'}
               rows={3}
-              className="font-mono"
+              className={styles.argv}
               spellCheck={false}
             />
-            <Input
+            <TextField
               aria-label="Model for coding runs"
               value={model}
               onChange={(e) => setModel(e.target.value)}
               placeholder="Model, e.g. gemini-2.5-pro"
             />
             <Button
-              variant="outline"
-              className="self-start"
+              variant="secondary"
+              className={styles.add}
+              icon={<Plus size={14} strokeWidth={1.8} />}
               disabled={
                 name.trim() === '' ||
                 argvFromLines(argv).length === 0 ||
@@ -123,7 +120,6 @@ export function CliAgents({ config, onSave, canOperate }: Props) {
               }
               onClick={() => void add()}
             >
-              <Plus />
               Add agent
             </Button>
           </div>

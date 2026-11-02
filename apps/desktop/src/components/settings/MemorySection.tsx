@@ -2,6 +2,7 @@ import type { ConfigPatch, DispatchConfig } from '@dispatch-foo/core/browser';
 import { DEFAULT_MEMORY } from '@dispatch-foo/core/browser';
 import type { ApiClient, MemoryIngestProblem } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
+import { Button, TextField } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
@@ -13,13 +14,13 @@ import {
   memoryQueryRootKey,
   memorySettingsModel,
 } from '../../lib/memory';
+import { RawText } from '../gr8r/RawText';
 import { RehomePanel } from '../memory/RehomePanel';
 import { ChoiceSetting, NumberSetting } from './fields';
+import styles from './MemorySection.module.css';
 import { SettingsSearchable } from './search';
+import kit from './settings.module.css';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
-import { Button } from '@/ui/button';
-import { PanelRow } from '@/ui/chrome';
-import { Input } from '@/ui/input';
 
 interface MemorySectionProps {
   data: DispatchProjectData;
@@ -69,11 +70,11 @@ function useMemoryAction(port: number | undefined) {
 function ActionError({ error }: { error: string | null }) {
   if (error === null) return null;
   return (
-    <PanelRow data-settings-row="" className="py-2">
-      <span role="alert" className="text-red text-[12px]">
+    <div data-settings-row="" className={kit.row}>
+      <span role="alert" className={kit.error}>
         {error}
       </span>
-    </PanelRow>
+    </div>
   );
 }
 
@@ -197,11 +198,9 @@ function ParityGroup({ parityText }: { parityText: string | null }) {
         />
       ) : (
         <SettingsSearchable text="ledger import parity report rows read">
-          <PanelRow className="py-3">
-            <pre className="text-muted-foreground overflow-x-auto font-mono text-[12px] leading-[17px]">
-              {parityText}
-            </pre>
-          </PanelRow>
+          <div className={kit.row}>
+            <RawText>{parityText}</RawText>
+          </div>
         </SettingsSearchable>
       )}
     </SettingsGroup>
@@ -264,7 +263,7 @@ function ClaudeImportGroup({
         subtitle={claudeStateText(model)}
         control={
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             disabled={busy}
             onClick={() =>
@@ -277,9 +276,9 @@ function ClaudeImportGroup({
       />
       {model.claudeImport === 'failed' &&
         model.claudeProblems.map((problem) => (
-          <PanelRow key={problem} data-settings-row="" className="py-2">
-            <span className="text-red text-[12px]">{problem}</span>
-          </PanelRow>
+          <div key={problem} data-settings-row="" className={kit.row}>
+            <span className={kit.error}>{problem}</span>
+          </div>
         ))}
       {model.claudeImport === 'unconfirmed' && (
         <>
@@ -290,7 +289,7 @@ function ClaudeImportGroup({
               subtitle="Claude notes may be here."
               control={
                 <Button
-                  variant="outline"
+                  variant="secondary"
                   size="sm"
                   disabled={busy}
                   onClick={() =>
@@ -309,7 +308,7 @@ function ClaudeImportGroup({
             subtitle="Runs then use Dispatch memory alone."
             control={
               <Button
-                variant="outline"
+                variant="secondary"
                 size="sm"
                 disabled={busy}
                 onClick={() =>
@@ -351,9 +350,9 @@ function RehomeGroup({
       requires="none"
     >
       <SettingsSearchable text="move entries to this project">
-        <PanelRow className="block py-2">
+        <div className={kit.row}>
           <RehomePanel client={client} port={port} />
-        </PanelRow>
+        </div>
       </SettingsSearchable>
     </SettingsGroup>
   );
@@ -393,7 +392,7 @@ function SkippedFilesGroup({
           subtitle={problemLine(problem)}
           control={
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               disabled={action.pending !== null}
               onClick={() =>
@@ -467,7 +466,7 @@ function IdentityGroup({
           control={
             rebound ? (
               <Button
-                variant="outline"
+                variant="secondary"
                 size="sm"
                 disabled={action.pending !== null}
                 onClick={() =>
@@ -512,7 +511,7 @@ function IdentityGroup({
           subtitle="Get a one-time code here and enter it in the other project's Settings → Memory. It lasts 10 minutes."
           control={
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               disabled={action.pending !== null}
               onClick={getCode}
@@ -523,8 +522,8 @@ function IdentityGroup({
         >
           {issued !== null && (
             <SettingsHint>
-              <span className="text-foreground font-mono">{issued.code}</span>{' '}
-              until {new Date(issued.expiresAt).toLocaleTimeString()}
+              <span className={styles.code}>{issued.code}</span> until{' '}
+              {new Date(issued.expiresAt).toLocaleTimeString()}
             </SettingsHint>
           )}
         </SettingsRow>
@@ -536,19 +535,19 @@ function IdentityGroup({
           htmlFor="memory-link-code"
           control={
             <>
-              <Input
+              <TextField
                 id="memory-link-code"
                 aria-label="Link code"
                 value={code}
                 spellCheck={false}
-                className="w-32 font-mono"
+                className={styles.linkCode}
                 onChange={(e) => setCode(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') link();
                 }}
               />
               <Button
-                variant="outline"
+                variant="secondary"
                 size="sm"
                 disabled={action.pending !== null || code.trim() === ''}
                 onClick={link}

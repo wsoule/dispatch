@@ -9,10 +9,15 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { useEffect, useState } from 'react';
 
 import {
+  Button,
   Dialog,
+  Field,
+  Menu,
+  type MenuEntry,
   type PickerOption,
   PickerPopover,
   Popover,
+  Select,
   Tooltip,
 } from '../src/index';
 import SlideOver from '../src/shell/slide-over';
@@ -419,5 +424,258 @@ describe('Outside presses through nested layers', () => {
     fireEvent.pointerDown(scrim);
     expect(dialogNamed('Folder')).toBeNull();
     expect(dialogNamed('Publish')).not.toBeNull();
+  });
+});
+
+describe('Menu and Select (the controls family) in the stack', () => {
+  const MORE: MenuEntry[] = [
+    { id: 'copy', label: 'Copy link', onSelect: () => undefined },
+    {
+      kind: 'submenu',
+      id: 'move',
+      label: 'Move to',
+      items: [{ id: 'docs', label: 'docs', onSelect: () => undefined }],
+    },
+  ];
+
+  function menuNamed(name: string): HTMLElement | null {
+    return screen.queryByRole('menu', { name });
+  }
+
+  function scrimOfDialog(name: string): HTMLElement {
+    const scrim = dialogNamed(name)?.parentElement?.firstElementChild;
+    if (!(scrim instanceof HTMLElement)) throw new Error('no scrim');
+    return scrim;
+  }
+
+  /** A Publish dialog holding a More menu with a Move to submenu. */
+  function MenuInDialog() {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)}>
+          Publish…
+        </button>
+        <p>Page</p>
+        <Dialog open={open} onClose={() => setOpen(false)} title="Publish">
+          <p>Where it goes</p>
+          <Menu
+            label="More"
+            items={MORE}
+            trigger={(props) => <Button {...props}>More</Button>}
+          />
+        </Dialog>
+      </>
+    );
+  }
+
+  /** Opens the dialog, its More menu and the Move to submenu from the
+      keyboard; focus ends on the submenu's first row. */
+  function openAll(): { more: HTMLElement; row: HTMLElement } {
+    press('Publish…');
+    const more = screen.getByRole('button', { name: 'More' });
+    act(() => more.focus());
+    fireEvent.keyDown(more, { key: 'ArrowDown' });
+    const row = screen.getByRole('menuitem', { name: 'Move to' });
+    act(() => row.focus());
+    fireEvent.keyDown(row, { key: 'ArrowRight' });
+    expect(menuNamed('Move to')).not.toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole('menuitem', { name: 'docs' })
+    );
+    return { more, row };
+  }
+
+  test('Dialog ⊃ Menu ⊃ submenu: each Escape closes one, innermost first', () => {
+    const page = { escapes: 0 };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') page.escapes += 1;
+    };
+    render(<MenuInDialog />);
+    document.addEventListener('keydown', onKey);
+    try {
+      const { more, row } = openAll();
+      escape();
+      expect(menuNamed('Move to')).toBeNull();
+      expect(menuNamed('More')).not.toBeNull();
+      expect(document.activeElement).toBe(row);
+      escape();
+      expect(menuNamed('More')).toBeNull();
+      expect(dialogNamed('Publish')).not.toBeNull();
+      expect(document.activeElement).toBe(more);
+      escape();
+      expect(dialogNamed('Publish')).toBeNull();
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Publish…' })
+      );
+      expect(page.escapes).toBe(0);
+    } finally {
+      document.removeEventListener('keydown', onKey);
+    }
+  });
+
+  test('a press on the dialog’s scrim or in its body closes the menu only', () => {
+    render(<MenuInDialog />);
+    openAll();
+    // The scrim: the submenu and the menu go, the dialog stays.
+    fireEvent.pointerDown(scrimOfDialog('Publish'));
+    expect(menuNamed('Move to')).toBeNull();
+    expect(menuNamed('More')).toBeNull();
+    expect(dialogNamed('Publish')).not.toBeNull();
+    // The body.
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(menuNamed('More')).not.toBeNull();
+    fireEvent.pointerDown(screen.getByText('Where it goes'));
+    expect(menuNamed('More')).toBeNull();
+    expect(dialogNamed('Publish')).not.toBeNull();
+    // No stale layer: the next Escape (focus fallen to <body>) is the
+    // dialog's.
+    act(() => {
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+    });
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(dialogNamed('Publish')).toBeNull();
+  });
+
+  /** A modal SlideOver (a form surface) holding a Menu and a Select in a
+      Field. */
+  function Panel() {
+    const [open, setOpen] = useState(false);
+    const [tier, setTier] = useState<string | null>('member');
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)}>
+          Edit member
+        </button>
+        <SlideOver
+          open={open}
+          onClose={() => setOpen(false)}
+          title="Member"
+          modal
+        >
+          <Field label="Tier">
+            <Select
+              label="Tier"
+              value={tier}
+              options={[
+                { value: 'member', label: 'Member' },
+                { value: 'admin', label: 'Admin' },
+              ]}
+              onChange={setTier}
+            />
+          </Field>
+          <Menu
+            label="More"
+            items={MORE}
+            trigger={(props) => <Button {...props}>More</Button>}
+          />
+        </SlideOver>
+      </>
+    );
+  }
+
+  function scrimOfPanel(): HTMLElement {
+    const scrim = dialogNamed('Member')?.previousElementSibling;
+    if (!(scrim instanceof HTMLElement)) throw new Error('no scrim');
+    return scrim;
+  }
+
+  test('modal SlideOver ⊃ Select: Escape closes the list, then the panel', () => {
+    render(<Panel />);
+    press('Edit member');
+    press(/^Tier/);
+    expect(dialogNamed('Tier')).not.toBeNull();
+    escape();
+    expect(dialogNamed('Tier')).toBeNull();
+    expect(dialogNamed('Member')).not.toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: /^Tier/ })
+    );
+    escape();
+    expect(dialogNamed('Member')).toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Edit member' })
+    );
+  });
+
+  test('modal SlideOver ⊃ Select: a press on the scrim closes the list only', () => {
+    render(<Panel />);
+    press('Edit member');
+    press(/^Tier/);
+    const scrim = scrimOfPanel();
+    fireEvent.pointerDown(scrim);
+    fireEvent.click(scrim);
+    expect(dialogNamed('Tier')).toBeNull();
+    expect(dialogNamed('Member')).not.toBeNull();
+    fireEvent.pointerDown(scrim);
+    fireEvent.click(scrim);
+    expect(dialogNamed('Member')).toBeNull();
+  });
+
+  test('modal SlideOver ⊃ Menu: the scrim closes the menu only; Escape then closes the panel', () => {
+    render(<Panel />);
+    press('Edit member');
+    press('More');
+    expect(menuNamed('More')).not.toBeNull();
+    const scrim = scrimOfPanel();
+    fireEvent.pointerDown(scrim);
+    fireEvent.click(scrim);
+    expect(menuNamed('More')).toBeNull();
+    expect(dialogNamed('Member')).not.toBeNull();
+    press('More');
+    escape();
+    expect(menuNamed('More')).toBeNull();
+    expect(dialogNamed('Member')).not.toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'More' })
+    );
+    escape();
+    expect(dialogNamed('Member')).toBeNull();
+  });
+
+  test('focus moving into the command palette closes an open menu; the palette keeps its Escape', () => {
+    function Page() {
+      const [palette, setPalette] = useState(false);
+      return (
+        <>
+          <Menu
+            label="More"
+            items={MORE}
+            trigger={(props) => <Button {...props}>More</Button>}
+          />
+          <button type="button" onClick={() => setPalette(true)}>
+            Palette
+          </button>
+          {palette ? (
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Command palette"
+              onKeyDown={(event) => {
+                if (event.key !== 'Escape') return;
+                event.preventDefault();
+                event.stopPropagation();
+                setPalette(false);
+              }}
+            >
+              <input aria-label="Search commands" />
+            </div>
+          ) : null}
+        </>
+      );
+    }
+    render(<Page />);
+    press('More');
+    expect(menuNamed('More')).not.toBeNull();
+    // Opened from the page's own keyboard (no focus move on the way).
+    fireEvent.click(screen.getByRole('button', { name: 'Palette' }));
+    const field = screen.getByRole('textbox', { name: 'Search commands' });
+    act(() => field.focus());
+    expect(menuNamed('More')).toBeNull();
+    expect(document.activeElement).toBe(field);
+    escape();
+    expect(dialogNamed('Command palette')).toBeNull();
   });
 });

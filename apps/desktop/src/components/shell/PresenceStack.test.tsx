@@ -8,7 +8,6 @@ import {
   presenceLine,
   PresenceStack,
 } from './PresenceStack';
-import { TooltipProvider } from '@/ui/tooltip';
 
 const person = (
   handle: string,
@@ -24,11 +23,7 @@ const person = (
 });
 
 function mount(presence: PresenceEntry[]) {
-  return render(
-    <TooltipProvider>
-      <PresenceStack presence={presence} />
-    </TooltipProvider>
-  );
+  return render(<PresenceStack presence={presence} />);
 }
 
 test('renders nothing for a solo project', () => {
@@ -78,20 +73,12 @@ test('the tooltip line says what someone has open, by title when known', () => {
 });
 
 test('AlsoViewing is silent until someone else has the task open', () => {
-  const { container } = render(
-    <TooltipProvider>
-      <AlsoViewing viewers={[]} />
-    </TooltipProvider>
-  );
+  const { container } = render(<AlsoViewing viewers={[]} />);
   expect(container.querySelector('[data-slot=also-viewing]')).toBeNull();
 });
 
 test('AlsoViewing names who else is here, in a sentence', () => {
-  render(
-    <TooltipProvider>
-      <AlsoViewing viewers={[person('ada'), person('grace')]} />
-    </TooltipProvider>
-  );
+  render(<AlsoViewing viewers={[person('ada'), person('grace')]} />);
   expect(
     screen.getByRole('group', { name: 'ada and grace also have this open' })
   ).toBeTruthy();

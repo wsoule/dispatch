@@ -225,9 +225,16 @@ export class CliExecutor implements Executor {
     // Both streams are surfaced as transcript entries. stderr is kept separate
     // rather than merged: a CLI agent's progress chatter usually goes there,
     // and folding it into the assistant's own output would read as if the
-    // agent had said it.
+    // agent had said it. Each read of stdout is logged as it arrives, marked
+    // `chunk` because it ends wherever the pipe had data (mid-line, inside a
+    // code block), so a reader joins consecutive ones before rendering them.
     void pump(child.stdout, (text) => {
-      events.onEntry({ ts: new Date().toISOString(), kind: 'assistant', text });
+      events.onEntry({
+        ts: new Date().toISOString(),
+        kind: 'assistant',
+        text,
+        chunk: true,
+      });
     });
     void pump(child.stderr, (text) => {
       events.onEntry({ ts: new Date().toISOString(), kind: 'system', text });

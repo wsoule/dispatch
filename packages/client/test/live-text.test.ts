@@ -252,13 +252,33 @@ describe('mergeSnapshot', () => {
   });
 });
 
+// A store whose frames the test paints by hand: `paint` runs the flush the
+// store asked for (if it asked), and `asked` counts how often it asked.
+function storeWithFrames() {
+  const waiting: (() => void)[] = [];
+  let asked = 0;
+  const store = new LiveTextStore((flush) => {
+    asked += 1;
+    waiting.push(flush);
+  });
+  let notified = 0;
+  const unsubscribe = store.subscribe(() => {
+    notified += 1;
+  });
+  return {
+    store,
+    unsubscribe,
+    paint: () => {
+      for (const flush of waiting.splice(0)) flush();
+    },
+    asked: () => asked,
+    notified: () => notified,
+  };
+}
+
 describe('LiveTextStore', () => {
   it('keeps keys and daemons apart, notifies, and runs the repair it was handed', () => {
-    const store = new LiveTextStore();
-    let notified = 0;
-    const unsubscribe = store.subscribe(() => {
-      notified += 1;
-    });
+    const { store, unsubscribe, paint, notified } = storeWithFrames();
     let repairs = 0;
     const repair = () => {
       repairs += 1;
@@ -272,42 +292,117 @@ describe('LiveTextStore', () => {
     expect(store.get(2, 'overseer:a')?.segments).toEqual([
       { id: 'a', text: 'two' },
     ]);
+    // The repair runs at once; the listeners hear of all three at the frame.
     expect(repairs).toBe(1);
-    expect(notified).toBe(3);
+    expect(notified()).toBe(0);
+    paint();
+    expect(notified()).toBe(1);
 
     // A duplicate changes nothing, so nothing re-renders.
     const before = store.get(1, 'overseer:a');
     store.applyDelta(1, 'overseer:a', frame(1, 'one'), repair);
+    paint();
     expect(store.get(1, 'overseer:a')).toBe(before);
-    expect(notified).toBe(3);
+    expect(notified()).toBe(1);
 
     // A daemon's hello forgets that daemon only.
     store.reset(1);
     expect(store.get(1, 'overseer:a')).toBeUndefined();
     expect(store.get(1, 'overseer:b')).toBeUndefined();
     expect(store.get(2, 'overseer:a')).toBeDefined();
-    expect(notified).toBe(4);
+    paint();
+    expect(notified()).toBe(2);
     unsubscribe();
     store.reset(2);
-    expect(notified).toBe(4);
+    paint();
+    expect(notified()).toBe(2);
   });
 
   it('forgets one key and drops one segment, notifying only on a change', () => {
-    const store = new LiveTextStore();
-    let notified = 0;
-    store.subscribe(() => {
-      notified += 1;
-    });
+    const { store, paint, asked, notified } = storeWithFrames();
     store.applyDelta(1, 'run:a', frame(1, 'one'), () => {});
     store.applyDelta(1, 'run:b', frame(1, 'two'), () => {});
+    paint();
     store.drop(1, 'run:a', 'a');
     expect(store.get(1, 'run:a')?.segments).toEqual([]);
+    paint();
     store.drop(1, 'run:a', 'a');
-    expect(notified).toBe(3);
+    paint();
+    expect(notified()).toBe(2);
+    expect(asked()).toBe(2);
     store.forget(1, 'run:a');
     store.forget(1, 'run:a');
     expect(store.get(1, 'run:a')).toBeUndefined();
     expect(store.get(1, 'run:b')).toBeDefined();
-    expect(notified).toBe(4);
+    paint();
+    expect(notified()).toBe(3);
+    expect(asked()).toBe(3);
+  });
+
+  it('applies each frame at once but notifies once per animation frame', () => {
+    const { store, paint, asked, notified } = storeWithFrames();
+    for (let seq = 1; seq <= 100; seq += 1) {
+      store.applyDelta(1, 'run:a', frame(seq, 'x'), () => {});
+      expect(store.get(1, 'run:a')?.segments[0]?.text).toHaveLength(seq);
+    }
+    expect(asked()).toBe(1);
+    expect(notified()).toBe(0);
+    paint();
+    expect(notified()).toBe(1);
+
+    // The next change asks for the next frame.
+    store.applyDelta(1, 'run:a', frame(101, 'x'), () => {});
+    expect(asked()).toBe(2);
+    paint();
+    expect(notified()).toBe(2);
+  });
+
+  it('notifies at once on flush, and not again when the frame comes', () => {
+    const { store, paint, asked, notified } = storeWithFrames();
+    store.applyDelta(1, 'run:a', frame(1, 'one'), () => {});
+    store.flush();
+    expect(notified()).toBe(1);
+    paint();
+    store.flush();
+    expect(notified()).toBe(1);
+
+    // A change after the flush asks for a frame of its own.
+    store.applyDelta(1, 'run:a', frame(2, ' two'), () => {});
+    expect(asked()).toBe(2);
+    paint();
+    expect(notified()).toBe(2);
+  });
+
+  it('waits for an animation frame, or a macrotask where there are none', async () => {
+    const host = globalThis as {
+      requestAnimationFrame?: (cb: FrameRequestCallback) => number;
+    };
+    const had = Object.hasOwn(host, 'requestAnimationFrame');
+    const original = host.requestAnimationFrame;
+    const frames: FrameRequestCallback[] = [];
+    try {
+      host.requestAnimationFrame = (cb) => frames.push(cb);
+      const store = new LiveTextStore();
+      let notified = 0;
+      store.subscribe(() => {
+        notified += 1;
+      });
+      store.applyDelta(1, 'run:a', frame(1, 'one'), () => {});
+      store.applyDelta(1, 'run:a', frame(2, ' two'), () => {});
+      expect(frames).toHaveLength(1);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(notified).toBe(0);
+      frames[0](0);
+      expect(notified).toBe(1);
+
+      host.requestAnimationFrame = undefined;
+      store.applyDelta(1, 'run:a', frame(3, ' three'), () => {});
+      expect(notified).toBe(1);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(notified).toBe(2);
+    } finally {
+      if (had) host.requestAnimationFrame = original;
+      else delete host.requestAnimationFrame;
+    }
   });
 });

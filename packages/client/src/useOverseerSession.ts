@@ -171,7 +171,7 @@ export interface OverseerSession {
    * gone). Consumers can trust it: whatever is readable here is a conversation
    * dispatchd still has.
    */
-  record: OverseerRecord | undefined;
+  record: OverseerRecordView | undefined;
   /** Why `record` is missing or stale when the fetch itself failed, not just pending. */
   recordError: string | null;
   /**
@@ -192,9 +192,14 @@ export interface OverseerSession {
    * the outcome is readable on `sending` and `sendError`.
    */
   submit: (text: string) => Promise<void>;
-  /** Posts `text` for a surface with its own draft (a Threads reply): raises
-   *  `sending`, leaves `draft` and `sendError` alone, and rejects on failure. */
-  reply: (text: string) => Promise<void>;
+  /**
+   * Posts `text`, with `attachments` when given, for a surface that keeps its
+   * own draft (a Threads reply, the Tasks composer): opens the conversation
+   * when none is open yet, as `submit` does, and raises `sending`, but leaves
+   * `draft`, `attachments` and `sendError` alone and rejects on failure, so
+   * the Overseer page's unsent message is never touched by another surface.
+   */
+  reply: (text: string, attachments?: OverseerAttachment[]) => Promise<void>;
   /**
    * A submit is in flight. Session-held for the same reason `draft` is: the
    * rail unmounts the chat's whole panel on a tab flip, and a component-local
@@ -210,7 +215,14 @@ export interface OverseerSession {
    * unmounted tree and the failure is reported to nobody.
    */
   sendError: string | null;
-  /** The last send was refused because the Overseer is revoked; cleared by a send that works. */
+  /**
+   * The Overseer is revoked and takes no turns. Whichever came last decides:
+   * the open record's `revoked` (refetched on every `overseer.changed`, which
+   * dispatchd broadcasts when the Overseer is approved or revoked), a send
+   * refused as revoked (which refetches the record), or a send that worked.
+   * With no conversation open, or on a daemon whose records do not say, only
+   * the sends do.
+   */
   revoked: boolean;
   /**
    * Decides one queued mutating action by answering its `overseer-action`
@@ -327,6 +339,9 @@ export interface OverseerSession {
   attachments: OverseerAttachment[];
   /** Uploads files for the next submit; a failure lands on `sendError`. */
   attachFiles: (files: File[]) => Promise<void>;
+  /** Uploads files for a surface that holds its own (see `reply`): stores
+   *  nothing on the session and rejects on failure. */
+  upload: (files: File[]) => Promise<OverseerAttachment[]>;
   /** Drops one pending attachment (by `path`) before it is sent. */
   removeAttachment: (path: string) => void;
   /** An upload from `attachFiles` is in flight; Send waits for it. */
@@ -457,7 +472,11 @@ export function useOverseerSession(
     };
   }, [client, port, projectPath, queryClient, resume]);
 
-  const { data: record, error } = useQuery({
+  const {
+    data: record,
+    error,
+    dataUpdatedAt,
+  } = useQuery({
     queryKey: overseerKey(port, conversationId),
     // Every read carries the running turn's live text; the store takes it.
     queryFn: async () => {
@@ -499,6 +518,21 @@ export function useOverseerSession(
       return rec;
     },
     [client, model, effortId, fakeBackend, port, queryClient]
+  );
+
+  // A send the daemon refused because the Overseer is revoked: say so at once,
+  // and fetch the open record, whose `revoked` is the daemon's word from then on.
+  const noteRefusal = useCallback(
+    (err: unknown) => {
+      const refused = isRevokedRefusal(err);
+      setRevoked(refused);
+      if (refused && conversationId !== null) {
+        void queryClient.invalidateQueries({
+          queryKey: overseerKey(port, conversationId),
+        });
+      }
+    },
+    [conversationId, port, queryClient]
   );
 
   const sendMessage = useCallback(
@@ -550,7 +584,7 @@ export function useOverseerSession(
         }
         setRevoked(false);
       } catch (err) {
-        setRevoked(isRevokedRefusal(err));
+        noteRefusal(err);
         setSendError(err instanceof Error ? err.message : String(err));
         setDraft((current) => (current === '' ? text : current));
         setAttachments((current) => [...files, ...current]);
@@ -558,7 +592,7 @@ export function useOverseerSession(
         setSending(false);
       }
     },
-    [attachments, conversationId, sendMessage, start]
+    [attachments, conversationId, noteRefusal, sendMessage, start]
   );
 
   // Uploads right away, so Send only ever waits on the message itself.
@@ -592,19 +626,31 @@ export function useOverseerSession(
   const submitNew = useCallback((text: string) => send(text, true), [send]);
 
   const reply = useCallback(
-    async (text: string) => {
+    async (text: string, files: OverseerAttachment[] = []) => {
       setSending(true);
       try {
-        await sendMessage(text);
+        if (conversationId === null) {
+          await start(text, files);
+        } else {
+          await sendMessage(text, files);
+        }
         setRevoked(false);
       } catch (err) {
-        setRevoked(isRevokedRefusal(err));
+        noteRefusal(err);
         throw err;
       } finally {
         setSending(false);
       }
     },
-    [sendMessage]
+    [conversationId, noteRefusal, sendMessage, start]
+  );
+
+  const upload = useCallback(
+    (files: File[]) =>
+      client === null
+        ? Promise.reject(new Error('dispatchd client not ready'))
+        : client.uploadOverseerAttachments(files),
+    [client]
   );
 
   // The open gates, read fresh rather than from cache: a gate answered
@@ -769,7 +815,7 @@ export function useOverseerSession(
   // the bubble it came from is usually gone by then (the turn sent it).
   const changeQueued = useCallback(
     async (
-      call: (api: ApiClient, id: string) => Promise<OverseerRecord>
+      call: (api: ApiClient, id: string) => Promise<OverseerRecordView>
     ): Promise<boolean> => {
       if (client === null || conversationId === null) return false;
       setSendError(null);
@@ -814,6 +860,13 @@ export function useOverseerSession(
     error instanceof ApiError && (error.status === 404 || error.status === 410);
   const shown = recordGone ? undefined : record;
 
+  // Each record that lands (fetched, or written by a mutation) says whether
+  // the Overseer is revoked, and that is newer than any send before it.
+  const recordRevoked = shown?.revoked;
+  useEffect(() => {
+    if (recordRevoked !== undefined) setRevoked(recordRevoked);
+  }, [dataUpdatedAt, recordRevoked]);
+
   const committed = useMemo(
     () => (shown === undefined ? NO_SEGMENTS : committedSegments(shown)),
     [shown]
@@ -856,6 +909,7 @@ export function useOverseerSession(
     setDraft,
     attachments,
     attachFiles,
+    upload,
     removeAttachment,
     attaching,
     fetchAttachment,

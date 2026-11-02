@@ -1,4 +1,5 @@
 import type { ConfigPatch } from '@dispatch-foo/core/browser';
+import { Button, EmptyState, TextField } from '@dispatch/ui';
 import type { LucideIcon } from 'lucide-react';
 import {
   Bell,
@@ -70,15 +71,7 @@ import { GitStep } from '../components/setup/GitStep';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { SettingsPage } from '../lib/appNav';
 import { isInsufficientTier } from '../lib/daemonAuth';
-import { cn } from '@/lib/utils';
-import { PageHeader, PageHeaderEmbeddedContext } from '@/ui/ai/page-header';
-import {
-  SIDEBAR_ROW_ACTIVE_CLASS,
-  SIDEBAR_ROW_CLASS,
-  SIDEBAR_ROW_INACTIVE_CLASS,
-} from '@/ui/ai/sidebar-nav';
-import { EmptyState } from '@/ui/chrome';
-import { Input } from '@/ui/input';
+import styles from './SettingsView.module.css';
 
 interface SettingsViewProps {
   /** Just `{ path, name }`, the same minimal shape `App.tsx` derives from
@@ -93,13 +86,14 @@ interface SettingsViewProps {
   initialPage?: SettingsPage | HostedSettingsPage['id'];
   /** Whole views shown as extra pages (Two views folds Sessions and All agents in here). */
   hostedPages?: readonly HostedSettingsPage[];
-  /** Replaces the header's crumb-only row, e.g. with the panel's close button. */
+  /** Actions at the end of the header's crumb row, e.g. the panel's close button. */
   headerActions?: ReactNode;
   /** Shown after a page's own groups (Two views puts memory's Recent under Memory). */
   pageExtras?: Partial<Record<SettingsPage, ReactNode>>;
 }
 
-/** A page that is a whole view: full width, its own state, left out of search. */
+/** A page that is a whole view: full width, its own state, left out of search. Its
+ *  render keeps only the view's tabs row (the host marks the view as embedded). */
 export interface HostedSettingsPage {
   id: 'usage' | 'runs';
   label: string;
@@ -534,14 +528,16 @@ export function SettingsView({
 
   if (activeProject === null) {
     return (
-      <div className="flex h-full min-h-0 flex-col">
-        <PageHeader crumb={['Settings']} />
-        <EmptyState
-          icon={FolderSearch}
-          heading="No project selected"
-          description="Pick a project in the sidebar."
-          className="flex-1"
-        />
+      <div className={styles.view}>
+        <SettingsHeader actions={headerActions} />
+        <div className={styles.empty}>
+          <EmptyState
+            label="No project selected"
+            icon={<FolderSearch size={22} strokeWidth={1.8} aria-hidden />}
+          >
+            Pick a project in the sidebar.
+          </EmptyState>
+        </div>
       </div>
     );
   }
@@ -564,12 +560,8 @@ export function SettingsView({
   const saveLine = (
     <span
       role="status"
-      className={cn(
-        'font-book text-[12px]',
-        saveState.kind === 'error'
-          ? 'text-state-failed'
-          : 'text-muted-foreground'
-      )}
+      className={styles.saveLine}
+      data-error={saveState.kind === 'error' ? '' : undefined}
     >
       {saveState.kind === 'saving' && 'Saving…'}
       {saveState.kind === 'saved' && 'Saved'}
@@ -579,40 +571,39 @@ export function SettingsView({
 
   return (
     <SettingsAccessProvider access={access}>
-      <div className="flex h-full min-h-0 flex-col">
-        <PageHeader crumb={['Settings']} actions={headerActions} />
-        <div className="grid min-h-0 flex-1 grid-cols-[208px_minmax(0,1fr)]">
-          <nav
-            aria-label="Settings"
-            className="shadow-hairline-right flex min-h-0 flex-col gap-4 overflow-y-auto px-2 py-3"
-          >
-            <div className="relative">
-              <SearchIcon
-                aria-hidden
-                className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2"
-              />
-              <Input
-                type="search"
-                aria-label="Search settings"
-                placeholder="Search settings"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') setQuery('');
-                }}
-                className="pr-7 pl-7 [&::-webkit-search-cancel-button]:hidden"
-              />
-              {searching && (
-                <button
-                  type="button"
-                  aria-label="Clear search"
-                  onClick={() => setQuery('')}
-                  className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2"
-                >
-                  <XIcon aria-hidden className="size-3.5" />
-                </button>
-              )}
-            </div>
+      <div className={styles.view}>
+        <SettingsHeader actions={headerActions} />
+        <div className={styles.body}>
+          <nav aria-label="Settings" className={styles.rail}>
+            <TextField
+              type="search"
+              size="sm"
+              aria-label="Search settings"
+              placeholder="Search settings"
+              value={query}
+              className={styles.search}
+              start={<SearchIcon size={14} strokeWidth={1.8} aria-hidden />}
+              end={
+                searching ? (
+                  <Button
+                    variant="quiet"
+                    size="sm"
+                    aria-label="Clear search"
+                    icon={<XIcon size={14} strokeWidth={1.8} aria-hidden />}
+                    onClick={() => setQuery('')}
+                  />
+                ) : undefined
+              }
+              onChange={(e) => setQuery(e.target.value)}
+              // Escape with text in the search clears it and stops there, so the same
+              // press never also closes the panel; an empty search lets it close.
+              onKeyDown={(e) => {
+                if (e.key !== 'Escape' || query === '') return;
+                e.preventDefault();
+                e.stopPropagation();
+                setQuery('');
+              }}
+            />
             {[
               ...SETTINGS_GROUPS,
               ...(hostedPages.length === 0
@@ -620,34 +611,25 @@ export function SettingsView({
                 : [{ label: 'Activity', pages: hostedPages }]),
             ].map((group) => (
               <div key={group.label}>
-                <div className="text-muted-foreground flex h-7 items-center px-2 text-[12px] font-medium">
-                  {group.label}
-                </div>
-                <div className="flex flex-col gap-px">
+                <div className={styles.railGroup}>{group.label}</div>
+                <div className={styles.railRows}>
                   {group.pages.map((entry) => {
                     const active = !searching && entry.id === page;
                     const Icon = entry.icon;
+                    // A native button: Gr8r's Button takes no aria-current.
                     return (
                       <button
                         key={entry.id}
                         type="button"
                         aria-current={active ? 'page' : undefined}
+                        className={styles.railRow}
                         onClick={() => {
                           setQuery('');
                           setPage(entry.id);
                         }}
-                        className={cn(
-                          SIDEBAR_ROW_CLASS,
-                          'gap-2',
-                          active
-                            ? SIDEBAR_ROW_ACTIVE_CLASS
-                            : SIDEBAR_ROW_INACTIVE_CLASS
-                        )}
                       >
-                        <Icon aria-hidden className="size-3.5 shrink-0" />
-                        <span className="min-w-0 flex-1 truncate">
-                          {entry.label}
-                        </span>
+                        <Icon aria-hidden size={14} strokeWidth={1.8} />
+                        <span className={styles.railLabel}>{entry.label}</span>
                       </button>
                     );
                   })}
@@ -658,34 +640,26 @@ export function SettingsView({
 
           {hosted !== undefined && !searching ? (
             // Titled like every other page; the hosted view keeps only its tabs row.
-            <div className="flex min-h-0 flex-col overflow-hidden">
-              <div className="flex flex-col gap-1 px-6 pt-5 pb-3">
-                <h1 className="text-foreground text-[24px] leading-8 font-semibold tracking-[-0.16px]">
-                  {hosted.label}
-                </h1>
-                <p className="font-book text-muted-foreground text-[13px]">
-                  {hosted.intro}
-                </p>
+            <div className={styles.hosted}>
+              <div className={styles.hostedHead}>
+                <h1 className={styles.pageTitle}>{hosted.label}</h1>
+                <p className={styles.intro}>{hosted.intro}</p>
               </div>
-              <PageHeaderEmbeddedContext.Provider value>
-                <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                  {hosted.render()}
-                </div>
-              </PageHeaderEmbeddedContext.Provider>
+              <div className={styles.hostedBody}>{hosted.render()}</div>
             </div>
           ) : (
-            <div className="min-h-0 overflow-y-auto px-6 py-5">
-              <div className="mx-auto flex w-full max-w-[600px] flex-col gap-6 pb-10">
+            <div className={styles.scroller}>
+              <div className={styles.column}>
                 {searching ? (
                   <>
-                    <div className="flex items-baseline justify-between gap-3">
-                      <h1 className="text-foreground text-[20px] leading-7 font-semibold tracking-[-0.12px]">
+                    <div className={styles.titleRow}>
+                      <h1 className={styles.resultsTitle}>
                         Results for &ldquo;{query.trim()}&rdquo;
                       </h1>
                       {saveLine}
                     </div>
                     <SettingsSearchProvider query={query}>
-                      <div ref={resultsRef} className="flex flex-col gap-8">
+                      <div ref={resultsRef} className={styles.results}>
                         {ALL_PAGES.map((entry) => (
                           <SearchScopeProvider
                             key={entry.id}
@@ -693,19 +667,27 @@ export function SettingsView({
                           >
                             <section
                               aria-label={entry.label}
-                              className="flex flex-col gap-4 [&:not(:has([data-settings-row]))]:hidden"
+                              className={styles.resultPage}
                             >
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setQuery('');
-                                  setPage(entry.id);
-                                }}
-                                className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 self-start text-[12px] font-medium"
-                              >
-                                <entry.icon aria-hidden className="size-3.5" />
-                                {entry.label}
-                              </button>
+                              <span className={styles.resultLink}>
+                                <Button
+                                  variant="quiet"
+                                  size="sm"
+                                  icon={
+                                    <entry.icon
+                                      aria-hidden
+                                      size={14}
+                                      strokeWidth={1.8}
+                                    />
+                                  }
+                                  onClick={() => {
+                                    setQuery('');
+                                    setPage(entry.id);
+                                  }}
+                                >
+                                  {entry.label}
+                                </Button>
+                              </span>
                               {entry.render(ctx)}
                             </section>
                           </SearchScopeProvider>
@@ -714,39 +696,36 @@ export function SettingsView({
                     </SettingsSearchProvider>
                     {noMatches && (
                       <EmptyState
-                        icon={SearchIcon}
-                        heading="No settings match"
-                        description="Try a different word, like “budget”, “model” or “webhook”."
-                      />
+                        label="No settings match"
+                        icon={
+                          <SearchIcon size={22} strokeWidth={1.8} aria-hidden />
+                        }
+                      >
+                        Try a different word, like “budget”, “model” or
+                        “webhook”.
+                      </EmptyState>
                     )}
                   </>
                 ) : (
                   <>
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-baseline justify-between gap-3">
-                        <h1 className="text-foreground text-[24px] leading-8 font-semibold tracking-[-0.16px]">
-                          {spec.label}
-                        </h1>
+                    <div className={styles.pageHead}>
+                      <div className={styles.titleRow}>
+                        <h1 className={styles.pageTitle}>{spec.label}</h1>
                         {spec.savesConfig && saveLine}
                       </div>
-                      <p className="font-book text-muted-foreground text-[13px]">
-                        {spec.intro}
-                      </p>
+                      <p className={styles.intro}>{spec.intro}</p>
                     </div>
                     {/* No tier yet means no connection yet, not a refusal. */}
                     {spec.savesConfig &&
                       data.myTier !== null &&
                       !access.canDecide && (
-                        <div className="bg-surface-secondary text-muted-foreground rounded-control font-book flex flex-col gap-2 px-3 py-2 text-[12px]">
-                          <p role="note" className="flex items-start gap-2">
-                            <LockIcon
-                              aria-hidden
-                              className="mt-px size-3.5 shrink-0"
-                            />
+                        <div className={styles.lockNote}>
+                          <p role="note" className={styles.lockLine}>
+                            <LockIcon aria-hidden size={14} strokeWidth={1.8} />
                             {access.decideReason}
                           </p>
                           {data.takeover !== null && (
-                            <div className="pl-[22px]">
+                            <div className={styles.lockAction}>
                               <TakeOverDaemon
                                 takeover={data.takeover}
                                 onRestart={data.handleRestartDaemon}
@@ -765,5 +744,17 @@ export function SettingsView({
         </div>
       </div>
     </SettingsAccessProvider>
+  );
+}
+
+/** The crumb row above the rail and the page, with the host's actions at its end. */
+function SettingsHeader({ actions }: { actions?: ReactNode }) {
+  return (
+    <header className={styles.header}>
+      <span className={styles.crumb}>Settings</span>
+      {actions !== undefined && actions !== null && (
+        <div className={styles.headerActions}>{actions}</div>
+      )}
+    </header>
   );
 }

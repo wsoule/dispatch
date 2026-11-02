@@ -100,7 +100,8 @@ export interface PickerOption {
  * button on the inverted bulk bar, in --text-inv; brand = the app shell's
  * brand row (AppShell's workspace switcher, Gr8r's .ws): a row as wide as
  * its container, padded like the brand link, the --surface-3 fill on hover
- * and while open, with the host's face (pass `trigger`).
+ * and while open, with the host's face (pass `trigger`); field = a form
+ * select, Gr8r's bordered field with a trailing chevron (Select).
  */
 export type PickerAppearance =
   | 'value'
@@ -108,7 +109,8 @@ export type PickerAppearance =
   | 'quiet'
   | 'cell'
   | 'bar'
-  | 'brand';
+  | 'brand'
+  | 'field';
 
 /** Wording of every built-in label in the edit family. */
 export interface EditLabels {

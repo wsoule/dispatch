@@ -1,12 +1,13 @@
+import type { UiTone } from '@dispatch/ui';
+import { StatsStrip } from '@dispatch/ui';
 import { AlertCircle } from 'lucide-react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
+import { RawText } from '../gr8r/RawText';
 import { describeDaemonError } from '../shell/DaemonUnavailable';
+import styles from './DaemonSection.module.css';
 import { SettingsSearchable } from './search';
 import { SettingsGroup, SettingsRow } from './SettingsGroup';
-import { cn } from '@/lib/utils';
-import { PanelRow } from '@/ui/chrome';
-import { StatTile } from '@/ui/chrome/StatTile';
 
 interface DaemonSectionProps {
   activeProject: { path: string; name: string };
@@ -15,9 +16,9 @@ interface DaemonSectionProps {
 
 // The dot is decorative — `daemonStatusLabel`'s text sits right beside it and
 // carries the same information, so the dot itself is `aria-hidden`.
-function daemonDotClass(data: DispatchProjectData): string {
-  if (data.portLoading) return 'bg-muted-foreground/40';
-  return data.client !== null ? 'bg-state-review' : 'bg-state-failed';
+function daemonDotTone(data: DispatchProjectData): UiTone {
+  if (data.portLoading) return 'muted';
+  return data.client !== null ? 'success' : 'danger';
 }
 
 function daemonStatusLabel(data: DispatchProjectData): string {
@@ -38,48 +39,46 @@ export function DaemonSection({ activeProject, data }: DaemonSectionProps) {
       >
         <SettingsRow
           title="Dispatch for this project"
-          subtitle={
-            <span className="font-mono break-all">{activeProject.path}</span>
-          }
+          subtitle={<span className={styles.path}>{activeProject.path}</span>}
           keywords="daemon dispatchd"
           control={
-            <span className="font-book flex items-center gap-2 text-[12px] text-(--text-secondary)">
+            <span className={styles.status}>
               <span
                 aria-hidden="true"
-                className={cn(
-                  'size-1.5 shrink-0 rounded-full',
-                  daemonDotClass(data)
-                )}
+                data-tone={daemonDotTone(data)}
+                className={styles.dot}
               />
               {daemonStatusLabel(data)}
             </span>
           }
         >
           {data.portError && (
-            <div className="flex flex-col gap-1.5">
-              <p className="text-state-failed flex items-center gap-1.5 text-[13px]">
-                <AlertCircle className="size-3.5 shrink-0" />
+            <div className={styles.failure}>
+              <p className={styles.failed}>
+                <AlertCircle aria-hidden size={14} strokeWidth={1.8} />
                 Dispatch couldn&rsquo;t start for this project
               </p>
-              {errorDetail !== null && (
-                <pre className="bg-surface-quaternary text-muted-foreground rounded-control max-h-48 overflow-auto p-3 text-left font-mono text-[12px] whitespace-pre-wrap">
-                  {errorDetail}
-                </pre>
-              )}
+              {errorDetail !== null && <RawText>{errorDetail}</RawText>}
             </div>
           )}
         </SettingsRow>
 
         {data.health !== undefined && (
           <SettingsSearchable text="tasks runs pull requests github">
-            <PanelRow className="grid grid-cols-3 gap-3 py-3">
-              <StatTile value={data.tasks.length} label="Tasks" />
-              <StatTile value={data.runs.length} label="Runs" />
-              <StatTile
-                value={data.health.pr ? 'Connected' : 'Not set up'}
-                label="Pull requests"
+            <div className={styles.stats}>
+              <StatsStrip
+                label="This project"
+                cells={[
+                  { id: 'tasks', value: data.tasks.length, label: 'Tasks' },
+                  { id: 'runs', value: data.runs.length, label: 'Runs' },
+                  {
+                    id: 'pr',
+                    value: data.health.pr ? 'Connected' : 'Not set up',
+                    label: 'Pull requests',
+                  },
+                ]}
               />
-            </PanelRow>
+            </div>
           </SettingsSearchable>
         )}
       </SettingsGroup>

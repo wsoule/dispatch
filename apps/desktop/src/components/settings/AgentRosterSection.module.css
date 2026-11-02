@@ -1,0 +1,82 @@
+/* Settings → Connected agents: the roster's rows (AgentRosterSection.tsx). */
+
+.roster {
+  padding: var(--s-1);
+}
+
+.roster:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* Title, status, approver, actions and date across one dense row. */
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 18px 92px 56px;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--row-h);
+  padding: 0 var(--s-2);
+  border-radius: var(--r-sm);
+}
+
+.row:hover {
+  background: var(--surface-2);
+}
+
+.title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.address {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+.client {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.approver {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+}
+
+/* Mute and revoke line up down the table whether or not approve is there. */
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.date {
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--text-3);
+}
+
+.error {
+  padding: 0 var(--s-3) 10px;
+}

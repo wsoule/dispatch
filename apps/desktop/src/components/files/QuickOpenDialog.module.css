@@ -1,0 +1,51 @@
+/* Quick open (QuickOpenDialog.tsx): one field over a list of matching paths, the arrow keys'
+   row filled. */
+.results {
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  margin: var(--s-2) calc(-1 * var(--s-2)) 0;
+  overflow-y: auto;
+}
+
+.none {
+  padding: var(--s-2);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* A path row: plain until it is the active one (arrow keys or hover). */
+.hit {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  padding: var(--s-1) var(--s-2);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.hit[data-active] {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.path {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The characters the matcher matched, so a result shows why it matched. */
+.match {
+  background: transparent;
+  color: var(--accent-ink);
+  font-weight: var(--fw-semibold);
+}

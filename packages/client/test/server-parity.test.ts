@@ -76,10 +76,11 @@ function clientSource(): string {
 }
 
 // Field names (with their `?` optionality marker) of one exported interface,
-// in declaration order. Returns null when the interface is gone.
+// in declaration order, its own and not the ones it extends. Returns null when
+// the interface is gone.
 function fields(source: string, name: string): string[] | null {
   const body = new RegExp(
-    `export interface ${name} \\{([\\s\\S]*?)\\n\\}`
+    `export interface ${name}(?: extends [\\w, ]+)? \\{([\\s\\S]*?)\\n\\}`
   ).exec(source)?.[1];
   if (body === undefined) return null;
   return [...body.matchAll(/\n {2}(\w+\??):/g)].map((m) => m[1]);
@@ -180,6 +181,8 @@ describe('run types mirror dispatchd', () => {
       'NormalizedEntry'
     );
     expect(server).toContain('streamId?');
+    expect(server).toContain('chunk?');
+    expect(server).toContain('redacted?');
     expect(fields(clientSource(), 'NormalizedEntry')).toEqual(server);
   });
 
@@ -320,13 +323,16 @@ describe('overseer types mirror dispatchd', () => {
     });
   }
 
-  it('OverseerRecordView adds the same live field to the record', () => {
-    const pattern = /export type OverseerRecordView = ([^;]+);/;
-    const server = pattern.exec(
-      serverSource('orchestrator', 'overseer.ts')
-    )?.[1];
-    expect(server).toBeDefined();
-    expect(pattern.exec(clientSource())?.[1]).toBe(server);
+  it('OverseerRecordView adds the same fields to the record', () => {
+    const extending = /export interface OverseerRecordView extends (\w+) \{/;
+    const source = serverSource('orchestrator', 'overseer.ts');
+    expect(extending.exec(clientSource())?.[1]).toBe(
+      extending.exec(source)?.[1]
+    );
+    const server = fields(source, 'OverseerRecordView');
+    expect(server).toContain('contextLimit?');
+    expect(server).toContain('revoked?');
+    expect(fields(clientSource(), 'OverseerRecordView')).toEqual(server);
   });
 
   it('OverseerState carries the same states the server stores', () => {
@@ -340,12 +346,14 @@ describe('overseer types mirror dispatchd', () => {
     expect(client).toEqual(server);
   });
 
-  // The three inline literal unions inside the interfaces (message role,
-  // action lifecycle outcome, action status) — field-name parity above says
-  // nothing about their members. A long union wraps onto its own lines.
+  // The inline literal unions inside the interfaces (message role, action
+  // lifecycle outcome, tool row status, action status) — field-name parity
+  // above says nothing about their members. A long union wraps onto its own
+  // lines.
   for (const [iface, field] of [
     ['OverseerMessage', 'role'],
     ['OverseerMessage', 'outcome?'],
+    ['OverseerMessage', 'status?'],
     ['OverseerAction', 'status'],
   ] as const) {
     it(`${iface}.${field} carries the same literals as the server`, () => {

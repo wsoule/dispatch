@@ -1,5 +1,6 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
 import type { ApiClient, Message } from '@dispatch/client';
+import { Button } from '@dispatch/ui';
 import { useEffect, useState } from 'react';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';
@@ -16,7 +17,7 @@ import { MemoryGateCard } from '../memory/MemoryGateCard';
 import { ApprovalCard } from '../runs/ApprovalCard';
 import { ScopeRequestCard } from '../runs/ScopeRequestCard';
 import { TaskProposalCard } from '../threads/TaskProposalCard';
-import { Button } from '@/ui/button';
+import styles from './GateCard.module.css';
 
 /** An answer to a gate or ask: a body, and the choice a button stands for. */
 export type GateReply = { body: string; choice?: string };
@@ -58,9 +59,7 @@ export function GateCard({
   port,
 }: GateCardProps) {
   if (control.kind === 'read-only') {
-    return (
-      <p className="text-muted-foreground text-[12px]">{control.reason}</p>
-    );
+    return <p className={styles.note}>{control.reason}</p>;
   }
   // Drawn for every viewer; its answers wait on the decide tier.
   if (control.kind === 'task-proposal') {
@@ -108,7 +107,7 @@ export function GateCard({
       );
     case 'memory':
       return client === null ? (
-        <p className="text-muted-foreground text-[12px]">
+        <p className={styles.note}>
           This window cannot read the proposal, so it cannot decide it.
         </p>
       ) : (
@@ -123,7 +122,7 @@ export function GateCard({
       );
     case 'doc':
       return client === null ? (
-        <p className="text-muted-foreground text-[12px]">
+        <p className={styles.note}>
           This window cannot read the proposal, so it cannot decide it.
         </p>
       ) : (
@@ -180,13 +179,13 @@ function DecideButtons({
       role="group"
       aria-label="Answer"
       aria-busy={pending === null ? undefined : true}
-      className="flex flex-wrap gap-1.5"
+      className={styles.choices}
     >
       {options.map(({ choice, label }) => (
         <Button
           key={choice}
           size="sm"
-          variant="outline"
+          variant="secondary"
           disabled={disabled || pending !== null}
           onClick={() => void choose(choice)}
         >
@@ -214,7 +213,7 @@ export function WakeCard({
   canDecide?: boolean;
 }) {
   return (
-    <div data-testid="wake-card" className="flex flex-col gap-1.5">
+    <div data-testid="wake-card" className={styles.card}>
       <DecideButtons
         options={[
           { choice: 'approve', label: `Wake ${wakeLabel(target)}` },
@@ -245,8 +244,8 @@ export function RegistrationCard({
   canDecide?: boolean;
 }) {
   return (
-    <div data-testid="registration-card" className="flex flex-col gap-1.5">
-      <p className="text-muted-foreground text-[12px] break-words">
+    <div data-testid="registration-card" className={styles.card}>
+      <p className={styles.note}>
         {`${agent} · ${client}`}
         {requestedBy === undefined ? null : ` · asked by ${requestedBy}`}
       </p>

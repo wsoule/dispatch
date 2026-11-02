@@ -75,6 +75,9 @@ export function DiffModal({
       <DialogContent
         showCloseButton={false}
         className="flex max-h-[85vh] flex-col sm:max-w-4xl"
+        // A modal surface outside @dispatch/ui's overlay stack, as SessionDetailModal (which
+        // opens it, inside Settings) explains: its Escape stays its own.
+        aria-modal={filePath !== null ? true : undefined}
       >
         {/* The crumb row names the session, then the file — a path, so it keeps mono. */}
         <DialogChrome>

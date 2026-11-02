@@ -1,7 +1,7 @@
+import { Button } from '@dispatch/ui';
 import type { ReactNode } from 'react';
 
-import { cn } from '@/lib/utils';
-import { Button } from '@/ui/button';
+import styles from './SelectionActions.module.css';
 
 /** A selected span of code in a diff: which file, which lines, and the text itself. This is a
  * UI concept distinct from `Snippet` (the persisted attachment a later step turns it into). */
@@ -84,10 +84,8 @@ export function SelectionActions({
     <div
       role="toolbar"
       aria-label="Selection actions"
-      className={cn(
-        'bg-popover rounded-card shadow-overlay absolute z-50 flex gap-1 p-1',
-        placeAbove && '-translate-y-full'
-      )}
+      className={styles.bar}
+      data-place={placeAbove ? 'above' : 'below'}
       style={style}
     >
       {actions.map((action) => (
@@ -95,10 +93,10 @@ export function SelectionActions({
           key={action.id}
           type="button"
           size="sm"
-          variant="ghost"
+          variant="quiet"
+          icon={action.icon}
           onClick={() => action.onInvoke(selection)}
         >
-          {action.icon}
           {action.label}
         </Button>
       ))}

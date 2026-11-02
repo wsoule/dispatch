@@ -1,6 +1,7 @@
 /* ErrorBoundary's fallback (components/shell/ErrorBoundary.tsx): a pane that fills the
    crashed view's height and centres the library EmptyState in it. This module adds the
-   toned icon, the action column, the stale-module hint and the thrown message's block. */
+   toned icon, the action column and the stale-module hint; the thrown message prints in
+   RawDetails (components/gr8r/RawText.tsx). */
 
 .root {
   display: flex;
@@ -42,25 +43,4 @@
   margin: 0;
   font-size: var(--fs-xs);
   color: var(--text-2);
-}
-
-/* The thrown message: machine-read, so Geist Mono, scrolling inside a short box. */
-.detail {
-  box-sizing: border-box;
-  max-width: 100%;
-  max-height: 192px;
-  margin: 0;
-  padding: var(--s-2) var(--s-3);
-  overflow: auto;
-  scrollbar-width: thin;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
-  color: var(--text-2);
-  font-family: var(--font-mono);
-  font-size: var(--fs-2xs);
-  line-height: var(--lh);
-  text-align: start;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }

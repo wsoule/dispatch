@@ -1,0 +1,51 @@
+/* Who else is here (PresenceStack.tsx): a row of 20px initials faces, side by side. */
+.stack {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: var(--r-full);
+}
+
+.face {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  font-size: 9px;
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+
+/* A live agent: a ring in the info hue, so who is busy reads without the tooltip. */
+.face[data-busy] {
+  box-shadow: 0 0 0 1px var(--blue);
+}
+
+button.face {
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  button.face:hover {
+    background: var(--surface-3);
+  }
+}
+
+.more {
+  margin-left: var(--s-1);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}

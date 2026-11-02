@@ -83,6 +83,8 @@ export class StallingExecutor implements Executor {
   readonly notified: string[] = [];
   // Every send() call any started run received, in order.
   readonly sent: string[] = [];
+  // Each start's events, so a test can log entries as that run's executor.
+  readonly events: ExecutorEvents[] = [];
 
   // Each start's run token, read from its token file at start (the file is
   // removed when the run ends).
@@ -95,6 +97,7 @@ export class StallingExecutor implements Executor {
 
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
     this.started.push(opts);
+    this.events.push(events);
     this.runTokens.push(
       opts.runTokenFile === undefined
         ? undefined

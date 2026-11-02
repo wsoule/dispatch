@@ -89,3 +89,34 @@ export function placePopover(input: PlacementInput): Placement {
     width,
   };
 }
+
+/** A submenu's box beside the row that opens it. */
+export interface BesidePlacement {
+  /** CSS left, px. */
+  left: number;
+  /** CSS top, px. */
+  top: number;
+  side: 'right' | 'left';
+}
+
+/**
+ * Places a submenu beside its row: to the right with its first row level
+ * with the opener, flipped to the left when it would leave the viewport,
+ * and slid up when it would run off the bottom.
+ */
+export function placeBeside(input: PlacementInput): BesidePlacement {
+  const gap = input.gap ?? 2;
+  const margin = input.margin ?? 8;
+  const { anchor, size, viewport } = input;
+  const fitsRight = anchor.right + gap + size.width <= viewport.width - margin;
+  const fitsLeft = anchor.left - gap - size.width >= margin;
+  const side: BesidePlacement['side'] =
+    fitsRight || !fitsLeft ? 'right' : 'left';
+  let left =
+    side === 'right' ? anchor.right + gap : anchor.left - gap - size.width;
+  left = Math.max(margin, Math.min(left, viewport.width - margin - size.width));
+  let top = anchor.top - 4;
+  top = Math.min(top, viewport.height - margin - size.height);
+  top = Math.max(top, margin);
+  return { side, left: Math.round(left), top: Math.round(top) };
+}

@@ -1035,8 +1035,10 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
   };
 }
 
-// Every request-tier caller can read an overseer transcript, so the overseer
-// reads as Dispatch itself, which acts for no human: project and team only.
+// An overseer transcript reaches more people than its owner (the operator,
+// and every deciding human through its bus thread and live text), so the
+// overseer reads as Dispatch itself, which acts for no human: project and
+// team only.
 export function overseerMemory(
   memory: Pick<MemoryService, 'requireEngine'>
 ): NonNullable<OverseerToolContext['memory']> {

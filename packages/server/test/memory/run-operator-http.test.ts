@@ -13,11 +13,6 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
-import type {
-  ExecutorEvents,
-  ExecutorRun,
-  ExecutorStartOptions,
-} from '../../src/orchestrator/types.js';
 import {
   initGitRepo,
   runGitSync,
@@ -51,30 +46,18 @@ async function waitFor(
   throw new Error('waitFor timed out');
 }
 
-// A StallingExecutor that keeps each run's events, so a test can fail one.
-class EventKeepingExecutor extends StallingExecutor {
-  readonly events: ExecutorEvents[] = [];
-  override start(
-    opts: ExecutorStartOptions,
-    events: ExecutorEvents
-  ): ExecutorRun {
-    this.events.push(events);
-    return super.start(opts, events);
-  }
-}
-
 let fakeHome: string;
 let root: string;
 let handle: ServerHandle;
 let base: string;
-let executor: EventKeepingExecutor;
+let executor: StallingExecutor;
 const originalHome = process.env.DISPATCH_HOME;
 
 beforeEach(async () => {
   fakeHome = realpathSync(mkdtempSync(join(tmpdir(), 'dispatch-home-')));
   process.env.DISPATCH_HOME = fakeHome;
   root = realpathSync(initGitRepo('dispatch-run-operator-'));
-  executor = new EventKeepingExecutor();
+  executor = new StallingExecutor();
   handle = await startServer({
     rootDir: root,
     port: 0,

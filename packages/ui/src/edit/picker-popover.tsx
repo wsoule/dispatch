@@ -1,6 +1,6 @@
 'use client';
 
-import { Check, Plus, Search } from 'lucide-react';
+import { Check, ChevronDown, Plus, Search } from 'lucide-react';
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -16,6 +16,7 @@ import { dataAttributes } from '../lib/data-attributes';
 import { useMediaQuery, useScrollLock } from '../shell/dom';
 import { Kbd } from '../shell/kbd';
 import {
+  followAnchor,
   hideFromTopLayer,
   positionLayer,
   SHEET_QUERY,
@@ -82,6 +83,7 @@ const OUTSETS: Record<PickerAppearance, Outset> = {
   cell: { x: 7, y: 4 },
   bar: { x: 0, y: 0 },
   brand: { x: 0, y: 0 },
+  field: { x: 0, y: 0 },
 };
 
 function isList(value: PickerValue): value is readonly string[] {
@@ -387,42 +389,23 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
     if (!isOpen) return undefined;
     const layer = layerRef.current;
     if (layer === null) return undefined;
-    let frame = 0;
     const point =
       anchorX === null || anchorY === null ? null : { x: anchorX, y: anchorY };
-    const place = (): void => {
-      frame = 0;
+    // Places the layer at once (a hidden layer cannot take focus), so the
+    // first focus below lands in a placed list.
+    const stop = followAnchor(layer, triggerRef.current, () =>
       positionLayer(layer, point ?? triggerRef.current, {
         panel: panelRef.current,
         sheet,
         outset: OUTSETS[appearance],
         align,
         prefix: '--picker',
-      });
-    };
-    place();
+      })
+    );
     (searchable ? inputRef.current : listRef.current)?.focus({
       preventScroll: true,
     });
-    const schedule = (event?: Event): void => {
-      if (event?.target instanceof Node && layer.contains(event.target)) {
-        return;
-      }
-      if (frame === 0) frame = requestAnimationFrame(place);
-    };
-    window.addEventListener('resize', schedule);
-    document.addEventListener('scroll', schedule, true);
-    const observer =
-      typeof ResizeObserver === 'undefined'
-        ? null
-        : new ResizeObserver(() => schedule());
-    if (triggerRef.current !== null) observer?.observe(triggerRef.current);
-    return () => {
-      if (frame !== 0) cancelAnimationFrame(frame);
-      window.removeEventListener('resize', schedule);
-      document.removeEventListener('scroll', schedule, true);
-      observer?.disconnect();
-    };
+    return stop;
   }, [isOpen, sheet, appearance, align, searchable, anchorX, anchorY]);
 
   useEffect(() => {
@@ -1074,6 +1057,7 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
       className={cx(
         styles.root,
         appearance === 'brand' ? styles.brandRoot : undefined,
+        appearance === 'field' ? styles.fieldRoot : undefined,
         className
       )}
       data-picker=""
@@ -1084,7 +1068,13 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
           ref={triggerRef}
           id={id}
           type="button"
-          className={cx(styles.trigger, styles[appearance])}
+          // A field select is a global .input (TextField's box and ring);
+          // the other appearances draw their own trigger.
+          className={
+            appearance === 'field'
+              ? cx('input', styles.field)
+              : cx(styles.trigger, styles[appearance])
+          }
           aria-label={accessibleName}
           aria-haspopup="dialog"
           aria-expanded={isOpen}
@@ -1100,6 +1090,14 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
           onKeyDown={onTriggerKeyDown}
         >
           <span className={styles.face}>{face}</span>
+          {appearance === 'field' ? (
+            <ChevronDown
+              className={styles.fieldChevron}
+              size={14}
+              strokeWidth={1.8}
+              aria-hidden="true"
+            />
+          ) : null}
         </button>
         {pending ? <PendingNote text={labels.saving} /> : null}
       </span>

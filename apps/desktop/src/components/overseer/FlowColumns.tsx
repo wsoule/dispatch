@@ -241,7 +241,7 @@ function SessionRow({
       data-testid="overseer-session-row"
       onClick={onOpen}
       // A paused session still drains its last runs; held, not working.
-      leading={<StateMark state={paused ? 'blocked' : 'working'} />}
+      leading={<StateMark state={paused ? 'blocked' : 'working'} pulse />}
       title={title}
       crumb={paused ? 'paused' : `${live} running`}
       date={spendPillLabel(progress.spend)}

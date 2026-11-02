@@ -372,43 +372,48 @@ exported from the package root (`TaskDetailProps`, `TimelineChartProps`,
 `UiLinkProviderProps`, `PickerMarkViewProps`, …). Required props are listed; see
 the types for the rest.
 
-| family   | component                                                                                                              | required props                                                      |
-| -------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| basics   | `StatusMark`                                                                                                           | `status`, `label`                                                   |
-|          | `BlockBar` (a section heading row; `index` is ignored)                                                                 | `title`                                                             |
-|          | `Tabs` (ids are prefixed per instance; `label` names the tablist; empty renders nothing)                               | `items: TabItem[]` (`id`, `label`, `content`)                       |
-|          | `ThemeToggle`                                                                                                          | `storageKey`                                                        |
-|          | `InitialsAvatar` (round, a pastel hue from the name; blank = nobody), `avatarHue(name)`                                | `name`                                                              |
-| tasks    | `Button` (primary, secondary, quiet, danger; `size` sm / md / lg; `block`)                                             | none (`href` renders a link)                                        |
-|          | `Checkbox` (`indeterminate` for a partly selected group), `Switch`, `SegmentedControl`, `Chip`                         | see `tasks/types.ts`                                                |
-|          | `TaskGroupTable` (grouped issue list; selection, drag and slots below)                                                 | `sections`                                                          |
-|          | `ViewToolbar` (list toolbar: search, the host's Filter / Sort / Group, end actions), `ToolbarBadge`                    | `search`, `controls`                                                |
-|          | `FilterChips` ("Project is …" chips joined by "and", + Filter, Clear all)                                              | `chips`                                                             |
-|          | `BulkBar` (the floating bar of a selection; confirm strip, busy, note), `useBulkBarHeight()` (its height while up)     | `count`, `onClear`, `children`                                      |
-|          | `DeadlineList`, `StatsStrip`, `ProgressRule`                                                                           | `groups`; `cells`; `done`/`total`                                   |
-|          | `Register`, `RegisterRow`, `RegisterCell`                                                                              | `columns`, `label`, `children`                                      |
-|          | `Notice`, `EmptyState` (a centred icon, optional `label` title, the sentence, an action), `NavTabs`, `Checklist`       | see `tasks/types.ts`                                                |
-|          | `Disclosure` (a fold: a trigger and the panel it shows or hides; below)                                                | `children`                                                          |
-| shell    | `AppShell` (sidebar, topbar, phone tab bar; `workspaceSwitcher` makes the brand row a workspace menu, below)           | `appName`, `brandHref`, `nav`                                       |
-|          | `CommandPaletteProvider` + `CommandPalette`                                                                            | none; pass `navigate` (the default is `window.location.assign`)     |
-|          | `ToastProvider` + `useToast()` (`useOptionalToast()`: null without a provider)                                         | none                                                                |
-|          | `SlideOver` (`contentKey`: a swap in place moves focus; `modal`, `size`, `footer` for a form surface)                  | `open`, `onClose`, `title`                                          |
-|          | `Dialog` (a centred modal: sm / md / lg), `ConfirmDialog` (an alertdialog before a destructive write)                  | `open`, `onClose`, `title`; `confirmLabel`, `onConfirm`, `onCancel` |
-|          | `Tooltip` (hover and keyboard focus, no provider), `Spinner` (in-flight agent or network work only)                    | `content`, `children`; none                                         |
-|          | `SignedOutFrame`, `PropertyList`, `AlertStrip`                                                                         | see `shell/types.ts`                                                |
-|          | `Skeleton*`, `Kbd`, `KbdKeys`                                                                                          | see `shell/types.ts`                                                |
-| timeline | `TimelineChart` (Gantt)                                                                                                | `today`, `windowStart`, `windowEnd`, `zoom`, `groups`, `onOpenBar`  |
-| graph    | `DependencyGraph`                                                                                                      | `nodes`, `edges`, `ariaSummary`, `emptyMessage`                     |
-|          | `GraphLegend`, `MermaidSource`                                                                                         | see `graph/types.ts`                                                |
-| task     | `TaskDetail` (`layout="drawer"` or `"page"`)                                                                           | `taskKey`, `title`, `status`, `properties`                          |
-|          | `TaskSlideOver` (TaskDetail in a SlideOver)                                                                            | the above plus `open`, `onClose`                                    |
-|          | `TaskDescription`, `TaskRelationList`, `TaskCommentList`, `TaskActivityList`, `TaskCrumbs`                             | see `task/types.ts`                                                 |
-| edit     | `StatePicker`, `AssigneePicker`, `PriorityPicker`, `LabelPicker`, `ProjectPicker`, `MilestonePicker`, `EstimatePicker` | the choices (`states`, `people`, …), `value`, `onChange`            |
-|          | `PickerPopover` (the generic picker)                                                                                   | see `edit/types.ts`                                                 |
-|          | `Popover` (a non-modal panel for a host's own controls)                                                                | `open`, `onOpenChange`, `label`, `children`                         |
-|          | `TaskRelationPicker`                                                                                                   | `label`, `search`, `onSelect`                                       |
-|          | `InlineTextField`, `TextAreaEditor`                                                                                    | `label`, `onSave` (and `value` for the field)                       |
-|          | `DateField`                                                                                                            | `label`, `value`, `onChange`                                        |
+| family   | component                                                                                                                         | required props                                                      |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| basics   | `StatusMark`                                                                                                                      | `status`, `label`                                                   |
+|          | `BlockBar` (a section heading row; `index` is ignored)                                                                            | `title`                                                             |
+|          | `Tabs` (ids are prefixed per instance; `label` names the tablist; empty renders nothing)                                          | `items: TabItem[]` (`id`, `label`, `content`)                       |
+|          | `ThemeToggle`                                                                                                                     | `storageKey`                                                        |
+|          | `InitialsAvatar` (round, a pastel hue from the name; blank = nobody), `avatarHue(name)`                                           | `name`                                                              |
+| tasks    | `Button` (primary, secondary, quiet, danger; `size` sm / md / lg; `block`)                                                        | none (`href` renders a link)                                        |
+|          | `Checkbox` (`indeterminate` for a partly selected group), `Switch`, `SegmentedControl`, `Chip`                                    | see `tasks/types.ts`                                                |
+|          | `TaskGroupTable` (grouped issue list; selection, drag and slots below)                                                            | `sections`                                                          |
+|          | `ViewToolbar` (list toolbar: search, the host's Filter / Sort / Group, end actions), `ToolbarBadge`                               | `search`, `controls`                                                |
+|          | `FilterChips` ("Project is …" chips joined by "and", + Filter, Clear all)                                                         | `chips`                                                             |
+|          | `BulkBar` (the floating bar of a selection; confirm strip, busy, note), `useBulkBarHeight()` (its height while up)                | `count`, `onClear`, `children`                                      |
+|          | `DeadlineList`, `StatsStrip`, `ProgressRule`                                                                                      | `groups`; `cells`; `done`/`total`                                   |
+|          | `Register`, `RegisterRow`, `RegisterCell`                                                                                         | `columns`, `label`, `children`                                      |
+|          | `Notice`, `EmptyState` (a centred icon, optional `label` title, the sentence, an action), `NavTabs`, `Checklist`                  | see `tasks/types.ts`                                                |
+|          | `Disclosure` (a fold: a trigger and the panel it shows or hides; below)                                                           | `children`                                                          |
+| shell    | `AppShell` (sidebar, topbar, phone tab bar; `workspaceSwitcher` makes the brand row a workspace menu, below)                      | `appName`, `brandHref`, `nav`                                       |
+|          | `CommandPaletteProvider` + `CommandPalette`                                                                                       | none; pass `navigate` (the default is `window.location.assign`)     |
+|          | `ToastProvider` + `useToast()` (`useOptionalToast()`: null without a provider)                                                    | none                                                                |
+|          | `SlideOver` (`contentKey`: a swap in place moves focus; `modal`, `size`, `footer` for a form surface)                             | `open`, `onClose`, `title`                                          |
+|          | `Dialog` (a centred modal: sm / md / lg; `titleHidden`, `placement`), `ConfirmDialog` (an alertdialog before a destructive write) | `open`, `onClose`, `title`; `confirmLabel`, `onConfirm`, `onCancel` |
+|          | `useModalSurface` (a host's own panel over a scrim, out of the top layer; below)                                                  | `open`, `onClose`, `panelRef`, `scrimRef`                           |
+|          | `Tooltip` (hover and keyboard focus, no provider), `Spinner` (in-flight agent or network work only)                               | `content`, `children`; none                                         |
+|          | `SignedOutFrame`, `PropertyList`, `AlertStrip`                                                                                    | see `shell/types.ts`                                                |
+|          | `Skeleton*`, `Kbd`, `KbdKeys`                                                                                                     | see `shell/types.ts`                                                |
+| timeline | `TimelineChart` (Gantt)                                                                                                           | `today`, `windowStart`, `windowEnd`, `zoom`, `groups`, `onOpenBar`  |
+| graph    | `DependencyGraph`                                                                                                                 | `nodes`, `edges`, `ariaSummary`, `emptyMessage`                     |
+|          | `GraphLegend`, `MermaidSource`                                                                                                    | see `graph/types.ts`                                                |
+| task     | `TaskDetail` (`layout="drawer"` or `"page"`)                                                                                      | `taskKey`, `title`, `status`, `properties`                          |
+|          | `TaskSlideOver` (TaskDetail in a SlideOver)                                                                                       | the above plus `open`, `onClose`                                    |
+|          | `TaskDescription`, `TaskRelationList`, `TaskCommentList`, `TaskActivityList`, `TaskCrumbs`                                        | see `task/types.ts`                                                 |
+| edit     | `StatePicker`, `AssigneePicker`, `PriorityPicker`, `LabelPicker`, `ProjectPicker`, `MilestonePicker`, `EstimatePicker`            | the choices (`states`, `people`, …), `value`, `onChange`            |
+|          | `PickerPopover` (the generic picker)                                                                                              | see `edit/types.ts`                                                 |
+|          | `Popover` (a non-modal panel for a host's own controls)                                                                           | `open`, `onOpenChange`, `label`, `children`                         |
+|          | `TaskRelationPicker`                                                                                                              | `label`, `search`, `onSelect`                                       |
+|          | `InlineTextField`, `TextAreaEditor`                                                                                               | `label`, `onSave` (and `value` for the field)                       |
+|          | `DateField`                                                                                                                       | `label`, `value`, `onChange`                                        |
+| controls | `TextField` (field or inline; `start` / `end` adornments), `TextArea` (grows with its content)                                    | none (native attributes pass through)                               |
+|          | `Field` (label, `hint`, `error`; the control inside takes its id and description)                                                 | `label`, `children`                                                 |
+|          | `Select` (a field-look `PickerPopover` without search), `RadioGroup` (native radios)                                              | `value`, `options`, `onChange` (and `label` for Select)             |
+|          | `Menu` (actions, radio rows, groups, separators, submenus; it and each open submenu are layers of the overlay stack)              | `label`, `trigger` (spread its props onto a `Button`), `items`      |
 
 Pure helpers are exported too: the timeline's date scale (`createScale`,
 `xForDate`, …), the graph layout (`layoutGraph`, `upstreamChain`, …), the
@@ -427,14 +432,17 @@ helper.
 **Host data attributes.** `DataAttributes`
 (``{ [key: `data-${string}`]: string | number | boolean | undefined }``) types a
 host's `data-testid` and `data-slot` hooks. `Button` (as a button and as a
-link), `Popover`, `Dialog`, `ConfirmDialog`, `PickerPopover`, `SlideOver` and
-`Disclosure` take them and spread them, untouched, on their root element: the
-`<button>` or the link, the popover's and the picker's `role="dialog"` layer
-(not the trigger), the dialog's and the slide-over's panel (the `role="dialog"`
-or `role="alertdialog"` element), the disclosure's wrapper. The component's own
-`data-*` attributes (`data-variant`, `data-picker-popup`, `data-popover`,
-`data-state`, `data-open`) win over a host's of the same name. A host's link
-component receives them in `UiLinkProps` and spreads them onto its anchor.
+link), `Popover`, `Dialog`, `ConfirmDialog`, `PickerPopover`, `SlideOver`,
+`Disclosure`, `Menu`, `Select` and `RadioGroup` take them and spread them,
+untouched, on their root element: the `<button>` or the link, the popover's and
+the picker's `role="dialog"` layer (not the trigger), the dialog's and the
+slide-over's panel (the `role="dialog"` or `role="alertdialog"` element), the
+disclosure's wrapper, the open menu's root layer (not the trigger; its submenus
+sit inside it), the open `Select` list's layer (not the trigger), and the
+`role="radiogroup"` element. The component's own `data-*` attributes
+(`data-variant`, `data-picker-popup`, `data-popover`, `data-state`, `data-open`)
+win over a host's of the same name. A host's link component receives them in
+`UiLinkProps` and spreads them onto its anchor.
 
 ### Disclosure
 
@@ -1019,16 +1027,21 @@ or middle click still opens the link.
   before the title), `actions` and `footerLeading` in the footer,
   `initialFocusRef`, `dismissible`, `dismissOnOutsideClick` (default true),
   `closeLabel`, `contentKey` (a new step while open: focus moves to its first
-  field) and `role`. It is `role="dialog"` with `aria-modal="true"`, named by
-  the title and described by the description, over the `--overlay` scrim. Focus
-  goes to the first enabled control outside the header row (the Back action and
-  the close button are skipped; a disabled field or a `tabIndex={-1}` button
-  too), else the panel, and an explicit `initialFocusRef` wins; it returns to
-  the opener on close. Tab cycles inside; the page does not scroll. Escape
-  closes it with `preventDefault()` and `stopPropagation()`, so a `SlideOver`
-  beneath stays open and the host's shortcuts stay quiet; `dismissible={false}`
-  (while busy) ignores Escape, the scrim and the close button (disabled).
-  Anything with pickers and a long body is a modal SlideOver instead.
+  field), `role`, `titleHidden` (the title and description stay for assistive
+  tech only: no header row, no close button, no `titleAction`; Escape and the
+  scrim still close it, for a search-first dialog such as quick open) and
+  `placement` (`center`, the default, or `top`: on screens wider than 640px the
+  card hangs 12vh from the top so a list under a field grows downward). It is
+  `role="dialog"` with `aria-modal="true"`, named by the title and described by
+  the description, over the `--overlay` scrim. Focus goes to the first enabled
+  control outside the header row (the Back action and the close button are
+  skipped; a disabled field or a `tabIndex={-1}` button too), else the panel,
+  and an explicit `initialFocusRef` wins; it returns to the opener on close. Tab
+  cycles inside; the page does not scroll. Escape closes it with
+  `preventDefault()` and `stopPropagation()`, so a `SlideOver` beneath stays
+  open and the host's shortcuts stay quiet; `dismissible={false}` (while busy)
+  ignores Escape, the scrim and the close button (disabled). Anything with
+  pickers and a long body is a modal SlideOver instead.
 - `ConfirmDialog` asks before a destructive or irreversible write: `title` (the
   question), the consequence as `children`, `confirmLabel`, `cancelLabel`,
   `tone` (`danger` draws the red danger Button), `busy`, `onConfirm` and
@@ -1072,6 +1085,21 @@ or middle click still opens the link.
   cover a phone. `footer` is an action row (Cancel, Create) under a `--divider`
   rule, outside the scrolling body, so it stays in view while the body scrolls.
   A host's `data-*` hooks go on the panel.
+- `useModalSurface({ open, onClose, panelRef, scrimRef, initialFocusRef })` is a
+  modal `SlideOver`'s behaviour for a host's own panel over a scrim (Dispatch's
+  Settings), which has to stay out of the browser's top layer (a fixed overlay
+  with its own z-index, so a host's legacy dialogs can still stack above it).
+  The host renders the scrim and the `role="dialog"` panel (`aria-modal="true"`,
+  `tabIndex={-1}`), spreads the returned `scrimProps` on the scrim and puts
+  `onKeyDown` on the panel. The hook moves focus in on open and back on close,
+  keeps Tab inside, locks `<html>` scrolling, makes the panel a modal layer of
+  the overlay stack (Escape and presses go to a picker, popover, menu, tooltip
+  or `Dialog` open in it first, one layer per press; a press on the scrim with
+  one open closes only that), closes it on Escape from inside or a click on the
+  scrim, and takes focus back when it falls to `<body>`. Keys that reach the
+  panel from a React portal outside its DOM are left to their own surface.
+  `modal: false` keeps only the focus moves and the Tab trap (a desktop
+  `SlideOver` beside the page).
 
 ### Task detail slots for a desktop host
 
@@ -1193,27 +1221,30 @@ the dialog and the list (Filter's "Add filter" box over "Filter facets"), and
 at the end of the search row and as the trigger's `aria-keyshortcuts` (the host
 still binds the key). The trigger appearances are `value` (the default, the
 property sheet's), `mono` (the status line's bordered pill), `quiet` (a small
-ghost button, "+ Add"), and three more for particular places: `cell` (the
-trigger takes the cell's own voice, so its text sits where the plain value
-would, with a soft `--surface-3` pill on hover), `bar` (a ghost action on the
-bulk bar's inverted pill: `--text-inv` at 0.85 opacity, with a faint light wash
-on hover and while its popover is open) and `brand` (the app shell's brand row,
-the workspace switcher above: a row as wide as its container with the brand
-link's padding, the `--surface-3` fill on hover and while open, an outline in
-forced colours while open, no outset, a 280px menu; pass the face as `trigger`).
-A `PickerOption.href` makes a row a link out: picking it closes the popover and
-loads the URL (`window.location.assign`) instead of choosing it, so it is never
-ticked, never calls `onChange` and shows no pending note. `groupTitleHidden` on
-a group's first option draws that group under Gr8r's bare divider (its title
-still names the group for assistive tech). A multiple picker whose groups each
-hold one choice (Sort, Group) takes `marks="tick"`: the single picker's trailing
-tick instead of checkbox squares. A `PickerOption.tone` colours the trigger's
-face text (from the `data-tone` hook) while that option is the value shown, a
-pending one included; `PriorityPicker` takes it per level as `priorityTones` (a
-list cell's `{ 1: 'danger' }`: "Urgent" red the moment it is picked, a pending
-"High" never red). `anchorPoint={{ x, y }}` opens the popover at a viewport
-point instead of under its trigger (a context menu at the pointer; a phone keeps
-its sheet). `returnFocus={() => element}` sends focus there instead of to the
+ghost button, "+ Add"), and four more for particular places: `cell` (the trigger
+takes the cell's own voice, so its text sits where the plain value would, with a
+soft `--surface-3` pill on hover), `bar` (a ghost action on the bulk bar's
+inverted pill: `--text-inv` at 0.85 opacity, with a faint light wash on hover
+and while its popover is open) and `brand` (the app shell's brand row, the
+workspace switcher above: a row as wide as its container with the brand link's
+padding, the `--surface-3` fill on hover and while open, an outline in forced
+colours while open, no outset, a 280px menu; pass the face as `trigger`) and
+`field` (a form select, as `Select` draws it: the trigger is a global `.input`,
+so it has a text input's edge, hover, ring, disabled fill and `aria-invalid`
+edge, as wide as its host, with a trailing chevron). A `PickerOption.href` makes
+a row a link out: picking it closes the popover and loads the URL
+(`window.location.assign`) instead of choosing it, so it is never ticked, never
+calls `onChange` and shows no pending note. `groupTitleHidden` on a group's
+first option draws that group under Gr8r's bare divider (its title still names
+the group for assistive tech). A multiple picker whose groups each hold one
+choice (Sort, Group) takes `marks="tick"`: the single picker's trailing tick
+instead of checkbox squares. A `PickerOption.tone` colours the trigger's face
+text (from the `data-tone` hook) while that option is the value shown, a pending
+one included; `PriorityPicker` takes it per level as `priorityTones` (a list
+cell's `{ 1: 'danger' }`: "Urgent" red the moment it is picked, a pending "High"
+never red). `anchorPoint={{ x, y }}` opens the popover at a viewport point
+instead of under its trigger (a context menu at the pointer; a phone keeps its
+sheet). `returnFocus={() => element}` sends focus there instead of to the
 trigger when the picker closes on Esc, a choice or a close button (a picker a
 host's single-key shortcut opened from a row's title goes back to that title);
 Tab and an outside click are unchanged. A disabled option wraps, so a menu's
@@ -1267,6 +1298,39 @@ at 640px and below. A `PickerPopover` inside it is a layer of its own: its
 Escape and a press in the popover's body close only the picker, and choosing in
 it keeps the popover open.
 
+### Controls
+
+`TextField`, `TextArea`, `Field`, `RadioGroup` and `Select` are form controls.
+Inside a `Field`, a `TextField`, `TextArea` or `Select` takes the label's id,
+and the text controls take its hint and error as their description and
+`aria-invalid` (the error edge). `Select` is a `PickerPopover` in the `field`
+appearance without a search row: its `onChange` follows the save contract above,
+its open list is a layer of the overlay stack like any picker's, and a host's
+`data-*` hooks land on that list's layer. `RadioGroup` is native radios (one
+`name`, so the browser's arrow keys move and pick); its `data-*` hooks land on
+the radiogroup.
+
+`Menu` is an action menu. `label` names the `role="menu"`; `items` are action
+rows (`shortcut`, `destructive`, `disabled`), radio rows (`kind: 'radio'`,
+`checked`), groups, separators and submenus (`kind: 'submenu'`, `emptyLabel`);
+`trigger` is a render function whose props (`ref`, `aria-haspopup="menu"`,
+`aria-expanded`, `aria-controls`, the toggling click and the opening keys) go
+onto a `Button`. ↓, ↵ or Space on the trigger opens it on the first row and ↑ on
+the last; ↑/↓ wrap over the enabled rows, Home and End jump, → opens a submenu,
+← and Esc come back from one, Esc at the root closes the menu with focus back on
+the trigger, and Tab closes it and moves on from the trigger. Picking a row
+closes the whole menu and puts focus back on the trigger before the row's
+`onSelect` runs, so a dialog it opens returns focus there. `open` and
+`onOpenChange` control it (a host's shortcut), and `align="end"` lines it up
+with the trigger's right edge. The open menu and each open submenu are popover
+layers of the overlay stack (below), placed by script (under the trigger, or
+beside the submenu's row) and kept placed while the page scrolls: a submenu sits
+over its menu, so Escape and an outside press close it first, a press in the
+menu outside the submenu closes only the submenu, and Escape with focus back on
+a submenu's row closes that submenu. Its layer carries `data-picker-popup` (so
+the shell's `[` and the palette's keys stand down inside it) and a host's
+`data-*` hooks.
+
 ## Browser behaviour hosts should know about
 
 All of it runs in effects and event handlers on the client; server rendering
@@ -1275,17 +1339,17 @@ touches none of it.
 - `ThemeToggle` writes `html[data-theme]` and `localStorage`.
 - `AppShell` writes `html[data-shell-collapsed]` (and removes it on unmount),
   binds `[` to collapse the sidebar (unless `sidebarShortcut` is false; never
-  from inside an open picker, a `[data-picker-popup]`), and locks `<html>`
-  scrolling while the phone drawer is open. `sidebarCollapseScript(key)` is its
-  pre-paint script. Its workspace switcher's connect row calls
-  `window.location.assign`.
+  from inside an open picker, menu or popover, a `[data-picker-popup]`), and
+  locks `<html>` scrolling while the phone drawer is open.
+  `sidebarCollapseScript(key)` is its pre-paint script. Its workspace switcher's
+  connect row calls `window.location.assign`.
 - `CommandPaletteProvider` binds Ctrl/⌘ K, `?` and two-key `G …` shortcuts on
-  `document`, none of them from inside an open picker (whose popover sits in the
-  top layer, over the palette). Do not mount it in a host that has its own
-  command palette. Its API's `isSequencePending()` is true between a sequence's
-  first key and its second (1.2 s): React handlers run before that document
-  listener, so a host's own single keys can check it and stay out of a chord's
-  way.
+  `document`, none of them from inside an open picker, menu or popover (each
+  sits in the top layer, over the palette, and its layer carries
+  `data-picker-popup`). Do not mount it in a host that has its own command
+  palette. Its API's `isSequencePending()` is true between a sequence's first
+  key and its second (1.2 s): React handlers run before that document listener,
+  so a host's own single keys can check it and stay out of a chord's way.
 - `TaskGroupTable` with `drag` reads `(hover: hover) and (pointer: fine)`
   through a media query and appends (then removes) a drag-image element.
   `BulkBar` is `position: fixed` and lifts itself above
@@ -1299,11 +1363,12 @@ touches none of it.
 - `SlideOver` closes on Esc and traps focus (a modal one, or any on a phone, is
   also a modal layer of the overlay stack below, locks `<html>` scrolling, and
   reads `pointerdown` on `window` in the capture phase while open, to tell a
-  press on its scrim from one that only closes a picker over it);
-  `TaskGroupTable` can persist folded groups in `localStorage` or
-  `sessionStorage` (`storage="session"` suits a desktop app). Storage failures
-  are tolerated everywhere.
-- **Overlays render in place and stack.** `PickerPopover`, `Popover`, `Tooltip`
+  press on its scrim from one that only closes a picker over it; a host's panel
+  on `useModalSurface` does the same); `TaskGroupTable` can persist folded
+  groups in `localStorage` or `sessionStorage` (`storage="session"` suits a
+  desktop app). Storage failures are tolerated everywhere.
+- **Overlays render in place and stack.** `PickerPopover` (and `Select`, which
+  is one), `Popover`, `Menu` (the open menu and each open submenu), `Tooltip`
   and `Dialog` render where the host renders them, never portalled to `<body>`,
   and show in the browser's top layer (`popover="manual"`; a `position: fixed`
   layer where the Popover API is missing, such as happy-dom), so a picker inside
@@ -1315,21 +1380,22 @@ touches none of it.
   non-modal layer under it that does not hold the press either: a press in a
   dialog's body closes the picker open in it and leaves the dialog, a press on
   the page closes a picker and the popover holding it, and a press on a dialog's
-  scrim with a picker open closes only the picker. Focus moving out of a popover
-  or picker closes it (a modal layer keeps focus itself). Escape closes the
-  topmost layer only, with `preventDefault()` and `stopPropagation()` (from
-  inside a layer its own handler takes the key after anything focused in it;
-  with focus elsewhere, the stack takes it before any page listener). A modal
-  surface outside the stack (`aria-modal="true"`, such as the command palette or
-  a host's own dialog) keeps its own Escape and presses: the layers under it
-  never take them. Tooltips hide on any press, take Escape only from their own
-  trigger, and never stand between a press or a key and the layer under them. A
-  host's document-level Escape listener should return early on
+  scrim with a picker open closes only the picker. Focus moving out of a
+  popover, picker or menu closes it (a modal layer keeps focus itself). Escape
+  closes the topmost layer only, with `preventDefault()` and `stopPropagation()`
+  (from inside a layer its own handler takes the key after anything focused in
+  it; with focus elsewhere, the stack takes it before any page listener). A
+  modal surface outside the stack (`aria-modal="true"`, such as the command
+  palette or a host's own dialog) keeps its own Escape and presses: the layers
+  under it never take them. Tooltips hide on any press, take Escape only from
+  their own trigger, and never stand between a press or a key and the layer
+  under them. A host's document-level Escape listener should return early on
   `event.defaultPrevented` (as `SlideOver` does). Only `Dialog`,
   `ConfirmDialog`, a modal or phone `SlideOver` and the command palette set
-  `aria-modal="true"`, and only while open, so a host's "is a modal open?" check
-  (`[aria-modal="true"]`) mutes its shortcuts exactly then. `Dialog` locks
-  `<html>` scrolling while open.
+  `aria-modal="true"` (a host's panel on `useModalSurface` sets it itself), and
+  only while open, so a host's "is a modal open?" check (`[aria-modal="true"]`)
+  mutes its shortcuts exactly then. `Dialog` locks `<html>` scrolling while
+  open.
 
 ## Server rendering
 

@@ -6,15 +6,8 @@ import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { useLatest } from '../edit/save-state';
 import { dataAttributes } from '../lib/data-attributes';
 import { cx } from '../tasks/class-names';
-import {
-  PHONE_QUERY,
-  REDUCED_MOTION_QUERY,
-  trapTab,
-  useDialogFocus,
-  useMediaQuery,
-  useScrollLock,
-} from './dom';
-import { useLayer } from './layer';
+import { PHONE_QUERY, REDUCED_MOTION_QUERY, useMediaQuery } from './dom';
+import { useModalSurface } from './modal-surface';
 import styles from './slide-over.module.css';
 import type { SlideOverProps } from './types';
 
@@ -92,83 +85,20 @@ export default function SlideOver(props: SlideOverProps): ReactNode {
     return () => clearTimeout(timer);
   }, [closing, reduceMotion]);
 
-  useDialogFocus(panelRef, open, initialFocusRef);
-  useScrollLock(open && isModal);
-
-  // Modal: a layer of the stack, so a picker, popover or dialog opened in
-  // the panel sits over it (their Escape and outside presses close them
-  // first), and an Escape with focus outside the panel (fallen to <body>)
-  // closes it before any page listener, a non-modal SlideOver's included,
-  // sees the key. Presses outside never close it from the stack: the
-  // scrim's own click does (a toast over the scrim stays usable).
-  const layer = useLayer({
-    open: open && isModal,
-    kind: 'modal',
-    ref: panelRef,
-    closeOnOutside: false,
-    onDismiss: () => latest.current.onClose(),
+  // Focus in and out and Tab kept inside always; while modal, also a
+  // modal layer of the stack (a picker, popover or dialog opened in the
+  // panel takes Escape and presses first, and an Escape with focus fallen
+  // to <body> still closes it before any page listener, a non-modal
+  // SlideOver's included), the scroll lock, the scrim's click, Escape from
+  // inside, and focus never resting on <body> behind the panel.
+  const surface = useModalSurface({
+    open,
+    modal: isModal,
+    panelRef,
+    scrimRef,
+    initialFocusRef,
+    onClose: () => latest.current.onClose(),
   });
-
-  // A press that starts on the scrim while another layer sits over the
-  // panel (a picker open in it) closes only that layer: the stack does
-  // that on pointerdown, so the scrim's click must not close the panel
-  // too. Read on `window` in the capture phase, which runs before the
-  // stack's document listener, while that layer is still open.
-  const scrimPressCovered = useRef(false);
-  useEffect(() => {
-    if (!open || !isModal) return undefined;
-    function onPress(event: PointerEvent): void {
-      scrimPressCovered.current =
-        event.target === scrimRef.current && !layer.isTop(true);
-    }
-    window.addEventListener('pointerdown', onPress, true);
-    return () => window.removeEventListener('pointerdown', onPress, true);
-  }, [open, isModal, layer]);
-
-  // Modal: focus never rests on <body> behind the panel. A focused
-  // control that unmounts or turns disabled (a busy submit, a removed
-  // chip) drops focus there, where Tab would walk the page behind the
-  // scrim and page listeners would take keys meant for the panel. A
-  // focusout with nowhere to go is checked a tick later (after a host's
-  // own focus move, or a picker handing focus back to its trigger) and,
-  // if focus is still on <body> and no layer sits over the panel, the
-  // panel takes it; a Tab pressed from <body> moves into the panel.
-  useEffect(() => {
-    const panel = panelRef.current;
-    if (!open || !isModal || panel === null) return undefined;
-    const target: HTMLElement = panel;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    function focusLost(): boolean {
-      const active = document.activeElement;
-      return (
-        active === null ||
-        active === document.body ||
-        active === document.documentElement
-      );
-    }
-    function onFocusOut(event: FocusEvent): void {
-      if (event.relatedTarget !== null) return;
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        if (focusLost() && target.isConnected && layer.isTop(true)) {
-          target.focus({ preventScroll: true });
-        }
-      }, 0);
-    }
-    function onTab(event: KeyboardEvent): void {
-      if (event.key !== 'Tab' || event.defaultPrevented) return;
-      if (!focusLost() || !layer.isTop(true)) return;
-      trapTab(event, target);
-      event.stopPropagation();
-    }
-    target.addEventListener('focusout', onFocusOut);
-    document.addEventListener('keydown', onTab, true);
-    return () => {
-      clearTimeout(timer);
-      target.removeEventListener('focusout', onFocusOut);
-      document.removeEventListener('keydown', onTab, true);
-    };
-  }, [open, isModal, layer]);
 
   useEffect(() => {
     const previous = shownKey.current;
@@ -214,13 +144,7 @@ export default function SlideOver(props: SlideOverProps): ReactNode {
           className={styles.scrim}
           data-state={closing ? 'closing' : 'open'}
           aria-hidden="true"
-          // A press on the scrim must not move focus out of the panel.
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => {
-            const covered = scrimPressCovered.current;
-            scrimPressCovered.current = false;
-            if (!covered) onClose();
-          }}
+          {...surface.scrimProps}
         />
       ) : null}
       <div
@@ -238,26 +162,7 @@ export default function SlideOver(props: SlideOverProps): ReactNode {
         data-state={closing ? 'closing' : 'open'}
         data-modal={isModal ? 'true' : undefined}
         data-size={size}
-        onKeyDown={(event) => {
-          if (isModal && event.key === 'Escape') {
-            // Something focused inside (a field cancelling its edit, an
-            // open picker) took it first.
-            if (event.nativeEvent.isComposing || event.defaultPrevented) {
-              return;
-            }
-            // Stopped here, so a non-modal SlideOver underneath (whose
-            // document listener came first) and the host's shortcuts
-            // never see it.
-            event.preventDefault();
-            event.stopPropagation();
-            onClose();
-            return;
-          }
-          if (panelRef.current === null) return;
-          trapTab(event, panelRef.current);
-          // A slide-over around this modal one traps Tab too: one trap.
-          if (isModal && event.key === 'Tab') event.stopPropagation();
-        }}
+        onKeyDown={surface.onKeyDown}
         onAnimationEnd={(event) => {
           if (closing && event.target === event.currentTarget)
             setPresent(false);

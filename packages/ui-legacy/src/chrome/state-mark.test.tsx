@@ -1,6 +1,7 @@
 import { render } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
+import { feedTier } from '../lib/feedState';
 import { StateMark } from './state-mark';
 
 const STATES = [
@@ -32,16 +33,30 @@ test('every state renders a distinct glyph', () => {
   expect(seen.size).toBe(STATES.length);
 });
 
-// Marks are still, like Linear's status icons: no state pulses, even when a
-// caller still asks for it, and every mark is the fixed 14px glyph.
-test('no state pulses and every mark is 14px', () => {
+// Only in-flight (machine-tier) states pulse, and only when asked — T3 Code's working
+// dot. Every mark stays the fixed 14px glyph.
+test('only in-flight states pulse and every mark is 14px', () => {
   for (const state of STATES) {
     const { container } = render(<StateMark state={state} pulse size="md" />);
-    expect(container.innerHTML).not.toContain('animate-pulse');
     const glyph = container.firstElementChild as SVGElement;
+    const pulses = (glyph.getAttribute('class') ?? '').includes(
+      'animate-status-pulse'
+    );
+    expect(pulses).toBe(feedTier(state) === 'machine');
     expect(glyph.getAttribute('class')).toContain('size-3.5');
     expect(glyph.getAttribute('stroke-width')).toBe('1.75');
   }
+  const { container: still } = render(<StateMark state="working" />);
+  expect(still.innerHTML).not.toContain('animate-status-pulse');
+});
+
+// The dot variant is a 9px disc in the tier hue.
+test('the dot variant is a 9px tier-coloured disc', () => {
+  const { container } = render(<StateMark state="failed" variant="dot" />);
+  const dot = container.firstElementChild as HTMLElement;
+  expect(dot.getAttribute('data-slot')).toBe('state-dot');
+  expect(dot.className).toContain('size-[9px]');
+  expect(dot.className).toContain('bg-state-failed');
 });
 
 // Every state is its own lucide glyph — not one shape recoloured — so the marks

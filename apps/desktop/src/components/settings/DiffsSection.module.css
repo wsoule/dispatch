@@ -1,0 +1,16 @@
+/* Diff display: the appearance selects, and the preview's fixed-height frame (the diff
+   surface inside is its own scroller, so the page never grows by the sample's length). */
+.select {
+  width: 120px;
+}
+
+.preview {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 288px;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}

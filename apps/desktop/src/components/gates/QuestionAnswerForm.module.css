@@ -1,0 +1,30 @@
+/* The free-text answer box (QuestionAnswerForm.tsx): a label over a field and its buttons. */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.label {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.error {
+  font-size: var(--fs-xs);
+  color: var(--red);
+  overflow-wrap: anywhere;
+}

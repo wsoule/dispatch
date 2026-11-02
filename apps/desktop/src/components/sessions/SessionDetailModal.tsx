@@ -110,6 +110,11 @@ export function SessionDetailModal({
       <DialogContent
         showCloseButton={false}
         className="max-h-[85vh] sm:max-w-2xl"
+        // Base UI never marks its modal dialogs. Opened from the Usage page inside Settings
+        // (a modal layer of @dispatch/ui's overlay stack), this one must read as a modal
+        // surface outside that stack, or the stack would take its Escape and close Settings
+        // under it. Only while open, so the exit animation no longer mutes shortcuts.
+        aria-modal={sessionId !== null ? true : undefined}
       >
         <ErrorBoundary label="this dialog">
           <DialogChrome>Sessions › Session</DialogChrome>

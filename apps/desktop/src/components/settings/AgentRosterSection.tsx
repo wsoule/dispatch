@@ -1,4 +1,12 @@
 import type { AgentStatus, AgentSummary, ApiClient } from '@dispatch/client';
+import type { ChipTone } from '@dispatch/ui';
+import {
+  Button,
+  Chip,
+  ConfirmDialog,
+  InitialsAvatar,
+  Tooltip,
+} from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ban, Bell, BellOff, Check } from 'lucide-react';
 import type { ReactElement } from 'react';
@@ -13,44 +21,24 @@ import {
   sortRoster,
 } from '../../lib/agentRoster';
 import { isInsufficientTier } from '../../lib/daemonAuth';
+import { formatShortDate } from '../../lib/taskDates';
 import { useSettingsAccess } from './access';
+import styles from './AgentRosterSection.module.css';
 import { SettingsSearchable } from './search';
+import shared from './settings.module.css';
 import { SettingsGroup, SettingsRow } from './SettingsGroup';
-import { IconButton } from '@/ui/ai/icon-button';
-import { InitialsAvatar } from '@/ui/ai/initials-avatar';
-import { LabelPill, Pill } from '@/ui/ai/pill';
-import type { RecordsColumn } from '@/ui/ai/records-table';
-import { RecordsTable } from '@/ui/ai/records-table';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/ui/alert-dialog';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 interface AgentRosterSectionProps {
   data: DispatchProjectData;
 }
 
-const STATUS_PILL: Record<AgentStatus, { label: string; color: string }> = {
-  pending: { label: 'Pending', color: 'var(--state-waiting-fg)' },
-  approved: { label: 'Approved', color: 'var(--state-review-fg)' },
-  revoked: { label: 'Revoked', color: 'var(--state-failed-fg)' },
+const STATUS_PILL: Record<AgentStatus, { label: string; tone: ChipTone }> = {
+  pending: { label: 'Pending', tone: 'warning' },
+  approved: { label: 'Approved', tone: 'success' },
+  revoked: { label: 'Revoked', tone: 'danger' },
 };
 
-const COLUMNS: RecordsColumn[] = [
-  { key: 'address', label: 'Address' },
-  { key: 'client', label: 'Client', slot: 'title' },
-  { key: 'status', label: 'Status' },
-  { key: 'approvedBy', label: 'Approved by' },
-  { key: 'actions', label: 'Actions' },
-  { key: 'createdAt', label: 'Added', kind: 'time' },
-];
+const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
 
 function muteLabel(agent: AgentSummary): string {
   return `${agent.muted ? 'Unmute' : 'Mute'} ${agent.address}`;
@@ -73,13 +61,15 @@ function RosterAction({
   onClick: () => void;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger render={<span className="inline-flex" />}>
-        <IconButton label={label} disabled={disabled} onClick={onClick}>
-          {icon}
-        </IconButton>
-      </TooltipTrigger>
-      <TooltipContent className="max-w-64">{hint}</TooltipContent>
+    <Tooltip content={hint}>
+      <Button
+        variant="quiet"
+        size="sm"
+        icon={icon}
+        aria-label={label}
+        disabled={disabled}
+        onClick={onClick}
+      />
     </Tooltip>
   );
 }
@@ -201,58 +191,49 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
   }, [refocus, roster.data, busy]);
 
   const agents = sortRoster(roster.data?.agents ?? []);
-  const byAddress = new Map(agents.map((a) => [a.address, a]));
-
-  const renderCell = (
-    row: { id: string },
-    column: RecordsColumn
-  ): ReactElement | null | undefined => {
-    const agent = byAddress.get(row.id);
-    if (agent === undefined) return undefined;
-    switch (column.key) {
-      case 'client':
-        return (
-          <span className="font-book text-muted-foreground ml-1.5 inline-flex items-center gap-1.5">
+  // One roster row: address and client, status, approver, actions and the date added.
+  function rosterRow(agent: AgentSummary): ReactElement {
+    const pill = STATUS_PILL[agent.status];
+    const who = agent.approvedBy === null ? null : handleOf(agent.approvedBy);
+    return (
+      <div key={agent.address} role="row" className={styles.row}>
+        <span role="cell" className={styles.title} data-roster-title="">
+          <span className={styles.address}>{agent.address}</span>
+          <span className={styles.client}>
             {agent.client}
             {typeof agent.remote === 'string' && (
-              <Pill>{`remote: ${agent.remote}`}</Pill>
+              <Chip>{`remote: ${agent.remote}`}</Chip>
             )}
           </span>
-        );
-      case 'status': {
-        const pill = STATUS_PILL[agent.status];
-        return (
-          <span className="flex items-center justify-end gap-1.5">
-            {agent.muted && (
-              <Pill>
-                <BellOff aria-hidden />
-                Muted
-              </Pill>
-            )}
-            <LabelPill color={pill.color}>{pill.label}</LabelPill>
-          </span>
-        );
-      }
-      case 'approvedBy': {
-        // An empty slot of the avatar's size keeps the columns aligned.
-        if (agent.approvedBy === null) {
-          return <span aria-hidden className="size-[18px]" />;
-        }
-        const who = handleOf(agent.approvedBy);
-        return (
-          <InitialsAvatar
-            name={who}
-            aria-label={`Approved by ${who}`}
-            title={`Approved by ${who}`}
-          />
-        );
-      }
-      case 'actions':
-        return rosterRowActions(agent);
-      default:
-        return undefined;
-    }
-  };
+        </span>
+        <span role="cell" className={styles.status}>
+          {agent.muted && (
+            <Chip tone="muted">
+              <BellOff size={12} strokeWidth={1.8} aria-hidden />
+              Muted
+            </Chip>
+          )}
+          <Chip tone={pill.tone}>{pill.label}</Chip>
+        </span>
+        <span role="cell" className={styles.approver}>
+          {/* An empty slot of the avatar's size keeps the columns aligned. */}
+          {who !== null && (
+            <span
+              role="img"
+              aria-label={`Approved by ${who}`}
+              title={`Approved by ${who}`}
+            >
+              <InitialsAvatar name={who} />
+            </span>
+          )}
+        </span>
+        <span role="cell">{rosterRowActions(agent)}</span>
+        <span role="cell" className={styles.date}>
+          {formatShortDate(agent.createdAt)}
+        </span>
+      </div>
+    );
+  }
 
   // The row's buttons, right-aligned in a fixed-width cell so mute and revoke
   // line up down the table whether or not approve is there.
@@ -264,12 +245,12 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
     const disabled = !canDecide || busy.has(agent.address);
     const hint = (label: string) => (canDecide ? label : decideReason);
     return (
-      <span className="flex w-[92px] items-center justify-end gap-0.5">
+      <span className={styles.actions}>
         {offered.approve && (
           <RosterAction
             label={`Approve ${agent.address}`}
             hint={hint('Approve')}
-            icon={<Check aria-hidden />}
+            icon={<Check {...ICON} />}
             disabled={disabled}
             onClick={() =>
               void act(agent.address, (api) => api.approveAgent(agent.address))
@@ -280,7 +261,7 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
           <RosterAction
             label={muteLabel(agent)}
             hint={hint(agent.muted ? 'Unmute' : 'Mute')}
-            icon={agent.muted ? <Bell aria-hidden /> : <BellOff aria-hidden />}
+            icon={agent.muted ? <Bell {...ICON} /> : <BellOff {...ICON} />}
             disabled={disabled}
             onClick={() =>
               void act(agent.address, (api) =>
@@ -293,7 +274,7 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
           <RosterAction
             label={`Revoke ${agent.address}`}
             hint={hint('Revoke')}
-            icon={<Ban aria-hidden />}
+            icon={<Ban {...ICON} />}
             disabled={disabled}
             onClick={() => setConfirming(agent)}
           />
@@ -338,7 +319,7 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
             subtitle={
               <>
                 An agent outside Dispatch shows up here once it connects with{' '}
-                <code className="font-mono">dispatch mcp</code>.
+                <code className="mono">dispatch mcp</code>.
               </>
             }
           />
@@ -349,56 +330,37 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
               role="group"
               aria-label="Agents"
               tabIndex={-1}
-              className="p-1 outline-none"
+              className={styles.roster}
             >
-              <RecordsTable
-                columns={COLUMNS}
-                rows={agents.map((a) => ({
-                  id: a.address,
-                  cells: { address: a.address, createdAt: a.createdAt },
-                }))}
-                sort={null}
-                renderCell={renderCell}
-              />
+              <div role="table" aria-label="Connected agents">
+                {agents.map(rosterRow)}
+              </div>
             </div>
           </SettingsSearchable>
         )}
         {error !== null && (
-          <p
-            role="alert"
-            className="text-state-failed font-book px-3 pb-2.5 text-[12px]"
-          >
+          <p role="alert" className={`${shared.error} ${styles.error}`}>
             {error}
           </p>
         )}
       </SettingsGroup>
 
-      {confirming !== null && (
-        <AlertDialog open onOpenChange={(open) => !open && setConfirming(null)}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Revoke {confirming.address}?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Its token stops working at once. Messages it already sent stay
-                readable. To come back it has to register again, and someone has
-                to approve it.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel variant="ghost">Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                variant="destructive"
-                onClick={() => {
-                  const { address } = confirming;
-                  void act(address, (api) => api.revokeAgent(address));
-                }}
-              >
-                Revoke
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      )}
+      <ConfirmDialog
+        open={confirming !== null}
+        title={`Revoke ${confirming?.address ?? ''}?`}
+        confirmLabel="Revoke"
+        tone="danger"
+        onCancel={() => setConfirming(null)}
+        onConfirm={() => {
+          if (confirming === null) return;
+          const { address } = confirming;
+          setConfirming(null);
+          void act(address, (api) => api.revokeAgent(address));
+        }}
+      >
+        Its token stops working at once. Messages it already sent stay readable.
+        To come back it has to register again, and someone has to approve it.
+      </ConfirmDialog>
     </>
   );
 }

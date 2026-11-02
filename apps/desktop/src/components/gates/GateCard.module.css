@@ -1,0 +1,18 @@
+/* A message's answer affordance (GateCard.tsx): quiet notes and rows of choice buttons. */
+.note {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}

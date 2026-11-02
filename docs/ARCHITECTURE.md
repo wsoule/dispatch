@@ -75,6 +75,14 @@ team-server work has to cross.
 | `notes.json`      | Triage notes and follow-ups                                 |
 | `inbox/`          | Per-actor inbox (per-actor files, so merges don't collide)  |
 
+`config.yml` is hand-written and reviewed, so Settings (`PATCH /api/config`,
+core's `updateConfig`) edits it in place. Only the keys a save names change:
+comments, key order and keys Dispatch does not know stay as they are, a long
+line is not wrapped and CRLF line ends are kept. One thing the YAML library
+rewrites anywhere in the file: an inline list or map comes back padded (`[a, b]`
+as `[ a, b ]`, `{a: 1}` as `{ a: 1 }`), the style this repo's own config.yml
+already uses. The loader checks the whole patched file before it is written.
+
 **Outside the repo, machine-local, never committed** —
 `$DISPATCH_HOME/.dispatch/runs/<sha256(rootDir)[:12]>/`:
 
@@ -249,6 +257,25 @@ person configured for their own interactive Codex in `~/.codex/config.toml` are
 switched off for every dispatched run (a system entry names them); the run gets
 only Dispatch's own server and carto.
 
+Any other agent that is a command-line program runs on `CliExecutor`
+(`executors/cli.ts`): the presets in `executors/cliPresets.ts` whose binary is
+on PATH, and every `executors.<name>.command` in config.yml. It has no approval
+protocol (a gated `permissionMode` is refused, and the transcript opens by
+saying nothing holds a floor command), no cost, turns or resume, and takes no
+mid-run message. Its stdout lands as `assistant` entries one read at a time,
+each marked `chunk: true` because a read ends wherever the pipe had data, often
+mid-line or inside a code block; its stderr lands as `system` entries. The
+desktop's run chat (`groupLogEntries` in `apps/desktop/src/lib/runLog.ts`) joins
+consecutive chunks into one text in the first one's place before rendering it as
+Markdown, so a code block or a list cut between reads renders whole; each chunk
+keeps its own entry, and run.log's `index`, in the transcript. A stderr line or
+a tool row between two reads starts a new text, and a transcript logged before
+the marker existed renders chunk by chunk as before. That text grows with every
+read while the run is live, so the live row draws it one Markdown block at a
+time (`StreamingText`'s `blocks`, split by `splitSettledMarkdown` in
+`packages/ui`): a read re-parses the block still open, and each finished one is
+parsed once. The finished run's row is one Markdown again.
+
 Notable modules:
 
 | Module                                         | Lines | Role                                                                   |
@@ -266,13 +293,41 @@ Notable modules:
 | `milestone.ts`/`milestoneBranch.ts`            | —     | Milestone sessions, progress, and their branches                       |
 | `repoDigest.ts`/`orientation.ts`/`hotspots.ts` | —     | Repo context handed to agents                                          |
 
+### Overseer records
+
+Every `/api/overseer` route that answers with a conversation sends it through
+`OverseerManager.view`, which adds to the stored record what the daemon knows
+beside it and never stores: `live` while a turn runs (see
+[Live text](#live-text-narration-and-tool-results)), `contextLimit` and
+`revoked`. `contextLimit` is `ROLLOVER_TOKENS` (150,000): once the record's
+`contextTokens` reaches it, the next turn starts a fresh session from a recap of
+the latest lines, behind a divider, and the old session's grants end. The
+desktop's status line shows the share as "62% context". `revoked` says the
+daemon's Overseer agent is not approved, the same check that refuses a turn with
+409 `overseer_revoked`. Approving or revoking that agent's own row broadcasts
+`overseer.changed` for every conversation, so each window refetches the record
+it shows and shows the agent off, or back on, without a send of its own refused
+first. The session (`useOverseerSession`) takes whichever came last: a record
+that landed, a send refused as revoked (which refetches the open record) or a
+send that worked. Only an open conversation's record can say the agent is back,
+so the desktop locks the composers on `revoked` only while a conversation is
+open (`revokedLocksComposer`); with none open, the banner shows after a refused
+send and the next send decides.
+
+The session holds the Overseer page's unsent message (its draft and attached
+files), and `submit` sends and clears it. Another surface with a composer of its
+own, a Threads reply or the "say something" box in Tasks, sends with `reply`,
+which opens the conversation when none is open, takes that surface's own files
+(uploaded with `upload`), rejects on failure and leaves the page's message
+alone.
+
 ## Live text, narration and tool results
 
 The Overseer chat and a task run's chat show an agent at work, not only what it
 settled on. Three pieces do that: **live text** (the words of a running turn,
 streamed and never stored), **narration** (the Overseer's prose between tool
-calls, stored as rows) and **tool results** (how each of a run's tool calls
-ended, stored as entries).
+calls, stored as rows) and **tool results** (how each tool call ended: a run's
+stored as entries, the Overseer's as a status on its tool row).
 
 **Segments.** Live text is cut into segments: one Claude text block, or one
 Codex `agentMessage` item. A Claude segment is `<apiMessageId>:<blockIndex>`,
@@ -301,11 +356,12 @@ Overseer turn never keeps it as narration, and a frame with `abandoned: true`
 and empty `text` tells clients to drop it rather than show it for the rest of
 the turn.
 
-**Snapshot.** `GET /api/overseer/:id`, `GET /api/overseer/current` and
-`GET /api/runs/:id` add `live: { seq, turnId, segments }` while a turn runs, so
-a window that opens or reconnects mid-turn starts from what was already written.
-Mutation responses may omit it; the stored record and the run transcript never
-hold it. The buffer is `packages/server/src/liveText.ts`, in memory only.
+**Snapshot.** Every Overseer route that answers with a record (see
+[Overseer records](#overseer-records)) and `GET /api/runs/:id` add
+`live: { seq, turnId, segments }` while a turn runs, so a window that opens or
+reconnects mid-turn starts from what was already written. The stored record and
+the run transcript never hold it. The buffer is
+`packages/server/src/liveText.ts`, in memory only.
 
 **Gap repair.** The client folds frames in `packages/client/src/liveText.ts`, a
 pure reducer behind one store per window, keyed by port and
@@ -326,6 +382,17 @@ so a run opened later starts from its detail's snapshot. A run's segment leaves
 the store when the `run.log` entry naming it arrives, and the run's key goes
 once a fetched detail shows the run ended.
 
+**View updates.** The client store applies each frame as it lands, so a read
+(`get`, the snapshot `useSyncExternalStore` takes) is always current, but it
+tells its views at most once per animation frame, or on the next macrotask where
+the host paints none. A turn sends a frame every few tokens, each in a websocket
+message of its own, and the Overseer's live text is read at the desktop's App
+root (`useOverseerSession`), so telling the views of every frame re-rendered the
+whole app per delta; a burst now renders once per painted frame. A hidden window
+paints no frames, so its views catch up on the first one it paints.
+`LiveTextStore` takes its scheduler as a constructor argument, and its `flush()`
+tells the views at once, so a test decides when frames happen.
+
 **Run log order.** A `run.log` frame carries `index`, its entry's place among
 the run's transcript entries, the same position `GET /api/runs/:id` lists it at.
 The desktop appends a frame that continues its cached detail, ignores one it
@@ -345,13 +412,65 @@ conversation's live audience (`overseerLiveAudience` in
 `decide` tier or above, the reach the bus mirror of the conversation's lines
 already has through `messageAudience` in `messaging/service.ts`), the
 conversation's owner at any tier, and operator-tier sockets. Never a socket
-opened with the shared agent token. `run.delta` goes to exactly the sockets
-`run.log` reaches, which today is every socket; that is parity on purpose, and
-scoping both is separate work.
+opened with the shared agent token.
+
+**Run audience (decided 2026-10-26).** A run's transcript entry for a bus
+message (`kind: 'message'` with a `messageId`: a message delivered to the run, a
+channel digest, the run's own message to a person) follows that message's
+audience. Its `run.log` frame reaches the sockets `messageAudience` accepts
+whole and every other socket as
+`{ ts, kind: 'message', messageId, redacted: true }` at the same `index`, so
+every window counts the same entries. `GET /api/runs/:id` redacts the same way
+by caller, under the bus's read rule (`DeliveryEngine.canRead`): a run's own
+token reads as that run (the messages delivered to it and its own), the shared
+agent token reads none, and a person reads the messages they take part in, or
+every one at the `decide` tier. Every other entry (the agent's own work, the
+Session composer's turns, a daemon notice from docs or memory, which carries no
+`messageId`) and `run.delta`, the agent's own text as it writes it, reach every
+socket and every request-tier caller: run detail already returns the agent's
+entries to all of them once they are written. So a Dispatch tool call that
+writes text kept for fewer readers loses that text before the daemon writes any
+executor's entry (`withoutScopedText` in `orchestrator/types.ts`, under Claude's
+`mcp__dispatch__<tool>` and Codex's `mcp.dispatch.<tool>` names): the executor
+logs the call as it starts, before anything says where the text went, so the
+entry has no id to redact it by. `GET /api/runs/:id` applies the same rule again
+as it reads, so a transcript an older daemon wrote, with those inputs whole,
+serves them as a new one does. `msg_send` / `msg_reply`, the only way a run
+reaches anyone, keep where the message went (`to`, `kind`, `messageId`,
+`blocking`, `urgent`, `wake`); the text reaches a reader through the message's
+own entry, and a message to another agent, which gets none on the sender's
+transcript, through the bus thread. `doc_save` keeps `doc`, `slug`, `scope`,
+`baseRev`, `links` and each op's kind, not its body, title or op text: a
+personal doc is its owner's, a run's edit to an accepted team doc is a proposal
+for deciders and the run's operator, the docs routes refuse the shared agent
+token, and a `doc-…` ref does not say which applies. `memory_save` keeps
+`scope`, `kind`, `refs`, `milestone`, `appliesTo`, `supersedes` and
+`projectOnly`, not its title (the lesson itself) or body, for the same reasons,
+and `memory_forget` keeps the memory's `id`, not the reason. A Claude run's
+`Write`, `Edit`, `MultiEdit` or `NotebookEdit` call on a file inside a Claude
+memory export (`claudeMemoryRoot`, where export mode has the run save memories
+as usual) keeps only its `file_path` (`notebook_path`): Dispatch keeps a file
+written there as the operator's personal memory, and an edit's old text is one
+already exported to them. Every other tool's input stays whole: ids and queries,
+or text every transcript reader may already read (a task, a task comment, an
+inbox item, evidence, a file in the run's worktree) or that leaves Dispatch (a
+Linear comment). Redaction of message entries happens on the way out; the stored
+transcript keeps them whole, and the daemon's own readers (review summaries,
+judgments, memory) read it as stored. The two sides reuse the bus's own two
+rules, so a run's chat shows a message where the bus does, and they differ at
+the edges as the bus's do: the socket rule also counts a message's `to`
+addresses and its recipients on a teammate's machine, and the read rule lets a
+run's token read for its whole task (its task's address and other runs). The
+desktop, `dispatch run show`, `--watch`, `run watch` and `dispatch share` show
+nothing for a redacted entry, and the CLI, which uses the shared agent token,
+gets every bus message's entry redacted.
 
 **Switches.** Two `.dispatch/config.yml` blocks, read when a turn or a run
-starts. They are rollback switches, so both default to `live`; YAML `true` and
-`false` read as `live` and `off`. Neither is in Settings yet.
+starts, so a change applies from the Overseer's next turn and to runs started
+after it. They are rollback switches, so both default to `live`; YAML `true` and
+`false` read as `live` and `off`. Settings → Agents → Streaming sets them
+through `PATCH /api/config` (`overseer: { stream }`, `runs: { stream }`; `null`
+removes the key), at the decide tier every config save needs.
 
 ```yaml
 overseer:
@@ -386,26 +505,49 @@ those rows, so a newer daemon is safe with it.
 **Run tool results.** A run's transcript is append-only, so a tool call's
 outcome is an entry of its own. The Claude executor logs each top-level
 `tool_result` for a call the agent itself made as a `tool` entry with the call's
-`toolUseId`, no `toolName`, `status` `done` or `error`, and no output: the
-transcript and its run.log frames reach every request-tier client, and a result
+`toolUseId`, no `toolName`, `status` `done` or `error`, and no output: tool
+entries and their run.log frames reach every request-tier client, and a result
 can carry what the call read (the operator's exported memory, a personal doc, an
-MCP answer). Showing output means scoping run.log first. A sub-agent's results
-are not logged. The Codex executor logs a tool item when it starts and again
-when it completes, both under the item id. The desktop folds each result into
-its call by `toolUseId` (`lib/runLog.ts`), so a chip ends done or failed. In a
-log that reports results, a call shows as running until its result lands; for an
-older daemon, a scripted run, or a sub-agent's call, only the live edge does.
+MCP answer). Showing output means scoping tool entries the way message entries
+are. A sub-agent's results are not logged. The Codex executor logs a tool item
+when it starts and again when it completes, both under the item id. A completed
+command keeps its output, cut at `MAX_TOOL_RESULT_TEXT` characters with
+`… (truncated)` as an Overseer tool row is, because the run chat has always
+shown a Codex command's output. The desktop folds each result into its call by
+`toolUseId` (`lib/runLog.ts`), so a chip ends done or failed. In a log that
+reports results, a call shows as running until its result lands; for an older
+daemon, a scripted run, or a sub-agent's call, only the live edge does.
 `dispatch run show` folds each result into its call's line (✓ or ✗);
 `dispatch run --watch` and `run watch` skip result entries, since the call's own
 line already printed.
 
+**Overseer tool status.** An Overseer `tool` row carries a `status` (`running`,
+`done` or `error`) and, for a built-in call, the backend's id for it as
+`toolUseId` (Claude's tool_use id, Codex's item id); never the call's output, by
+the same rule as a run's results. A built-in call the backend reports with an id
+(`onToolUse`) lands `running`, and `onToolResult` settles that row in place, in
+one `overseer.changed`: Claude reports each top-level `tool_result` for a call
+it reported (`is_error` is an error), Codex a tool item's `item/completed`
+status (`failed` or `declined` is an error). A registry call's row lands `done`
+or `error` once the call ran. A row still `running` when its turn ends (a Stop,
+a failed turn, a result that never came) is settled `done` in the update that
+ends the turn, and at boot for a turn the daemon died in: `done` there says the
+call is over, not that it worked, and a result that comes later changes nothing.
+One turn runs at a time, so a `running` row is always the running turn's. The
+desktop shows a `running` row without its shimmer, as a plain chip, on a record
+that is not `running` and while the turn is parked on an approval, which waits
+on the human as the card above it says. Rows from before `status` keep the old
+reading, failed when the text starts with `error:`.
+
 **Rendering.** Both chats render live text through `StreamingText`
 (`packages/ui`) with the app's Markdown: text that grows continues its reveal
 from where it was, text that arrives whole shows at once, and a code fence still
-open at the end is closed for display. Overseer narration renders as the agent's
-prose, quieter than the reply, and live segments take the place of the "working"
-row while there is text. Both chats use one approval card (`ToolApprovalCard`),
-whose Deny takes an optional reason that reaches the model.
+open at the end is closed for display. A CLI agent's joined output, which grows
+for the whole run, is drawn a block at a time (see `CliExecutor` above).
+Overseer narration renders as the agent's prose, quieter than the reply, and
+live segments take the place of the "working" row while there is text. Both
+chats use one approval card (`ToolApprovalCard`), whose Deny takes an optional
+reason that reaches the model.
 
 ## Messaging
 
@@ -424,7 +566,12 @@ Agents, runs and people talk over one persistent bus
   once, before its answer is published.
 - **Gates** are blocking questions to a human carrying typed `data`
   (`tool-approval`, `scope`, `wake`, `agent-registration`, `overseer-action`).
-  Only a human at the decide tier can answer one.
+  Only a human at the decide tier can answer one. An Overseer gate waits on
+  state the daemon holds in memory (a parked tool call, a queued action), so the
+  boot sweep closes it, and the Overseer's records drop what it asked about: a
+  parked call leaves `pendingApprovals` when its turn loads as restarted, and a
+  queued action leaves `pendingActions` with a denied row, the model told on its
+  next turn, so no card asks about something nothing can decide.
 - **Tables** (`messages.db`, machine-local): `messages`, `recipients`,
   `deliveries` (one per resolved recipient, each with its own state),
   `channels`, `members`, `agents`, `gate_effects`.

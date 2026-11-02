@@ -10,6 +10,7 @@ import { CalendarCheck, ChartGantt } from 'lucide-react';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { Popover } from '../src/edit/popover';
 import AppShell, { toggleShellCollapsed } from '../src/shell/app-shell';
 import { CommandPaletteProvider } from '../src/shell/command-palette';
 import type { AppShellProps } from '../src/shell/types';
@@ -351,6 +352,43 @@ describe('AppShell', () => {
     expect(collapseButton().getAttribute('aria-label')).toBe(
       'Collapse sidebar'
     );
+  });
+
+  // An open Popover is a popup like a picker or a menu (data-picker-popup):
+  // the shell's "[" and the palette's keys stand down for keys pressed in it.
+  test('"[" and Ctrl+K pressed inside an open Popover leave the shell alone', () => {
+    render(
+      <CommandPaletteProvider>
+        <AppShell {...PROPS}>
+          <Popover
+            open
+            onOpenChange={() => undefined}
+            label="Display options"
+            trigger={<button type="button">Display</button>}
+          >
+            <button type="button">Show done</button>
+          </Popover>
+        </AppShell>
+      </CommandPaletteProvider>
+    );
+    const inside = screen.getByRole('button', { name: 'Show done' });
+    expect(
+      screen
+        .getByRole('dialog', { name: 'Display options' })
+        .hasAttribute('data-picker-popup')
+    ).toBe(true);
+    fireEvent.keyDown(inside, { key: '[' });
+    expect(localStorage.getItem(KEY)).toBeNull();
+    expect(collapseButton().getAttribute('aria-label')).toBe(
+      'Collapse sidebar'
+    );
+    fireEvent.keyDown(inside, { key: 'k', ctrlKey: true });
+    expect(
+      screen.queryByRole('dialog', { name: 'Command palette' })
+    ).toBeNull();
+    // From the page, both still work.
+    fireEvent.keyDown(document.body, { key: '[' });
+    expect(localStorage.getItem(KEY)).toBe('1');
   });
 
   test('tolerates storage that throws', () => {

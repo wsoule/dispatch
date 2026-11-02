@@ -9,6 +9,7 @@ import {
   useState,
 } from 'react';
 
+import { fitHeight } from '../lib/fit-height';
 import { cx } from '../tasks/class-names';
 import styles from './inline-text-field.module.css';
 import { useSaveControl } from './save-state';
@@ -22,16 +23,6 @@ const useClientLayoutEffect =
 /** One line of text: pasted line breaks become spaces. */
 function singleLine(text: string): string {
   return text.replace(/\s*[\r\n]+\s*/g, ' ');
-}
-
-/** Grows a textarea to its content (where CSS field-sizing cannot).
-    scrollHeight is content + padding, but the box is border-box, so the
-    borders are added back: without them the editor came out 2px shorter
-    than the text it replaces and everything below moved up on open. */
-function fitHeight(el: HTMLTextAreaElement): void {
-  el.style.height = 'auto';
-  const borders = el.offsetHeight - el.clientHeight;
-  el.style.height = `${el.scrollHeight + borders}px`;
 }
 
 /**

@@ -8,9 +8,10 @@ import { join } from 'node:path';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import { FakeExecutor } from '../src/orchestrator/executors/fake.js';
-import type {
-  OverseerAttachment,
-  OverseerRecord,
+import {
+  type OverseerAttachment,
+  type OverseerRecord,
+  ROLLOVER_TOKENS,
 } from '../src/orchestrator/overseer.js';
 import type {
   OverseerBackend,
@@ -156,6 +157,39 @@ describe('POST /api/overseer and GET /api/overseer/:id', () => {
         text: 'Nothing is running.',
       })
     );
+  });
+
+  // The desktop's context meter reads how full the context may get from the
+  // daemon, so every route that answers a record names the threshold.
+  it('names the rollover threshold on every record it answers with', async () => {
+    await startWithOverseer(new FakeOverseer({ ok: true, reply: 'quiet' }));
+    const { record } = await startConversation();
+    expect(record).toMatchObject({ contextLimit: ROLLOVER_TOKENS });
+    await settled(record.id);
+    const answers = [
+      await fetch(`${baseUrl}/api/overseer/${record.id}`),
+      await fetch(`${baseUrl}/api/overseer/${record.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ effort: null }),
+      }),
+      await fetch(`${baseUrl}/api/overseer/${record.id}/stop`, {
+        method: 'POST',
+      }),
+      await fetch(`${baseUrl}/api/overseer/${record.id}/message`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'and now?' }),
+      }),
+    ];
+    for (const res of answers) {
+      expect(res.ok).toBe(true);
+      expect(await json(res)).toMatchObject({ contextLimit: ROLLOVER_TOKENS });
+    }
+    const { conversation } = (await json(
+      await fetch(`${baseUrl}/api/overseer/current`)
+    )) as { conversation: unknown };
+    expect(conversation).toMatchObject({ contextLimit: ROLLOVER_TOKENS });
   });
 
   it('400s an empty prompt and an unregistered backend', async () => {
@@ -951,6 +985,52 @@ describe('a revoked overseer', () => {
     expect(
       (await openGates()).filter((m) => gateType(m) === 'agent-registration')
     ).toEqual([]);
+  });
+
+  // A client learns the Overseer is off from the record itself, not from a
+  // send it refused, and hears of the change when it happens.
+  it('says so on its records and announces each change', async () => {
+    await startWithOverseer(new FakeOverseer({ ok: true, reply: 'all quiet' }));
+    const { ref } = (await json(await fetch(`${baseUrl}/api/whoami`))) as {
+      ref: string;
+    };
+    const overseer = encodeURIComponent(
+      `agent:${ref.slice('human:'.length)}/overseer`
+    );
+    const { record } = await startConversation();
+    expect(record).toMatchObject({ revoked: false });
+    await settled(record.id);
+
+    const ws = new WebSocket(wsUrl(handle));
+    const changes: string[] = [];
+    ws.addEventListener('message', (ev) => {
+      const frame = JSON.parse(ev.data as string) as {
+        type: string;
+        conversationId?: string;
+      };
+      if (frame.type === 'overseer.changed') {
+        changes.push(frame.conversationId ?? '');
+      }
+    });
+    await new Promise<void>((resolve) =>
+      ws.addEventListener('open', () => resolve())
+    );
+
+    await fetch(`${baseUrl}/api/agents/${overseer}/revoke`, { method: 'POST' });
+    await waitFor(() => Promise.resolve(changes.length === 1));
+    expect(changes).toEqual([record.id]);
+    expect(await getRecord(record.id)).toMatchObject({ revoked: true });
+    const { conversation } = (await json(
+      await fetch(`${baseUrl}/api/overseer/current`)
+    )) as { conversation: unknown };
+    expect(conversation).toMatchObject({ revoked: true });
+
+    await fetch(`${baseUrl}/api/agents/${overseer}/approve`, {
+      method: 'POST',
+    });
+    await waitFor(() => Promise.resolve(changes.length === 2));
+    expect(await getRecord(record.id)).toMatchObject({ revoked: false });
+    ws.close();
   });
 
   it('comes back on when a human approves its revoked row', async () => {

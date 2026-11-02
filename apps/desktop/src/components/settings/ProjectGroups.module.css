@@ -1,0 +1,26 @@
+/* The board columns' and checks' row controls and add forms (ProjectGroups.tsx). */
+.rowActions {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.addForm {
+  display: flex;
+  gap: var(--s-2);
+}
+
+.addForm[data-wrap] {
+  flex-wrap: wrap;
+}
+
+/* Two classes, so the width wins over the field's own 100%. */
+.addForm .short {
+  width: 128px;
+}
+
+.addForm .command {
+  flex: 1 1 200px;
+  width: auto;
+  min-width: 200px;
+  font-family: var(--font-mono);
+}

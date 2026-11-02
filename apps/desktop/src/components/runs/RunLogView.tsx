@@ -26,11 +26,14 @@ import {
 import { kindLabel } from '../../lib/threadSources';
 import { askAgentToFix, FailureNotice } from '../failure/FailureNotice';
 import { ApprovalCard } from './ApprovalCard';
+import { ChangedFilesCard } from './ChangedFilesCard';
 import { Markdown } from './Markdown';
 import { QuestionCard } from './QuestionCard';
 import { ScopeRequestCard } from './ScopeRequestCard';
 import { SubagentTree } from './SubagentTree';
 import { TranscriptRow } from './TranscriptRow';
+import { WorkFold } from './WorkFold';
+import { changedFilesFromLog } from '@/lib/changedFiles';
 import { cn } from '@/lib/utils';
 import { LoadingState } from '@/ui/ai/loading-state';
 import { Pill } from '@/ui/ai/pill';
@@ -162,9 +165,9 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
   return (
     <div
       className={cn(
-        'flex max-w-[90%] flex-col gap-0.5 rounded-card px-3 py-2',
+        'flex max-w-[80%] flex-col gap-0.5 rounded-card p-3',
         own
-          ? 'bg-surface-quaternary self-end border-[0.5px] border-border-strong'
+          ? 'bg-surface-inset self-end'
           : 'bg-state-waiting-surface self-start'
       )}
     >
@@ -285,6 +288,7 @@ export function RunLogView({
   // The sub-agents this run fanned out into, folded from the same entries the
   // transcript renders — so the tree ticks with each `run.log` event.
   const subagents = useMemo(() => foldSubagents(entries), [entries]);
+  const changedFiles = useMemo(() => changedFilesFromLog(entries), [entries]);
   const terminal = isTerminalRunState(meta.state);
   const canSend = SENDABLE_STATES.has(meta.state);
   // The transcript's genuinely live entries, only ever while the run is actually producing
@@ -367,12 +371,19 @@ export function RunLogView({
         aria-label="Run log"
         className="min-h-0 flex-1 overflow-y-auto px-1"
       >
-        <div ref={contentRef} className="flex min-h-full flex-col gap-3">
+        <div
+          ref={contentRef}
+          className="mx-auto flex min-h-full w-full max-w-(--chat-lane-w) flex-col gap-3"
+        >
           {meta.resumedFrom !== undefined && (
-            <div className="text-muted-foreground font-book flex items-center justify-center gap-1.5 py-1 text-center text-[12px]">
-              <Info className="size-3 shrink-0" />
-              Resumed from run {meta.resumedFrom} — earlier conversation lives
-              there.
+            <div className="flex items-center gap-3 py-1">
+              <span className="bg-border/70 h-px flex-1" />
+              <span className="border-border/70 bg-background text-muted-foreground font-book flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px]">
+                <Info className="size-3 shrink-0" />
+                Resumed from run {meta.resumedFrom} — earlier conversation lives
+                there.
+              </span>
+              <span className="bg-border/70 h-px flex-1" />
             </div>
           )}
           {groups.length === 0 &&
@@ -394,21 +405,22 @@ export function RunLogView({
                 <p className="font-book text-[13px]">No log entries yet.</p>
               </div>
             ))}
-          {/* Three levels of emphasis, which is what the flat version was missing. What the
-              agent SAID is the transcript's spine and gets full weight. What it DID is
-              subordinate — a run of tool calls collapses into one quiet block behind a rule, so
-              twelve file reads read as one event rather than twelve. What YOU said is a bubble,
-              because finding your own interjections is a different job from reading along. */}
+          {/* Three levels of emphasis. What the agent SAID is the transcript's spine and gets
+              full weight. What it DID is subordinate — a run of tool calls folds behind one
+              "Worked for 12s" line, so twelve file reads read as one event rather than twelve.
+              What YOU said is a bubble, because finding your own interjections is a different
+              job from reading along. */}
           {groups.map((group, i) =>
             group.kind === 'tools' ? (
-              <div
+              <WorkFold
                 key={i}
-                className="border-border my-0.5 flex flex-col border-l-[0.5px] pl-2"
+                entries={group.entries}
+                live={group.entries.some(isLive)}
               >
                 {group.entries.map((entry, j) => (
                   <TranscriptRow key={j} entry={entry} live={isLive(entry)} />
                 ))}
-              </div>
+              </WorkFold>
             ) : group.entries[0].kind === 'message' ? (
               <ChatMessageBubble
                 key={i}
@@ -436,6 +448,9 @@ export function RunLogView({
               live
             />
           ))}
+
+          {/* What the run edited, once it has settled: T3 Code's end-of-turn card. */}
+          {terminal && <ChangedFilesCard files={changedFiles} />}
 
           {/* Why the run stopped, in the run itself — without this a force-failed run (a
               daemon restart, not the agent's doing) reads as "failed, $0" with zero

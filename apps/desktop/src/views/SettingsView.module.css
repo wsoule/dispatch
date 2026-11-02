@@ -1,0 +1,288 @@
+/* Settings (views/SettingsView.tsx): a crumb row over a grouped rail of pages on the left and
+   the selected page as a centred column on the right. */
+.view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--surface);
+}
+
+.header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-2);
+  height: var(--h-lg);
+  padding: 0 var(--s-2) 0 var(--s-4);
+  border-bottom: 1px solid var(--divider);
+}
+
+.crumb {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+.empty {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s-6);
+}
+
+.body {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: 208px minmax(0, 1fr);
+  min-height: 0;
+}
+
+/* The rail: search, then the page groups. */
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-height: 0;
+  padding: var(--s-3) var(--s-2);
+  overflow-y: auto;
+  border-right: 1px solid var(--divider);
+  background: var(--bg-side);
+}
+
+.search {
+  flex: none;
+}
+
+.search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.railGroup {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 var(--s-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-3);
+}
+
+.railRows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* A page row, drawn like the app sidebar's rows: the raised pill marks the current page. */
+.railRow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  height: var(--side-row);
+  padding: 0 var(--s-2);
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-soft);
+  text-align: left;
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease;
+}
+
+.railRow svg {
+  flex: none;
+  color: var(--text-4);
+}
+
+.railRow:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.railRow[aria-current='page'] {
+  background: var(--nav-current-bg, var(--surface));
+  color: var(--text);
+  font-weight: var(--fw-medium);
+  box-shadow: var(--nav-current-shadow, var(--shadow-raised));
+}
+
+.railRow[aria-current='page'] svg {
+  color: var(--accent-ink);
+}
+
+.railLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A hosted page: its own title, then the whole view below it. */
+.hosted {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.hostedHead {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding: var(--s-5) var(--s-6) var(--s-3);
+}
+
+.hostedBody {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* A settings page: a 600px column, scrolled. */
+.scroller {
+  min-height: 0;
+  padding: var(--s-5) var(--s-6);
+  overflow-y: auto;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-6);
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
+  padding-bottom: var(--s-10);
+}
+
+.pageHead {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.titleRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.pageTitle {
+  margin: 0;
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-title);
+  color: var(--text);
+}
+
+.resultsTitle {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-heading);
+  color: var(--text);
+}
+
+.intro {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.saveLine {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.saveLine[data-error] {
+  color: var(--red);
+}
+
+/* Search results: every matching page, each under a link back to it. */
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-8);
+}
+
+.resultPage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+/* A page with no matching rows hides itself. */
+.resultPage:not(:has([data-settings-row])) {
+  display: none;
+}
+
+.resultLink {
+  align-self: flex-start;
+}
+
+/* Below the decide tier: why config is read-only, and the takeover when it applies. */
+.lockNote {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.lockLine {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin: 0;
+}
+
+.lockLine svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.lockAction {
+  padding-left: 22px;
+}
+
+/* Phones: one column. The rail becomes a short scrolling strip over the page, so the page keeps
+   the full width instead of a sliver beside a 208px rail. */
+@media (width <= 640px) {
+  .body {
+    grid-template-rows: minmax(0, auto) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rail {
+    max-height: 34vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--divider);
+  }
+
+  .scroller {
+    padding: var(--s-4) var(--s-4);
+  }
+
+  .hostedHead {
+    padding: var(--s-4) var(--s-4) var(--s-3);
+  }
+}

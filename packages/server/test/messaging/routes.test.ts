@@ -1950,6 +1950,8 @@ describe('messaging routes — direct unit coverage', () => {
       createdAt: new Date().toISOString(),
     });
   }
+  // How many times a decision told the Overseer's windows to refetch.
+  let overseerAnnounced = 0;
   function approverCtx(
     tier: 'decide' | 'operator',
     ownerCredential = tier === 'operator'
@@ -1963,6 +1965,11 @@ describe('messaging routes — direct unit coverage', () => {
       },
       caller: { handle: 'test', ref: 'human:test', tier },
       memory: { host: { agentDecided: () => {} } },
+      overseerManager: {
+        agentDecided: () => {
+          overseerAnnounced += 1;
+        },
+      },
     } as unknown as ApiContext;
   }
   const code = async (res: Response) =>
@@ -1984,6 +1991,7 @@ describe('messaging routes — direct unit coverage', () => {
   });
 
   it('re-approves the owner’s revoked Overseer only with the owner credential', async () => {
+    overseerAnnounced = 0;
     revokedAgent('agent:test/overseer');
     const refused = await approveAgent(
       approverCtx('decide'),
@@ -2010,6 +2018,8 @@ describe('messaging routes — direct unit coverage', () => {
     expect(messaging.store.getAgent('agent:test/overseer')?.status).toBe(
       'approved'
     );
+    // Only the approval that took tells the Overseer's windows.
+    expect(overseerAnnounced).toBe(1);
   });
 
   it('reverts the agent to revoked and 500s if the registration gate fails to send', async () => {

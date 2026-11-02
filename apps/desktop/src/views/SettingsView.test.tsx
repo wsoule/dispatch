@@ -18,8 +18,10 @@ import {
 } from '../components/settings/access';
 import {
   dataWith,
+  selectTrigger,
   testConfig,
   testProject,
+  visibleText,
 } from '../components/settings/fixtures.test-helper';
 import { OPERATOR_ONLY } from '../components/settings/SettingsGroup';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
@@ -362,15 +364,9 @@ test('Board sync offers sharing on a database board and committing on a file boa
 });
 
 // Whether a control can't be used: disabled itself, or a native control inside
-// a locked group (happy-dom doesn't carry a disabled fieldset down). A Switch
-// is a span the fieldset never reaches, so only its own flag counts.
+// a locked group (happy-dom doesn't carry a disabled fieldset down).
 function isDisabled(element: HTMLElement): boolean {
-  if (
-    (element as HTMLInputElement).disabled === true ||
-    element.hasAttribute('data-disabled')
-  ) {
-    return true;
-  }
+  if ((element as HTMLInputElement).disabled === true) return true;
   return (
     element.matches('button, input, select, textarea') &&
     element.closest('fieldset')?.disabled === true
@@ -509,17 +505,19 @@ const CONFIG_PAGES: PageLocks[] = [
     page: 'agents',
     locked: [
       'Models',
+      'Streaming',
       'Limits',
       'Permissions',
       'Defaults',
       'Command-line agents',
     ],
     controls: () => [
-      screen.getByRole('combobox', { name: 'Coding runs model' }),
+      selectTrigger('Coding runs model'),
+      ...within(group('Streaming')).getAllByRole('radio'),
       screen.getByLabelText('Runs at once'),
       screen.getByLabelText('Spend per run'),
       screen.getByLabelText('Ask me every time'),
-      screen.getByRole('combobox', { name: 'Default agent' }),
+      selectTrigger('Default agent'),
     ],
   },
   {
@@ -540,7 +538,7 @@ const CONFIG_PAGES: PageLocks[] = [
     open: ['Hard stops', 'Recent automatic decisions'],
     controls: () => [
       screen.getByRole('slider', { name: 'Autonomy' }),
-      ...screen.getAllByRole('combobox', { name: / override$/ }),
+      ...screen.getAllByRole('button', { name: / override: / }),
       ...within(group('Task ranking')).getAllByRole('textbox'),
     ],
   },
@@ -577,7 +575,7 @@ const CONFIG_PAGES: PageLocks[] = [
     open: ['Connection', 'Sync', 'Coverage', 'Capacity'],
     controls: () => [
       screen.getByRole('switch', { name: 'Sync this project with Linear' }),
-      screen.getByRole('combobox', { name: 'Direction' }),
+      selectTrigger('Direction'),
       screen.getByLabelText('Poll interval'),
       screen.getByRole('switch', {
         name: 'Send Acceptance Criteria to Linear',
@@ -586,7 +584,7 @@ const CONFIG_PAGES: PageLocks[] = [
         name: 'Archive finished tasks in Linear too',
       }),
       screen.getByRole('checkbox', { name: 'Link Unknown team' }),
-      screen.getByRole('combobox', { name: 'Run finishes status' }),
+      selectTrigger('Run finishes status'),
     ],
   },
   {
@@ -595,7 +593,7 @@ const CONFIG_PAGES: PageLocks[] = [
     open: ['Status'],
     controls: () => [
       screen.getByRole('switch', { name: 'Keep a receipt log' }),
-      screen.getByRole('combobox', { name: 'Code map' }),
+      selectTrigger('Code map'),
       screen.getByRole('switch', { name: 'Repo summary' }),
       screen.getByLabelText('Refresh the summary at most every'),
     ],
@@ -632,8 +630,8 @@ describe('below the decide tier, config is read-only', () => {
     });
   }
 
-  // Clicks rather than a disabled check: the fieldset never reaches a Switch,
-  // so only a click shows one is really locked.
+  // Clicks as well as the disabled check: only a click shows a switch is
+  // really locked.
   test('clicking any switch saves nothing', async () => {
     for (const spec of CONFIG_PAGES) {
       const handleUpdateConfig = mock((_patch: ConfigSave) =>
@@ -800,8 +798,8 @@ describe('below the decide tier, what has its own route stays usable', () => {
     expect(screen.queryByRole('note')).toBeNull();
     expect(headingLock('Appearance')).toBeNull();
     for (const control of [
-      screen.getByRole('combobox', { name: 'Diff layout' }),
-      screen.getByRole('combobox', { name: 'Diff change indicators' }),
+      selectTrigger('Diff layout'),
+      selectTrigger('Diff change indicators'),
       screen.getByRole('switch', { name: 'Wrap long lines' }),
       screen.getByRole('switch', { name: 'Show line numbers' }),
     ]) {
@@ -828,7 +826,7 @@ describe('Connected agents', () => {
     expect(screen.queryByRole('note')).toBeNull();
     expect(headingLock('Agents')).toBeNull();
     expect(rowLock('Approving, muting and revoking')).toBe(NEEDS_DECIDE);
-    expect(screen.getByText(NEEDS_DECIDE)).toBeDefined();
+    expect(visibleText(NEEDS_DECIDE)).toHaveLength(1);
     expect(actions().every((a) => a.disabled)).toBe(true);
   });
 
@@ -883,11 +881,7 @@ describe('at the decide tier', () => {
     expect(rowLock('Share this board with teammates')).toBe(OPERATOR_ONLY);
     expect(screen.queryByRole('textbox', { name: 'Branch' })).toBeNull();
     expect(rowLock('Branch')).toBe(OPERATOR_ONLY);
-    expect(
-      isDisabled(
-        screen.getByRole('combobox', { name: 'Where the board is kept' })
-      )
-    ).toBe(true);
+    expect(isDisabled(selectTrigger('Where the board is kept'))).toBe(true);
     expect(
       isDisabled(screen.getByLabelText("Check for teammates' changes every"))
     ).toBe(false);

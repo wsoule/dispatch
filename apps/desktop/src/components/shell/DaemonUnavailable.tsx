@@ -1,6 +1,7 @@
-import { Button, Disclosure, EmptyState, Spinner } from '@dispatch/ui';
+import { Button, EmptyState, Spinner } from '@dispatch/ui';
 import { OctagonAlert } from 'lucide-react';
 
+import { RawDetails } from '../gr8r/RawText';
 import styles from './DaemonUnavailable.module.css';
 
 interface DaemonUnavailableProps {
@@ -21,7 +22,8 @@ interface DaemonUnavailableProps {
  * Both states fill the parent's height and centre themselves in it (callers place it as a
  * whole pane). Starting is a Spinner (role="status") beside one sentence; the error is the
  * library EmptyState with a danger-toned OctagonAlert, a Retry button and, when the failure
- * carries text, that raw output in a mono block behind a "Details" disclosure.
+ * carries text, that raw output in the shared mono well behind a "Details" disclosure
+ * (RawDetails).
  */
 export function DaemonUnavailable({
   starting,
@@ -55,11 +57,7 @@ export function DaemonUnavailable({
             <Button variant="secondary" size="sm" onClick={onRetry}>
               Retry
             </Button>
-            {detail !== null && (
-              <Disclosure variant="inline" summary="Details">
-                <pre className={styles.detail}>{detail}</pre>
-              </Disclosure>
-            )}
+            {detail !== null && <RawDetails text={detail} />}
           </div>
         }
       >

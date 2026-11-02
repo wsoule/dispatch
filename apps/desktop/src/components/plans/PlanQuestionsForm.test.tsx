@@ -65,7 +65,7 @@ describe('PlanQuestionsForm', () => {
 });
 
 describe('PlanQuestionsForm chrome', () => {
-  test('the heading is a 12px sentence-case row, not an uppercase tracked label', () => {
+  test('the heading is a sentence-case row, not an uppercase eyebrow', () => {
     render(
       <PlanQuestionsForm
         questions={[Q1]}
@@ -74,8 +74,8 @@ describe('PlanQuestionsForm chrome', () => {
       />
     );
     const heading = screen.getByText('The planner is asking you');
-    expect(heading.className).toContain('text-[12px]');
-    expect(heading.className).toContain('font-medium');
+    expect(heading.textContent).toBe('The planner is asking you');
+    expect(heading.className).not.toContain('eyebrow');
     expect(heading.className).not.toContain('uppercase');
   });
 });

@@ -37,7 +37,15 @@ export type OverseerThreadItem =
   /** A running turn's text as the model writes it, one row per segment. It
    *  becomes a `narration` or `message` row once the record holds it. */
   | { kind: 'live'; key: string; segmentId: string; text: string }
-  | { kind: 'tool'; key: string; tool: string; text: string; at: string }
+  | {
+      kind: 'tool';
+      key: string;
+      tool: string;
+      text: string;
+      at: string;
+      /** How the call reads on its chip (see toolCallState). */
+      state: ToolCallState;
+    }
   | {
       kind: 'outcome';
       key: string;
@@ -69,6 +77,9 @@ export type OverseerThreadItem =
   | { kind: 'queued'; key: string; id: string; text: string; waiting: boolean }
   /** The agent's show_tasks: a door the human opens, never a jump. */
   | { kind: 'door'; key: string; door: OverseerDoor; at: string };
+
+/** A tool call's chip: still running, ended, or failed. */
+export type ToolCallState = 'running' | 'done' | 'failed';
 
 /** Where a show_tasks door opens Tasks. */
 export interface OverseerDoor {
@@ -281,6 +292,7 @@ function buildRow(
       tool: message.tool ?? 'tool',
       text: message.text,
       at: message.at,
+      state: toolCallState(record, message),
     };
   }
 
@@ -345,6 +357,27 @@ function buildRow(
   return null;
 }
 
+// How a tool row reads: its `status` once the call ended. A call still
+// `running` is running only while its turn is working: the daemon settles a
+// row its turn left running when that turn ends, so one on a record that is
+// not running reads as ended; and a turn parked on a call is waiting on the
+// human, which the approval card says and a shimmer above it would
+// contradict (the 'working' row hides for the same reason). A row from
+// before `status` failed when its text says so.
+function toolCallState(
+  record: OverseerRecord,
+  message: OverseerMessage
+): ToolCallState {
+  if (message.status === 'error') return 'failed';
+  if (message.status === 'done') return 'done';
+  if (message.status === 'running') {
+    const working =
+      record.state === 'running' && record.pendingApprovals.length === 0;
+    return working ? 'running' : 'done';
+  }
+  return message.text.startsWith('error:') ? 'failed' : 'done';
+}
+
 // The words a row can be found by; cards and spinners have none of their own.
 function searchableText(item: OverseerThreadItem): string | null {
   switch (item.kind) {
@@ -384,13 +417,14 @@ export function findInThread(
 // The SDK's own tool-loading step: plumbing, not work the human asked about.
 const HIDDEN_TOOLS = new Set(['ToolSearch']);
 
-/** A thread row as the chat renders it: consecutive tool calls fold into one chip row. */
+/** A thread row as the chat renders it: consecutive tool calls fold into one
+ *  chip row, so a lone `tool` row never reaches the chat. */
 export type OverseerStreamItem =
-  | OverseerThreadItem
+  | Exclude<OverseerThreadItem, { kind: 'tool' }>
   | {
       kind: 'tools';
       key: string;
-      calls: { tool: string; text: string; failed: boolean }[];
+      calls: { tool: string; text: string; state: ToolCallState }[];
     }
   /** Two or more actions queued together, answered on one card. */
   | {
@@ -434,11 +468,7 @@ export function groupToolRows(
       continue;
     }
     if (HIDDEN_TOOLS.has(item.tool)) continue;
-    const call = {
-      tool: item.tool,
-      text: item.text,
-      failed: item.text.startsWith('error:'),
-    };
+    const call = { tool: item.tool, text: item.text, state: item.state };
     const last = out.at(-1);
     if (last?.kind === 'tools') last.calls.push(call);
     else out.push({ kind: 'tools', key: item.key, calls: [call] });

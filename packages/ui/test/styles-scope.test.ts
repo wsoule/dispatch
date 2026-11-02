@@ -147,6 +147,13 @@ describe('the issue list modules are scoped', () => {
     // The drawer, modal or not, and the disclosure a host nests anywhere.
     'shell/slide-over.module.css',
     'tasks/disclosure.module.css',
+    // The controls family: Menu is an overlay too, and the form controls
+    // sit in hosts' own forms.
+    'controls/menu.module.css',
+    'controls/field.module.css',
+    'controls/radio-group.module.css',
+    'controls/text-area.module.css',
+    'controls/text-field.module.css',
   ];
   const keyframeStop = /^(from|to|\d+(\.\d+)?%)$/;
   for (const file of modules) {

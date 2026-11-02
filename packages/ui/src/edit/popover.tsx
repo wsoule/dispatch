@@ -19,6 +19,7 @@ import { dataAttributes } from '../lib/data-attributes';
 import { useMergedRef } from '../lib/refs';
 import { focusableWithin, useMediaQuery, useScrollLock } from '../shell/dom';
 import {
+  followAnchor,
   hideFromTopLayer,
   positionLayer,
   SHEET_QUERY,
@@ -68,7 +69,9 @@ function firstFocusable(root: HTMLElement): HTMLElement | null {
  * (a fixed layer without the Popover API), and is one layer of the
  * package's stack: a PickerPopover inside closes first on Escape or an
  * outside press, and a press in the popover's own body closes only that
- * picker. At 640px and below it is a bottom sheet over the scrim.
+ * picker. At 640px and below it is a bottom sheet over the scrim. Its
+ * layer carries data-picker-popup, as a picker's and a menu's do, so the
+ * shell's `[`, the palette's keys and a table's row keys stand down inside.
  */
 export function Popover(props: PopoverProps): ReactNode {
   const {
@@ -158,40 +161,17 @@ export function Popover(props: PopoverProps): ReactNode {
   useClientLayoutEffect(() => {
     const layer = layerRef.current;
     if (!open || layer === null) return undefined;
-    let frame = 0;
     const target = (): HTMLElement | null =>
       anchorLatest.current?.current ?? triggerRef.current;
-    const place = (): void => {
-      frame = 0;
+    return followAnchor(layer, target(), () =>
       positionLayer(layer, target(), {
         panel: panelRef.current,
         sheet,
         side,
         align,
         prefix: '--popover',
-      });
-    };
-    place();
-    const schedule = (event?: Event): void => {
-      if (event?.target instanceof Node && layer.contains(event.target)) {
-        return;
-      }
-      if (frame === 0) frame = requestAnimationFrame(place);
-    };
-    window.addEventListener('resize', schedule);
-    document.addEventListener('scroll', schedule, true);
-    const observer =
-      typeof ResizeObserver === 'undefined'
-        ? null
-        : new ResizeObserver(() => schedule());
-    const anchorElement = target();
-    if (anchorElement !== null) observer?.observe(anchorElement);
-    return () => {
-      if (frame !== 0) cancelAnimationFrame(frame);
-      window.removeEventListener('resize', schedule);
-      document.removeEventListener('scroll', schedule, true);
-      observer?.disconnect();
-    };
+      })
+    );
   }, [open, sheet, side, align, width, anchorLatest]);
 
   // First focus, once the layer is placed (a hidden layer cannot take
@@ -291,6 +271,9 @@ export function Popover(props: PopoverProps): ReactNode {
           className={styles.layer}
           style={widthStyle}
           data-popover=""
+          // An open popup, as a picker's or a menu's layer is: the shell's
+          // `[`, the palette's keys and a table's row keys stand down here.
+          data-picker-popup=""
           data-width={width === undefined ? undefined : 'set'}
           onKeyDown={onKeyDown}
           onPointerDown={(event) => {

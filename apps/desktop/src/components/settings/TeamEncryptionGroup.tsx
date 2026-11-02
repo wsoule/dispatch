@@ -1,5 +1,6 @@
 import type { ContentE2eStatus } from '@dispatch/client';
 import { isInsufficientTier } from '@dispatch/client';
+import { Button, Chip, ConfirmDialog } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
@@ -7,19 +8,7 @@ import { useState } from 'react';
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { NEEDS_DECIDE, useSettingsAccess } from './access';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
-import { cn } from '@/lib/utils';
-import { Pill } from '@/ui/ai/pill';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/ui/alert-dialog';
-import { Button } from '@/ui/button';
+import styles from './TeamEncryptionGroup.module.css';
 
 interface TeamEncryptionGroupProps {
   data: DispatchProjectData;
@@ -63,18 +52,7 @@ function StatePill({
   tone: 'good' | 'waiting';
   children: string;
 }) {
-  return (
-    <Pill>
-      <span
-        aria-hidden
-        className={cn(
-          'size-1.5 rounded-full',
-          tone === 'good' ? 'bg-state-review' : 'bg-state-waiting'
-        )}
-      />
-      {children}
-    </Pill>
-  );
+  return <Chip tone={tone === 'good' ? 'success' : 'warning'}>{children}</Chip>;
 }
 
 /**
@@ -170,7 +148,7 @@ export function TeamEncryptionGroup({ data }: TeamEncryptionGroupProps) {
         <SettingsRow
           title="Couldn’t read the encryption status"
           subtitle={
-            <span className="text-state-failed">{status.error.message}</span>
+            <span className={styles.error}>{status.error.message}</span>
           }
         />
       )
@@ -215,7 +193,7 @@ export function TeamEncryptionGroup({ data }: TeamEncryptionGroupProps) {
           }
         />
         {pending && (
-          <SettingsHint className="px-3 py-2">
+          <SettingsHint className={styles.note}>
             Turned on here; it reaches the team on the next sync.
           </SettingsHint>
         )}
@@ -268,7 +246,6 @@ export function TeamEncryptionGroup({ data }: TeamEncryptionGroupProps) {
         control={
           <Button
             size="sm"
-            variant="outline"
             data-testid="team-e2e-on"
             disabled={busy || blocker !== null}
             title={blocker ?? undefined}
@@ -279,49 +256,35 @@ export function TeamEncryptionGroup({ data }: TeamEncryptionGroupProps) {
         }
       >
         {error !== null && (
-          <span role="alert" className="text-state-failed text-[12px]">
+          <span role="alert" className={styles.alert}>
             {error}
           </span>
         )}
       </SettingsRow>
-      {confirming && (
-        <AlertDialog
-          open
-          onOpenChange={(open) => !open && setConfirming(false)}
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>
-                Encrypt team content for good?
-              </AlertDialogTitle>
-              <AlertDialogDescription render={<div />}>
-                <p>
-                  From now on the relay carries only ciphertext for the board,
-                  team memory, team docs, presence and agents. It cannot be
-                  turned off. What it does not do:
-                </p>
-                <ul className="mt-2 list-disc space-y-1 pl-4">
-                  {ENCRYPT_LIMITS.map((line) => (
-                    <li key={line}>{line}</li>
-                  ))}
-                </ul>
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel variant="ghost">Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                data-testid="team-e2e-confirm"
-                onClick={() => {
-                  setConfirming(false);
-                  void turnOn();
-                }}
-              >
-                Encrypt team content
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      )}
+      <ConfirmDialog
+        open={confirming}
+        title="Encrypt team content for good?"
+        confirmLabel="Encrypt team content"
+        data-testid="team-e2e-confirm"
+        onCancel={() => setConfirming(false)}
+        onConfirm={() => {
+          setConfirming(false);
+          void turnOn();
+        }}
+      >
+        <div className={styles.confirm}>
+          <p>
+            From now on the relay carries only ciphertext for the board, team
+            memory, team docs, presence and agents. It cannot be turned off.
+            What it does not do:
+          </p>
+          <ul className={styles.limits}>
+            {ENCRYPT_LIMITS.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      </ConfirmDialog>
     </>
   );
 }

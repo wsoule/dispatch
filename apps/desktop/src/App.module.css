@@ -1,0 +1,16 @@
+/* App's own frames around a full-view state (a resolution error, loading the project, a page
+   this window may not open): the empty state centred in the space it fills. */
+.centred {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  height: 100%;
+  padding: var(--s-6);
+}
+
+.alert {
+  color: var(--red);
+}

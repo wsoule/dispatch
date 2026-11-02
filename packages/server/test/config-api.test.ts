@@ -280,6 +280,52 @@ describe('PATCH /api/config — memory', () => {
   });
 });
 
+describe('PATCH /api/config — chat streaming', () => {
+  type Streams = {
+    overseer: { stream: string };
+    runs: { stream: string };
+  };
+
+  it('writes both switches, they round-trip through GET, and null clears one', async () => {
+    const res = await patchConfig({
+      overseer: { stream: 'narration' },
+      runs: { stream: 'off' },
+    });
+    expect(res.status).toBe(200);
+    const config = await json<Streams>(res);
+    expect(config.overseer).toEqual({ stream: 'narration' });
+    expect(config.runs).toEqual({ stream: 'off' });
+    const again = await json<Streams>(await fetch(`${baseUrl}/api/config`));
+    expect(again.overseer.stream).toBe('narration');
+    expect(again.runs.stream).toBe('off');
+
+    const cleared = await patchConfig({ runs: { stream: null } });
+    expect((await json<Streams>(cleared)).runs).toEqual({ stream: 'live' });
+  });
+
+  it('400s a mode the block does not have or another key, without writing', async () => {
+    for (const body of [
+      { runs: { stream: 'narration' } },
+      { overseer: { stream: 'typing' } },
+      { overseer: { mode: 'off' } },
+    ]) {
+      const res = await patchConfig(body);
+      expect(res.status).toBe(400);
+      expect((await json<{ error: string }>(res)).error).toMatch(
+        /^invalid (overseer|runs)/
+      );
+    }
+    const path = join(root, '.dispatch', 'config.yml');
+    const file = existsSync(path) ? readFileSync(path, 'utf8') : '';
+    expect(file).not.toContain('stream');
+  });
+
+  it('400s a non-object block outright', async () => {
+    expect((await patchConfig({ overseer: 'live' })).status).toBe(400);
+    expect((await patchConfig({ runs: null })).status).toBe(400);
+  });
+});
+
 // This suite's server boots with `writeDaemonFile: false`, so it never told
 // clients to find it: no file is not a missing file.
 describe('GET /api/health — daemon identity without a daemon file', () => {

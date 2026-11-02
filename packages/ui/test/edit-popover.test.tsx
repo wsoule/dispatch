@@ -93,6 +93,26 @@ describe('Popover', () => {
     expect(document.querySelector('[aria-modal="true"]')).toBeNull();
   });
 
+  test('controlled: the trigger asks the host, and a host that says no keeps it closed', () => {
+    const onOpenChange = mock((_open: boolean) => undefined);
+    render(
+      <Popover
+        open={false}
+        onOpenChange={onOpenChange}
+        label="Due date"
+        trigger={<button type="button">Due</button>}
+      >
+        <p>Calendar</p>
+      </Popover>
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Due' }));
+    expect(onOpenChange).toHaveBeenCalledWith(true);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'Due' }).getAttribute('aria-expanded')
+    ).toBe('false');
+  });
+
   test('the trigger toggles it; a press on the trigger is not outside', () => {
     render(<Host />);
     openIt();
@@ -184,6 +204,30 @@ describe('Popover', () => {
     const panel = dialog.firstElementChild;
     expect(document.activeElement).toBe(panel);
     expect(screen.getByRole('button', { name: 'Apply' })).toBeTruthy();
+  });
+
+  test('initialFocus={ref} wins over the first focusable element', () => {
+    function Focused() {
+      const ref = useRef<HTMLInputElement>(null);
+      const [open, setOpen] = useState(false);
+      return (
+        <Popover
+          open={open}
+          onOpenChange={setOpen}
+          label="More options"
+          trigger={<button type="button">More</button>}
+          initialFocus={ref}
+        >
+          <button type="button">First</button>
+          <input ref={ref} aria-label="Files it may change" />
+        </Popover>
+      );
+    }
+    render(<Focused />);
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(document.activeElement).toBe(
+      screen.getByRole('textbox', { name: 'Files it may change' })
+    );
   });
 
   test('returnFocus sends focus elsewhere on Escape; false leaves it', () => {

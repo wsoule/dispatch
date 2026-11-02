@@ -32,7 +32,7 @@ import { grantKey, GrantStore, type GrantView } from './overseerGrants.js';
 import type { OverseerStore } from './overseerStore.js';
 import type { OverseerAction, OverseerToolRegistry } from './overseerTools.js';
 import {
-  MAX_TOOL_RESULT_TEXT,
+  capToolResult,
   OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
@@ -108,6 +108,17 @@ export interface OverseerMessage {
   streamId?: string;
   /** `tool`, `action` and `approval` entries: which tool the entry is about. */
   tool?: string;
+  /** `tool` entries for a built-in call the backend named: its id for the
+   *  call (Claude's tool_use id, Codex's item id). */
+  toolUseId?: string;
+  /**
+   * `tool` entries: how the call went, never what it returned. A built-in
+   * call with a `toolUseId` lands `running` and is settled in place when its
+   * result comes; a registry call lands once it ran. A row still `running`
+   * after its turn ended never got a result (a Stop, a failed turn). Absent
+   * on older rows and on a built-in call reported without an id.
+   */
+  status?: 'running' | 'done' | 'error';
   /** `action` entries: the OverseerAction this entry reports on. */
   actionId?: string;
   /** `approval` entries: the OverseerApproval this entry reports on. */
@@ -188,7 +199,8 @@ export interface OverseerRecord {
    * Mutating tool calls this conversation has queued that nobody has decided
    * on yet — the confirmation queue the chat UI renders. Snapshots taken when
    * the call was made; the registry stays the source of truth for whether an
-   * action has since been applied.
+   * action has since been applied. The registry is in memory, so the next
+   * boot drops whatever is still here (see dropOrphanedActions).
    */
   pendingActions: OverseerAction[];
   /**
@@ -226,9 +238,18 @@ export interface OverseerRecord {
   updatedAt: string;
 }
 
-/** What GET /api/overseer/:id answers with: the record, plus the running
- *  turn's live text. `live` is never stored. */
-export type OverseerRecordView = OverseerRecord & { live?: LiveText };
+/** What every /api/overseer route answers a record with (`view`): the record,
+ *  plus what the daemon knows beside it, none of it stored. */
+export interface OverseerRecordView extends OverseerRecord {
+  /** The running turn's text, while one runs. */
+  live?: LiveText;
+  /** ROLLOVER_TOKENS: the `contextTokens` at which the next turn starts over
+   *  from a recap. Always set; optional for clients that read older daemons. */
+  contextLimit?: number;
+  /** The daemon's Overseer is revoked, so no conversation takes a turn until
+   *  a human approves it again. Always set, like `contextLimit`. */
+  revoked?: boolean;
+}
 
 /**
  * Who hears an Overseer turn's live text over /ws (owner decision 2026-10-23):
@@ -297,6 +318,9 @@ const AUTO_ALLOWED_EDIT_TOOLS = new Set([
 // human decided — the backend threw, or the conversation is gone.
 const TURN_ENDED_DENIAL = 'the turn ended before this call was decided';
 
+// Why a queued action an earlier daemon left on the record was dropped at boot.
+const RESTART_DENIAL = 'Dispatch restarted before anyone decided';
+
 /** Past this many tokens of context, the next turn starts a fresh session from a recap. */
 export const ROLLOVER_TOKENS = 150_000;
 
@@ -353,10 +377,21 @@ function describeToolCall(toolName: string, input: unknown): string {
 
 // Renders a tool result for the transcript: compact JSON, capped.
 function describeToolResult(data: unknown): string {
-  const text = JSON.stringify(data) ?? String(data);
-  return text.length <= MAX_TOOL_RESULT_TEXT
-    ? text
-    : `${text.slice(0, MAX_TOOL_RESULT_TEXT)}… (truncated)`;
+  return capToolResult(JSON.stringify(data) ?? String(data));
+}
+
+// A conversation's rows once its turn is over. A call the turn reported and
+// got no result for (a Stop, a failed turn, a result that never came, a
+// restart) is settled `done`, which says the call is over, not that it
+// worked: one turn runs at a time, so a row left `running` would read as
+// running again while the next turn does.
+function settleRunningCalls(messages: OverseerMessage[]): OverseerMessage[] {
+  const running = (m: OverseerMessage) =>
+    m.role === 'tool' && m.status === 'running';
+  if (!messages.some(running)) return messages;
+  return messages.map((m) =>
+    running(m) ? { ...m, status: 'done' as const } : m
+  );
 }
 
 /**
@@ -366,7 +401,7 @@ function describeToolResult(data: unknown): string {
  * written through to the store so a conversation outlives the daemon (a turn
  * the daemon died in loads back as failed). Machine-local, like PlanManager.
  * The text a running turn streams is the one thing kept in memory only: see
- * `live` and `withLive`.
+ * `live` and `view`.
  *
  * Two rules this class exists to enforce, on top of what OverseerToolRegistry
  * already guarantees. A turn's mutating registry calls are *collected*, never
@@ -412,6 +447,11 @@ export class OverseerManager {
   // message even when a step followed it); the reply then takes that row's
   // place instead of repeating it. Cleared when the turn ends.
   private readonly narrated = new Map<string, Map<string, OverseerMessage>>();
+  // The built-in calls the running turn reported by id and has no result for
+  // yet, per conversation: what `onToolResult` may settle. Cleared when the
+  // turn ends, which settles their rows `done` (settleRunningCalls), so a
+  // result that comes later changes nothing.
+  private readonly runningCalls = new Map<string, Set<string>>();
   // Set by shutdown(): turns still settling write nothing more.
   private shuttingDown = false;
   // Who typed each conversation's queued messages, for posting them when they go.
@@ -425,7 +465,48 @@ export class OverseerManager {
       const record = withQueuedIds(loaded);
       this.conversations.set(record.id, record);
       if (record.state === 'running') this.interrupted(record);
+      this.dropOrphanedActions(record.id);
     }
+  }
+
+  // Actions an earlier daemon queued: the registry that held them lives in
+  // memory and the boot sweep closed their gates, so a confirm card for one
+  // could never be answered. Each leaves the queue with a denied row, and the
+  // model hears on its next turn that it did not happen.
+  private dropOrphanedActions(conversationId: string): void {
+    const record = this.conversations.get(conversationId);
+    if (record === undefined || record.pendingActions.length === 0) return;
+    const at = new Date().toISOString();
+    for (const action of record.pendingActions) {
+      this.ctx.bus?.closeGate(
+        conversationId,
+        { actionId: action.id },
+        RESTART_DENIAL
+      );
+    }
+    this.updateRecord(conversationId, {
+      pendingActions: [],
+      messages: [
+        ...record.messages,
+        ...record.pendingActions.map(
+          (action): OverseerMessage => ({
+            role: 'action',
+            tool: action.tool,
+            actionId: action.id,
+            outcome: 'denied',
+            text: `Denied: ${action.summary} — ${RESTART_DENIAL}`,
+            at,
+          })
+        ),
+      ],
+      undeliveredDecisions: [
+        ...record.undeliveredDecisions,
+        ...record.pendingActions.map(
+          (action) =>
+            `${action.summary} — nobody decided this before Dispatch restarted, so it was dropped. It did not happen.`
+        ),
+      ],
+    });
   }
 
   // A turn the daemon died in: nothing can answer its parked calls now.
@@ -442,7 +523,7 @@ export class OverseerManager {
       error: 'Dispatch restarted during this turn',
       pendingApprovals: [],
       messages: [
-        ...record.messages,
+        ...settleRunningCalls(record.messages),
         {
           role: 'notice',
           notice: 'restarted',
@@ -508,12 +589,10 @@ export class OverseerManager {
           config.orchestrator.permissionMode,
           request
         ),
-      onToolUse: (toolName, input) =>
-        this.appendMessage(conversationId, {
-          role: 'tool',
-          tool: toolName,
-          text: describeToolCall(toolName, input),
-        }),
+      onToolUse: (toolName, input, toolUseId) =>
+        this.toolUse(conversationId, turnId, toolName, input, toolUseId),
+      onToolResult: (toolUseId, status) =>
+        this.toolResult(conversationId, turnId, toolUseId, status),
       ...(live
         ? {
             onTextDelta: (segmentId: string, text: string) =>
@@ -530,6 +609,56 @@ export class OverseerManager {
         : {}),
     };
     return { options, live };
+  }
+
+  // A built-in call the backend reported lands as a tool row. One it named by
+  // id, while its turn runs, shows as running until its result settles it.
+  private toolUse(
+    conversationId: string,
+    turnId: string,
+    toolName: string,
+    input: unknown,
+    toolUseId: string | undefined
+  ): void {
+    const settles =
+      toolUseId !== undefined && this.live.isRunning(conversationId, turnId);
+    if (settles) {
+      const calls = this.runningCalls.get(conversationId) ?? new Set<string>();
+      this.runningCalls.set(conversationId, calls.add(toolUseId));
+    }
+    this.appendMessage(conversationId, {
+      role: 'tool',
+      tool: toolName,
+      text: describeToolCall(toolName, input),
+      ...(toolUseId !== undefined ? { toolUseId } : {}),
+      ...(settles ? { status: 'running' as const } : {}),
+    });
+  }
+
+  // Settles a running call's row in place with how it ended, in one update.
+  // A result for a call this turn is not running, or one that lands after
+  // the turn ended and settled its row, changes nothing.
+  private toolResult(
+    conversationId: string,
+    turnId: string,
+    toolUseId: string,
+    status: 'done' | 'error'
+  ): void {
+    if (!this.live.isRunning(conversationId, turnId)) return;
+    if (this.runningCalls.get(conversationId)?.delete(toolUseId) !== true) {
+      return;
+    }
+    const record = this.conversations.get(conversationId);
+    if (record === undefined) return;
+    const at = record.messages.findLastIndex(
+      (m) => m.role === 'tool' && m.toolUseId === toolUseId
+    );
+    if (at === -1) return;
+    this.updateRecord(conversationId, {
+      messages: record.messages.map((m, i) =>
+        i === at ? { ...m, status } : m
+      ),
+    });
   }
 
   // One frame of live text: kept for the snapshot and sent to the sockets
@@ -625,14 +754,20 @@ export class OverseerManager {
   }
 
   /**
-   * `record` as GET /api/overseer/:id answers it: while a turn runs, with
-   * the text it has streamed and not committed (`live`), so a window that
-   * opens or reconnects mid-turn picks up from there.
+   * `record` as every /api/overseer route answers it: with the context size
+   * its next turn rolls over at, whether the Overseer is revoked, and while a
+   * turn runs, with the text it has streamed and not committed (`live`), so a
+   * window that opens or reconnects mid-turn picks up from there.
    */
-  withLive(record: OverseerRecord): OverseerRecordView {
-    if (record.state !== 'running') return record;
+  view(record: OverseerRecord): OverseerRecordView {
+    const view = {
+      ...record,
+      contextLimit: ROLLOVER_TOKENS,
+      revoked: this.ctx.bus?.revoked() === true,
+    };
+    if (record.state !== 'running') return view;
     const live = this.live.snapshot(record.id);
-    return live === undefined ? record : { ...record, live };
+    return live === undefined ? view : { ...view, live };
   }
 
   /** The backend a conversation opened with none named runs on: the default agent's, else Claude's. */
@@ -649,6 +784,17 @@ export class OverseerManager {
       throw new OrchestratorClientError(`unknown overseer backend: ${name}`);
     }
     return backend;
+  }
+
+  /**
+   * The Overseer's own agent row was just approved or revoked: every record's
+   * `revoked` changed with it, so each conversation is announced, and a window
+   * shows the agent off (or back on) without a send of its own refused first.
+   */
+  agentDecided(): void {
+    for (const conversationId of this.conversations.keys()) {
+      this.ctx.events.broadcast({ type: 'overseer.changed', conversationId });
+    }
   }
 
   // A revoked overseer takes no new turns until a human approves it again.
@@ -973,7 +1119,9 @@ export class OverseerManager {
           : this.narrated
               .get(conversationId)
               ?.get(streamIdOf(stream.turnId, turn.streamId));
-      const earlier = current.messages.filter((m) => m !== narratedReply);
+      const earlier = settleRunningCalls(
+        current.messages.filter((m) => m !== narratedReply)
+      );
       this.updateRecord(conversationId, {
         state: 'ready',
         sessionId: turn.sessionId ?? current.sessionId,
@@ -1013,7 +1161,7 @@ export class OverseerManager {
           state: 'ready',
           undeliveredDecisions,
           messages: [
-            ...(current?.messages ?? []),
+            ...settleRunningCalls(current?.messages ?? []),
             {
               role: 'notice',
               notice: 'stopped',
@@ -1027,11 +1175,15 @@ export class OverseerManager {
           state: 'failed',
           error: (err as Error).message,
           undeliveredDecisions,
+          ...(current !== undefined
+            ? { messages: settleRunningCalls(current.messages) }
+            : {}),
         });
       }
     } finally {
       this.turns.delete(conversationId);
       this.narrated.delete(conversationId);
+      this.runningCalls.delete(conversationId);
       // Past shutdown, or for a conversation that is gone, nothing more lands.
       this.live.end(conversationId, stream.turnId);
       // A turn that is over has no tool call left to run: anything still
@@ -1458,6 +1610,7 @@ export class OverseerManager {
         role: 'tool',
         tool: name,
         text: registry.transcriptFor(name, data) ?? describeToolResult(data),
+        status: 'done',
       });
       return { content: data, isError: false };
     } catch (err) {
@@ -1466,6 +1619,7 @@ export class OverseerManager {
         role: 'tool',
         tool: name,
         text: `error: ${message}`,
+        status: 'error',
       });
       return { content: { error: message }, isError: true };
     }

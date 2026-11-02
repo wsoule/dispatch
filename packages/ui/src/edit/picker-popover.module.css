@@ -233,6 +233,61 @@
   opacity: 0.85;
 }
 
+/* A field select fills the width its host gives the picker. */
+.fieldRoot {
+  display: flex;
+  align-items: stretch;
+}
+
+.fieldRoot > .triggerRow {
+  display: flex;
+}
+
+/* field: a form select (Select). The button carries the global .input
+   class, so its edge, radius, hover, accent ring, disabled fill and
+   aria-invalid red edge are the text fields' own; this rule only lays it
+   out (it does not take .trigger, whose transparent box would undo the
+   field's), with the chevron at its end. */
+.field {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding-right: 8px;
+  text-align: start;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.field .face {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.field .faceText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+}
+
+.field[data-pending='true'] .face {
+  opacity: 0.55;
+}
+
+.fieldChevron {
+  flex: none;
+  color: var(--text-3);
+}
+
+/* Open: the accent edge, hovered or not. */
+.field[aria-expanded='true'],
+.field[aria-expanded='true']:hover {
+  border-color: var(--accent);
+}
+
 /* brand: the app shell's brand row as the trigger (AppShell's workspace
    switcher, Gr8r's .ws): as wide as its container, padded like the brand
    link (5px 6px, 6px radius), the --surface-3 fill on hover and while

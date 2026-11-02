@@ -45,6 +45,19 @@ export function overseerTurnLive(overseer: OverseerSession): boolean {
   );
 }
 
+/**
+ * Whether a revoked Overseer locks the composers. Only an open conversation's
+ * record tells the window the agent came back (dispatchd announces each stored
+ * conversation when it is approved again), so with none open the composer
+ * stays usable and the next send decides: it works, which clears `revoked`, or
+ * it is refused again and the banner stays.
+ */
+export function revokedLocksComposer(
+  overseer: Pick<OverseerSession, 'revoked' | 'conversationId'>
+): boolean {
+  return overseer.revoked && overseer.conversationId !== null;
+}
+
 /** The orb's tooltip and accessible name. */
 export function orbLabel(input: {
   state: OrbState;

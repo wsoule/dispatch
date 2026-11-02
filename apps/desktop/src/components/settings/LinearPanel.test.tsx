@@ -16,7 +16,7 @@ import { expect, mock, test } from 'bun:test';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { accessFor, SettingsAccessProvider } from './access';
-import { dataWith, testConfig } from './fixtures.test-helper';
+import { dataWith, selectTrigger, testConfig } from './fixtures.test-helper';
 import { LinearPanel } from './LinearPanel';
 
 // Whether a locked settings group has disabled this control. happy-dom does
@@ -71,9 +71,9 @@ test('links and unlinks teams, and picks the primary', () => {
     />
   );
   const box = (name: string) =>
-    screen.getByRole('checkbox', { name: `Link ${name}` });
-  expect(box('Hydrogen').getAttribute('aria-checked')).toBe('true');
-  expect(box('Security').getAttribute('aria-checked')).toBe('false');
+    screen.getByRole<HTMLInputElement>('checkbox', { name: `Link ${name}` });
+  expect(box('Hydrogen').checked).toBe(true);
+  expect(box('Security').checked).toBe(false);
   expect(screen.getByText(/Primary: new issues go here/)).toBeDefined();
 
   fireEvent.click(box('Security'));
@@ -106,10 +106,9 @@ test('reads a legacy single teamId as the linked team', () => {
     />
   );
   expect(
-    screen
-      .getByRole('checkbox', { name: 'Link Security' })
-      .getAttribute('aria-checked')
-  ).toBe('true');
+    screen.getByRole<HTMLInputElement>('checkbox', { name: 'Link Security' })
+      .checked
+  ).toBe(true);
 });
 
 // The reported symptom: the picker opened with nothing in it and no reason.
@@ -205,9 +204,9 @@ test('a global-sourced key hides Disconnect and invites a project override', () 
   expect(screen.getByText(/shared default key/)).toBeDefined();
 });
 
-// Sync is a row whose title labels a `Switch`; the API-key field is the 13px book-weight
-// `Input` with no code face, and the poll interval is sans with tabular digits.
-test('sync is a switch and the key and interval inputs are sans', () => {
+// Sync is a row whose title labels a `Switch`; the API key is a password field the
+// browser never fills, and the poll interval takes a number.
+test('sync is a switch, the key is a secret field and the interval a number', () => {
   render(
     <LinearPanel data={dataWith({ keySource: 'env', connected: true })} />
   );
@@ -215,12 +214,10 @@ test('sync is a switch and the key and interval inputs are sans', () => {
     screen.getByRole('switch', { name: 'Sync this project with Linear' })
   ).toBeDefined();
   const key = screen.getByPlaceholderText('Linear API key');
-  expect(key.className).toContain('text-[13px]');
-  expect(key.className).toContain('font-book');
-  expect(key.className).not.toContain('font-mono');
+  expect(key.getAttribute('type')).toBe('password');
+  expect(key.getAttribute('autocomplete')).toBe('off');
   const interval = screen.getByLabelText('Poll interval');
-  expect(interval.className).toContain('tabular-nums');
-  expect(interval.className).not.toContain('font-mono');
+  expect(interval.getAttribute('inputmode')).toBe('numeric');
 });
 
 // With a team linked, each lifecycle role picks one of the team's statuses;
@@ -246,9 +243,9 @@ test('lists the status roles with their current choice', () => {
   render(<LinearPanel data={data} />);
 
   expect(screen.getByText('Status roles')).toBeDefined();
-  const review = screen.getByRole('combobox', { name: 'Run finishes status' });
+  const review = selectTrigger('Run finishes status');
   expect(review.textContent).toContain('In Review');
-  const landing = screen.getByRole('combobox', { name: 'Merge queue status' });
+  const landing = selectTrigger('Merge queue status');
   expect(landing.textContent).toContain('None');
 });
 

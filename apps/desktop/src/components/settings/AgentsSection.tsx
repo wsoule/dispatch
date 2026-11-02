@@ -3,9 +3,17 @@ import type {
   DispatchConfig,
   EffortConfig,
   ModelConfig,
+  OverseerStreamMode,
+  RunStreamMode,
 } from '@dispatch-foo/core/browser';
-import { EFFORT_ROLES, MODEL_ROLES } from '@dispatch-foo/core/browser';
+import {
+  EFFORT_ROLES,
+  MODEL_ROLES,
+  overseerSettings,
+  runSettings,
+} from '@dispatch-foo/core/browser';
 import type { ApiClient, ExecutorsResponse } from '@dispatch/client';
+import { RadioGroup, Select } from '@dispatch/ui';
 
 import {
   DEFAULT_EFFORT_ID,
@@ -15,16 +23,10 @@ import {
   MODELS,
 } from '../../lib/models';
 import { CliAgents } from './AgentsMoreGroups';
-import { ChoiceSetting, NumberSetting } from './fields';
+import styles from './AgentsSection.module.css';
+import { ChoiceSetting, ModeSetting, NumberSetting } from './fields';
 import { JudgmentStatusRow } from './JudgmentStatusRow';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/ui/select';
 
 interface AgentsSectionProps {
   config: DispatchConfig;
@@ -93,8 +95,54 @@ const PERMISSION_MODES = [
 
 const OFFERED_MODES: readonly string[] = PERMISSION_MODES.map(([mode]) => mode);
 
-/** Settings → Agents: models and effort per kind of work, the limits runs
- *  work under, what they may do unasked, and the agents a dispatch can use.
+// The chat streaming switches (`overseer.stream`, `runs.stream`), each mode
+// with the line that says what it does; the row shows the chosen one's.
+const OVERSEER_STREAM: {
+  value: OverseerStreamMode;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: 'live',
+    label: 'Live',
+    hint: 'Its reply appears as it writes, and what it says between steps stays in the chat.',
+  },
+  {
+    value: 'narration',
+    label: 'Narration',
+    hint: 'What it says between steps stays in the chat, each part shown once it is finished.',
+  },
+  {
+    value: 'off',
+    label: 'Off',
+    hint: 'One reply per turn, shown when the turn is done.',
+  },
+];
+
+const RUN_STREAM: { value: RunStreamMode; label: string; hint: string }[] = [
+  {
+    value: 'live',
+    label: 'Live',
+    hint: "The agent's text appears as it writes.",
+  },
+  {
+    value: 'off',
+    label: 'Off',
+    hint: "Each part of the agent's text appears once it is finished.",
+  },
+];
+
+/** The line under a streaming row: what the chosen mode does. */
+function streamHint(
+  modes: { value: string; hint: string }[],
+  value: string
+): string {
+  return modes.find((m) => m.value === value)?.hint ?? '';
+}
+
+/** Settings → Agents: models and effort per kind of work, how their chats
+ *  stream, the limits runs work under, what they may do unasked, and the
+ *  agents a dispatch can use.
  *  Save feedback lives in the shell, not here: this only calls `onSave`. */
 export function AgentsSection({
   config,
@@ -111,6 +159,8 @@ export function AgentsSection({
       config.orchestrator.executor,
     ]),
   ];
+  const overseerStream = overseerSettings(config).stream;
+  const runStream = runSettings(config).stream;
   return (
     <>
       <SettingsGroup
@@ -130,51 +180,33 @@ export function AgentsSection({
               control={
                 <>
                   <Select
+                    label={`${info.label} model`}
                     value={current}
-                    onValueChange={(id) =>
-                      void onSave({ models: { [role]: id } })
-                    }
-                  >
-                    <SelectTrigger
-                      aria-label={`${info.label} model`}
-                      className="w-[124px]"
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {modelChoices(current).map((m) => (
-                        <SelectItem key={m.id} value={m.id}>
-                          {m.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    options={modelChoices(current).map((m) => ({
+                      value: m.id,
+                      label: m.label,
+                    }))}
+                    className={styles.model}
+                    onChange={(id) => void onSave({ models: { [role]: id } })}
+                  />
                   {hasEffort(role) ? (
                     <Select
+                      label={`${info.label} effort`}
                       value={config.effort?.[role] ?? DEFAULT_EFFORT_ID}
-                      onValueChange={(id) =>
+                      options={effortOptions(undefined).map((o) => ({
+                        value: o.id,
+                        label: o.label,
+                      }))}
+                      className={styles.effort}
+                      onChange={(id) =>
                         void onSave({
                           effort: { [role]: effortFromId(id) ?? null },
                         })
                       }
-                    >
-                      <SelectTrigger
-                        aria-label={`${info.label} effort`}
-                        className="w-[112px]"
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {effortOptions(undefined).map((o) => (
-                          <SelectItem key={o.id} value={o.id}>
-                            {o.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    />
                   ) : (
                     // Holds the column so every model select lines up.
-                    <span aria-hidden className="w-[112px]" />
+                    <span aria-hidden className={styles.effort} />
                   )}
                 </>
               }
@@ -189,6 +221,31 @@ export function AgentsSection({
         keywords="typesafe jev"
       >
         <JudgmentStatusRow client={client} port={port} />
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="Streaming"
+        hint="How a chat shows an agent's text while it works. Live is the default; the others are for when streaming misbehaves. A change applies from the assistant's next turn, and to runs started after it."
+        keywords="stream live text typing chat"
+      >
+        <ModeSetting<OverseerStreamMode>
+          id="overseer-stream"
+          title="Assistant"
+          subtitle={streamHint(OVERSEER_STREAM, overseerStream)}
+          keywords="overseer.stream overseer narration"
+          value={overseerStream}
+          choices={OVERSEER_STREAM}
+          onSave={(stream) => void onSave({ overseer: { stream } })}
+        />
+        <ModeSetting<RunStreamMode>
+          id="runs-stream"
+          title="Runs"
+          subtitle={streamHint(RUN_STREAM, runStream)}
+          keywords="runs.stream task run agent"
+          value={runStream}
+          choices={RUN_STREAM}
+          onSave={(stream) => void onSave({ runs: { stream } })}
+        />
       </SettingsGroup>
 
       <SettingsGroup title="Limits" keywords="caps">
@@ -256,28 +313,18 @@ export function AgentsSection({
         >
           {/* Native radios: a real input keeps `getByLabelText(...).checked`
               meaningful in the tests. */}
-          <div
-            role="radiogroup"
-            aria-label="When an agent wants to run a command or edit a file"
-            className="grid gap-1.5"
-          >
-            {PERMISSION_MODES.map(([mode, label]) => (
-              <label
-                key={mode}
-                className="font-book flex items-center gap-2 text-[13px] text-(--text-secondary)"
-              >
-                <input
-                  type="radio"
-                  name="permission-mode"
-                  value={mode}
-                  checked={config.orchestrator.permissionMode === mode}
-                  onChange={() => void onSave({ permissionMode: mode })}
-                  className="accent-primary size-3.5"
-                />
-                <span>{label}</span>
-              </label>
-            ))}
-          </div>
+          <RadioGroup
+            label="When an agent wants to run a command or edit a file"
+            value={config.orchestrator.permissionMode}
+            options={PERMISSION_MODES.map(([mode, label]) => ({
+              value: mode,
+              label,
+            }))}
+            onChange={(next) => {
+              const mode = PERMISSION_MODES.find(([m]) => m === next)?.[0];
+              if (mode !== undefined) void onSave({ permissionMode: mode });
+            }}
+          />
           {!OFFERED_MODES.includes(config.orchestrator.permissionMode) && (
             <SettingsHint>
               Currently &ldquo;{config.orchestrator.permissionMode}&rdquo;, set

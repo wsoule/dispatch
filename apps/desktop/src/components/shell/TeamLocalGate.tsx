@@ -1,3 +1,4 @@
+import { Spinner } from '@dispatch/ui';
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 
@@ -9,7 +10,7 @@ import {
   saveTeamSession,
 } from '../../lib/teamLocal';
 import { checkTeamSession, SignInView } from '../../views/SignInView';
-import { Spinner } from '@/ui/spinner';
+import styles from './TeamLocalGate.module.css';
 
 interface TeamLocalGateProps {
   children: ReactNode;
@@ -65,8 +66,8 @@ function TeamLocalSignIn({ children }: TeamLocalGateProps) {
 
   if (state === 'checking') {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <Spinner className="text-muted-foreground size-5" />
+      <div className={styles.checking}>
+        <Spinner size="lg" label="Checking your session" />
       </div>
     );
   }

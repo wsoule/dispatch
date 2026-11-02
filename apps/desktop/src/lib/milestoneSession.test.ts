@@ -17,7 +17,7 @@ import {
   PHASE_CHIP_ORDER,
   PHASE_LABEL,
   phaseCounts,
-  phaseTint,
+  phaseTone,
   rulingsWaiting,
   showsPhasePill,
   spendPillLabel,
@@ -118,23 +118,23 @@ describe('PHASE_LABEL', () => {
   });
 });
 
-describe('phaseTint', () => {
-  test('groups the phases onto the state tokens', () => {
-    expect(phaseTint('working')).toBe('var(--state-working-fg)');
-    expect(phaseTint('reviewing')).toBe('var(--state-working-fg)');
-    expect(phaseTint('fixing')).toBe('var(--state-working-fg)');
-    expect(phaseTint('capped')).toBe('var(--state-waiting-fg)');
-    expect(phaseTint('held')).toBe('var(--state-waiting-fg)');
-    expect(phaseTint('waiting')).toBe('var(--state-waiting-fg)');
-    expect(phaseTint('failed')).toBe('var(--state-failed-fg)');
-    expect(phaseTint('blocked')).toBe('var(--state-failed-fg)');
-    expect(phaseTint('needs-review')).toBe('var(--state-review-fg)');
-    expect(phaseTint('landing')).toBe('var(--state-landing-fg)');
+describe('phaseTone', () => {
+  test('groups the phases onto the status tones', () => {
+    expect(phaseTone('working')).toBe('info');
+    expect(phaseTone('reviewing')).toBe('info');
+    expect(phaseTone('fixing')).toBe('info');
+    expect(phaseTone('needs-review')).toBe('info');
+    expect(phaseTone('landing')).toBe('info');
+    expect(phaseTone('capped')).toBe('warning');
+    expect(phaseTone('held')).toBe('warning');
+    expect(phaseTone('waiting')).toBe('warning');
+    expect(phaseTone('failed')).toBe('danger');
+    expect(phaseTone('blocked')).toBe('danger');
   });
 
-  test('leaves the glyph-only phases untinted', () => {
+  test('leaves the glyph-only phases untoned', () => {
     for (const phase of ['draft', 'queued', 'landed', 'dropped'] as const) {
-      expect(phaseTint(phase)).toBeNull();
+      expect(phaseTone(phase)).toBeNull();
     }
   });
 });

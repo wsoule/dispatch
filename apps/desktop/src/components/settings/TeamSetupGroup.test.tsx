@@ -19,6 +19,10 @@ import {
 } from './TakeOverDaemon';
 import { TeamSetupGroup } from './TeamSetupGroup';
 
+// Each action's test hook sits on its Button.
+const hookButton = (id: string) => screen.getByTestId(id);
+const findHookButton = (id: string) => screen.findByTestId(id);
+
 function status(over: Partial<TeamStatus> = {}): TeamStatus {
   return {
     state: 'none',
@@ -129,13 +133,11 @@ describe('TeamSetupGroup', () => {
     await screen.findByTestId('team-status-line');
     expect(screen.getByText(/The relay can read everything/)).toBeTruthy();
     // Nowhere chosen yet: a board repo URL comes first.
-    expect(screen.getByTestId('team-start').hasAttribute('disabled')).toBe(
-      true
-    );
+    expect(hookButton('team-start').hasAttribute('disabled')).toBe(true);
     fireEvent.change(screen.getByLabelText('Board repo URL'), {
       target: { value: ' git@example.com:acme/board.git ' },
     });
-    fireEvent.click(screen.getByTestId('team-start'));
+    fireEvent.click(hookButton('team-start'));
     await waitFor(() =>
       expect(screen.getByTestId('team-recovery-code').textContent).toBe(
         'RECOVERY-CODE'
@@ -154,7 +156,7 @@ describe('TeamSetupGroup', () => {
       await screen.findByRole('radio', { name: /This project’s repo/ })
     );
     expect(screen.queryByLabelText('Board repo URL')).toBeNull();
-    fireEvent.click(screen.getByTestId('team-start'));
+    fireEvent.click(hookButton('team-start'));
     await waitFor(() =>
       expect(c.startTeam).toHaveBeenCalledWith({
         confirmed: true,
@@ -180,7 +182,7 @@ describe('TeamSetupGroup', () => {
       (await screen.findByTestId('team-start-place')).textContent
     ).toContain('git@example.com:acme/board.git');
     expect(screen.queryByRole('radiogroup')).toBeNull();
-    fireEvent.click(screen.getByTestId('team-start'));
+    fireEvent.click(hookButton('team-start'));
     await waitFor(() =>
       expect(c.startTeam).toHaveBeenCalledWith({ confirmed: true })
     );
@@ -198,7 +200,7 @@ describe('TeamSetupGroup', () => {
     fireEvent.change(await screen.findByLabelText('Invite link'), {
       target: { value: '  dispatch-team:LINK ' },
     });
-    fireEvent.click(screen.getByTestId('team-join'));
+    fireEvent.click(hookButton('team-join'));
     await waitFor(() =>
       expect(screen.getByTestId('team-join-check').textContent).toContain(
         '654 321'
@@ -231,12 +233,12 @@ describe('TeamSetupGroup', () => {
     fireEvent.change(await screen.findByLabelText('Invite link'), {
       target: { value: 'dispatch-team:LINK' },
     });
-    fireEvent.click(screen.getByTestId('team-join'));
+    fireEvent.click(hookButton('team-join'));
     expect(
       (await screen.findByTestId('team-join-repo-warning')).textContent
     ).toContain('/srv/board.git');
     expect(screen.queryByTestId('team-join-check')).toBeNull();
-    fireEvent.click(screen.getByTestId('team-join-confirm-repo'));
+    fireEvent.click(hookButton('team-join-confirm-repo'));
     await waitFor(() =>
       expect(screen.getByTestId('team-join-check').textContent).toContain(
         '654 321'
@@ -272,7 +274,7 @@ describe('TeamSetupGroup', () => {
     fireEvent.change(screen.getByLabelText('Email or handle to invite'), {
       target: { value: 'cy@example.com' },
     });
-    fireEvent.click(screen.getByTestId('team-invite'));
+    fireEvent.click(hookButton('team-invite'));
     await waitFor(() =>
       expect(screen.getByTestId('team-invite-link').textContent).toBe(
         'dispatch-team:LINK'
@@ -324,7 +326,7 @@ describe('TeamSetupGroup', () => {
       takeover: IDLE,
       handleRestartDaemon: restart,
     });
-    fireEvent.click(await screen.findByTestId('daemon-takeover'));
+    fireEvent.click(await findHookButton('daemon-takeover'));
     expect(screen.getByText('Start or join a team')).toBeTruthy();
     expect(screen.queryByTestId('team-start')).toBeNull();
     expect(screen.queryByTestId('team-join')).toBeNull();
@@ -356,7 +358,7 @@ describe('TeamSetupGroup', () => {
       takeover: IDLE,
       handleRestartDaemon: () => Promise.reject(new Error(refusal)),
     });
-    fireEvent.click(await screen.findByTestId('daemon-takeover'));
+    fireEvent.click(await findHookButton('daemon-takeover'));
     expect((await screen.findByRole('alert')).textContent).toBe(refusal);
   });
 
@@ -366,13 +368,13 @@ describe('TeamSetupGroup', () => {
       takeover: { ...IDLE, parked: 2, waiting: 2 },
       handleRestartDaemon: restart,
     });
-    fireEvent.click(await screen.findByTestId('daemon-takeover'));
+    fireEvent.click(await findHookButton('daemon-takeover'));
     expect(screen.getByText(takeoverParkedConfirm(2))).toBeTruthy();
     expect(takeoverParkedConfirm(2)).toBe(
       "2 runs are waiting on you; they'll pick up again after the restart. Questions stay open; tool approvals will be asked again."
     );
     expect(restart).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByTestId('daemon-takeover-confirm'));
+    fireEvent.click(hookButton('daemon-takeover-confirm'));
     await waitFor(() => expect(restart).toHaveBeenCalledTimes(1));
   });
 
@@ -382,7 +384,7 @@ describe('TeamSetupGroup', () => {
       takeover: { ...IDLE, parked: 1 },
       handleRestartDaemon: restart,
     });
-    fireEvent.click(await screen.findByTestId('daemon-takeover'));
+    fireEvent.click(await findHookButton('daemon-takeover'));
     fireEvent.click(screen.getByText('Cancel'));
     expect(screen.getByTestId('daemon-takeover')).toBeTruthy();
     expect(restart).not.toHaveBeenCalled();

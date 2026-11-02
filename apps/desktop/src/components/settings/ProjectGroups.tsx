@@ -4,13 +4,13 @@ import type {
   VerifyStep,
 } from '@dispatch-foo/core/browser';
 import { statusLabel } from '@dispatch-foo/core/browser';
+import { Button, TextField } from '@dispatch/ui';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
 import { OPERATOR_ONLY, TextSetting } from './fields';
+import styles from './ProjectGroups.module.css';
 import { SettingsGroup, SettingsRow } from './SettingsGroup';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
 
 interface Props {
   config: DispatchConfig;
@@ -72,30 +72,29 @@ export function StatusesGroup({ config, onSave }: Omit<Props, 'canOperate'>) {
           key={status}
           title={statusLabel(status)}
           control={
-            <span className="flex gap-0.5">
+            <span className={styles.rowActions}>
               <Button
-                variant="ghost"
-                size="icon-sm"
+                variant="quiet"
+                size="sm"
+                icon={<ArrowUp size={14} strokeWidth={1.8} />}
                 aria-label={`Move ${status} up`}
                 disabled={i === 0}
                 onClick={() =>
                   void onSave({ statuses: moved(statuses, i, -1) })
                 }
-              >
-                <ArrowUp />
-              </Button>
+              />
               <Button
-                variant="ghost"
-                size="icon-sm"
+                variant="quiet"
+                size="sm"
+                icon={<ArrowDown size={14} strokeWidth={1.8} />}
                 aria-label={`Move ${status} down`}
                 disabled={i === statuses.length - 1}
                 onClick={() => void onSave({ statuses: moved(statuses, i, 1) })}
-              >
-                <ArrowDown />
-              </Button>
+              />
               <Button
-                variant="ghost"
-                size="icon-sm"
+                variant="quiet"
+                size="sm"
+                icon={<Trash2 size={14} strokeWidth={1.8} />}
                 aria-label={`Remove ${status}`}
                 disabled={statuses.length === 1}
                 onClick={() =>
@@ -103,9 +102,7 @@ export function StatusesGroup({ config, onSave }: Omit<Props, 'canOperate'>) {
                     statuses: statuses.filter((s) => s !== status),
                   })
                 }
-              >
-                <Trash2 />
-              </Button>
+              />
             </span>
           }
         />
@@ -115,25 +112,25 @@ export function StatusesGroup({ config, onSave }: Omit<Props, 'canOperate'>) {
         htmlFor="status-new"
         control={
           <form
-            className="flex gap-2"
+            className={styles.addForm}
             onSubmit={(e) => {
               e.preventDefault();
               add();
             }}
           >
-            <Input
+            <TextField
               id="status-new"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder="qa"
-              className="w-32"
+              className={styles.short}
             />
             <Button
               type="submit"
-              variant="outline"
+              variant="secondary"
+              icon={<Plus size={14} strokeWidth={1.8} />}
               disabled={draft.trim() === ''}
             >
-              <Plus />
               Add
             </Button>
           </form>
@@ -156,19 +153,18 @@ export function VerifyStepsList({ config, onSave, canOperate }: Props) {
         <SettingsRow
           key={`${step.name}-${i}`}
           title={step.name}
-          subtitle={<span className="font-mono">{step.command}</span>}
+          subtitle={<span className="mono">{step.command}</span>}
           keywords="check step verify"
           locked={!canOperate}
           control={
             canOperate ? (
               <Button
-                variant="ghost"
-                size="icon-sm"
+                variant="quiet"
+                size="sm"
+                icon={<Trash2 size={14} strokeWidth={1.8} />}
                 aria-label={`Remove ${step.name}`}
                 onClick={() => void save(steps.filter((_, j) => j !== i))}
-              >
-                <Trash2 />
-              </Button>
+              />
             ) : undefined
           }
         />
@@ -187,7 +183,8 @@ export function VerifyStepsList({ config, onSave, canOperate }: Props) {
       >
         {canOperate && (
           <form
-            className="flex flex-wrap gap-2"
+            className={styles.addForm}
+            data-wrap=""
             onSubmit={(e) => {
               e.preventDefault();
               if (name.trim() === '' || command.trim() === '') return;
@@ -201,27 +198,27 @@ export function VerifyStepsList({ config, onSave, canOperate }: Props) {
               });
             }}
           >
-            <Input
+            <TextField
               id="verify-step-name"
               aria-label="Check name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="tests"
-              className="w-32"
+              className={styles.short}
             />
-            <Input
+            <TextField
               aria-label="Command"
               value={command}
               onChange={(e) => setCommand(e.target.value)}
               placeholder="pnpm test"
-              className="min-w-[200px] flex-1 font-mono"
+              className={styles.command}
             />
             <Button
               type="submit"
-              variant="outline"
+              variant="secondary"
+              icon={<Plus size={14} strokeWidth={1.8} />}
               disabled={name.trim() === '' || command.trim() === ''}
             >
-              <Plus />
               Add
             </Button>
           </form>

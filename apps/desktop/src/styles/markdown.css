@@ -20,6 +20,12 @@
   margin: 0.4em 0;
 }
 
+/* A live text drawn block by block (StreamingText's `blocks`) keeps the gap one Markdown
+   would leave between its paragraphs. */
+[data-slot='streaming-blocks'] > .dispatch-md + .dispatch-md {
+  margin-top: 0.4em;
+}
+
 .dispatch-md ul,
 .dispatch-md ol {
   margin: 0.4em 0;
@@ -156,4 +162,16 @@
 .dispatch-md-prose ul,
 .dispatch-md-prose ol {
   margin: 0.5em 0;
+}
+
+/* While a reply streams, each new block fades in once instead of popping. Gated on
+   `data-streaming` so a settled transcript never replays it. */
+@media (prefers-reduced-motion: no-preference) {
+  .dispatch-md[data-streaming] > * {
+    transition: opacity 600ms ease-out;
+
+    @starting-style {
+      opacity: 0;
+    }
+  }
 }

@@ -1,0 +1,184 @@
+import type {
+  InputHTMLAttributes,
+  KeyboardEvent,
+  MouseEvent,
+  ReactNode,
+  Ref,
+  TextareaHTMLAttributes,
+} from 'react';
+
+import type { PickerOption, SaveResult } from '../edit/types';
+import type { DataAttributes } from '../types';
+
+// Props of the controls family: general-purpose form controls and Menu.
+// Plain data and callbacks; text controls pass native attributes through.
+
+/* ---- menu trigger ------------------------------------------------------ */
+
+/** What Menu hands its `trigger` render function: spread it onto the
+    opening button (Button accepts all of it). */
+export interface MenuTriggerProps {
+  ref: Ref<HTMLButtonElement>;
+  'aria-haspopup': 'menu';
+  'aria-expanded': boolean;
+  'aria-controls': string | undefined;
+  onClick: (event: MouseEvent<HTMLButtonElement>) => void;
+  onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
+}
+
+/* ---- text -------------------------------------------------------------- */
+
+/** field = Gr8r's bordered input; inline = no box, for in-place editing. */
+export type TextFieldVariant = 'field' | 'inline';
+
+export interface TextFieldProps extends Omit<
+  InputHTMLAttributes<HTMLInputElement>,
+  'size'
+> {
+  variant?: TextFieldVariant;
+  /** sm 26px (toolbars, dense rows), md 30px (the default). */
+  size?: 'sm' | 'md';
+  /** Leading adornment inside the box (a search icon, a chip). */
+  start?: ReactNode;
+  /** Trailing adornment inside the box (a count, a clear button). */
+  end?: ReactNode;
+  /** The red error edge; a surrounding Field with an error sets it too. */
+  invalid?: boolean;
+  ref?: Ref<HTMLInputElement>;
+}
+
+export interface TextAreaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
+  variant?: TextFieldVariant;
+  /** Grows with its content (the default); `rows` stays the minimum. */
+  autoGrow?: boolean;
+  invalid?: boolean;
+  ref?: Ref<HTMLTextAreaElement>;
+}
+
+/* ---- field ------------------------------------------------------------- */
+
+export interface FieldProps {
+  /** The visible label, tied to the control inside by id. */
+  label: ReactNode;
+  /** Quiet help under the control, read as its description. */
+  hint?: ReactNode;
+  /** The error under the control: marks it invalid and describes it. */
+  error?: ReactNode;
+  /** The control's id; generated when omitted. */
+  id?: string;
+  /** One TextField, TextArea or Select (they pick up id and description). */
+  children: ReactNode;
+  className?: string;
+}
+
+/* ---- choices ----------------------------------------------------------- */
+
+export interface RadioOption {
+  value: string;
+  label: ReactNode;
+  /** A quiet line under the label, read as the option's description. */
+  hint?: ReactNode;
+  disabled?: boolean;
+}
+
+export interface RadioGroupProps extends DataAttributes {
+  options: readonly RadioOption[];
+  value: string | null;
+  onChange: (value: string) => void;
+  /** Accessible name of the group; or name it by `aria-labelledby`. */
+  label?: string;
+  'aria-labelledby'?: string;
+  /** vertical (default) stacks the options; horizontal sets them in a row. */
+  orientation?: 'vertical' | 'horizontal';
+  disabled?: boolean;
+}
+
+/** A host's `data-*` hooks go on the open list's layer, as on any
+    PickerPopover. */
+export interface SelectProps extends DataAttributes {
+  /** The setting's name: the trigger reads "Tier: Admin". */
+  label: string;
+  value: string | null;
+  options: readonly PickerOption[];
+  onChange: (value: string) => SaveResult;
+  /** Face when nothing is chosen. */
+  placeholder?: string;
+  disabled?: boolean;
+  /** The trigger's id (a Field's label points at it). */
+  id?: string;
+  className?: string;
+}
+
+/* ---- menu -------------------------------------------------------------- */
+
+export interface MenuActionItem {
+  kind?: 'item';
+  id: string;
+  label: ReactNode;
+  /** A 14px leading icon. */
+  icon?: ReactNode;
+  /** Quiet key hint at the end of the row ("G then S"). */
+  shortcut?: string;
+  /** Red text: an irreversible action ("Discard the run"). */
+  destructive?: boolean;
+  disabled?: boolean;
+  title?: string;
+  onSelect: () => void;
+}
+
+/** One choice of a set, ticked when `checked` (role menuitemradio). */
+export interface MenuRadioItem {
+  kind: 'radio';
+  id: string;
+  label: ReactNode;
+  icon?: ReactNode;
+  checked: boolean;
+  disabled?: boolean;
+  onSelect: () => void;
+}
+
+export interface MenuSeparator {
+  kind: 'separator';
+  id?: string;
+}
+
+/** A labelled run of items ("Saved views"). */
+export interface MenuGroup {
+  kind: 'group';
+  id: string;
+  label: string;
+  items: readonly (MenuActionItem | MenuRadioItem)[];
+}
+
+/** A row that opens a nested menu to its side ("Switch project"). */
+export interface MenuSubmenu {
+  kind: 'submenu';
+  id: string;
+  label: ReactNode;
+  icon?: ReactNode;
+  items: readonly MenuEntry[];
+  /** Printed when `items` is empty. */
+  emptyLabel?: string;
+}
+
+export type MenuEntry =
+  | MenuActionItem
+  | MenuRadioItem
+  | MenuSeparator
+  | MenuGroup
+  | MenuSubmenu;
+
+/** A host's `data-*` hooks (`data-testid`) go on the open menu's layer,
+    as on a PickerPopover's popover. */
+export interface MenuProps extends DataAttributes {
+  /** Accessible name of the menu. */
+  label: string;
+  items: readonly MenuEntry[];
+  /** Renders the opening button; spread the props onto it. */
+  trigger: (props: MenuTriggerProps) => ReactNode;
+  /** Which trigger edge the menu lines up with. Default 'start'. */
+  align?: 'start' | 'end';
+  /** Controlled open state (a host shortcut opens it). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}

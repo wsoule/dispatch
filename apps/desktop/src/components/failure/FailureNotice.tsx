@@ -1,10 +1,11 @@
 import { explainFailure } from '@dispatch-foo/core/browser';
+import { Button } from '@dispatch/ui';
 import { CircleAlert } from 'lucide-react';
 import { useState } from 'react';
 
-import { DetailsDisclosure } from '../setup/DetailsDisclosure';
+import { RawDetails } from '../gr8r/RawText';
 import { useOptionalShellActions } from '../shell/ShellActionsContext';
-import { Button } from '@/ui/button';
+import styles from './FailureNotice.module.css';
 
 /** What "Ask the agent to fix it" sends: the failure verbatim and what to do about it. */
 export function askAgentToFix(error: string): string {
@@ -60,8 +61,8 @@ export function FailureNotice({
   const actions = toSetup ? (
     shell !== null && (
       <Button
-        size="xs"
-        variant="outline"
+        size="sm"
+        variant="secondary"
         onClick={() => shell.setGlobalView('settings', { page: 'setup' })}
       >
         Fix in Settings → Setup
@@ -71,8 +72,8 @@ export function FailureNotice({
     <>
       {onRetry !== undefined && (
         <Button
-          size="xs"
-          variant="outline"
+          size="sm"
+          variant="secondary"
           disabled={busy}
           onClick={() => void run(onRetry)}
         >
@@ -81,8 +82,8 @@ export function FailureNotice({
       )}
       {onAskAgent !== undefined && (
         <Button
-          size="xs"
-          variant="ghost"
+          size="sm"
+          variant="quiet"
           disabled={busy}
           onClick={() => void run(onAskAgent)}
         >
@@ -96,22 +97,23 @@ export function FailureNotice({
     <div
       role="alert"
       data-slot="failure-notice"
-      className="bg-state-failed-surface rounded-card flex flex-col gap-2 self-stretch px-3 py-2 text-[13px]"
+      data-tone="danger"
+      className={styles.notice}
     >
-      <div className="text-state-failed flex items-start gap-2">
+      <div className={styles.sentence}>
         <CircleAlert
-          aria-hidden
-          className="size-3.5 shrink-0 translate-y-0.5"
+          aria-hidden="true"
+          className={styles.icon}
+          size={14}
+          strokeWidth={1.8}
         />
         <span>{sentence}</span>
       </div>
-      <div className="flex flex-wrap items-center gap-1.5 empty:hidden">
-        {actions}
-      </div>
+      <div className={styles.actions}>{actions}</div>
       {actionError !== null && (
-        <p className="text-state-failed text-[12px]">{actionError}</p>
+        <p className={styles.actionError}>{actionError}</p>
       )}
-      {showDetails && <DetailsDisclosure text={error} />}
+      {showDetails && <RawDetails text={error} />}
     </div>
   );
 }

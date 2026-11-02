@@ -1,0 +1,46 @@
+/* The daemon status row and its numbers (DaemonSection.tsx). */
+.path {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+/* The decorative dot beside the status word, coloured by its data-tone. */
+.dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--tone);
+}
+
+.failure {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.failed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--red);
+}
+
+.stats {
+  padding: var(--s-3);
+  border-bottom: 1px solid var(--divider);
+}
+
+.stats:last-child {
+  border-bottom: 0;
+}

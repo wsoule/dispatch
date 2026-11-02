@@ -1,0 +1,71 @@
+/* Linear's Capacity and Coverage groups (LinearCapacityGroup.tsx, LinearCoverageGroup.tsx). */
+.error {
+  font-size: var(--fs-xs);
+  color: var(--red);
+}
+
+/* The Check again icon while a check runs. */
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The scrolling list of tasks with no Linear record. */
+.unlinkedList {
+  max-height: 288px;
+  overflow-y: auto;
+}
+
+.unlinkedRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-2) 0;
+  border-bottom: 1px solid var(--divider);
+}
+
+.unlinkedRow:last-child {
+  border-bottom: 0;
+}
+
+.unlinkedText {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.unlinkedHead {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.unlinkedTitle {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.unlinkedActions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-2);
+}

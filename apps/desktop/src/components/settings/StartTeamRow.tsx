@@ -1,12 +1,17 @@
 import type { DispatchConfig } from '@dispatch-foo/core/browser';
 import type { StartTeamInput } from '@dispatch/client';
+import { Button, RadioGroup, TextField } from '@dispatch/ui';
 import { useState } from 'react';
 
 import { SettingsRow } from './SettingsGroup';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
+import styles from './StartTeamRow.module.css';
 
 type Choice = 'repo' | 'project';
+
+const CHOICES: { value: Choice; label: string }[] = [
+  { value: 'repo', label: 'A separate board repo (recommended)' },
+  { value: 'project', label: 'This project’s repo (branch dispatch-sync)' },
+];
 
 /** Where config.yml already keeps the board, in words, or null when nobody
  *  chose a place yet. */
@@ -60,7 +65,6 @@ export function StartTeamRow({
       control={
         <Button
           size="sm"
-          variant="outline"
           data-testid="team-start"
           disabled={busy || input === null}
           onClick={() => {
@@ -72,43 +76,26 @@ export function StartTeamRow({
       }
     >
       {placed !== null ? (
-        <span
-          data-testid="team-start-place"
-          className="text-muted-foreground text-[12px]"
-        >
+        <span data-testid="team-start-place" className={styles.place}>
           The team&rsquo;s board is kept at {placed}, on branch {branch}.
         </span>
       ) : (
-        <div className="flex flex-col gap-2">
-          <div
-            role="radiogroup"
-            aria-label="Where the team's board is kept"
-            className="flex flex-wrap gap-2"
-          >
-            <Button
-              size="sm"
-              role="radio"
-              aria-checked={choice === 'repo'}
-              variant={choice === 'repo' ? 'secondary' : 'ghost'}
-              onClick={() => setChoice('repo')}
-            >
-              A separate board repo (recommended)
-            </Button>
-            <Button
-              size="sm"
-              role="radio"
-              aria-checked={choice === 'project'}
-              variant={choice === 'project' ? 'secondary' : 'ghost'}
-              onClick={() => setChoice('project')}
-            >
-              This project&rsquo;s repo (branch dispatch-sync)
-            </Button>
-          </div>
+        <div className={styles.choose}>
+          <RadioGroup
+            label="Where the team's board is kept"
+            orientation="horizontal"
+            value={choice}
+            options={CHOICES}
+            onChange={(next) =>
+              setChoice(next === 'project' ? 'project' : 'repo')
+            }
+          />
           {choice === 'repo' && (
-            <Input
+            <TextField
+              size="sm"
               aria-label="Board repo URL"
               placeholder="git@github.com:acme/dispatch-board.git"
-              className="h-7 w-80 font-mono text-[12px]"
+              className={styles.url}
               value={url}
               onChange={(e) => setUrl(e.target.value)}
             />

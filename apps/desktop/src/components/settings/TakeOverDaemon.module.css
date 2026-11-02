@@ -1,0 +1,21 @@
+/* The takeover block (TakeOverDaemon.tsx): the notice, then the restart or its confirm. */
+.takeover {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.strong {
+  color: var(--text);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.error {
+  color: var(--red);
+}

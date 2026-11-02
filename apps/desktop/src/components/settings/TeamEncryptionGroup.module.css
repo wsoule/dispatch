@@ -1,0 +1,36 @@
+/* Settings → Members, "End-to-end encryption" (TeamEncryptionGroup.tsx). */
+
+.error {
+  color: var(--red);
+}
+
+.alert {
+  font-size: var(--fs-xs);
+  color: var(--red);
+}
+
+/* A hint set straight into the card, padded like a row. */
+.note {
+  padding: var(--s-2) var(--s-3);
+}
+
+/* The confirm's body: what turning it on does not do. */
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  color: var(--text-2);
+}
+
+.confirm p {
+  margin: 0;
+}
+
+.limits {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  margin: 0;
+  padding-left: var(--s-4);
+  list-style: disc;
+}

@@ -1,7 +1,8 @@
-import { Button, Disclosure, EmptyState } from '@dispatch/ui';
+import { Button, EmptyState } from '@dispatch/ui';
 import { OctagonAlert } from 'lucide-react';
 import { Component, type ErrorInfo, Fragment, type ReactNode } from 'react';
 
+import { RawDetails } from '../gr8r/RawText';
 import styles from './ErrorBoundary.module.css';
 import { errorDetails, isStaleChunkError } from './errorBoundaryUtils';
 
@@ -69,7 +70,8 @@ export class ErrorBoundary extends Component<
     // The fallback: the library EmptyState with a danger-toned OctagonAlert, the sentence
     // naming what failed and the reassurance under it, "Try again", "Reload app" and "Copy
     // error details" (the name, message and stack for a bug report), the stale-module hint
-    // when a stale chunk threw, and the thrown message in a mono block behind "Details".
+    // when a stale chunk threw, and the thrown message in the shared mono well behind
+    // "Details" (RawDetails).
     // role="alert" so a crash that replaces a view is announced.
     return (
       <div className={styles.root} role="alert">
@@ -109,9 +111,7 @@ export class ErrorBoundary extends Component<
                   after an update.
                 </p>
               )}
-              <Disclosure variant="inline" summary="Details">
-                <pre className={styles.detail}>{error.message}</pre>
-              </Disclosure>
+              <RawDetails text={error.message} />
             </div>
           }
         >

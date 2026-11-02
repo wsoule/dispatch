@@ -1,4 +1,10 @@
-import type { ComponentType, ReactElement, ReactNode } from 'react';
+import type {
+  ComponentType,
+  KeyboardEvent,
+  MouseEvent,
+  ReactElement,
+  ReactNode,
+} from 'react';
 
 import type { SaveResult } from '../edit/types';
 import type { DataAttributes, UiStatus, UiTone } from '../types';
@@ -406,6 +412,45 @@ export interface SlideOverProps extends DataAttributes {
   children?: ReactNode;
 }
 
+/**
+ * What useModalSurface takes: a host's own panel over a scrim (Dispatch's
+ * Settings), or a SlideOver. The host renders both elements and places
+ * them; the hook brings focus, Tab, Escape, the scrim and the stack.
+ */
+export interface ModalSurfaceOptions {
+  open: boolean;
+  /** Escape from inside, an Escape the stack routes here, a scrim click. */
+  onClose: () => void;
+  /** The panel: the role="dialog" element (aria-modal="true" while
+      modal, tabIndex -1 so it can take focus itself). */
+  panelRef: { readonly current: HTMLElement | null };
+  /** The --overlay scrim, behind the panel or wrapped around it. */
+  scrimRef: { readonly current: HTMLElement | null };
+  /** Receives focus on open instead of the panel itself. */
+  initialFocusRef?: { readonly current: HTMLElement | null };
+  /** Default true. false: a panel beside a usable page (a desktop
+      SlideOver), which only moves focus in and out and keeps Tab
+      inside; no layer, scroll lock, scrim or Escape. */
+  modal?: boolean;
+}
+
+/** The handlers useModalSurface hands back for the host to wire in. */
+export interface ModalSurface {
+  /** Spread on the scrim: a press on it keeps focus in the panel, and
+      its click closes the panel unless that press closed a layer (a
+      picker) sitting over the panel. Presses on the scrim's children
+      (a panel wrapped by it) are not the scrim's. */
+  scrimProps: {
+    onMouseDown: (event: MouseEvent<HTMLElement>) => void;
+    onClick: (event: MouseEvent<HTMLElement>) => void;
+  };
+  /** The panel's keydown (or that of an element around it): Escape
+      closes it unless something inside took the key first, and Tab and
+      Shift+Tab cycle inside it. Keys from outside the panel's DOM (a
+      portal rendered from inside it) are left alone. */
+  onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
+}
+
 export interface PropertyListItem {
   id?: string;
   label: string;
@@ -606,6 +651,14 @@ export interface DialogProps extends DataAttributes {
   contentKey?: string;
   /** alertdialog for a confirmation (ConfirmDialog): no close button. */
   role?: 'dialog' | 'alertdialog';
+  /** Keeps the title (and description) for assistive tech only: no
+      header row, no close button and no `titleAction`; Escape and the
+      scrim still close it. For a search-first dialog (quick open). */
+  titleHidden?: boolean;
+  /** center (default), or top: the card hangs from the upper part of the
+      window, so a result list under a field grows downward. Phones keep
+      the bottom sheet. */
+  placement?: 'center' | 'top';
   children: ReactNode;
 }
 

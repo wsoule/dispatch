@@ -1,8 +1,13 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
+import { accessFor, SettingsAccessProvider } from './access';
 import { AgentsSection } from './AgentsSection';
-import { testConfig as config } from './fixtures.test-helper';
+import {
+  chooseOption,
+  testConfig as config,
+  selectTrigger,
+} from './fixtures.test-helper';
 
 type Props = Parameters<typeof AgentsSection>[0];
 
@@ -24,14 +29,6 @@ function recorder() {
     saved,
     onSave: (p: unknown) => Promise.resolve(void saved.push(p)),
   };
-}
-
-// Base UI commits a select item on a click that began on it (a bare click is
-// treated as one that opened the list under the pointer), so press first.
-function chooseOption(name: string) {
-  const option = screen.getByRole('option', { name });
-  fireEvent.pointerDown(option);
-  fireEvent.click(option);
 }
 
 // The default config says 'auto'; before this was offered, a stock project
@@ -148,14 +145,14 @@ test('clearing an already-absent budget cap saves nothing', () => {
 
 test('a model role select carries its accessible name', () => {
   renderAgents();
-  expect(screen.getByLabelText('Coding runs model')).toBeTruthy();
-  expect(screen.getByLabelText('Coding runs effort')).toBeTruthy();
+  expect(selectTrigger('Coding runs model')).toBeTruthy();
+  expect(selectTrigger('Coding runs effort')).toBeTruthy();
 });
 
 test('choosing an effort level saves it for that role', () => {
   const r = recorder();
   renderAgents({ onSave: r.onSave });
-  fireEvent.click(screen.getByRole('combobox', { name: 'Coding runs effort' }));
+  fireEvent.click(selectTrigger('Coding runs effort'));
   chooseOption('Max');
   expect(r.saved).toEqual([{ effort: { execute: 'max' } }]);
 });
@@ -168,13 +165,13 @@ test('choosing Default effort clears the role', () => {
     config: { ...config, effort: { execute: 'high' } },
     onSave: r.onSave,
   });
-  fireEvent.click(screen.getByRole('combobox', { name: 'Coding runs effort' }));
+  fireEvent.click(selectTrigger('Coding runs effort'));
   chooseOption('Default');
   expect(r.saved).toEqual([{ effort: { execute: null } }]);
 });
 
-// Models first, then the limits runs work under, then what they may do, then
-// which agent a dispatch uses.
+// Models first, then how their chats stream, the limits runs work under,
+// what they may do, then which agent a dispatch uses.
 test('the page is sentence-case groups in order', () => {
   renderAgents();
   expect(
@@ -182,6 +179,7 @@ test('the page is sentence-case groups in order', () => {
   ).toEqual([
     'Models',
     'Judgments',
+    'Streaming',
     'Limits',
     'Permissions',
     'Defaults',
@@ -189,22 +187,100 @@ test('the page is sentence-case groups in order', () => {
   ]);
 });
 
-// Numeric inputs are sans with tabular digits — no code face on a number.
-test('numeric inputs are not monospaced', () => {
+// Numeric inputs ask for a decimal keypad, not free text.
+test('numeric inputs take decimals', () => {
   renderAgents();
   const input = screen.getByLabelText('Turns per run');
-  expect(input.className).not.toContain('font-mono');
-  expect(input.className).toContain('tabular-nums');
+  expect(input.getAttribute('inputmode')).toBe('decimal');
 });
 
-// The permission radios paint on Linear's indigo (`--color-primary` → `--accent`), not the
-// `accent-accent` alias that resolves to the near-transparent hover wash.
-test('the permission radios paint with the primary accent', () => {
+// The permission modes are one named group of native radios.
+test('the permission modes are native radios in one named group', () => {
   renderAgents();
-  const radios = screen.getAllByRole('radio');
-  expect(radios.length).toBeGreaterThan(0);
+  const group = screen.getByRole('radiogroup', {
+    name: 'When an agent wants to run a command or edit a file',
+  });
+  const radios = within(group).getAllByRole('radio');
+  expect(radios).toHaveLength(4);
   for (const radio of radios) {
-    expect(radio.className).toContain('accent-primary');
-    expect(radio.className).not.toContain('accent-accent');
+    expect((radio as HTMLInputElement).type).toBe('radio');
   }
+});
+
+// The two streaming switches: every mode in view, the chosen one checked,
+// and the line under each saying what the chosen mode does.
+function streamMode(row: string, mode: string): HTMLElement {
+  return within(screen.getByRole('radiogroup', { name: row })).getByRole(
+    'radio',
+    { name: mode }
+  );
+}
+
+test('both chats stream live when config.yml says nothing', () => {
+  renderAgents();
+  expect(streamMode('Assistant', 'Live').getAttribute('aria-checked')).toBe(
+    'true'
+  );
+  expect(streamMode('Runs', 'Live').getAttribute('aria-checked')).toBe('true');
+  expect(
+    screen.getByText(
+      'Its reply appears as it writes, and what it says between steps stays in the chat.'
+    )
+  ).toBeTruthy();
+  // Narration is the Assistant's alone.
+  expect(
+    within(screen.getByRole('radiogroup', { name: 'Runs' }))
+      .getAllByRole('radio')
+      .map((b) => b.textContent)
+  ).toEqual(['Live', 'Off']);
+});
+
+test('pressing a mode saves it under its own block', () => {
+  const r = recorder();
+  renderAgents({ onSave: r.onSave });
+  fireEvent.click(streamMode('Assistant', 'Narration'));
+  fireEvent.click(streamMode('Runs', 'Off'));
+  expect(r.saved).toEqual([
+    { overseer: { stream: 'narration' } },
+    { runs: { stream: 'off' } },
+  ]);
+});
+
+test('the configured mode is pressed and described, and pressing it again saves nothing', () => {
+  const r = recorder();
+  renderAgents({
+    config: { ...config, overseer: { stream: 'off' }, runs: { stream: 'off' } },
+    onSave: r.onSave,
+  });
+  expect(streamMode('Assistant', 'Off').getAttribute('aria-checked')).toBe(
+    'true'
+  );
+  expect(
+    screen.getByText('One reply per turn, shown when the turn is done.')
+  ).toBeTruthy();
+  expect(
+    screen.getByText(
+      "Each part of the agent's text appears once it is finished."
+    )
+  ).toBeTruthy();
+  fireEvent.click(streamMode('Assistant', 'Off'));
+  expect(r.saved).toEqual([]);
+});
+
+test('a viewer who may not save config cannot press a mode', () => {
+  const r = recorder();
+  render(
+    <SettingsAccessProvider access={accessFor('request', false)}>
+      <AgentsSection
+        config={config}
+        executors={null}
+        onSave={r.onSave}
+        canOperate={false}
+      />
+    </SettingsAccessProvider>
+  );
+  const narration = streamMode('Assistant', 'Narration');
+  expect(narration.hasAttribute('disabled')).toBe(true);
+  fireEvent.click(narration);
+  expect(r.saved).toEqual([]);
 });

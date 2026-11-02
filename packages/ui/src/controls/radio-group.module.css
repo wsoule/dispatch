@@ -1,0 +1,119 @@
+/* Gr8r's radio: a 15px ring that fills the accent around a white dot when
+   chosen; the focus ring sits on the circle. */
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.group[data-orientation='horizontal'] {
+  flex-flow: row wrap;
+  gap: var(--s-2) var(--s-4);
+}
+
+.option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.row {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  color: var(--text);
+  font-size: var(--fs);
+  cursor: pointer;
+}
+
+.row[data-disabled='true'] {
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+.input {
+  position: absolute;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.ring {
+  position: relative;
+  flex: none;
+  width: 15px;
+  height: 15px;
+  border: 1.5px solid var(--control-border);
+  border-radius: 50%;
+  background: var(--surface);
+  transition:
+    background-color var(--dur) ease,
+    border-color var(--dur) ease;
+}
+
+.ring::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--on-accent);
+  opacity: 0;
+}
+
+.input:checked + .ring {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.input:checked + .ring::after {
+  opacity: 1;
+}
+
+.input:focus-visible + .ring {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.input:disabled + .ring {
+  opacity: 0.5;
+}
+
+.label {
+  min-width: 0;
+}
+
+.hint {
+  padding-left: 23px;
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+@media (forced-colors: active) {
+  .ring {
+    forced-color-adjust: none;
+    border-color: CanvasText;
+    background: Canvas;
+  }
+
+  .input:checked + .ring {
+    border-color: Highlight;
+    background: Canvas;
+  }
+
+  .input:checked + .ring::after {
+    background: Highlight;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ring {
+    transition: none;
+  }
+}

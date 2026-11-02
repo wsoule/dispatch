@@ -1101,3 +1101,11 @@ test('Escape closes the composer', () => {
   fireEvent.keyDown(document, { key: 'Escape' });
   expect(composer()).toBeNull();
 });
+
+// Focus is in the capture box on open, so an Escape typed there closes the
+// composer too.
+test('Escape typed in the capture box closes the composer', () => {
+  mount({ mode: 'capture' });
+  fireEvent.keyDown(captureField(), { key: 'Escape' });
+  expect(composer()).toBeNull();
+});

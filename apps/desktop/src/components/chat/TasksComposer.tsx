@@ -1,7 +1,9 @@
+import type { OverseerAttachment } from '@dispatch/client';
 import { X } from 'lucide-react';
 import { useState } from 'react';
 
 import type { OverseerSession } from '../../hooks/useOverseerSession';
+import { describeError } from '../../lib/actionFeedback';
 import { overseerTurnLive } from '../../lib/agentPresence';
 import { useAttachmentPreviews } from './OverseerChat';
 import { IconButton } from '@/ui/ai/icon-button';
@@ -16,16 +18,31 @@ export interface TasksComposerProps {
   about: { taskId: string; title: string } | null;
   onOpenOverseer: () => void;
   disabled: boolean;
+  /** The project it sends to; a switch starts the composer afresh. */
+  project: string;
 }
 
-/** "say something" in Tasks: always your agent. Its reply shows in a tray; you stay put. */
-export function TasksComposer({
+/**
+ * "say something" in Tasks: always your agent. Its reply shows in a tray; you
+ * stay put. Its text, files and failure are its own: the Overseer page keeps
+ * its unsent message on the session, and a send from here never touches it.
+ * They are one project's too, keyed by `project`: its files were uploaded to
+ * that project's dispatchd, and Tasks stays mounted across a project switch.
+ */
+export function TasksComposer(props: TasksComposerProps) {
+  return <ProjectTasksComposer key={props.project} {...props} />;
+}
+
+function ProjectTasksComposer({
   overseer,
   about,
   onOpenOverseer,
   disabled,
 }: TasksComposerProps) {
   const [draft, setDraft] = useState('');
+  const [files, setFiles] = useState<OverseerAttachment[]>([]);
+  const [attaching, setAttaching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   // Collapsed to one line until used, so Tasks keeps its height for work.
   const [expanded, setExpanded] = useState(false);
   // The task whose pill you removed; another task brings the pill back.
@@ -42,34 +59,55 @@ export function TasksComposer({
           .filter((m) => m.role === 'assistant')
           .at(-1);
   const working = sentAt !== null && overseerTurnLive(overseer);
-  const previews = useAttachmentPreviews(
-    overseer.attachments,
-    overseer.fetchAttachment
-  );
-  const pending = overseer.attachments.length > 0;
+  const previews = useAttachmentPreviews(files, overseer.fetchAttachment);
+  const pending = files.length > 0;
 
+  const attach = async (picked: File[]) => {
+    if (picked.length === 0) return;
+    setAttaching(true);
+    setError(null);
+    try {
+      const uploaded = await overseer.upload(picked);
+      setFiles((current) => [...current, ...uploaded]);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setAttaching(false);
+    }
+  };
+
+  // Clears the composer up front and puts the text and files back if the
+  // send fails, unless something new was typed or attached meanwhile.
   const submit = () => {
     const text = draft.trim();
-    if ((text === '' && !pending) || overseer.sending || overseer.attaching) {
+    if ((text === '' && !pending) || overseer.sending || attaching) {
       return;
     }
     const prompt =
       pill === null ? text : `About ${pill.taskId} ("${pill.title}"): ${text}`;
+    const typed = draft;
+    const sent = files;
     setSentAt(messages.length);
     setDraft('');
-    void overseer.submit(prompt);
+    setFiles([]);
+    setError(null);
+    overseer.reply(prompt, sent).catch((err: unknown) => {
+      setError(describeError(err));
+      setDraft((current) => (current === '' ? typed : current));
+      setFiles((current) => [...sent, ...current]);
+    });
   };
 
   return (
     <div className="border-border flex shrink-0 flex-col items-center gap-2 border-t-[0.5px] px-4 pt-2 pb-2">
-      {sentAt !== null && (
+      {(sentAt !== null || error !== null) && (
         <div
           data-testid="tasks-composer-tray"
           role="status"
           className="bg-background border-border rounded-card flex w-full max-w-[760px] items-start gap-3 border-[0.5px] px-3 py-2 text-[13px]"
         >
           <p className="line-clamp-3 min-w-0 flex-1 text-(--text-secondary)">
-            {overseer.sendError ??
+            {error ??
               (working
                 ? 'Your agent is working…'
                 : (reply?.text ?? 'Sent to your agent.'))}
@@ -79,7 +117,10 @@ export function TasksComposer({
           </Button>
           <IconButton
             label="Dismiss"
-            onClick={() => setSentAt(null)}
+            onClick={() => {
+              setSentAt(null);
+              setError(null);
+            }}
             className="size-6"
           >
             <X />
@@ -136,14 +177,16 @@ export function TasksComposer({
                 : [{ id: 'about', label: `about ${pill.taskId}` }]
             }
             onRemoveReference={() => setDismissed(about?.taskId ?? null)}
-            onAttachFiles={(files) => void overseer.attachFiles(files)}
-            attachments={overseer.attachments.map((a) => ({
+            onAttachFiles={(picked) => void attach(picked)}
+            attachments={files.map((a) => ({
               id: a.path,
               name: a.name,
               previewUrl: previews[a.path],
             }))}
-            onRemoveAttachment={overseer.removeAttachment}
-            attaching={overseer.attaching}
+            onRemoveAttachment={(path) =>
+              setFiles((current) => current.filter((a) => a.path !== path))
+            }
+            attaching={attaching}
           />
         </div>
       )}

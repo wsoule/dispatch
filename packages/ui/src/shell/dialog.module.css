@@ -204,6 +204,16 @@
   }
 }
 
+/* placement="top" (quick open): the card hangs from the upper part of the
+   window and a list under its field grows downward. Phones keep the
+   bottom sheet below. */
+@media (width > 640px) {
+  .layer[data-placement='top'] {
+    align-items: flex-start;
+    padding-top: 12vh;
+  }
+}
+
 /* ---- phones: a full-width sheet ---------------------------------------- */
 
 @media (width <= 640px) {

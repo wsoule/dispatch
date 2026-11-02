@@ -1,14 +1,13 @@
 import type { TeamKeys } from '@dispatch/client';
 import { isInsufficientTier } from '@dispatch/client';
+import { Button, Chip, TextField } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { NEEDS_DECIDE, useSettingsAccess } from './access';
+import styles from './MachinesGroup.module.css';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
-import { Pill } from '@/ui/ai/pill';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
 
 interface MachinesGroupProps {
   data: DispatchProjectData;
@@ -150,7 +149,7 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
         ) : (
           <SettingsRow
             title="Couldn’t read the team"
-            subtitle={<span className="text-state-failed">{message}</span>}
+            subtitle={<span className={styles.error}>{message}</span>}
           />
         )}
       </SettingsGroup>
@@ -175,7 +174,7 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
         title="This machine"
         subtitle={`${k.machine.handle} on ${k.machine.device} (${k.machine.replica})`}
         control={
-          <span className="font-mono text-[12px]">{k.machine.fingerprint}</span>
+          <span className={styles.fingerprint}>{k.machine.fingerprint}</span>
         }
       />
       {k.team !== null && (
@@ -183,7 +182,7 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
           title={`Team ${k.team.name}`}
           subtitle={`Founder ${k.team.founder.handle}: verify this with ${k.team.founder.handle}`}
           control={
-            <span className="font-mono text-[12px]">
+            <span className={styles.fingerprint}>
               {k.team.founder.fingerprint}
             </span>
           }
@@ -196,7 +195,6 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
           control={
             <Button
               size="sm"
-              variant="outline"
               disabled={busy}
               onClick={() =>
                 void act(async () => {
@@ -223,11 +221,9 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
           }
           stacked
           control={
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-[12px] break-all">
-                {shown.code}
-              </span>
-              <Button size="sm" variant="ghost" onClick={() => setShown(null)}>
+            <div className={styles.line}>
+              <span className={styles.secret}>{shown.code}</span>
+              <Button size="sm" variant="quiet" onClick={() => setShown(null)}>
                 Done
               </Button>
             </div>
@@ -241,12 +237,11 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
             title={`Founding by ${f.replica}`}
             subtitle="Two or more teams were founded on this branch. Trust the one whose founder you can verify."
             control={
-              <span className="flex items-center gap-2">
-                <span className="font-mono text-[12px]">{f.fingerprint}</span>
+              <span className={styles.line}>
+                <span className={styles.fingerprint}>{f.fingerprint}</span>
                 {canOperate && (
                   <Button
                     size="sm"
-                    variant="outline"
                     aria-label={`Trust ${f.fingerprint}`}
                     disabled={busy}
                     onClick={() =>
@@ -265,17 +260,17 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
           title="Invite a machine"
           subtitle="Its owner runs dispatch team join and pastes the code; you then compare fingerprints and admit it."
           control={
-            <span className="flex items-center gap-2">
-              <Input
+            <span className={styles.line}>
+              <TextField
                 aria-label="Handle to invite"
                 placeholder="handle"
-                className="h-7 w-36 text-[12px]"
+                size="sm"
+                className={styles.handleInput}
                 value={inviteFor}
                 onChange={(e) => setInviteFor(e.target.value)}
               />
               <Button
                 size="sm"
-                variant="outline"
                 disabled={busy || inviteFor.trim() === ''}
                 onClick={() =>
                   void act(async () => {
@@ -301,10 +296,10 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
           <SettingsRow
             key={m.replica}
             title={
-              <span className="flex items-center gap-1.5">
+              <span className={styles.who}>
                 {m.handle} on {m.device}
-                <Pill>{m.observer ? 'observer' : m.role}</Pill>
-                {m.recovered && <Pill>recovered</Pill>}
+                <Chip>{m.observer ? 'observer' : m.role}</Chip>
+                {m.recovered && <Chip>recovered</Chip>}
               </span>
             }
             subtitle={[
@@ -319,13 +314,13 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
               ...(m.hosts.length > 0 ? [`hosts ${m.hosts.join(', ')}`] : []),
             ].join(' · ')}
             control={
-              <span className="flex items-center gap-2">
-                <span className="font-mono text-[12px]">{m.fingerprint}</span>
+              <span className={styles.line}>
+                <span className={styles.fingerprint}>{m.fingerprint}</span>
                 {canAdmin && other && (
                   <>
                     <Button
                       size="sm"
-                      variant="ghost"
+                      variant="quiet"
                       disabled={busy}
                       onClick={() =>
                         void act(() =>
@@ -340,7 +335,7 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
                     </Button>
                     <Button
                       size="sm"
-                      variant="ghost"
+                      variant="quiet"
                       onClick={() =>
                         setConfirming({
                           replica: m.replica,
@@ -357,11 +352,12 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
             }
           >
             {canAdmin && !m.observer && (
-              <span className="mt-1 flex items-center gap-2">
-                <Input
+              <span className={styles.line}>
+                <TextField
                   aria-label={`Hosts for ${m.handle}`}
                   placeholder="handles this machine serves, comma-separated"
-                  className="h-7 w-72 text-[12px]"
+                  size="sm"
+                  className={styles.hostsInput}
                   value={draft}
                   onChange={(e) =>
                     setHostsDraft((d) => ({
@@ -372,7 +368,7 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
                 />
                 <Button
                   size="sm"
-                  variant="ghost"
+                  variant="quiet"
                   aria-label={`Save hosts for ${m.handle}`}
                   disabled={busy || draft === m.hosts.join(', ')}
                   onClick={() =>
@@ -403,21 +399,21 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
             key={id}
             title={`Waiting: ${w.handle} on ${w.device}`}
             subtitle={
-              <span className="flex flex-col gap-0.5">
+              <span className={styles.waiting}>
                 <span>
-                  {w.replica} ·{' '}
-                  <span className="font-mono">{w.fingerprint}</span>
+                  {w.replica} · <span className="mono">{w.fingerprint}</span>
                 </span>
                 {w.invitedBy !== null && <span>invited by {w.invitedBy}</span>}
               </span>
             }
             control={
               canAdmin ? (
-                <span className="flex items-center gap-2">
-                  <Input
+                <span className={styles.line}>
+                  <TextField
                     aria-label={`Fingerprint for ${w.handle}`}
                     placeholder="Fingerprint they read out"
-                    className="h-7 w-56 font-mono text-[12px]"
+                    size="sm"
+                    className={styles.fingerprintInput}
                     value={value}
                     onChange={(e) =>
                       setTyped((t) => ({ ...t, [id]: e.target.value }))
@@ -425,7 +421,6 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
                   />
                   <Button
                     size="sm"
-                    variant="outline"
                     aria-label={`Admit ${w.handle}`}
                     disabled={!matches || busy}
                     onClick={() =>
@@ -463,7 +458,7 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
             canAdmin ? (
               <Button
                 size="sm"
-                variant="ghost"
+                variant="quiet"
                 disabled={busy}
                 onClick={() => void act(() => api.closeLegacy())}
               >
@@ -480,7 +475,7 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
           control={
             <Button
               size="sm"
-              variant="ghost"
+              variant="quiet"
               disabled={busy}
               onClick={() =>
                 void act(async () => {
@@ -506,7 +501,7 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
               k.transport.kind === 'relay' ? (
                 <Button
                   size="sm"
-                  variant="ghost"
+                  variant="quiet"
                   disabled={busy}
                   onClick={() =>
                     void act(() => api.switchTransport({ kind: 'git' }))
@@ -515,26 +510,27 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
                   Switch back to git
                 </Button>
               ) : (
-                <div className="flex items-center gap-2">
-                  <Input
+                <div className={styles.line}>
+                  <TextField
                     aria-label="Relay URL"
                     placeholder="wss://relay.example"
                     value={relayUrl}
                     onChange={(e) => setRelayUrl(e.target.value)}
-                    className="h-7 w-56"
+                    size="sm"
+                    className={styles.relayInput}
                   />
-                  <Input
+                  <TextField
                     type="password"
                     autoComplete="off"
                     aria-label="Relay registration token (optional)"
                     placeholder="Registration token (optional)"
                     value={relayToken}
                     onChange={(e) => setRelayToken(e.target.value)}
-                    className="h-7 w-48"
+                    size="sm"
+                    className={styles.tokenInput}
                   />
                   <Button
                     size="sm"
-                    variant="outline"
                     disabled={busy || relayUrl.trim() === ''}
                     onClick={() => setDisclosing(relayUrl.trim())}
                   >
@@ -551,17 +547,16 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
           title="Before the team switches"
           subtitle={k.relayDisclosure}
           control={
-            <div className="flex items-center gap-2">
+            <div className={styles.line}>
               <Button
                 size="sm"
-                variant="ghost"
+                variant="quiet"
                 onClick={() => setDisclosing(null)}
               >
                 Cancel
               </Button>
               <Button
                 size="sm"
-                variant="outline"
                 disabled={busy}
                 onClick={() =>
                   void act(async () => {
@@ -596,7 +591,7 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
             canAdmin ? (
               <Button
                 size="sm"
-                variant="ghost"
+                variant="quiet"
                 onClick={() =>
                   setConfirming({
                     replica: b.replica,
@@ -616,17 +611,17 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
           title={`Revoke ${confirming.handle} for good?`}
           subtitle="Its key can never rejoin; the person joins again from a new machine."
           control={
-            <span className="flex items-center gap-2">
+            <span className={styles.line}>
               <Button
                 size="sm"
-                variant="ghost"
+                variant="quiet"
                 onClick={() => setConfirming(null)}
               >
                 Cancel
               </Button>
               <Button
                 size="sm"
-                variant="destructive"
+                variant="danger"
                 disabled={busy}
                 onClick={() => {
                   const c = confirming;
@@ -652,7 +647,6 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
             canAdmin ? (
               <Button
                 size="sm"
-                variant="outline"
                 aria-label={`Dismiss ${k.pause.replica}'s op`}
                 disabled={busy}
                 onClick={() => {
@@ -675,7 +669,11 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
       ].map((w) => (
         <SettingsRow
           key={w}
-          title={<span className="text-(--state-waiting-fg)">{w}</span>}
+          title={
+            <span data-tone="warning" className={styles.warning}>
+              {w}
+            </span>
+          }
         />
       ))}
       {k.problems.map((p) => {
@@ -691,7 +689,7 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
               canAcknowledge ? (
                 <Button
                   size="sm"
-                  variant="ghost"
+                  variant="quiet"
                   aria-label={`Acknowledge ${p.subject}`}
                   disabled={busy}
                   onClick={() => void act(() => api.ackProblem(p.subject))}
@@ -706,11 +704,13 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
       {error !== null && (
         <SettingsRow
           title="That change didn’t go through"
-          subtitle={<span className="text-state-failed">{error}</span>}
+          subtitle={<span className={styles.error}>{error}</span>}
         />
       )}
       {k.team === null && k.foundings.length === 0 && !canOperate && (
-        <SettingsHint>No team is founded on this branch yet.</SettingsHint>
+        <SettingsHint className={styles.note}>
+          No team is founded on this branch yet.
+        </SettingsHint>
       )}
     </SettingsGroup>
   );

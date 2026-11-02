@@ -227,6 +227,7 @@ export function openMessaging(deps: {
     ownerRef: deps.ownerRef,
     routing,
     gates,
+    audience: (message) => messageAudience(store, message),
     onHumanMessage: () => {
       // message.new already reaches the desktop over the EventBus; no OS
       // notification is raised for a human's message yet.

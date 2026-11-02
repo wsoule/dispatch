@@ -6,11 +6,12 @@ import { placePopover } from '../edit/position';
 import { useLatest } from '../edit/save-state';
 
 // The overlay layer stack shared by every floating thing in the package
-// (PickerPopover, Popover, Tooltip, Dialog): where a layer goes in the
-// browser's top layer, how it is placed against its anchor, and which
-// open layer an Escape or an outside press belongs to. Overlays render in
-// place (never portalled), so a picker inside a dialog is a DOM child of
-// it and the focus traps' `contains` checks keep working.
+// (PickerPopover, Popover, Menu, Tooltip, Dialog) and by the modal surfaces
+// on useModalSurface (a modal SlideOver, a host's own panel): where a layer
+// goes in the browser's top layer, how it is placed against its anchor, and
+// which open layer an Escape or an outside press belongs to. Overlays
+// render in place (never portalled), so a picker inside a dialog is a DOM
+// child of it and the focus traps' `contains` checks keep working.
 
 /** Phones get a bottom sheet instead of an anchored popover (PickerPopover,
     Popover): the stylesheets' `width <= 640px`. */
@@ -166,10 +167,55 @@ export function positionLayer(
   layer.dataset.placed = 'true';
 }
 
+/**
+ * Keeps an open layer placed against its anchor: runs `place` now, then
+ * at most once per animation frame whenever the window resizes, anything
+ * outside the layer scrolls (a scroll inside it, its own list, is not the
+ * anchor moving) or the anchor itself changes size. Returns the cleanup,
+ * for a layout effect that runs while the layer is open. Popover,
+ * PickerPopover, Menu and each of its submenus use it.
+ */
+export function followAnchor(
+  layer: HTMLElement,
+  anchor: Element | null,
+  place: () => void
+): () => void {
+  let frame = 0;
+  const run = (): void => {
+    frame = 0;
+    place();
+  };
+  run();
+  const schedule = (event?: Event): void => {
+    if (event?.target instanceof Node && layer.contains(event.target)) {
+      return;
+    }
+    if (frame === 0) frame = requestAnimationFrame(run);
+  };
+  window.addEventListener('resize', schedule);
+  document.addEventListener('scroll', schedule, true);
+  const observer =
+    typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(() => schedule());
+  if (anchor !== null) observer?.observe(anchor);
+  return () => {
+    if (frame !== 0) cancelAnimationFrame(frame);
+    window.removeEventListener('resize', schedule);
+    document.removeEventListener('scroll', schedule, true);
+    observer?.disconnect();
+  };
+}
+
 // ---- the stack --------------------------------------------------------
 
 type LayerKind = 'modal' | 'popover' | 'tooltip';
-type DismissReason = 'escape' | 'outside' | 'tab';
+
+/** Why a layer is dismissed: 'escape' (an Escape the stack routes to it),
+    'outside' (a press outside it, or focus moved out of a popover), or
+    'tab' (a component's own Tab past its last control; the stack never
+    sends it). */
+export type LayerDismissReason = 'escape' | 'outside' | 'tab';
 
 interface LayerEntry {
   kind: LayerKind;
@@ -180,7 +226,7 @@ interface LayerEntry {
       own, such as its trigger). */
   holds: (target: Node) => boolean;
   closeOnOutside: () => boolean;
-  dismiss: (reason: DismissReason) => void;
+  dismiss: (reason: LayerDismissReason) => void;
 }
 
 /** Every open layer, bottom first. */
@@ -336,16 +382,17 @@ function removeLayer(entry: LayerEntry): void {
 
 interface UseLayerOptions {
   open: boolean;
-  /** modal: Dialog, a modal SlideOver; popover: PickerPopover, Popover;
-      tooltip: Tooltip (any press hides it, and it never takes a press
-      from the layer under it). */
+  /** modal: Dialog, and a modal SlideOver or a host's panel on
+      useModalSurface; popover: PickerPopover, Popover, Menu and each open
+      submenu; tooltip: Tooltip (any press hides it, and it never takes a
+      press from the layer under it). */
   kind: LayerKind;
   /** The layer's element (the popover, the dialog panel, the tooltip). */
   ref: { readonly current: HTMLElement | null };
   /** The stack dismisses the layer: 'escape' (focus outside it), or
       'outside' (a press outside it, or focus moved out of a popover;
       focus stays where it went). 'tab' is the component's own. */
-  onDismiss: (reason: DismissReason) => void;
+  onDismiss: (reason: LayerDismissReason) => void;
   /** A press outside dismisses it. Default true. */
   closeOnOutside?: boolean;
   /** Elements outside `ref` that count as the layer's own for presses

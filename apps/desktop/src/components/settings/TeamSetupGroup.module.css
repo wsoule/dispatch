@@ -1,0 +1,51 @@
+/* Settings → Members, "Your team" (TeamSetupGroup.tsx): the inline forms, the
+   values to copy and the notes set straight into the card. */
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* Two classes, so the widths win over the field's own 100%. */
+.line .inviteInput {
+  width: 192px;
+}
+
+.line .joinInput {
+  width: 224px;
+}
+
+/* A one-time secret: wrapped anywhere, never cut. */
+.secret {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  word-break: break-all;
+}
+
+/* A link to copy: one line, cut with an ellipsis. */
+.code {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--s-1) var(--s-2);
+  overflow: hidden;
+  border-radius: var(--r-sm);
+  background: var(--sunken);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A hint set straight into the card, padded like a row. */
+.note {
+  padding: var(--s-2) var(--s-3);
+}
+
+.warning {
+  color: var(--tone-ink);
+}
+
+.error {
+  color: var(--red);
+}
