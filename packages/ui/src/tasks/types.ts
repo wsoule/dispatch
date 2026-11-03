@@ -676,10 +676,17 @@ export interface StatsStripProps extends DataAttributes {
    * key, four across (two on phones). compact: a page header's one-row
    * strip (Live, Flight Plan) with no panel: each cell's icon, key, value
    * and note inline on a 26px row, cells parted by soft rules, a meter
-   * value (ProgressRule) 120px wide; whole cells wrap onto further rows
-   * when the column is too narrow, so nothing scrolls sideways, and a row
-   * never starts with a rule. Same list, terms and tones as the panel. */
+   * value (ProgressRule) 120px wide. The cells never wrap: when the column
+   * is too narrow the strip scrolls sideways inside itself, fading the
+   * edges that hide cells, and takes a tab stop (a group named
+   * "<label>, scrolls sideways") only while it does. Same list, terms and
+   * tones as the panel. */
   variant?: 'panel' | 'compact';
+  /** compact only (the panel ignores it): the header's own controls (Pause
+   * all, a slots picker, Stop), drawn at the end of the strip's row, right
+   * aligned, outside the list. They wrap under the strip only when a 12rem
+   * strip and the controls cannot share the row. */
+  end?: ReactNode;
 }
 
 /* ---- the grouped task table -------------------------------------------- */

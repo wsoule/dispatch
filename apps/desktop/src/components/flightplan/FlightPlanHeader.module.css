@@ -1,29 +1,11 @@
-/* The Flight Plan's header (FlightPlanHeader): the stats strip, with the
-   fan-out controls beside it on the right, wrapping under it when the
-   column is narrow. A soft rule closes it off from the canvas. */
+/* The Flight Plan's header (FlightPlanHeader): the compact stats strip,
+   which carries the fan-out controls at the end of its own row. A soft
+   rule closes it off from the canvas. */
 .header {
-  display: flex;
   flex: none;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--s-2) var(--s-3);
   /* 8px above and below the compact strip's 26px row: a 43px header. */
   padding: var(--s-2) var(--s-4);
   border-bottom: 1px solid var(--border);
-}
-
-.strip {
-  flex: 1 1 420px;
-  min-width: 0;
-}
-
-.controls {
-  display: flex;
-  flex: none;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
 }
 
 /* The critical path's legend: the canvas highlighter's accent at the

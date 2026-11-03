@@ -835,3 +835,4 @@ nocapture
 blackhole
 nonblocking
 waitable
+scroller

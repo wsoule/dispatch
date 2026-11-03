@@ -986,17 +986,27 @@ with `title`. `variant` picks the shape:
 - `panel` (default): Gr8r's rounded panel of cells under soft rules, a 22px
   value under each key, four across and two at 900px and below, the last cell
   spanning what its row leaves.
-- `compact`: a page header's one-row strip (Live, Flight Plan) beside the
-  header's own controls. No panel: each cell's icon, key, value and note sit
-  inline on a 26px row (`--h-sm`, the height of the toolbar's controls), cells
-  parted by soft rules. A meter value (a `ProgressRule`, the agent slots) is
-  120px wide, its track and its "3/4". When the column is too narrow, whole
-  cells wrap onto another row (the strip never scrolls sideways), no row starts
-  with a rule, and a cell wider than the whole column folds its note under its
-  value. Toned values, linked cells (the fill on hover and focus) and the list
-  semantics are the panel's; the rules are borders, so forced colours keep them.
-  The list carries `data-variant="compact"` (the panel adds no attribute of its
-  own).
+- `compact`: a page header's one-row strip (Live, Flight Plan). No panel: each
+  cell's icon, key, value and note sit inline on a 26px row (`--h-sm`, the
+  height of the toolbar's controls), cells parted by soft rules. A meter value
+  (a `ProgressRule`, the agent slots) is 120px wide, its track and its "3/4".
+  The header's own controls go in `end` (Pause all, a slots picker, Stop): they
+  sit at the end of the same row, right aligned and outside the list, and drop
+  under the strip only when a 12rem strip and the controls cannot share the row.
+  The cells never wrap: when the column is too narrow the strip scrolls sideways
+  inside itself, with no scrollbar (so the row's height never changes) and a
+  24px fade on each edge that hides cells. While it overflows the scroller takes
+  a tab stop as a group named "`label`, scrolls sideways" (the arrow keys scroll
+  it, the ring is drawn around it), and keeps it while it holds focus, so a
+  strip that comes to fit never drops focus to the page; it is measured after
+  layout, on scroll and on resize. A plain vertical mouse wheel over a strip
+  that hides cells scrolls it sideways until it reaches that end, where the
+  wheel scrolls the page again; a trackpad, Shift+wheel and pinch zoom stay the
+  browser's. Toned values, linked cells (the fill on hover and focus) and the
+  list semantics are the panel's; the rules are borders, so forced colours keep
+  them, and the fade, the ring and the rules all hold there. The list carries
+  `data-variant="compact"` (the panel adds no attribute of its own) and keeps
+  the host's `data-*` hooks; the panel ignores `end`.
 
 In forced colours the panel's cells draw outlines, since the rules between them
 are its border colour showing through a gap.

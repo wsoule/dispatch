@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, render } from '@testing-library/react';
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { act, cleanup, fireEvent, render } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 
 import {
   Checklist,
@@ -215,21 +215,23 @@ describe('StatsStrip variant="compact"', () => {
     expect(link.hasAttribute('data-host-link')).toBe(true);
   });
 
-  test('one 26px wrapping row of inline cells, no panel', () => {
+  test('one 26px row of inline cells that never wraps, no panel', () => {
     const strip = cssRule(file, '.compact');
     expect(strip).toContain('display: flex;');
-    expect(strip).toContain('flex-wrap: wrap;');
+    expect(strip).toContain('flex-wrap: nowrap;');
+    // As wide as its cells: the scroller around it clips, never the list.
+    expect(strip).toContain('width: max-content;');
     expect(strip).toContain('border: 0;');
     expect(strip).toContain('background: none;');
     expect(strip).not.toContain('grid');
-    expect(cssRule(file, '.compact .cell')).toContain('max-width: 100%;');
+    expect(cssRule(file, '.compact .cell')).toContain('flex: none;');
     const inner = cssRule(file, '.compact .inner');
-    expect(inner).toContain('flex-flow: row wrap;');
+    expect(inner).toContain('flex-flow: row nowrap;');
     expect(inner).toContain('min-height: var(--h-sm);');
     expect(inner).toContain('padding: 0;');
-    expect(cssRule(file, '.compact .label, .compact .value')).toBe(
-      'white-space: nowrap;'
-    );
+    expect(
+      cssRule(file, '.compact .label, .compact .value, .compact .note')
+    ).toBe('white-space: nowrap;');
     // The value drops the panel's 22px figure for the body size.
     expect(cssRule(file, '.compact .value')).toContain('font-size: var(--fs);');
     expect(cssRule(file, ".compact .value:has([role='progressbar'])")).toBe(
@@ -237,22 +239,60 @@ describe('StatsStrip variant="compact"', () => {
     );
   });
 
-  test('rules are borders centred in the gap, cut off where a row starts', () => {
-    const strip = cssRule(file, '.compact');
-    expect(strip).toContain('gap: 4px 25px;');
-    // The clip reaches 6px past the strip on both sides: as far as a
-    // linked cell's fill, past its focus ring (3 to 5px out), and short of
-    // a row-start rule 13px out.
-    expect(strip).toContain('clip-path: inset(-4px -6px);');
-    const link = cssRule(file, '.compact a.inner');
-    expect(link).toContain('margin: 0 -6px;');
-    const ring = cssRule(file, 'a.inner:focus-visible');
-    expect(ring).toContain('outline-offset: -3px;');
+  test('rules are borders centred in the gap; the scroller cuts the first', () => {
+    expect(cssRule(file, '.compact')).toContain('gap: 25px;');
     const rule = cssRule(file, '.compact .cell::before');
     expect(rule).toContain('left: -13px;');
     // A border, not a fill, so forced colours keep it.
     expect(rule).toContain('border-left: 1px solid var(--border);');
     expect(rule).not.toContain('background');
+    // The scroller reaches 6px past the frame on both sides: as far as a
+    // linked cell's fill, past its focus ring (3 to 5px out), and short of
+    // the first cell's rule 13px out.
+    const scroller = cssRule(file, '.scroller');
+    expect(scroller).toContain('margin: -4px -6px;');
+    expect(scroller).toContain('padding: 4px 6px;');
+    expect(cssRule(file, '.compact a.inner')).toContain('margin: 0 -6px;');
+    expect(cssRule(file, 'a.inner:focus-visible')).toContain(
+      'outline-offset: -3px;'
+    );
+  });
+
+  test('the scroller scrolls sideways with no scrollbar and fades its hidden edges', () => {
+    const scroller = cssRule(file, '.scroller');
+    expect(scroller).toContain('overflow: auto hidden;');
+    expect(scroller).toContain('scrollbar-width: none;');
+    expect(scroller).toContain('scroll-padding-inline: 24px;');
+    expect(cssRule(file, '.scroller::-webkit-scrollbar')).toBe(
+      'display: none;'
+    );
+    expect(cssRule(file, '.scroller[data-fade-start]')).toBe(
+      'mask-image: linear-gradient(to right, transparent, currentcolor 24px);'
+    );
+    expect(cssRule(file, '.scroller[data-fade-end]')).toBe(
+      'mask-image: linear-gradient( to right, currentcolor calc(100% - 24px), transparent );'
+    );
+    expect(
+      cssRule(file, '.scroller[data-fade-start][data-fade-end]')
+    ).toContain(
+      'transparent, currentcolor 24px, currentcolor calc(100% - 24px), transparent'
+    );
+    // The frame draws the scroller's ring, outside the mask that would hide it.
+    expect(cssRule(file, '.frame:has(> .scroller:focus-visible)')).toBe(
+      'outline: 2px solid var(--focus-ring); outline-offset: 1px;'
+    );
+  });
+
+  test('the end controls share the row, wrapping only below a 12rem strip', () => {
+    const row = cssRule(file, '.row');
+    expect(row).toContain('display: flex;');
+    expect(row).toContain('flex-wrap: wrap;');
+    const frame = cssRule(file, '.frame');
+    expect(frame).toContain('flex: 1 1 12rem;');
+    expect(frame).toContain('min-width: 0;');
+    const end = cssRule(file, '.end');
+    expect(end).toContain('flex: none;');
+    expect(end).toContain('margin-left: auto;');
   });
 
   test('forced colours give the panel outlined cells', () => {
@@ -264,6 +304,281 @@ describe('StatsStrip variant="compact"', () => {
 
   test('tokens only: no hex in the stylesheet', () => {
     expect(readCss(file)).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+  });
+});
+
+describe('StatsStrip variant="compact": end controls and sideways scroll', () => {
+  const cells = [
+    { id: 'running', label: 'Running', value: 2 },
+    { id: 'queued', label: 'Queued', value: 5 },
+  ];
+
+  test('end draws the host controls after the list, outside it', () => {
+    const { getByRole } = render(
+      <StatsStrip
+        variant="compact"
+        label="Live"
+        cells={cells}
+        end={<button type="button">Pause all</button>}
+      />
+    );
+    const list = getByRole('list', { name: 'Live' });
+    const button = getByRole('button', { name: 'Pause all' });
+    expect(list.contains(button)).toBe(false);
+    // The list comes first in the row, so the controls read after the counts.
+    expect(
+      list.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    // One row holds both: the list's frame and the controls are siblings.
+    const row = button.parentElement?.parentElement;
+    expect(row?.contains(list)).toBe(true);
+  });
+
+  test('no end, null or false draws no controls box', () => {
+    for (const end of [undefined, null, false]) {
+      const { container, unmount } = render(
+        <StatsStrip variant="compact" cells={cells} end={end} />
+      );
+      // Row > frame only: no second child for the controls.
+      expect(container.firstElementChild?.childElementCount).toBe(1);
+      unmount();
+    }
+  });
+
+  test('the panel ignores end and stays a bare list', () => {
+    const { container, queryByRole } = render(
+      <StatsStrip cells={cells} end={<button type="button">Stop</button>} />
+    );
+    expect(container.firstElementChild?.tagName).toBe('UL');
+    expect(queryByRole('button')).toBeNull();
+  });
+
+  test('a strip whose cells fit takes no tab stop, role, name or fade', () => {
+    const { getByRole } = render(
+      <StatsStrip variant="compact" label="Live" cells={cells} />
+    );
+    const scroller = getByRole('list', { name: 'Live' }).parentElement;
+    for (const name of [
+      'tabindex',
+      'role',
+      'aria-label',
+      'data-fade-start',
+      'data-fade-end',
+    ]) {
+      expect(scroller?.hasAttribute(name)).toBe(false);
+    }
+  });
+
+  // happy-dom lays nothing out (every scroll size is 0), so overflowing
+  // cells are faked: 400px of them in a 100px scroller, and a stub
+  // ResizeObserver hands the test the callback a resize would fire.
+  describe('cells wider than the column', () => {
+    const sizes = ['scrollWidth', 'clientWidth'] as const;
+    const saved = sizes.map(
+      (name): [string, PropertyDescriptor | undefined] => [
+        name,
+        Object.getOwnPropertyDescriptor(HTMLElement.prototype, name),
+      ]
+    );
+    const savedObserver = globalThis.ResizeObserver;
+    let width = 400;
+    let observed: Element[] = [];
+    let resize: () => void = () => undefined;
+
+    beforeEach(() => {
+      width = 400;
+      observed = [];
+      Object.defineProperty(HTMLElement.prototype, 'scrollWidth', {
+        configurable: true,
+        get: () => width,
+      });
+      Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+        configurable: true,
+        get: () => 100,
+      });
+      globalThis.ResizeObserver = class {
+        constructor(callback: () => void) {
+          resize = callback;
+        }
+        observe(target: Element) {
+          observed.push(target);
+        }
+        unobserve() {}
+        disconnect() {}
+      } as unknown as typeof ResizeObserver;
+    });
+
+    afterEach(() => {
+      for (const [name, descriptor] of saved) {
+        if (descriptor === undefined) {
+          Reflect.deleteProperty(HTMLElement.prototype, name);
+        } else {
+          Object.defineProperty(HTMLElement.prototype, name, descriptor);
+        }
+      }
+      globalThis.ResizeObserver = savedObserver;
+    });
+
+    function scrollTo(scroller: HTMLElement, left: number) {
+      Object.defineProperty(scroller, 'scrollLeft', {
+        configurable: true,
+        value: left,
+      });
+      fireEvent.scroll(scroller);
+    }
+
+    test('the scroller is a focusable group named after the list', () => {
+      const { getByRole } = render(
+        <StatsStrip variant="compact" label="Live" cells={cells} />
+      );
+      const group = getByRole('group', { name: 'Live, scrolls sideways' });
+      expect(group.getAttribute('tabindex')).toBe('0');
+      // The list keeps its own role, name and hooks inside the group.
+      const list = getByRole('list', { name: 'Live' });
+      expect(list.parentElement).toBe(group);
+      expect(list.getAttribute('data-variant')).toBe('compact');
+      // Both the column and the cells are watched for size changes.
+      expect(observed).toEqual([group, list]);
+    });
+
+    test('only the edges that hide cells fade, following the scroll', () => {
+      const { getByRole } = render(
+        <StatsStrip variant="compact" label="Live" cells={cells} />
+      );
+      const group = getByRole('group');
+      const fades = () => [
+        group.hasAttribute('data-fade-start'),
+        group.hasAttribute('data-fade-end'),
+      ];
+      expect(fades()).toEqual([false, true]);
+      scrollTo(group, 150);
+      expect(fades()).toEqual([true, true]);
+      // 300 is as far as it goes (400 - 100): nothing hidden past the end.
+      scrollTo(group, 300);
+      expect(fades()).toEqual([true, false]);
+      scrollTo(group, 0);
+      expect(fades()).toEqual([false, true]);
+    });
+
+    test('a resize that lets the cells fit drops the tab stop and fades', () => {
+      const { getByRole, queryByRole } = render(
+        <StatsStrip variant="compact" label="Live" cells={cells} />
+      );
+      const list = getByRole('list', { name: 'Live' });
+      expect(queryByRole('group')).not.toBeNull();
+      width = 100;
+      act(() => resize());
+      expect(queryByRole('group')).toBeNull();
+      const scroller = list.parentElement;
+      expect(scroller?.hasAttribute('tabindex')).toBe(false);
+      expect(scroller?.hasAttribute('data-fade-end')).toBe(false);
+      // And back once the column narrows again.
+      width = 400;
+      act(() => resize());
+      expect(scroller?.getAttribute('tabindex')).toBe('0');
+    });
+
+    test('a focused strip keeps its tab stop when the cells come to fit, until blur', () => {
+      const { getByRole, queryByRole } = render(
+        <StatsStrip variant="compact" label="Live" cells={cells} />
+      );
+      const group = getByRole('group', { name: 'Live, scrolls sideways' });
+      act(() => group.focus());
+      expect(document.activeElement).toBe(group);
+      width = 100;
+      act(() => resize());
+      // Still a focusable group holding focus: the person keeps their place.
+      expect(document.activeElement).toBe(group);
+      expect(group.getAttribute('tabindex')).toBe('0');
+      expect(group.getAttribute('role')).toBe('group');
+      // Nothing is hidden any more, so nothing fades.
+      expect(group.hasAttribute('data-fade-end')).toBe(false);
+      act(() => group.blur());
+      expect(queryByRole('group')).toBeNull();
+      expect(group.hasAttribute('tabindex')).toBe(false);
+    });
+
+    // A scroller whose scrollLeft can be written, as a browser's can.
+    function writableScroll(scroller: HTMLElement, start = 0): () => number {
+      let left = start;
+      Object.defineProperty(scroller, 'scrollLeft', {
+        configurable: true,
+        get: () => left,
+        set: (value: number) => {
+          left = value;
+        },
+      });
+      return () => left;
+    }
+
+    // Dispatches a wheel and says whether the page may still act on it.
+    // happy-dom's WheelEvent drops the modifier keys a browser's carries
+    // (it is a MouseEvent there), so they are set on the event itself.
+    function wheel(target: HTMLElement, init: WheelEventInit): boolean {
+      const event = new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      });
+      for (const key of ['shiftKey', 'ctrlKey'] as const) {
+        Object.defineProperty(event, key, { value: init[key] === true });
+      }
+      return target.dispatchEvent(event);
+    }
+
+    test('a vertical wheel scrolls hidden cells sideways, and leaves the page at the ends', () => {
+      const { getByRole } = render(
+        <StatsStrip variant="compact" label="Live" cells={cells} />
+      );
+      const group = getByRole('group');
+      const left = writableScroll(group);
+      // Down moves right and is taken, so the page does not scroll too.
+      expect(wheel(group, { deltaY: 120 })).toBe(false);
+      expect(left()).toBe(120);
+      // Lines (Firefox) count 16px each.
+      expect(wheel(group, { deltaY: 3, deltaMode: 1 })).toBe(false);
+      expect(left()).toBe(168);
+      // Clamped to the end (400 - 100)...
+      expect(wheel(group, { deltaY: 500 })).toBe(false);
+      expect(left()).toBe(300);
+      // ...where a further wheel down scrolls the page instead.
+      expect(wheel(group, { deltaY: 120 })).toBe(true);
+      expect(left()).toBe(300);
+      // Up moves left, until the start lets the page have it again.
+      expect(wheel(group, { deltaY: -400 })).toBe(false);
+      expect(left()).toBe(0);
+      expect(wheel(group, { deltaY: -120 })).toBe(true);
+    });
+
+    test("sideways gestures, Shift and pinch zoom stay the browser's", () => {
+      const { getByRole } = render(
+        <StatsStrip variant="compact" label="Live" cells={cells} />
+      );
+      const group = getByRole('group');
+      const left = writableScroll(group, 50);
+      expect(wheel(group, { deltaX: 40, deltaY: 10 })).toBe(true);
+      expect(wheel(group, { deltaY: 120, shiftKey: true })).toBe(true);
+      expect(wheel(group, { deltaY: 120, ctrlKey: true })).toBe(true);
+      expect(left()).toBe(50);
+    });
+
+    test('a strip whose cells fit leaves the wheel alone', () => {
+      width = 100;
+      const { getByRole } = render(
+        <StatsStrip variant="compact" label="Live" cells={cells} />
+      );
+      const scroller = getByRole('list', { name: 'Live' }).parentElement;
+      if (scroller === null) throw new Error('no scroller');
+      const left = writableScroll(scroller);
+      expect(wheel(scroller, { deltaY: 120 })).toBe(true);
+      expect(left()).toBe(0);
+    });
+
+    test('the panel never measures or takes a tab stop', () => {
+      const { container } = render(<StatsStrip label="Panel" cells={cells} />);
+      expect(container.querySelector('[tabindex]')).toBeNull();
+      expect(observed).toEqual([]);
+    });
   });
 });
 

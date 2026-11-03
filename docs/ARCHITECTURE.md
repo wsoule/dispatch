@@ -631,8 +631,10 @@ grouped lists (`TaskGroupTable`) with a Kanban board as the Issues list's other
 mode; a Gantt Timeline; a dependency Graph; a Projects register; a slide-over
 drawer and a full page for a task; Flight Plan inside container pages (projects
 and milestones); Live under Runs. Live's and Flight Plan's headers use the
-compact `StatsStrip` (one 26px row of inline cells that wraps whole cells on a
-narrow column), so the bands and the canvas keep their height.
+compact `StatsStrip` (one 26px row of inline cells that scrolls sideways inside
+itself on a narrow column: edge fades, a tab stop only while it overflows or
+holds focus, a vertical wheel turned sideways), with the header's controls in
+its `end`, so the bands and the canvas keep their height.
 
 ### Tokens only
 

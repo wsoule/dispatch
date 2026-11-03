@@ -1,6 +1,6 @@
 import { Button, ProgressRule, type StatCell, StatsStrip } from '@dispatch/ui';
 import { Pause, Play } from 'lucide-react';
-import { memo } from 'react';
+import { memo, type ReactNode } from 'react';
 
 import type { LiveCeilings } from '../../lib/liveSpend';
 import { formatUsd } from '../../lib/milestoneSession';
@@ -121,6 +121,53 @@ function headerCells(totals: LiveTotals, spend: LiveSpend | null): StatCell[] {
   return cells;
 }
 
+// The one control for the whole fleet, drawn at the end of the strip's row: Pause all
+// while any fan-out fills slots, else Resume all for what someone paused (its hint says
+// a ceiling-paused fan-out stays paused), else nothing.
+function fleetControl({
+  active,
+  resumable,
+  capped,
+  busy,
+  onPauseAll,
+  onResumeAll,
+}: Omit<LiveHeaderProps, 'totals' | 'spendToday' | 'ceilings'>): ReactNode {
+  if (active > 0) {
+    return (
+      <Button
+        variant="secondary"
+        size="sm"
+        data-slot="live-pause-all"
+        disabled={busy}
+        icon={<Pause {...ICON} />}
+        onClick={onPauseAll}
+      >
+        Pause all
+      </Button>
+    );
+  }
+  if (resumable > 0) {
+    return (
+      <Button
+        variant="secondary"
+        size="sm"
+        data-slot="live-resume-all"
+        disabled={busy}
+        icon={<Play {...ICON} />}
+        onClick={onResumeAll}
+        title={
+          capped > 0
+            ? `${capped} paused on a ceiling stay paused: raise it on the band`
+            : undefined
+        }
+      >
+        Resume all
+      </Button>
+    );
+  }
+  return null;
+}
+
 interface LiveHeaderProps {
   totals: LiveTotals;
   spendToday: number | null;
@@ -140,10 +187,11 @@ interface LiveHeaderProps {
  * The Live view's strip: a library StatsStrip of the agent slots across every live
  * fan-out, what is running, queued, waiting on a teammate and landing, and today's spend
  * against the fan-outs' ceilings; then one control for the whole fleet on the right —
- * Pause all while anything is filling slots, else Resume all for what someone paused.
- * The strip is the compact variant (owner decision 2026-11-03): one 26px row of inline
- * cells at desktop widths, whole cells wrapping onto more rows on a narrow column, so the
- * bands keep the height the old panel took.
+ * Pause all while anything is filling slots, else Resume all for what someone paused,
+ * passed as the strip's `end` so it sits at the end of the same row. The strip is the
+ * compact variant (owner decision 2026-11-03): one 26px row at every width, the cells
+ * scrolling sideways inside the strip when the column is too narrow, so the bands keep
+ * the height the old panel took.
  */
 export const LiveHeader = memo(function LiveHeader({
   totals,
@@ -159,46 +207,20 @@ export const LiveHeader = memo(function LiveHeader({
   const spend = liveSpend(spendToday, ceilings);
   return (
     <div className={styles.header}>
-      <div className={styles.strip}>
-        <StatsStrip
-          variant="compact"
-          data-slot="live-header"
-          label="Live"
-          cells={headerCells(totals, spend)}
-        />
-      </div>
-      {active > 0 ? (
-        <div className={styles.controls}>
-          <Button
-            variant="secondary"
-            size="sm"
-            data-slot="live-pause-all"
-            disabled={busy}
-            icon={<Pause {...ICON} />}
-            onClick={onPauseAll}
-          >
-            Pause all
-          </Button>
-        </div>
-      ) : resumable > 0 ? (
-        <div className={styles.controls}>
-          <Button
-            variant="secondary"
-            size="sm"
-            data-slot="live-resume-all"
-            disabled={busy}
-            icon={<Play {...ICON} />}
-            onClick={onResumeAll}
-            title={
-              capped > 0
-                ? `${capped} paused on a ceiling stay paused: raise it on the band`
-                : undefined
-            }
-          >
-            Resume all
-          </Button>
-        </div>
-      ) : null}
+      <StatsStrip
+        variant="compact"
+        data-slot="live-header"
+        label="Live"
+        cells={headerCells(totals, spend)}
+        end={fleetControl({
+          active,
+          resumable,
+          capped,
+          busy,
+          onPauseAll,
+          onResumeAll,
+        })}
+      />
     </div>
   );
 });

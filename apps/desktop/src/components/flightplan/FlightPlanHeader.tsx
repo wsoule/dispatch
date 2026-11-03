@@ -112,9 +112,11 @@ function headerCells(stats: FlightHeaderStats): StatCell[] {
 /**
  * The Flight Plan's header: a library StatsStrip of the agent slots meter, what is
  * running, queued and landed, the critical path (its accent swatch is the legend for the
- * highlighter on the canvas) and the ETA, then the caller's fan-out controls on the right.
- * The strip is the compact variant (owner decision 2026-11-03): one 26px row of inline
- * cells at desktop widths, so Plan mode and container pages keep their canvas height.
+ * highlighter on the canvas) and the ETA, then the caller's fan-out controls as the
+ * strip's `end`, at the end of the same row. The strip is the compact variant (owner
+ * decision 2026-11-03): one 26px row at every width, the cells scrolling sideways inside
+ * the strip when the column is too narrow, so Plan mode and container pages keep their
+ * canvas height; the controls drop under it only on a column too narrow for both.
  */
 export function FlightPlanHeader({
   stats,
@@ -125,14 +127,12 @@ export function FlightPlanHeader({
 }) {
   return (
     <div data-slot="flight-header" className={styles.header}>
-      <div className={styles.strip}>
-        <StatsStrip
-          variant="compact"
-          label="Flight plan"
-          cells={headerCells(stats)}
-        />
-      </div>
-      <div className={styles.controls}>{controls}</div>
+      <StatsStrip
+        variant="compact"
+        label="Flight plan"
+        cells={headerCells(stats)}
+        end={controls}
+      />
     </div>
   );
 }
