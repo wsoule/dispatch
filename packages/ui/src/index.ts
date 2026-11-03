@@ -13,6 +13,12 @@ export {
   showTheme,
 } from './lib/theme-choice';
 export {
+  type ElementWidthOptions,
+  type ElementWidthTarget,
+  useElementWidth,
+  useWidthBelow,
+} from './lib/use-element-width';
+export {
   default as BlockBar,
   type BlockBarProps,
 } from './components/block-bar';

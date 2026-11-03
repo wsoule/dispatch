@@ -2130,6 +2130,18 @@ touches none of it.
   resize on `window` and for scroll and resize on `window.visualViewport`, and
   reads the rects of `[data-ui-edge-bar]` elements (which `AppShell` puts on its
   top bar and phone tab bar) to keep the lock's strip on screen.
+- `useElementWidth(target, { measureOnMount })` and
+  `useWidthBelow(target, px, { measureOnMount })` are for a host's own
+  responsive switches (a board's lane headers sized to its visible width, a page
+  header that folds its toggles into a menu in a narrow column). Each puts one
+  `ResizeObserver` on one element (an element, say from a callback ref kept in
+  state, or a ref object read once after mount) and reads its `clientWidth`.
+  `useElementWidth` is `null` until measured; `useWidthBelow` is false (wide)
+  until measured and re-renders the host only when the answer flips. A box with
+  no width (not laid out, or under a hidden `Activity`) keeps the last answer.
+  `measureOnMount` also measures in a layout effect before the first paint, so a
+  narrow column never flashes the wide layout; without it the first answer is
+  the observer's first callback. A server render returns the starting answer.
 - `SlideOver` closes on Esc and traps focus (a modal one, or any on a phone, is
   also a modal layer of the overlay stack below, locks `<html>` scrolling, and
   reads `pointerdown` on `window` in the capture phase while open, to tell a

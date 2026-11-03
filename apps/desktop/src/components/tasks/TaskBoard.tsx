@@ -18,6 +18,7 @@ import {
   type RowSegment,
   type RowWindowGroup,
   type RowWindows,
+  useElementWidth,
   useRowWindows,
 } from '@dispatch/ui';
 import {
@@ -184,23 +185,6 @@ const POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 6 } };
 // on the 324px inner width, the 44px collapsed strip, the sticky lane headers) lives in
 // TaskBoard.module.css.
 const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
-
-// The board's visible width — the scroll container's `clientWidth`, which excludes its own
-// scrollbar — kept current by one `ResizeObserver`. `null` until the observer's first
-// callback (browsers fire one on `observe`), so a render that never measures (tests, SSR)
-// sets no inline width and the header simply spans its lane.
-function useBoardViewportWidth(board: HTMLDivElement | null) {
-  const [viewportWidth, setViewportWidth] = useState<number | null>(null);
-  useEffect(() => {
-    if (board === null) return;
-    const observer = new ResizeObserver(() => {
-      setViewportWidth(board.clientWidth);
-    });
-    observer.observe(board);
-    return () => observer.disconnect();
-  }, [board]);
-  return viewportWidth;
-}
 
 // A card before it is measured — the skeleton's 104px tile.
 const CARD_ESTIMATE = 104;
@@ -644,7 +628,10 @@ export function TaskBoard({
   }, []);
   const columnHeadRef = useRef<HTMLDivElement | null>(null);
   const [laneStack, setLaneStack] = useState<HTMLDivElement | null>(null);
-  const viewportWidth = useBoardViewportWidth(board);
+  // The board's visible width (its `clientWidth`, less its own scrollbar), which the sticky
+  // lane headers take. `null` until the observer's first callback, so a render that never
+  // lays out (tests) sets no inline width and each header simply spans its lane.
+  const viewportWidth = useElementWidth(board);
   const fling = useBoardFling(board);
   // Each card's last measured height, by task id — what its fling placeholder takes.
   const [cardHeights] = useState(() => new Map<string, number>());
