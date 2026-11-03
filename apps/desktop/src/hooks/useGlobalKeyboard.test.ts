@@ -5,6 +5,7 @@ import { Activity, type ComponentProps, createElement } from 'react';
 import type { GlobalKeyCommand } from '../lib/keyboard';
 import {
   isAnyModalOpen,
+  isApplePlatform,
   isShown,
   isTypingTarget,
   useGlobalKeyboard,
@@ -203,6 +204,55 @@ describe('useGlobalKeyboard', () => {
     expect(commands).toEqual(['quick-open-blocked', 'quick-open']);
   });
 
+  // Owner decision 2026-11-03: on macOS only ⌘P is quick open; Ctrl+P there
+  // stays with the focused text field (Cocoa's "previous line").
+  test('on macOS Ctrl+P is left alone and ⌘P opens quick open', () => {
+    const commands: GlobalKeyCommand[] = [];
+    renderHook(() =>
+      useGlobalKeyboard({
+        onCommand: (c) => commands.push(c),
+        applePlatform: true,
+      })
+    );
+    const field = document.createElement('textarea');
+    document.body.appendChild(field);
+    const press = (mods: { metaKey?: boolean; ctrlKey?: boolean }) => {
+      const event = new KeyboardEvent('keydown', {
+        key: 'p',
+        cancelable: true,
+        bubbles: true,
+        ...mods,
+      });
+      field.dispatchEvent(event);
+      return event;
+    };
+    expect(press({ ctrlKey: true }).defaultPrevented).toBe(false);
+    expect(commands).toEqual([]);
+    expect(press({ metaKey: true }).defaultPrevented).toBe(true);
+    expect(commands).toEqual(['quick-open']);
+  });
+
+  test('off macOS Ctrl+P opens quick open, from a text field too', () => {
+    const commands: GlobalKeyCommand[] = [];
+    renderHook(() =>
+      useGlobalKeyboard({
+        onCommand: (c) => commands.push(c),
+        applePlatform: false,
+      })
+    );
+    const field = document.createElement('input');
+    document.body.appendChild(field);
+    const event = new KeyboardEvent('keydown', {
+      key: 'p',
+      ctrlKey: true,
+      cancelable: true,
+      bubbles: true,
+    });
+    field.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(commands).toEqual(['quick-open']);
+  });
+
   // Settings hides the views under <Activity mode="hidden">, which keeps a dialog
   // open in one in the DOM (aria-modal and all) behind display: none.
   test('a modal surface inside a hidden Activity does not count as open', () => {
@@ -295,5 +345,30 @@ describe('isTypingTarget', () => {
     box.remove();
     press.remove();
     text.remove();
+  });
+});
+
+describe('isApplePlatform', () => {
+  const original = Object.getOwnPropertyDescriptor(navigator, 'platform');
+  afterEach(() => {
+    if (original) Object.defineProperty(navigator, 'platform', original);
+    else Reflect.deleteProperty(navigator, 'platform');
+  });
+
+  function stubPlatform(platform: string) {
+    Object.defineProperty(navigator, 'platform', {
+      configurable: true,
+      get: () => platform,
+    });
+  }
+
+  test.each([
+    ['MacIntel', true],
+    ['iPad', true],
+    ['Win32', false],
+    ['Linux x86_64', false],
+  ] as const)('%p is Apple: %p', (platform, expected) => {
+    stubPlatform(platform);
+    expect(isApplePlatform()).toBe(expected);
   });
 });

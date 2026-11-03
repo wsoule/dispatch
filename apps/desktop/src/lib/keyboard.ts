@@ -35,6 +35,11 @@ export interface GlobalKeyboardContext {
    * holds it for 600ms after a bare `g`; while armed, the next letter resolves to a
    * `goto-*` chord instead of its own bare-key meaning. */
   pendingPrefix: ChordPrefix | null;
+  /** True on macOS (and the other Apple platforms), where Command is the app's modifier and
+   * Control keeps its Cocoa text meanings: Ctrl+P is "previous line" in every text field, so
+   * the app must not claim it there. Only the quick-open rule reads it today. Absent means
+   * not an Apple platform, where Ctrl is the app's modifier. */
+  isApplePlatform?: boolean;
 }
 
 /** The keys that start a two-key chord. Only `g` ("go to") today. */
@@ -57,10 +62,10 @@ export type GlobalKeyCommand =
   | 'new-task'
   /** Open the keyboard-shortcuts reference (`?`). */
   | 'open-shortcuts'
-  /** Go to file (⌘P): the Files page with its quick open showing. */
+  /** Go to file (⌘P on macOS, Ctrl+P elsewhere): the Files page with its quick open showing. */
   | 'quick-open'
-  /** ⌘P while a modal is open: nothing opens, but the key is still the app's,
-   * so the browser's print dialog never does either. */
+  /** The quick-open chord while a modal is open: nothing opens, but the key is still the
+   * app's, so the browser's print dialog never does either. */
   | 'quick-open-blocked'
   /** The `g` chords: `g h` Home, `g s` Settings, `g i` Inbox, `g m` Threads (messages),
    * `g t` Tasks, `g l` Timeline (`t` is taken), `g g` Graph, `g r` Projects (the
@@ -144,14 +149,20 @@ export function resolveGlobalKeyCommand(
   if (combo && input.key === ']') return 'nav-forward';
   // ⌘, is Settings everywhere on macOS; a modifier chord, so it works while typing.
   if (combo && input.key === ',') return 'goto-settings';
-  // ⌘P is Go to file. A modifier chord like ⌘K, so it fires while typing (the
-  // Files editor's own textarea is a typing target, and ⌘P from it is the way
-  // to the next file), but never over a modal: the open quick open is itself
-  // one, and a second layer over any dialog helps nobody. Over a modal it is
-  // still resolved (to a command that does nothing), so the keystroke is
-  // claimed and the browser's print dialog does not open in its place.
-  if (combo && input.key.toLowerCase() === 'p') {
-    return ctx.modalOpen ? 'quick-open-blocked' : 'quick-open';
+  // Go to file. On macOS only ⌘P opens it: Ctrl+P there is Cocoa's "previous
+  // line" in every text field, so it resolves to nothing and the field keeps
+  // it. Elsewhere Ctrl+P (or Meta+P) opens it. A modifier chord like ⌘K, so it
+  // fires while typing (the Files editor's own textarea is a typing target, and
+  // the chord from it is the way to the next file), but never over a modal:
+  // the open quick open is itself one, and a second layer over any dialog
+  // helps nobody. Over a modal it is still resolved (to a command that does
+  // nothing), so the keystroke is claimed and the browser's print dialog does
+  // not open in its place.
+  if (input.key.toLowerCase() === 'p') {
+    const quickOpenChord = ctx.isApplePlatform === true ? input.metaKey : combo;
+    if (quickOpenChord) {
+      return ctx.modalOpen ? 'quick-open-blocked' : 'quick-open';
+    }
   }
 
   // cmd+1..9 jumps to a rail entry. These work while typing on purpose: they

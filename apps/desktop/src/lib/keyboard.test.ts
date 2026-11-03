@@ -472,17 +472,52 @@ describe('the place shortcuts', () => {
   });
 });
 
-describe('Go to file (⌘P)', () => {
-  test('Meta+P and Ctrl+P resolve to quick-open, with Shift (P) too', () => {
-    expect(
-      resolveGlobalKeyCommand(key('p', { metaKey: true }), baseGlobalCtx)
-    ).toBe('quick-open');
-    expect(
-      resolveGlobalKeyCommand(key('p', { ctrlKey: true }), baseGlobalCtx)
-    ).toBe('quick-open');
-    expect(
-      resolveGlobalKeyCommand(key('P', { metaKey: true }), baseGlobalCtx)
-    ).toBe('quick-open');
+describe('Go to file (⌘P on macOS, Ctrl+P elsewhere)', () => {
+  const mac: GlobalKeyboardContext = {
+    ...baseGlobalCtx,
+    isApplePlatform: true,
+  };
+  const other: GlobalKeyboardContext = {
+    ...baseGlobalCtx,
+    isApplePlatform: false,
+  };
+
+  test('off macOS, Meta+P and Ctrl+P resolve to quick-open, with Shift (P) too', () => {
+    for (const ctx of [other, baseGlobalCtx]) {
+      expect(resolveGlobalKeyCommand(key('p', { metaKey: true }), ctx)).toBe(
+        'quick-open'
+      );
+      expect(resolveGlobalKeyCommand(key('p', { ctrlKey: true }), ctx)).toBe(
+        'quick-open'
+      );
+      expect(resolveGlobalKeyCommand(key('P', { ctrlKey: true }), ctx)).toBe(
+        'quick-open'
+      );
+    }
+  });
+
+  test('on macOS, Cmd+P resolves to quick-open, with Shift (P) too', () => {
+    expect(resolveGlobalKeyCommand(key('p', { metaKey: true }), mac)).toBe(
+      'quick-open'
+    );
+    expect(resolveGlobalKeyCommand(key('P', { metaKey: true }), mac)).toBe(
+      'quick-open'
+    );
+  });
+
+  // Owner decision 2026-11-03: Ctrl+P on macOS is Cocoa's "previous line" in a
+  // text field, so the app never claims it there, typing or not.
+  test('on macOS, Ctrl+P resolves to nothing, typing or not', () => {
+    for (const isTyping of [false, true]) {
+      for (const k of ['p', 'P']) {
+        expect(
+          resolveGlobalKeyCommand(key(k, { ctrlKey: true }), {
+            ...mac,
+            isTyping,
+          })
+        ).toBeNull();
+      }
+    }
   });
 
   // Still resolved over a modal, so the hook claims the key and the
@@ -490,31 +525,35 @@ describe('Go to file (⌘P)', () => {
   test('over a modal (the open quick open included) it is blocked, not dropped', () => {
     for (const mods of [{ metaKey: true }, { ctrlKey: true }]) {
       expect(
-        resolveGlobalKeyCommand(key('p', mods), {
-          ...baseGlobalCtx,
-          modalOpen: true,
-        })
+        resolveGlobalKeyCommand(key('p', mods), { ...other, modalOpen: true })
       ).toBe('quick-open-blocked');
     }
+    expect(
+      resolveGlobalKeyCommand(key('p', { metaKey: true }), {
+        ...mac,
+        modalOpen: true,
+      })
+    ).toBe('quick-open-blocked');
+    // macOS Ctrl+P over a modal is the modal's text field's, not the app's.
+    expect(
+      resolveGlobalKeyCommand(key('p', { ctrlKey: true }), {
+        ...mac,
+        modalOpen: true,
+      })
+    ).toBeNull();
   });
 
   test('fires while typing, like ⌘K: the Files editor is a text field', () => {
     expect(
       resolveGlobalKeyCommand(key('p', { metaKey: true }), {
-        ...baseGlobalCtx,
+        ...mac,
         isTyping: true,
       })
     ).toBe('quick-open');
-  });
-
-  // A recorded deviation from the plan's "suppressed while typing" (B13): any
-  // modifier, as ⌘K, so Ctrl+P in a text field (on macOS, Cocoa's "previous
-  // line") is Go to file too.
-  test('Ctrl+P fires while typing as well, with or without Shift', () => {
     for (const k of ['p', 'P']) {
       expect(
         resolveGlobalKeyCommand(key(k, { ctrlKey: true }), {
-          ...baseGlobalCtx,
+          ...other,
           isTyping: true,
         })
       ).toBe('quick-open');
