@@ -7,13 +7,15 @@ import type { TaskDetailSectionProps } from './types';
 
 /* A titled block of the task view (Description, Blocked by, Activity, or a
    host's own section): a sentence-case heading with an optional count and
-   a right-aligned note or control, over its content. Exported so a host's
-   extra sections read as part of the same sheet. */
+   a right-aligned note or control, an optional full-width note under the
+   heading (a heading control's save error), then its content. Exported so
+   a host's extra sections read as part of the same sheet. */
 export function TaskDetailSection({
   title,
   headingLevel = 3,
   count,
   meta,
+  note,
   hideTitle = false,
   id,
   className,
@@ -40,6 +42,11 @@ export function TaskDetailSection({
           <div className={styles.meta}>{meta}</div>
         ) : null}
       </div>
+      {note !== undefined && note !== null ? (
+        <div className={styles.note} data-slot="section-note">
+          {note}
+        </div>
+      ) : null}
       {children}
     </section>
   );

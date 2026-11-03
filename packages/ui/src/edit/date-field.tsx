@@ -1,7 +1,7 @@
 'use client';
 
 import { X } from 'lucide-react';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 
 import { cx } from '../tasks/class-names';
 import styles from './date-field.module.css';
@@ -25,7 +25,9 @@ export function isCompleteDate(text: string): boolean {
  * a short pause, at once on Enter or when the field is left; an
  * incomplete or out-of-range date is never saved and is put back when the
  * field is left. Saving follows the family's contract: pending, then the
- * saved date, or the old one back with the error under the field.
+ * saved date, or the old one back with the error under the field. With
+ * `emptyLabel`, an empty field at rest says it ("No due date") over the
+ * browser's hidden mask, and shows the mask again once focused.
  */
 export function DateField({
   label,
@@ -35,6 +37,7 @@ export function DateField({
   min,
   max,
   commitDelay = 600,
+  emptyLabel,
   formatError,
   labels: labelOverrides,
   disabled = false,
@@ -56,6 +59,8 @@ export function DateField({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shown = control.shown;
   const display = dirty ? draft : (shown ?? '');
+  const emptyId = useId();
+  const empty = emptyLabel !== undefined && emptyLabel !== '' && display === '';
 
   useEffect(
     () => () => {
@@ -100,6 +105,7 @@ export function DateField({
       className={cx(styles.root, className)}
       data-date-field=""
       data-pending={control.pending ? 'true' : undefined}
+      data-empty={empty ? 'true' : undefined}
     >
       <span className={styles.row}>
         <input
@@ -107,6 +113,7 @@ export function DateField({
           type="date"
           className={styles.input}
           aria-label={label}
+          aria-describedby={empty ? emptyId : undefined}
           aria-invalid={control.error !== null ? 'true' : undefined}
           value={display}
           min={min}
@@ -123,6 +130,11 @@ export function DateField({
             }
           }}
         />
+        {empty ? (
+          <span id={emptyId} className={styles.empty} aria-hidden="true">
+            {emptyLabel}
+          </span>
+        ) : null}
         {clearable && shown !== null ? (
           <button
             type="button"

@@ -1687,7 +1687,11 @@ Comments, Activity, `children`.
   with `onToggle(id, met)` each item is a `Checkbox` row a person ticks
   (ReviewMode's criteria), checked when `met`, reported by its `id` or, with
   none, by `String(index)`. `sectionMeta` puts a control in a built-in heading
-  (an Edit button on Description, "+ Add" on the relations).
+  (an Edit button on Description, "+ Add" on the relations), and `sectionNotes`
+  a full-width line under that heading (`TaskDetailSection`'s `note`): where a
+  heading control's save error goes, as an exported `SaveErrorLine`, rather than
+  wrapping beside the title. A host that prints the error there resolves the
+  control's promise, so the control prints none of its own.
 - **Description.** `content` is the host's rendered body (its markdown). With
   `clampContent` it is clamped to `clampLines` too, by height with a fade over
   the last lines (its blocks have line heights of their own), with the same Show
@@ -1869,6 +1873,13 @@ search at once and stays open for the next name. A rejection prints the error
 like a failed save and puts the text back in an empty search box; one create
 runs at a time. The host adds the new option to `options` (and usually to
 `value`). It is not offered in action mode (`action`) or without a search box.
+
+`DateField` is the browser's own date input with a Clear button; a complete date
+saves after `commitDelay`, at once on Enter or blur. `emptyLabel` ("No due
+date") is said in place of the browser's mm/dd/yyyy mask while the field is
+empty and unfocused, in `--text-3`, and is the input's description; focused, the
+mask is back to type into. The mask is hidden with the WebKit date parts, so an
+engine without them keeps its mask and draws no label over it.
 
 `Popover` is a non-modal panel for a host's own controls (a display panel, a
 save-view form): `open`, `onOpenChange`, `label` (names the `role="dialog"`;

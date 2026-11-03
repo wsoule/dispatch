@@ -426,6 +426,7 @@ export { DateField, isCompleteDate } from './edit/date-field';
 export { InlineTextField } from './edit/inline-text-field';
 export { PickerMarkView, type PickerMarkViewProps } from './edit/picker-mark';
 export { PickerPopover } from './edit/picker-popover';
+export { SaveErrorLine } from './edit/save-status';
 export { Popover } from './edit/popover';
 export {
   type BesidePlacement,

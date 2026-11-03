@@ -3,8 +3,11 @@
    other values; touch screens keep the field edge so it reads as one),
    the field's --control-border edge on hover, and on focus Gr8r's field
    ring (a 2px accent edge and a soft halo) over a transparent outline.
-   A small ghost Clear (X) sits beside it. color-scheme comes from the theme, so the browser's calendar follows
-   light and dark. */
+   A small ghost Clear (X) sits beside it. color-scheme comes from the
+   theme, so the browser's calendar follows light and dark. With
+   emptyLabel an empty field at rest says it in --text-3 over the
+   browser's mask (hidden, not removed, so the field keeps its width and
+   its calendar icon); focused, the mask is back to type into. */
 
 .root {
   display: inline-flex;
@@ -16,11 +19,46 @@
 }
 
 .row {
+  position: relative;
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   min-width: 0;
+}
+
+/* The empty label sits where the date's text would: the input's own
+   start (its -8px margin plus 8px padding and 1px edge) on its 28px
+   line. Clicks pass through to the input under it. */
+.empty {
+  position: absolute;
+  top: 0;
+  left: 1px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Opacity, not a transparent colour: forced colours would repaint the
+   colour and show the mask through the label. */
+.root[data-empty='true'] .input:not(:focus-within)::-webkit-datetime-edit {
+  opacity: 0;
+}
+
+.root:focus-within .empty {
+  display: none;
+}
+
+/* An engine without the WebKit date parts cannot hide its mask: there the
+   mask stays and the label does not draw over it. */
+@supports not selector(::-webkit-datetime-edit) {
+  .empty {
+    display: none;
+  }
 }
 
 .input {
@@ -123,8 +161,15 @@
 
 /* 16px keeps iOS from zooming into the field (touch screens of any width). */
 @media (width <= 640px), (pointer: coarse) {
-  .input {
+  .input,
+  .empty {
     font-size: 16px;
+  }
+}
+
+@media (forced-colors: active) {
+  .empty {
+    color: GrayText;
   }
 }
 

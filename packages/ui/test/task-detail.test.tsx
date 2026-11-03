@@ -11,6 +11,7 @@ import { useState } from 'react';
 
 import {
   Checklist,
+  SaveErrorLine,
   type TaskActivityItem,
   TaskActivityList,
   TaskDescription,
@@ -1109,5 +1110,47 @@ describe('TaskDetail: host sections', () => {
       properties?.parentElement ?? null
     );
     expect(activity?.nextElementSibling).toBe(acceptance ?? null);
+  });
+
+  // A heading control's save error (a refused "+ Add blocker") gets its own
+  // full-width line under the heading, not a line wrapping beside the title.
+  test('sectionNotes puts a line between a built-in heading and its content', () => {
+    render(
+      <TaskDetail
+        {...baseProps()}
+        sectionMeta={{
+          blockedBy: <button type="button">+ Add blocker</button>,
+        }}
+        sectionNotes={{
+          blockedBy: (
+            <SaveErrorLine
+              label="Not saved"
+              message="That would make a dependency cycle."
+            />
+          ),
+        }}
+      />
+    );
+    const section = screen
+      .getByRole('heading', { name: /^Blocked by/ })
+      .closest('section');
+    const note = section?.querySelector('[data-slot=section-note]');
+    expect(note?.textContent).toBe(
+      'Not savedThat would make a dependency cycle.'
+    );
+    expect(note?.querySelector('[role=alert]')).not.toBeNull();
+    // Under the heading row (which holds the "+ Add"), before the list.
+    const head = within(section as HTMLElement)
+      .getByRole('button', { name: '+ Add blocker' })
+      .closest('div')?.parentElement;
+    expect(head?.nextElementSibling).toBe(note ?? null);
+    expect(note?.nextElementSibling?.getAttribute('aria-label')).toBe(
+      'Blocked by'
+    );
+    // Blocks has no note.
+    const blocks = screen
+      .getByRole('heading', { name: /^Blocks/ })
+      .closest('section');
+    expect(blocks?.querySelector('[data-slot=section-note]')).toBeNull();
   });
 });

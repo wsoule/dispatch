@@ -260,6 +260,10 @@ export interface TaskDetailSectionProps {
   count?: number;
   /** Right-aligned note or control ("From Linear", "+ Add"). */
   meta?: ReactNode;
+  /** A full-width line between the heading and the content: the save error
+      of a control in the heading (a refused "+ Add blocker", as a
+      `SaveErrorLine`), which would otherwise wrap beside the title. */
+  note?: ReactNode;
   /** Keep the heading for assistive tech only. */
   hideTitle?: boolean;
   id?: string;
@@ -352,6 +356,9 @@ export interface TaskDetailProps {
   /** Controls or notes in the built-in sections' headings (an "+ Add"
       picker on Blocked by and Blocks). */
   sectionMeta?: TaskDetailSectionMeta;
+  /** Full-width lines under the built-in sections' headings (the save
+      error of a `sectionMeta` control); see TaskDetailSection's `note`. */
+  sectionNotes?: TaskDetailSectionMeta;
   /** Omit to leave out the section; newest first, or as given. */
   activity?: TaskActivityItem[];
   /** Items shown before "Show all N". */

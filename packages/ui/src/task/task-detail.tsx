@@ -121,7 +121,8 @@ function TaskAlerts({
  * has one, the host's property sheet and `rail` sections,
  * then Description, Blocked by, Blocks, Comments, Activity and any host
  * sections. `sectionMeta` puts a host's controls (an "+ Add" relation
- * picker, an Edit button) in those sections' headings.
+ * picker, an Edit button) in those sections' headings, and `sectionNotes`
+ * a full-width line under a heading (such a control's save error).
  *
  * `layout="drawer"` is one column for a slide-over or split pane;
  * `layout="page"` puts the properties (and `rail`) in a right rail beside
@@ -151,6 +152,7 @@ export function TaskDetail({
   description,
   comments,
   sectionMeta,
+  sectionNotes,
   activity,
   activityLimit,
   children,
@@ -246,6 +248,7 @@ export function TaskDetail({
           title={labels.description}
           headingLevel={sectionLevel}
           meta={sectionMeta?.description}
+          note={sectionNotes?.description}
         >
           {/* Keyed by task: a drawer that swaps tasks starts each one
               collapsed. */}
@@ -268,6 +271,7 @@ export function TaskDetail({
             headingLevel={sectionLevel}
             count={relations.blockedBy.length}
             meta={sectionMeta?.blockedBy}
+            note={sectionNotes?.blockedBy}
           >
             <TaskRelationList
               items={relations.blockedBy}
@@ -287,6 +291,7 @@ export function TaskDetail({
             headingLevel={sectionLevel}
             count={relations.blocks.length}
             meta={sectionMeta?.blocks}
+            note={sectionNotes?.blocks}
           >
             <TaskRelationList
               items={relations.blocks}
@@ -316,6 +321,7 @@ export function TaskDetail({
               : comments.items.length
           }
           meta={sectionMeta?.comments}
+          note={sectionNotes?.comments}
         >
           <TaskCommentList
             items={comments.items}
@@ -341,6 +347,7 @@ export function TaskDetail({
           title={labels.activity}
           headingLevel={sectionLevel}
           meta={sectionMeta?.activity}
+          note={sectionNotes?.activity}
         >
           <TaskActivityList
             key={taskKey}

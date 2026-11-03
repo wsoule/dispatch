@@ -6,6 +6,8 @@ import {
   screen,
 } from '@testing-library/react';
 import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { useState } from 'react';
 
 import {
@@ -571,5 +573,56 @@ describe('DateField', () => {
     fireEvent.blur(input());
     expect(onChange).not.toHaveBeenCalled();
     expect(input().value).toBe('');
+  });
+
+  // An empty due date says so ("No due date") instead of the browser's
+  // mm/dd/yyyy mask; a set date, or a field without emptyLabel, does not.
+  test('emptyLabel says an empty field in place of the mask', async () => {
+    render(<DueHost save={() => undefined} />);
+    expect(document.querySelector('[data-empty]')).toBeNull();
+    cleanup();
+
+    function EmptyHost() {
+      const [value, setValue] = useState<string | null>(null);
+      return (
+        <DateField
+          label="Due date"
+          value={value}
+          emptyLabel="No due date"
+          commitDelay={10}
+          onChange={(next) => setValue(next)}
+        />
+      );
+    }
+    render(<EmptyHost />);
+    const root = document.querySelector('[data-date-field]');
+    expect(root?.getAttribute('data-empty')).toBe('true');
+    const note = screen.getByText('No due date');
+    expect(note.getAttribute('aria-hidden')).toBe('true');
+    // The label is the input's description, so a screen reader hears it.
+    expect(input().getAttribute('aria-describedby')).toBe(note.id);
+    await act(async () => {
+      fireEvent.change(input(), { target: { value: '2026-11-04' } });
+      fireEvent.blur(input());
+      await Promise.resolve();
+    });
+    expect(root?.getAttribute('data-empty')).toBeNull();
+    expect(screen.queryByText('No due date')).toBeNull();
+    expect(input().getAttribute('aria-describedby')).toBeNull();
+
+    // The sheet hides the mask (opacity, which forced colours keep) only at
+    // rest, hides the label on focus, and keeps it off where the mask
+    // cannot be hidden.
+    const css = readFileSync(
+      path.join(import.meta.dir, '..', 'src', 'edit', 'date-field.module.css'),
+      'utf8'
+    );
+    expect(css).toMatch(
+      /\.root\[data-empty='true'\] \.input:not\(:focus-within\)::-webkit-datetime-edit \{\s*opacity: 0;/
+    );
+    expect(css).toMatch(/\.root:focus-within \.empty \{\s*display: none;/);
+    expect(css).toMatch(
+      /@supports not selector\(::-webkit-datetime-edit\) \{\s*\.empty \{\s*display: none;/
+    );
   });
 });

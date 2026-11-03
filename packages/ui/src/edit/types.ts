@@ -537,6 +537,13 @@ export interface DateFieldProps {
    * or pressing Enter saves at once.
    */
   commitDelay?: number;
+  /**
+   * Said in place of the browser's date mask (mm/dd/yyyy) while the field
+   * is empty and unfocused ("No due date"), and given to the input as its
+   * description. Focused, the field shows the browser's own segments to
+   * type into. Omitted: the browser's mask shows.
+   */
+  emptyLabel?: string;
   formatError?: ErrorFormatter;
   labels?: Partial<EditLabels>;
   disabled?: boolean;
