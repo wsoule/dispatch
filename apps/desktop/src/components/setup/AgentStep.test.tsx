@@ -123,6 +123,8 @@ function setup(r = report()) {
       })
     ),
     sendTerminalInput: mock(() => Promise.resolve()),
+    // CommandTerminal ends a still-running command when it unmounts.
+    closeTerminal: mock((_id: string) => Promise.resolve()),
   };
   const onSetDefault = mock((_id: string) => Promise.resolve());
   const onContinue = mock(() => {});
@@ -490,6 +492,28 @@ test('a running sign-in keeps its terminal while another card is picked, and sta
   expect(client.createTerminal).toHaveBeenCalledTimes(1);
   // The terminal sits outside every card, so no radio's label holds it.
   expect(terminal.closest('label')).toBeNull();
+});
+
+test('another action leaves a running install to finish, and ends a running sign-in', async () => {
+  const { client } = setup();
+  let started = 0;
+  client.createTerminal.mockImplementation(() => {
+    started += 1;
+    return Promise.resolve({ id: `t${started}`, state: 'running', pty: true });
+  });
+  await click(await screen.findByRole('button', { name: 'Install Codex' }));
+  await waitFor(() => expect(client.createTerminal).toHaveBeenCalledTimes(1));
+  // Signing in to Claude replaces the install's terminal, but a half-done
+  // `brew install` is never stopped.
+  await click(screen.getByRole('button', { name: 'Sign in' }));
+  await waitFor(() => expect(client.createTerminal).toHaveBeenCalledTimes(2));
+  expect(screen.getByLabelText('Sign in to Claude Code')).toBeTruthy();
+  expect(client.closeTerminal).not.toHaveBeenCalled();
+  // Starting the install again replaces the sign-in, which nobody could
+  // answer any more, so it ends.
+  await click(screen.getByRole('button', { name: 'Install Codex' }));
+  await waitFor(() => expect(client.createTerminal).toHaveBeenCalledTimes(3));
+  expect(client.closeTerminal.mock.calls).toEqual([['t2']]);
 });
 
 test('a key typed for one agent is not carried to another', async () => {

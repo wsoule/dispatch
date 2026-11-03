@@ -36,6 +36,8 @@ type Running = {
   providerId: string;
   fix: Extract<SetupFix, { kind: 'run' }>;
   title: string;
+  /** A sign-in, which ends with its terminal; an install runs to its end. */
+  signIn: boolean;
 };
 
 /** A plain sentence for the screen plus the raw reason for the Details disclosure. */
@@ -136,10 +138,12 @@ export function AgentStep({
     setChosen(p.id);
     setProblem(null);
     if (fix.kind === 'run') {
+      const signIn = fix === p.signIn;
       setRunning({
         providerId: p.id,
         fix,
-        title: fix.label === 'Sign in' ? `Sign in to ${p.name}` : fix.label,
+        title: signIn ? `Sign in to ${p.name}` : fix.label,
+        signIn,
       });
     } else if (fix.kind === 'open-url') {
       openUrl(fix.href).catch((err: unknown) =>
@@ -329,6 +333,11 @@ export function AgentStep({
           client={client}
           command={running.fix.command}
           title={running.title}
+          // A sign-in left behind would wait for input nobody can give, so
+          // it ends with its terminal; an install is never stopped midway
+          // (a half-done `npm install -g` or `brew install`), so another
+          // card's action or Continue lets it finish in the background.
+          endOnUnmount={running.signIn}
           onExit={() => {
             setRunning(null);
             void recheck();
