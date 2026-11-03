@@ -11,9 +11,9 @@ import type { OverseerSession } from '../hooks/useOverseerSession';
 import {
   OVERSEER_ATTACHED_EXPLANATION,
   type OverseerFocus,
-  TwoViewOverseer,
-  type TwoViewOverseerProps,
-} from './TwoViewOverseer';
+  OverseerView,
+  type OverseerViewProps,
+} from './OverseerView';
 
 function record(id: string, prompt: string): OverseerRecord {
   return {
@@ -78,7 +78,7 @@ function Harness({
 }: {
   overseer: OverseerSession;
   client: Partial<ApiClient>;
-  extra?: Partial<TwoViewOverseerProps>;
+  extra?: Partial<OverseerViewProps>;
   project?: Partial<DispatchProjectData>;
 }) {
   const [draft, setDraft] = useState('');
@@ -92,7 +92,7 @@ function Harness({
   } as unknown as DispatchProjectData;
   return (
     <QueryClientProvider client={queryClient}>
-      <TwoViewOverseer
+      <OverseerView
         data={data}
         overseer={{ ...overseer, draft, setDraft }}
         projectPath="/repo"
@@ -207,7 +207,7 @@ function FocusHarness({
   inflow,
 }: {
   runs: RunMeta[];
-  extra?: Partial<TwoViewOverseerProps>;
+  extra?: Partial<OverseerViewProps>;
   /** A Coming in child (as posts) given the harness's own focus setter, the
       way App's notifications, posts and drafts open a focus. */
   inflow?: (openFocus: (focus: OverseerFocus) => void) => ReactNode;
@@ -223,7 +223,7 @@ function FocusHarness({
   } as unknown as DispatchProjectData;
   return (
     <QueryClientProvider client={queryClient}>
-      <TwoViewOverseer
+      <OverseerView
         data={data}
         overseer={{ ...session({}), draft, setDraft }}
         projectPath="/repo"
@@ -418,7 +418,7 @@ test('Escape on a row’s trailing button closes the Coming in sheet', () => {
 test('the columns and the narrow-only pieces switch at the legacy widths', () => {
   const css = (file: string) =>
     readFileSync(new URL(file, import.meta.url), 'utf8');
-  const view = css('./TwoViewOverseer.module.css');
+  const view = css('./OverseerView.module.css');
   const columns = css('../components/overseer/FlowColumns.module.css');
   expect(view).toContain('container: overseer / inline-size;');
   expect(view).toContain('@container overseer (width >= 980px)');

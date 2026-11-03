@@ -9,7 +9,7 @@ import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { TaskTab } from '../lib/appNav';
 import type { RefAction } from '../lib/threadSources';
 import styles from './OverseerFocusView.module.css';
-import type { OverseerFocus } from './TwoViewOverseer';
+import type { OverseerFocus } from './OverseerView';
 
 /**
  * A task in the middle: the same task page as Tasks (TaskPageView), embedded at heading

@@ -2,7 +2,7 @@
    Going out on the right of the talk. Unboxed: a head (the name and count
    in one heading, then the flow chevrons), an optional quiet line, and a
    thin-scrollbar scroller of groups and rows. Beside the talk a column
-   shows only on a wide `overseer` container (TwoViewOverseer's root) and
+   shows only on a wide `overseer` container (OverseerView's root) and
    widens on a wider one; in a sheet it always shows and fills it. The
    widths keep the legacy window breakpoints: columns from a 1280px window
    (the old xl breakpoint), 340px from 1440px. With the 252px sidebar and the

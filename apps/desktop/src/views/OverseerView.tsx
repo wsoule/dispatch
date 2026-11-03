@@ -27,9 +27,9 @@ import type { OverseerSession } from '../hooks/useOverseerSession';
 import { revokedLocksComposer } from '../lib/agentPresence';
 import { docked, restored, useOverseerDock } from '../lib/overseerDock';
 import type { OverseerDoor } from '../lib/overseerThread';
-import styles from './TwoViewOverseer.module.css';
+import styles from './OverseerView.module.css';
 
-export interface TwoViewOverseerProps {
+export interface OverseerViewProps {
   data: DispatchProjectData;
   overseer: OverseerSession;
   /** The project, which keys its own set-aside conversations. */
@@ -82,10 +82,9 @@ export type OverseerFocus =
 
 /**
  * The Overseer page: the open conversation in the middle; on a wide window
- * the asks and any set-aside conversations sit in a column on the right. (The
- * component keeps the name of the retired Two views layout, where it began.)
+ * the asks and any set-aside conversations sit in a column on the right.
  */
-export function TwoViewOverseer({
+export function OverseerView({
   data,
   overseer,
   projectPath,
@@ -107,7 +106,7 @@ export function TwoViewOverseer({
   renderFocus,
   onOpenDoor,
   firstRun,
-}: TwoViewOverseerProps) {
+}: OverseerViewProps) {
   // Whatever a side column opened takes the middle; Esc hands it back to the
   // talk. In the app the global keyboard claims Escape first and closes the
   // focus itself (App's escape command, appNav's escapeLeavesNav); this

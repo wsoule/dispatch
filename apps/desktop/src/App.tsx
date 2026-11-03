@@ -225,6 +225,7 @@ import { GraphView } from './views/GraphView';
 import { IssuesView, type TasksSidePage } from './views/IssuesView';
 import { LiveView } from './views/LiveView';
 import { OverseerFocusView } from './views/OverseerFocusView';
+import { type OverseerFocus, OverseerView } from './views/OverseerView';
 import { ProjectsView } from './views/ProjectsView';
 import { PrReviewView } from './views/PrReviewView';
 import { SessionsHubView } from './views/SessionsHubView';
@@ -233,7 +234,6 @@ import { SetupView } from './views/SetupView';
 import { TerminalsView } from './views/TerminalsView';
 import { ThreadsView } from './views/ThreadsView';
 import { TimelineView } from './views/TimelineView';
-import { type OverseerFocus, TwoViewOverseer } from './views/TwoViewOverseer';
 
 // The hosts a task page and a Flight Plan draw from, provided together so the shell's
 // provider stack stays one level deep.
@@ -2351,7 +2351,7 @@ function App() {
         ) : undefined
       }
       overseer={
-        <TwoViewOverseer
+        <OverseerView
           data={data}
           overseer={overseer}
           projectPath={activeProject?.path ?? null}
