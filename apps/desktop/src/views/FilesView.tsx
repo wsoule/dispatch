@@ -208,9 +208,11 @@ export function FilesView({
   }
 
   // The Preview toggle is for a text file that also renders as something
-  // else: Markdown (the daemon marks every text file's `preview` "none", so
-  // the mime decides). A file with no text always shows its preview, so a
-  // toggle there would only report a state it cannot change.
+  // else: Markdown, known by its mime (the daemon marks its `preview`
+  // "none"), or an SVG or a PDF with no NUL byte, which are kind "text" but
+  // which the daemon marks `preview` "image" or "pdf". A file with no text
+  // always shows its preview, so a toggle there would only report a state it
+  // cannot change.
   const canPreview =
     file !== null &&
     file.kind === 'text' &&

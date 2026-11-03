@@ -1,6 +1,7 @@
 /* The preview pane (FilePreview.tsx): rendered text on the page, media
    centred on a sunken stage, a PDF filling the pane, and a quiet sentence
-   with a Download link for anything that cannot be shown. */
+   with a Download link for anything that cannot be shown. While the bytes
+   load the pane holds a skeleton; a failed read is a danger notice. */
 
 .text {
   height: 100%;
@@ -18,6 +19,13 @@
   padding: var(--s-4);
   overflow: auto;
   background: var(--sunken);
+}
+
+/* The skeleton while a preview's bytes are read, and the notice when the
+   read or the decode fails: both inset like the rendered text. */
+.loading,
+.notice {
+  padding: var(--s-4);
 }
 
 .media {
