@@ -4,6 +4,7 @@ import {
   buildArgv,
   CLI_EXECUTOR_PROFILE,
   CliExecutor,
+  defaultSpawner,
 } from '../src/orchestrator/executors/cli.js';
 import {
   availableCliPresets,
@@ -140,6 +141,37 @@ describe('CliExecutor', () => {
     // closes it — without that the run would hang rather than finish.
     expect((await rec.finished).state).toBe('finished');
     expect(textOf(rec.entries, 'assistant')).toContain('piped-prompt');
+  });
+
+  // The child here never reads stdin. When it exits before start() writes the
+  // prompt, the write meets a closed pipe (EPIPE), which used to throw out of
+  // start(). That needs the daemon to get no CPU between spawning the child
+  // and writing to it: rare on an idle machine, common on a loaded CI runner,
+  // where it failed the tests below that pipe a prompt to such a child. The
+  // pause after the real spawn makes it happen on every run.
+  it('finishes a run whose agent exits before it reads its prompt', async () => {
+    const executor = new CliExecutor({
+      command: { run: ['sh', '-c', 'echo ignored-the-prompt'] },
+      spawn: (opts) => {
+        const child = defaultSpawner(opts);
+        Bun.sleepSync(200);
+        return child;
+      },
+    });
+    const rec = recorder();
+    expect(() =>
+      executor.start(
+        {
+          cwd: process.cwd(),
+          prompt: 'x',
+          permissionMode: 'bypassPermissions',
+        },
+        rec.events
+      )
+    ).not.toThrow();
+
+    expect((await rec.finished).state).toBe('finished');
+    expect(textOf(rec.entries, 'assistant')).toContain('ignored-the-prompt');
   });
 
   it('keeps stderr separate from the agent’s own output', async () => {

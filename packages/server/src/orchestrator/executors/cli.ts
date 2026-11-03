@@ -93,7 +93,40 @@ export function buildArgv(
   return { argv, stdinPrompt: !usesPrompt };
 }
 
-function defaultSpawner(opts: CliSpawnOptions): CliSpawnResult {
+// Whether `err` is EPIPE: a write to a pipe whose reading end is closed.
+function isClosedPipe(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { code?: unknown }).code === 'EPIPE'
+  );
+}
+
+// Runs a write to, or the close of, a child's stdin, and ignores EPIPE.
+// An agent can exit, or close its stdin, before it reads the whole prompt,
+// and that is not a failure of its own: its exit status and output say how
+// the run went. Bun's stdin sink reports EPIPE in one of two ways. If the
+// child is already gone when start() writes, which happens when the daemon
+// gets no CPU between the spawn and the write, write() or end() throws it.
+// If the child goes while a write is still flushing, the promise that write
+// returned rejects. Any other error is thrown or rejected as before.
+function ignoreClosedPipe(op: () => unknown): void {
+  let pending: unknown;
+  try {
+    pending = op();
+  } catch (err) {
+    if (!isClosedPipe(err)) throw err;
+    return;
+  }
+  if (pending instanceof Promise)
+    pending.catch((err: unknown) => {
+      if (!isClosedPipe(err)) throw err;
+    });
+}
+
+// Spawns the agent with Bun.spawn. Exported so a test can wrap the real
+// spawner, to hold the daemon back between the spawn and the prompt write.
+export function defaultSpawner(opts: CliSpawnOptions): CliSpawnResult {
   // The two cases are spawned separately rather than with a conditional
   // `stdin` option: Bun types the returned `stdin` from that option's literal
   // value, so a union of 'pipe' | 'ignore' gives back a handle that is not
@@ -128,12 +161,12 @@ function defaultSpawner(opts: CliSpawnOptions): CliSpawnResult {
     stderr: proc.stderr,
     exited: proc.exited,
     writeStdin(text: string) {
-      void proc.stdin.write(text);
+      ignoreClosedPipe(() => proc.stdin.write(text));
     },
     closeStdin() {
       // Closing is what tells an agent reading a piped prompt that the prompt
       // is complete; without it the agent waits for an EOF that never comes.
-      void proc.stdin.end();
+      ignoreClosedPipe(() => proc.stdin.end());
     },
     kill: () => proc.kill(),
   };
