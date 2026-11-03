@@ -41,32 +41,28 @@ export function isShown(element: Element): boolean {
   );
 }
 
-const MODAL_SURFACES =
-  '[data-slot="alert-dialog-content"][data-open], [aria-modal="true"]';
+const MODAL_SURFACES = '[aria-modal="true"]';
 
 /** True while any modal surface is currently open. The `@dispatch/ui` modal surfaces (Dialog
  * and ConfirmDialog, the slide-over, the command palette, the phone drawer) set
  * `aria-modal="true"` on their panel while open and unmount on close, so a bare
  * `[aria-modal="true"]` match covers them: NewDocDialog, PublishDialog, LiveView's Pause all
- * confirm, the Usage page's SessionDetailModal and the DispatchDialog form among them (a
- * closing SlideOver drops aria-modal for its exit slide, so an exiting panel is not caught).
- * The one Base UI dialog left is ui-legacy's alert dialog (FirstTaskGuide):
- * `AlertDialogContent` renders `data-slot="alert-dialog-content"`, and its popup carries a
- * bare `data-open` only while open (it flips to `data-closed` for the exit animation, so
- * presence in the DOM alone is not enough); a destructive confirm swallows the app's
- * shortcuts like any other modal. Checked live via a DOM query at the moment a keydown
- * fires, rather than threaded through as reactive React state: every dialog instance only
- * renders into the DOM while open, so the query is as current as the state would be, without
- * App.tsx needing to know about every modal anywhere in the tree (including ones mounted deep
- * inside the Sessions hub). CommandPalette is one of these too, so a keydown reaching this
- * listener while the palette is open resolves `Escape` to `null` here — the library's own
- * Escape handling owns it, and its `onClose` dispatching `closePalette` through `onNavigate`
- * is the only thing that closes it (see `appNav.ts`'s `closePalette` case). Exported for a
- * view whose own document-level Escape must let an open panel's go first (the Graph's lock,
- * `views/GraphView.tsx`). A surface inside a view hidden under Settings (an
- * `<Activity mode="hidden">` boundary keeps it in the DOM, aria-modal and all) is not shown,
- * so it does not count: Escape still closes Settings, and the dialog is there again when its
- * view comes back. */
+ * confirm, the Usage page's SessionDetailModal, the DispatchDialog form and FirstTaskGuide's
+ * two ConfirmDialogs ("Close the guide?", "Start this task over?") among them (a closing
+ * SlideOver drops aria-modal for its exit slide, so an exiting panel is not caught). A
+ * confirm swallows the app's shortcuts like any other modal. Checked live via a DOM query at
+ * the moment a keydown fires, rather than threaded through as reactive React state: every
+ * dialog instance only renders into the DOM while open, so the query is as current as the
+ * state would be, without App.tsx needing to know about every modal anywhere in the tree
+ * (including ones mounted deep inside the Sessions hub). CommandPalette is one of these too,
+ * so a keydown reaching this listener while the palette is open resolves `Escape` to `null`
+ * here — the library's own Escape handling owns it, and its `onClose` dispatching
+ * `closePalette` through `onNavigate` is the only thing that closes it (see `appNav.ts`'s
+ * `closePalette` case). Exported for a view whose own document-level Escape must let an open
+ * panel's go first (the Graph's lock, `views/GraphView.tsx`). A surface inside a view hidden
+ * under Settings (an `<Activity mode="hidden">` boundary keeps it in the DOM, aria-modal and
+ * all) is not shown, so it does not count: Escape still closes Settings, and the dialog is
+ * there again when its view comes back. */
 export function isAnyModalOpen(): boolean {
   return Array.from(document.querySelectorAll(MODAL_SURFACES)).some(isShown);
 }
@@ -118,7 +114,7 @@ export function useGlobalKeyboard({
     }
 
     function handleKeyDown(event: KeyboardEvent) {
-      // A Base UI popup (Select/Menu/Dialog) already preventDefaults Escape when it dismisses
+      // An overlay (a popover, menu or dialog) already preventDefaults Escape when it dismisses
       // itself — without this guard the window-level listener below still saw the same
       // keystroke and dispatched a second, unwanted "back" navigation on top of it. A key a
       // view consumed (the Cockpit's own `g p`) still ends an armed chord, or the stale

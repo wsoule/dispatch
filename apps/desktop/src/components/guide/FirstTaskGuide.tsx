@@ -1,5 +1,13 @@
 import type { DraftRecord } from '@dispatch/client';
 import {
+  Button,
+  ConfirmDialog,
+  cx,
+  Panel,
+  Spinner,
+  TextArea,
+} from '@dispatch/ui';
+import {
   ChevronDown,
   ChevronUp,
   Circle,
@@ -19,27 +27,12 @@ import { formatUsd } from '../../lib/milestoneSession';
 import { FailureNotice } from '../failure/FailureNotice';
 import { useNarrowMain } from '../shell/DispatchShell';
 import { GlossaryTerm } from './GlossaryTerm';
+import styles from './guide.module.css';
 import {
   type SendChoice,
   SendToAgent,
   type SendToAgentOptions,
 } from './SendToAgent';
-import { cn } from '@/lib/utils';
-import { IconButton } from '@/ui/ai/icon-button';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/ui/alert-dialog';
-import { Button } from '@/ui/button';
-import { Panel, PanelHeader } from '@/ui/chrome';
-import { Spinner } from '@/ui/spinner';
-import { Textarea } from '@/ui/textarea';
 
 export interface GuideActions {
   /** Brings the describe box back into view (Overseer, not set aside). */
@@ -79,17 +72,23 @@ interface FirstTaskGuideProps {
 
 type BodyProps = Omit<FirstTaskGuideProps, 'collapsed' | 'onCollapsedChange'>;
 
+// A stage's sentence, in the card's secondary text.
 function Line({ children }: { children: ReactNode }) {
-  return (
-    <p className="font-book text-[13px] leading-5 text-(--text-secondary)">
-      {children}
-    </p>
-  );
+  return <p className={styles.line}>{children}</p>;
 }
 
-function Quiet({ children }: { children: ReactNode }) {
+// A quieter note beside a Spinner, or what the run draws on. Beside a
+// Spinner (which is hidden from assistive tech) it is a polite status, so
+// the drafting and working words are announced as they change.
+function Quiet({
+  children,
+  status = false,
+}: {
+  children: ReactNode;
+  status?: boolean;
+}) {
   return (
-    <p className="text-muted-foreground font-book flex items-center gap-1.5 text-[12px]">
+    <p className={styles.quiet} role={status ? 'status' : undefined}>
       {children}
     </p>
   );
@@ -110,8 +109,8 @@ function DescribeBody({ view, provider, actions }: BodyProps) {
     return (
       <>
         {waiting === 'drafting' ? (
-          <Quiet>
-            <Spinner className="size-3" />
+          <Quiet status>
+            <Spinner size="xs" label="" />
             Drafting your task…
           </Quiet>
         ) : (
@@ -119,7 +118,7 @@ function DescribeBody({ view, provider, actions }: BodyProps) {
         )}
         <Button
           size="sm"
-          variant="outline"
+          variant="secondary"
           onClick={() => actions.openDraft(draft.id)}
         >
           Open the draft
@@ -136,11 +135,11 @@ function DescribeBody({ view, provider, actions }: BodyProps) {
           : "Write what should change and how you'll know it's done. You check the "}
         <GlossaryTerm term="task">task</GlossaryTerm> before anything runs.
       </Line>
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Button size="sm" variant="outline" onClick={actions.showDescribe}>
+      <div className={styles.buttons}>
+        <Button size="sm" variant="secondary" onClick={actions.showDescribe}>
           Show me where
         </Button>
-        <Button size="sm" variant="link" onClick={actions.dismiss}>
+        <Button size="sm" variant="quiet" onClick={actions.dismiss}>
           Skip — I know my way around
         </Button>
       </div>
@@ -165,7 +164,7 @@ function CheckBody({ view, actions, sendOptions, sendError }: BodyProps) {
           {sendError !== null && <FailureNotice error={sendError} />}
           <Button
             size="sm"
-            variant="link"
+            variant="quiet"
             onClick={() => actions.openTask(taskId, 'spec')}
           >
             Open the task
@@ -176,7 +175,7 @@ function CheckBody({ view, actions, sendOptions, sendError }: BodyProps) {
           <Quiet>Send to agent is at the bottom of the draft.</Quiet>
           <Button
             size="sm"
-            variant="outline"
+            variant="secondary"
             onClick={() => actions.openDraft(draft.id)}
           >
             Open the draft
@@ -225,14 +224,14 @@ function WorksBody({ view, provider, actions }: BodyProps) {
         The agent works on its own copy of your project. Nothing changes in your
         files until you say so.
       </Line>
-      <Quiet>
-        <Spinner className="size-3" />
+      <Quiet status>
+        <Spinner size="xs" label="" />
         {step ?? run.lastStep?.text ?? 'Getting started…'}
       </Quiet>
       {cost !== null && <Quiet>{cost}</Quiet>}
       <Button
         size="sm"
-        variant="outline"
+        variant="secondary"
         onClick={() => actions.openTask(taskId, 'run', run.id)}
       >
         Watch it work
@@ -283,24 +282,25 @@ function ReviewBody({ view, actions }: BodyProps) {
       </Line>
       <Button
         size="sm"
-        variant="outline"
+        variant="secondary"
         onClick={() => actions.openTask(taskId, 'review', runId)}
       >
         Show the changes
       </Button>
       {asking ? (
         <>
-          <Textarea
+          <TextArea
+            className={styles.textarea}
             rows={3}
             aria-label="What should change"
             placeholder="What should the agent change?"
             value={text}
             onChange={(e) => setText(e.target.value)}
           />
-          <div className="flex gap-1.5 self-end">
+          <div className={cx(styles.buttons, styles.buttonsEnd)}>
             <Button
               size="sm"
-              variant="ghost"
+              variant="quiet"
               disabled={busy}
               onClick={() => setAsking(false)}
             >
@@ -308,6 +308,7 @@ function ReviewBody({ view, actions }: BodyProps) {
             </Button>
             <Button
               size="sm"
+              variant="primary"
               disabled={busy || text.trim() === ''}
               onClick={() => void sendChanges()}
             >
@@ -316,11 +317,15 @@ function ReviewBody({ view, actions }: BodyProps) {
           </div>
         </>
       ) : (
-        <div className="flex gap-1.5">
-          <Button size="sm" onClick={() => actions.looksGood(runId)}>
+        <div className={styles.buttons}>
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() => actions.looksGood(runId)}
+          >
             Looks good
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => setAsking(true)}>
+          <Button size="sm" variant="quiet" onClick={() => setAsking(true)}>
             Ask for changes
           </Button>
         </div>
@@ -348,17 +353,17 @@ function LandBody({ view, actions }: BodyProps) {
           Your pull request is open. This step finishes when it merges. If it
           was closed without merging, start over and send the task again.
         </Line>
-        <div className="flex flex-wrap gap-1.5">
+        <div className={styles.buttons}>
           <Button
             size="sm"
-            variant="outline"
+            variant="secondary"
             onClick={() => actions.openTask(taskId, 'review', runId)}
           >
             Open the review page
           </Button>
           <Button
             size="sm"
-            variant="ghost"
+            variant="quiet"
             disabled={busy}
             onClick={() => setConfirming(true)}
           >
@@ -366,29 +371,24 @@ function LandBody({ view, actions }: BodyProps) {
           </Button>
         </div>
         {error !== null && <FailureNotice error={error} />}
-        <AlertDialog open={confirming} onOpenChange={setConfirming}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Start this task over?</AlertDialogTitle>
-              <AlertDialogDescription>
-                The task goes back to Check the plan so you can change it and
-                send it again. This won&apos;t close the pull request on GitHub:
-                if it&apos;s still open, close it there.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel variant="ghost">Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => {
-                  setConfirming(false);
-                  void act(() => actions.startOver(runId));
-                }}
-              >
-                Start the task over
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        {/* Sets the run aside, nothing more: the pull request stays on
+            GitHub, so the confirm is the primary button, not danger. */}
+        <ConfirmDialog
+          open={confirming}
+          title="Start this task over?"
+          confirmLabel="Start the task over"
+          cancelLabel="Cancel"
+          tone="default"
+          onConfirm={() => {
+            setConfirming(false);
+            void act(() => actions.startOver(runId));
+          }}
+          onCancel={() => setConfirming(false)}
+        >
+          The task goes back to Check the plan so you can change it and send it
+          again. This won't close the pull request on GitHub: if it's still
+          open, close it there.
+        </ConfirmDialog>
       </>
     );
   }
@@ -398,10 +398,20 @@ function LandBody({ view, actions }: BodyProps) {
         <GlossaryTerm term="land">Land</GlossaryTerm> it: add the agent's
         changes to your project.
       </Line>
-      <Button size="sm" disabled={busy} onClick={() => void land()}>
-        {busy && <Spinner className="size-3.5" />}
+      <Button
+        size="sm"
+        variant="primary"
+        disabled={busy}
+        icon={busy ? <Spinner size="xs" label="" /> : undefined}
+        onClick={() => void land()}
+      >
         Add these changes to your project
       </Button>
+      {/* The button hides its Spinner from assistive tech and keeps its
+          words, so this always-mounted line says the landing out loud. */}
+      <span role="status" className="srOnly">
+        {busy ? 'Adding the changes to your project…' : ''}
+      </span>
       {failure !== null && <FailureNotice error={failure} onRetry={land} />}
     </>
   );
@@ -411,19 +421,55 @@ function DoneBody({ actions }: BodyProps) {
   return (
     <>
       <Line>Done. Your first change is in your project.</Line>
-      <div className="flex flex-wrap gap-1.5">
-        <Button size="sm" variant="outline" onClick={actions.openBoard}>
+      <div className={styles.buttons}>
+        <Button size="sm" variant="secondary" onClick={actions.openBoard}>
           See the board
         </Button>
-        <Button size="sm" variant="outline" onClick={actions.openOverseer}>
+        <Button size="sm" variant="secondary" onClick={actions.openOverseer}>
           Talk to the Overseer
         </Button>
-        <Button size="sm" variant="outline" onClick={actions.inviteTeammate}>
+        <Button size="sm" variant="secondary" onClick={actions.inviteTeammate}>
           Invite a teammate
         </Button>
       </div>
     </>
   );
+}
+
+type StepState = 'passed' | 'current' | 'next';
+
+// Where step `i` sits against the current step's index.
+function stepState(i: number, current: number): StepState {
+  if (i < current) return 'passed';
+  return i === current ? 'current' : 'next';
+}
+
+/* A step's mark: a check in success for a passed step, a dot in info for
+   the current one, a quiet ring for one still to come. The li's
+   aria-current and its words carry the meaning, so the mark is hidden and
+   colour is never the only signal. */
+function StepMark({ state }: { state: StepState }) {
+  const icon = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
+  switch (state) {
+    case 'passed':
+      return (
+        <span className={styles.mark} data-tone="success">
+          <CircleCheck {...icon} />
+        </span>
+      );
+    case 'current':
+      return (
+        <span className={styles.mark} data-tone="info">
+          <CircleDot {...icon} />
+        </span>
+      );
+    case 'next':
+      return (
+        <span className={styles.mark}>
+          <Circle {...icon} />
+        </span>
+      );
+  }
 }
 
 /**
@@ -453,62 +499,57 @@ export function FirstTaskGuide({
     ? 'Done'
     : `Step ${index + 1} of ${GUIDE_STEPS.length}: ${GUIDE_STEPS[index]?.label ?? ''}`;
   return (
-    <Panel className="bg-background shadow-overlay w-80 max-w-full">
-      <section
-        aria-label="First-task guide"
-        data-testid="first-task-guide"
-        data-stage={view.stage}
+    <section
+      aria-label="First-task guide"
+      data-testid="first-task-guide"
+      data-stage={view.stage}
+      className={styles.guide}
+    >
+      <Panel
+        as="div"
+        floating
+        heading={collapsed ? `Your first task · ${where}` : 'Your first task'}
+        actions={
+          <>
+            <Button
+              variant="quiet"
+              size="sm"
+              aria-label={collapsed ? 'Expand the guide' : 'Collapse the guide'}
+              aria-expanded={!collapsed}
+              icon={
+                collapsed ? (
+                  <ChevronUp size={14} strokeWidth={1.8} aria-hidden />
+                ) : (
+                  <ChevronDown size={14} strokeWidth={1.8} aria-hidden />
+                )
+              }
+              onClick={() => onCollapsedChange(!collapsed)}
+            />
+            <Button
+              variant="quiet"
+              size="sm"
+              aria-label="Close the guide"
+              icon={<X size={14} strokeWidth={1.8} aria-hidden />}
+              onClick={close}
+            />
+          </>
+        }
       >
-        <PanelHeader
-          actions={
-            <>
-              <IconButton
-                label={collapsed ? 'Expand the guide' : 'Collapse the guide'}
-                aria-expanded={!collapsed}
-                onClick={() => onCollapsedChange(!collapsed)}
-              >
-                {collapsed ? <ChevronUp /> : <ChevronDown />}
-              </IconButton>
-              <IconButton label="Close the guide" onClick={close}>
-                <X />
-              </IconButton>
-            </>
-          }
-        >
-          {collapsed ? `Your first task · ${where}` : 'Your first task'}
-        </PanelHeader>
         {!collapsed && (
           <>
-            <ol aria-label="Steps" className="flex flex-col gap-1 px-3 pt-2">
+            <ol aria-label="Steps" className={styles.steps}>
               {GUIDE_STEPS.map((step, i) => (
                 <li
                   key={step.stage}
                   aria-current={i === index ? 'step' : undefined}
-                  className={cn(
-                    'flex items-center gap-2 text-[12px]',
-                    i === index
-                      ? 'text-foreground font-medium'
-                      : 'text-muted-foreground'
-                  )}
+                  className={styles.step}
                 >
-                  {i < index ? (
-                    <CircleCheck
-                      aria-hidden
-                      className="text-state-review size-3.5"
-                    />
-                  ) : i === index ? (
-                    <CircleDot
-                      aria-hidden
-                      className="text-state-working size-3.5"
-                    />
-                  ) : (
-                    <Circle aria-hidden className="size-3.5" />
-                  )}
+                  <StepMark state={stepState(i, index)} />
                   {step.label}
                 </li>
               ))}
             </ol>
-            <div className="flex flex-col items-start gap-2 px-3 pt-2 pb-3">
+            <div className={styles.body}>
               {view.stage === 'describe' && <DescribeBody {...body} />}
               {view.stage === 'check' && <CheckBody {...body} />}
               {view.stage === 'works' && <WorksBody {...body} />}
@@ -518,31 +559,24 @@ export function FirstTaskGuide({
             </div>
           </>
         )}
-      </section>
-      <AlertDialog open={confirmClose} onOpenChange={setConfirmClose}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Close the guide?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Your task keeps going without it. You can start the guide again
-              from Help in the project menu.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel variant="ghost">
-              Keep the guide
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                setConfirmClose(false);
-                actions.dismiss();
-              }}
-            >
-              Close the guide for good
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </Panel>
+      </Panel>
+      {/* Ends the guide for this project, not the task: the primary button,
+          not danger. */}
+      <ConfirmDialog
+        open={confirmClose}
+        title="Close the guide?"
+        confirmLabel="Close the guide for good"
+        cancelLabel="Keep the guide"
+        tone="default"
+        onConfirm={() => {
+          setConfirmClose(false);
+          actions.dismiss();
+        }}
+        onCancel={() => setConfirmClose(false)}
+      >
+        Your task keeps going without it. You can start the guide again from
+        Help in the project menu.
+      </ConfirmDialog>
+    </section>
   );
 }

@@ -7,6 +7,8 @@ import {
   waitFor,
 } from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { FirstRunView } from './FirstRunView';
 
@@ -242,4 +244,54 @@ test('a draft that failed for another reason can be retried', async () => {
   );
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
   await waitFor(() => expect(onRetry).toHaveBeenCalledTimes(1));
+});
+
+test('the prompt grows with its text, its rows the minimum', () => {
+  setup();
+  const prompt = box() as HTMLTextAreaElement;
+  expect(prompt.getAttribute('rows')).toBe('4');
+  // happy-dom lays nothing out, so stand in the height the text would take.
+  Object.defineProperty(prompt, 'scrollHeight', {
+    configurable: true,
+    value: 180,
+  });
+  fireEvent.input(prompt, { target: { value: 'one\ntwo\nthree\nfour\nfive' } });
+  expect(prompt.style.height).toBe('180px');
+});
+
+test('drafting is said in words while the Spinner turns', async () => {
+  let finish: (record: DraftRecord) => void = () => {};
+  setup({
+    onStartDraft: () =>
+      new Promise<DraftRecord>((resolve) => {
+        finish = resolve;
+      }),
+  });
+  // Mounted empty before anything happens, so the words are announced.
+  const status = screen.getByRole('status');
+  expect(status.textContent).toBe('');
+  fireEvent.change(box(), { target: { value: 'do the thing' } });
+  fireEvent.keyDown(box(), { key: 'Enter' });
+  await waitFor(() => expect(status.textContent).toBe('Drafting your task…'));
+  expect(screen.getByRole('button', { name: 'Drafting…' })).toHaveProperty(
+    'disabled',
+    true
+  );
+  await act(() => {
+    finish(draft);
+    return Promise.resolve();
+  });
+  await waitFor(() => expect(status.textContent).toBe(''));
+});
+
+test('the prompt keeps the 16px size phones need, from a token', () => {
+  // bun loads a CSS module as an empty map, so this reads the sheet: under
+  // 16px iOS zooms the page in on focus, and the library's own 16px rule for
+  // touch screens loses to this two-class rule.
+  const sheet = readFileSync(
+    join(import.meta.dir, 'FirstRunView.module.css'),
+    'utf8'
+  );
+  const rule = /\.column \.prompt \{([^}]*)\}/.exec(sheet)?.[1] ?? '';
+  expect(rule).toContain('font-size: var(--fs-lg);');
 });

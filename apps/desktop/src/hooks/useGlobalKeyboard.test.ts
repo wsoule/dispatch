@@ -10,7 +10,7 @@ import {
   useGlobalKeyboard,
 } from './useGlobalKeyboard';
 
-// Fires a real `keydown` on `window`, optionally pre-cancelled the way a Base UI popup
+// Fires a real `keydown` on `window`, optionally pre-cancelled the way an overlay
 // cancels Escape when it dismisses itself — before this listener ever sees the event, not as
 // a side effect of it.
 function dispatchKeydown(key: string, { defaultPrevented = false } = {}) {
@@ -33,12 +33,12 @@ function mount(prefixTimeoutMs?: number) {
   return { commands, rerender };
 }
 
-// Stands in for an open Base UI alert dialog popup (ui-legacy's `AlertDialogContent`, the one
-// Base UI dialog left): it stamps `data-slot`, Base UI the bare `data-open` while it is open.
+// Stands in for an open @dispatch/ui ConfirmDialog (FirstTaskGuide's "Close the guide?"): an
+// alertdialog marked aria-modal while open, removed from the DOM on close.
 function mountOpenDialog() {
   const el = document.createElement('div');
-  el.setAttribute('data-slot', 'alert-dialog-content');
-  el.setAttribute('data-open', '');
+  el.setAttribute('role', 'alertdialog');
+  el.setAttribute('aria-modal', 'true');
   document.body.appendChild(el);
   return el;
 }
@@ -54,7 +54,7 @@ describe('useGlobalKeyboard', () => {
     expect(commands).toEqual(['escape']);
   });
 
-  test('an Escape a Base UI popup already defaultPrevented never reaches onCommand', () => {
+  test('an Escape an overlay already defaultPrevented never reaches onCommand', () => {
     const { commands } = mount();
     dispatchKeydown('Escape', { defaultPrevented: true });
     expect(commands).toEqual([]);
@@ -135,7 +135,7 @@ describe('useGlobalKeyboard', () => {
     expect(second).toEqual(['new-task']);
   });
 
-  test('an open Base UI alert dialog swallows the bare-key shortcuts', () => {
+  test('an open confirm dialog swallows the bare-key shortcuts', () => {
     const { commands } = mount();
     mountOpenDialog();
     for (const key of ['c', '[', '?']) {
@@ -149,17 +149,18 @@ describe('useGlobalKeyboard', () => {
     expect(commands).toEqual([]);
   });
 
-  test('a dialog mid exit-animation (data-closed) no longer counts as open', () => {
+  test('a closed dialog (removed from the DOM) no longer counts as open', () => {
     const { commands } = mount();
     const el = mountOpenDialog();
-    el.removeAttribute('data-open');
-    el.setAttribute('data-closed', '');
+    dispatchKeydown('c');
+    expect(commands).toEqual([]);
+    el.remove();
     dispatchKeydown('c');
     expect(commands).toEqual(['new-task']);
   });
 
-  // The incoming @dispatch/ui slide-over, command palette and phone drawer are not Base UI
-  // dialogs: they mark their panel `aria-modal="true"` while open and unmount on close.
+  // The @dispatch/ui slide-over, command palette and phone drawer mark their panel
+  // `aria-modal="true"` while open and unmount on close, as the dialogs do.
   test('an open aria-modal surface swallows the shortcuts like a dialog', () => {
     const { commands } = mount();
     const el = document.createElement('div');

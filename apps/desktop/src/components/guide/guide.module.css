@@ -1,0 +1,116 @@
+/* The first-task guide (FirstTaskGuide.tsx) and its Send to agent row
+   (SendToAgent.tsx). The guide is a floating Panel, the one card that
+   takes --shadow-pop (Panel's `floating`); this module only sizes it,
+   lays out its steps list and stage bodies, and sets the two text voices
+   the bodies use. */
+
+/* The card's width: 320px, never wider than the space it floats in. */
+.guide {
+  width: 320px;
+  max-width: 100%;
+}
+
+/* The five steps, one row each: a mark and the step's words. */
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+
+/* The step the task is on: full-strength text at medium weight, with
+   aria-current="step" saying it to assistive tech. */
+.step[aria-current='step'] {
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+
+/* A step's mark: a passed step's check and the current step's dot take
+   their tone's hue (data-tone); a future step's ring stays quiet. */
+.mark {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-3);
+}
+
+.mark[data-tone] {
+  color: var(--tone);
+}
+
+/* A stage's body: its lines and buttons, stacked from the start edge. */
+.body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-2);
+}
+
+/* A row of buttons inside a body. */
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+/* The review box's Cancel and Send to the agent, under the box at its end. */
+.buttonsEnd {
+  align-self: flex-end;
+}
+
+/* The review box (the library TextArea, growing with its text) fills the
+   card's width. */
+.textarea {
+  width: 100%;
+}
+
+/* A stage's sentence, in the body size. */
+.line {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs);
+  line-height: var(--lh);
+}
+
+/* A quieter note: the drafting or working step beside its Spinner, or
+   what the run draws on. */
+.quiet {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+/* SendToAgent: More options and Send to agent on one row, a failure
+   under them. */
+.send {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--s-2);
+}
+
+.sendRow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+/* More options' fields, stacked 12px apart. */
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}

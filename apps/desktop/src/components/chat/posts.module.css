@@ -1,0 +1,184 @@
+/* The Overseer's posts above the composer: the narrator's "While you were
+   away" digest (AwayDigest.tsx), the "Noted" captures (CapturedNotes.tsx)
+   and the "For you" cards (ForYouPosts.tsx). Each sits on the library's
+   Panel and PanelRow; these classes lay out what goes inside them. Tokens
+   only; status words colour through .toneText and data-tone. */
+
+/* A post section: its heading over its panels or cards. */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+/* A digest line or a captured note: one row that never wraps its text,
+   so the actions stay at the row's end. */
+.row {
+  flex-wrap: nowrap;
+}
+
+/* A captured note's row wraps only to put its error on a line of its own. */
+.noteRow {
+  flex-wrap: wrap;
+}
+
+/* The row's words, cut to one line with an ellipsis. */
+.rowText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A control at a row's end (a dismiss, a submit, a Make task): it keeps
+   its full size while the words beside it give way. */
+.rowAction {
+  flex: none;
+}
+
+/* An error under the row or the card, in full: a long daemon message
+   wraps anywhere rather than widening the column. */
+.error {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+/* ---- For you ---------------------------------------------------------- */
+
+/* An unread card: an <article> holding the Panel. */
+.post {
+  min-width: 0;
+  font-size: var(--fs);
+}
+
+/* Who wrote, about what, how many, when, and the dismiss control. */
+.meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+/* The sender and the subject chip share what the row has left after the
+   count, the time and the dismiss control (which never shrink): each is
+   cut to one line with an ellipsis, the longer one giving more. */
+.from {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subject {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* The library Chip inside .subject: free to shrink below its words (a
+   chip wraps them anywhere otherwise, one letter per line at worst). */
+.subject > span {
+  min-width: 0;
+}
+
+/* The subject's words inside the chip, on one line. */
+.subjectText {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.count {
+  flex: none;
+}
+
+.time {
+  flex: none;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The latest message, at most three lines. */
+.body {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+/* The receipt, the hold with its Undo, and the Open / Reply actions. */
+.status {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+.hold {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  font-size: var(--fs-xs);
+}
+
+.actions {
+  display: flex;
+  gap: var(--s-2);
+}
+
+.replyForm {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+/* The reply field takes the row's width; the short submit label keeps its
+   own, so a long address never squeezes the field. */
+.replyInput {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A read post: one quiet line, its byline cut to fit, then its dismiss. */
+.readRow {
+  display: flex;
+  align-self: flex-start;
+  align-items: center;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.readButton {
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+.truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "N new", centred under the cards while an agent turn holds them back. */
+.fresh {
+  display: flex;
+  justify-content: center;
+}
