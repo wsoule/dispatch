@@ -627,9 +627,12 @@ function withCors(
   const allowed = resolveCorsOrigin(origin, own);
   if (allowed !== null) {
     res.headers.set('access-control-allow-origin', allowed);
+    // Every method the client sends must be listed: the webview is
+    // cross-origin, so a method missing here (PUT for label colours, the
+    // license, doc bodies and the A2A listener) dies at the preflight.
     res.headers.set(
       'access-control-allow-methods',
-      'GET, POST, PATCH, DELETE, OPTIONS'
+      'GET, POST, PUT, PATCH, DELETE, OPTIONS'
     );
     // `authorization` must stay listed: every guarded route needs the bearer
     // header, and the desktop webview and dev harness are both cross-origin to

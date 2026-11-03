@@ -123,7 +123,7 @@ describe('GET /api/health', () => {
 
 // Every method @dispatch/client sends. A method missing from the preflight
 // response makes the browser drop the real request before it is ever sent.
-const CLIENT_METHODS = ['GET', 'POST', 'PATCH', 'DELETE'] as const;
+const CLIENT_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
 
 describe('CORS preflight', () => {
   it('answers a trusted OPTIONS preflight with 204 and the allow headers', async () => {
