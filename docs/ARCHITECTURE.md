@@ -747,9 +747,13 @@ The inline `themeScript` (injected by `apps/desktop/vite.config.ts`) applies it
 before first paint. The sidebar footer's toggle flips between light and dark,
 Settings → General → Appearance offers all three, and the palette's "Follow the
 system theme" goes back to System. Storage is per origin: one for the Tauri app,
-one per daemon port in a browser. The Tauri window's native appearance (its
-background before first paint, the area a resize exposes, native menus) follows
-the OS, not the stored choice.
+one per daemon port in a browser. In the Tauri app, `followThemeInNativeWindow`
+(`apps/desktop/src/lib/nativeTheme.ts`) sets the window's native appearance (its
+background where the page has not painted, the area a resize exposes, native
+menus) from `html[data-theme]` at startup and on every change, through
+`getCurrentWindow().setTheme` (`null` for System) and the
+`core:window:allow-set-theme` capability; only the first frames of a launch,
+before the page's script runs, still follow the OS.
 
 ### Overlays: one layer stack
 

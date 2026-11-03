@@ -57,12 +57,17 @@ origin: the Tauri app has one origin, so the choice holds for every project; in
 a browser (`dispatch ui`) each daemon port is its own origin and keeps its own
 choice.
 
-Known limit: the Tauri window's native appearance is not set from the stored
-choice, so it follows the OS. With the OS light and Dark chosen, the window's
-background before first paint, the area a resize exposes and native menus are
-still light. Setting it needs `getCurrentWindow().setTheme` at startup and on
-every change, and the `core:window:allow-set-theme` capability in
-`src-tauri/capabilities/`.
+In the Tauri app the window's native appearance follows the choice too:
+`followThemeInNativeWindow` (`src/lib/nativeTheme.ts`, started by `main.tsx`)
+calls `getCurrentWindow().setTheme` with `'light'` or `'dark'` for a stored
+choice and `null` (follow the OS) for System, once at startup and on every
+change of `html[data-theme]`, so the footer toggle, Settings, the palette and
+another window all reach it. That sets the window background where the page has
+not painted, the area a resize exposes and native menus. It needs the
+`core:window:allow-set-theme` capability in `src-tauri/capabilities/`; a browser
+never calls it. The first frames of a launch, before the page's script runs,
+still follow the OS: the choice lives in the webview's `localStorage`, which the
+native side cannot read before it opens the window.
 
 ## Toolchain notes
 

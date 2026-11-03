@@ -22,6 +22,7 @@ import { TeamLocalGate } from './components/shell/TeamLocalGate';
 import { ToastProvider } from './components/shell/Toasts';
 import { followThemeFromOtherWindows } from './hooks/useThemeChoice';
 import { warmBoot } from './lib/bootWarm';
+import { followThemeInNativeWindow } from './lib/nativeTheme';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -37,6 +38,11 @@ void warmBoot(queryClient);
 // A theme picked in another tab on this daemon port shows here too, on every
 // screen (the gates as well as the app), for the life of the page.
 followThemeFromOtherWindows();
+
+// In the Tauri app, the window's native appearance (its background before the
+// page paints, native menus) follows the stored choice too, not only the OS.
+// A no-op in a browser.
+followThemeInNativeWindow();
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
