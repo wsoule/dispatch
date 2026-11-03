@@ -13,13 +13,14 @@
 
    SCOPE. By default this sheet styles the whole document (the planner owns
    its page). A host that embeds the components in an app with its own
-   design system (Dispatch: Tailwind, its own --accent/--border/--muted…)
-   puts data-bt-ui-scoped on <html> and data-bt-ui on each wrapper element:
-   the tokens are then declared on the wrapper only, and the reset, block
-   chrome and primitive classes (.pageBlock, .button, .label…) apply only inside
-   it, so nothing leaks into the host's own UI. Every selector below is
-   written as :where(<unscoped html>, [data-bt-ui]) <selector>, which adds
-   no specificity, so the unscoped cascade is exactly the old global one.
+   design system (for example one that loads Tailwind, or defines its own
+   --accent/--border/--text…) puts data-bt-ui-scoped on <html> and
+   data-bt-ui on each wrapper element: the tokens are then declared on the
+   wrapper only, and the reset, block chrome and primitive classes
+   (.pageBlock, .button, .label…) apply only inside it, so nothing leaks
+   into the host's own UI. Every selector below is written as
+   :where(<unscoped html>, [data-bt-ui]) <selector>, which adds no
+   specificity, so the unscoped cascade is exactly the old global one.
    Dark mode in a wrapper: data-theme="dark" on the wrapper or on <html>. */
 
 /* ============================================================================

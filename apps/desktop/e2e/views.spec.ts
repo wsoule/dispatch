@@ -6,9 +6,24 @@ import { expectNeedsYouCount, openDestination, waitForShell } from './shell';
 // Each shot opens its page the way a person does: Issues and Threads from the
 // sidebar, every other page under Tasks from its command-menu row (the label
 // `buildPaletteEntries` gives it), so a renamed or dropped page fails here
-// rather than silently capturing another one.
+// rather than silently capturing another one. The board shot opens Issues and
+// picks Board in its Tasks layout control. That choice lives in the window's
+// navigation state and its URL hash (`?mode=board`), and every test loads a
+// fresh page in a fresh browser context, so the tasks shot still opens on the
+// list.
 const VIEWS: { name: string; open: (page: Page) => Promise<void> }[] = [
   { name: 'tasks', open: (page) => openDestination(page, 'Issues') },
+  {
+    name: 'board',
+    open: async (page) => {
+      await openDestination(page, 'Issues');
+      await page
+        .getByRole('radiogroup', { name: 'Tasks layout' })
+        .getByRole('radio', { name: 'Board' })
+        .click();
+      await expect(page.getByTestId('board-pane')).toBeVisible();
+    },
+  },
   { name: 'threads', open: (page) => openDestination(page, 'Threads') },
   { name: 'files', open: (page) => openFromPalette(page, 'Open Files') },
 ];
@@ -61,8 +76,9 @@ async function assertFixtureDataLoaded(page: Page): Promise<void> {
   );
 }
 
-// Baselines are Two views on the storefront fixture, refreshed with
-// `e2e:update` on macOS (CI does not run this suite); review every PNG first.
+// Baselines are the Gr8r desktop on the storefront fixture, refreshed with
+// `moonx desktop:e2e-update --ignore-ci-checks` on macOS (CI does not run this
+// suite); review every PNG first.
 for (const view of VIEWS) {
   test(`${view.name} renders`, async ({ page, baseURL }) => {
     // Rows show ages like "78d ago"; a fixed clock keeps them from drifting
@@ -79,11 +95,6 @@ for (const view of VIEWS) {
     await page.waitForTimeout(1000);
     await expect(page).toHaveScreenshot(`${view.name}.png`, {
       fullPage: true,
-      // The Git view's right pane renders the fixture repo's own working-tree
-      // diff, which every daemon boot and every run of this suite appends to
-      // (ledger lines, task frontmatter) — data, not layout. The file tree
-      // and the chrome around it are still compared.
-      mask: [page.locator('[data-slot="git-right-pane"]')],
     });
   });
 }

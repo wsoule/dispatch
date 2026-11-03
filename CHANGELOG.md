@@ -28,6 +28,14 @@ holds what a user upgrading needs to know.
 
 ### Changed
 
+- **The desktop app has one look.** Every view uses the same design system:
+  Settings opens as a page in the main column (⌘, and Escape still work); the
+  board, chat, runs, review, docs and threads share one set of controls; and the
+  sidebar flips the theme between light and dark, while Settings → General also
+  offers follow-the-system. ⌘P opens quick open over the project's files. The
+  desktop app keeps the theme choice for every project; in a browser opened on a
+  daemon (`dispatch ui`), each daemon port keeps its own, so another port starts
+  from the system theme until you choose again.
 - **A CLI agent's output reads as one text in its run chat.** Gemini, Qwen,
   Cursor, opencode, Crush, Goose, Aider and any agent you set up with
   `executors.<name>.command` print their answer in pieces, and the chat used to

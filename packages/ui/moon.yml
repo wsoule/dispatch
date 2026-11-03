@@ -2,10 +2,10 @@ $schema: 'https://moonrepo.dev/schemas/project.json'
 
 # The React component library (Gr8r Studio design system, shell, grouped
 # task table, timeline, dependency graph, task detail, pickers), consumed as
-# TypeScript source like ui-legacy: the desktop app's Vite compiles it, so
-# there is no dist. Inherits test and typecheck from the
-# shared bun-common tasks. Not listed in the root dependsOn because it
-# produces no dist (type-aware lint reads the source directly).
+# TypeScript source, compiled by the consuming app's Vite, so there is no
+# dist. Inherits test and typecheck from the shared bun-common tasks. Not
+# listed in the root dependsOn because it produces no dist (type-aware lint
+# reads the source directly).
 language: 'typescript'
 layer: 'library'
 

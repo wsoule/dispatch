@@ -4,10 +4,11 @@ import path from 'node:path';
 
 // The package's global sheets (tokens.css, primitives.css) must be scopable:
 // with data-bt-ui-scoped on <html> they may only reach inside [data-bt-ui]
-// wrappers, so an embedding host (Dispatch: Tailwind, its own --accent,
-// --border, --muted, a .block utility) keeps its own UI. Every selector
-// therefore starts from one of the scope forms below; a bare `button` or
-// `.pageBlock` added later would leak into the host and fails here.
+// wrappers, so an embedding host (one that loads Tailwind, or has its own
+// --accent, --border, --text or a .block utility) keeps its own UI. Every
+// selector therefore starts from one of the scope forms below; a bare
+// `button` or `.pageBlock` added later would leak into the host and fails
+// here.
 
 const SCOPE = ':where(html:not([data-bt-ui-scoped]), [data-bt-ui])';
 const ALLOWED_PREFIXES = [

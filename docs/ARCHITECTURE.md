@@ -110,23 +110,22 @@ none of your runs or memory; replicating team memory is team-server work.
 
 ## Packages
 
-| Package                  | Size                  | What it is                                                                                                                                                        |
-| ------------------------ | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@dispatch-foo/core`     | ~11.5k                | Domain model. Task parse/serialize, `TaskStore`, actors, conflicts, timeline, ledger, findings, evidence, config, merge drivers, Carto binding                    |
-| `@dispatch-foo/protocol` | ~2.0k                 | The message bus, MIT: addresses, the envelope and its validation, `MessageStore` over SQLite, `DeliveryEngine`                                                    |
-| `@dispatch/memory`       | ~4.6k                 | The memory engine, MIT: entries and scopes, proposals, ranking, the prompt index, the SQLite store, Claude's memory file format                                   |
-| `@dispatch/server`       | ~56.8k                | `dispatchd` — HTTP API, event bus, orchestrator, git, Linear, board sync                                                                                          |
-| `@dispatch/cli`          | ~6.4k                 | The `dispatch` binary                                                                                                                                             |
-| `@dispatch-foo/mcp`      | ~2.8k                 | Stdio MCP server, 21 tools                                                                                                                                        |
-| `@dispatch/client`       | ~4.1k                 | Typed API client and React hooks over the daemon                                                                                                                  |
-| `@dispatch/ui`           | ~23k                  | Better-Tracker's React component library: Gr8r Studio design system, shell, grouped task table, timeline, dependency graph, task detail, pickers; source-consumed |
-| `@dispatch/planning`     | —                     | Pure planning view-model builders from Better-Tracker's core: workspace snapshot, assessment, timeline, dependency graph, allocation                              |
-| `@dispatch/ui-legacy`    | ~8.8k                 | The shadcn-style component library plus `ai/`, `chrome/`, `hooks/`, `lib/`; being replaced by `@dispatch/ui`                                                      |
-| `@dispatch/tokens`       | —                     | The design token palette (`tokens.css`) of the marketing site (`apps/site`); the desktop app is on `@dispatch/ui`                                                 |
-| `apps/desktop`           | ~67.4k TS + 8.6k Rust | The Tauri app: ~25 views, Rust shell, sidecar management                                                                                                          |
-| `apps/demo`              | —                     | Hosted sandbox. Embeds `startServer` in-process with `FakeExecutor`/`FakePlanner`                                                                                 |
-| `apps/site`              | —                     | Static marketing server (Railway)                                                                                                                                 |
-| `packages/demo`          | —                     | Seeds a demo repo — board, runs, records, teammate                                                                                                                |
+| Package                  | Size                    | What it is                                                                                                                                                                                                |
+| ------------------------ | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@dispatch-foo/core`     | ~11.5k                  | Domain model. Task parse/serialize, `TaskStore`, actors, conflicts, timeline, ledger, findings, evidence, config, merge drivers, Carto binding                                                            |
+| `@dispatch-foo/protocol` | ~2.0k                   | The message bus, MIT: addresses, the envelope and its validation, `MessageStore` over SQLite, `DeliveryEngine`                                                                                            |
+| `@dispatch/memory`       | ~4.6k                   | The memory engine, MIT: entries and scopes, proposals, ranking, the prompt index, the SQLite store, Claude's memory file format                                                                           |
+| `@dispatch/server`       | ~56.8k                  | `dispatchd` — HTTP API, event bus, orchestrator, git, Linear, board sync                                                                                                                                  |
+| `@dispatch/cli`          | ~6.4k                   | The `dispatch` binary                                                                                                                                                                                     |
+| `@dispatch-foo/mcp`      | ~2.8k                   | Stdio MCP server, 21 tools                                                                                                                                                                                |
+| `@dispatch/client`       | ~4.1k                   | Typed API client and React hooks over the daemon                                                                                                                                                          |
+| `@dispatch/ui`           | ~31.6k TS + 16.7k CSS   | The desktop's only component library (Gr8r Studio design system): shell, grouped task table, timeline, dependency graph, task detail, pickers, controls; source-consumed (the desktop's Vite compiles it) |
+| `@dispatch/planning`     | —                       | Pure planning view-model builders from Better-Tracker's core: workspace snapshot, assessment, timeline, dependency graph, allocation                                                                      |
+| `@dispatch/tokens`       | —                       | The design token palette (`tokens.css`) of the marketing site (`apps/site`); the desktop app is on `@dispatch/ui`                                                                                         |
+| `apps/desktop`           | ~105.5k TS + 11.1k Rust | The Tauri app: the destinations under Clients, Rust shell, sidecar management                                                                                                                             |
+| `apps/demo`              | —                       | Hosted sandbox. Embeds `startServer` in-process with `FakeExecutor`/`FakePlanner`                                                                                                                         |
+| `apps/site`              | —                       | Static marketing server (Railway)                                                                                                                                                                         |
+| `packages/demo`          | —                       | Seeds a demo repo — board, runs, records, teammate                                                                                                                                                        |
 
 ## The task model
 
@@ -584,9 +583,19 @@ Agents, runs and people talk over one persistent bus
 
 ## Clients
 
-**Desktop** (`apps/desktop`, ~67.4k lines) is the primary surface: ~25 views
-covering board, tasks, task detail, PR review, diffs, branches, milestones,
-plans, sessions, agents, impact, inbox/brain-dump, threads, settings, gallery.
+**Desktop** (`apps/desktop`, ~105.5k lines of TypeScript) is the primary
+surface. Its sidebar lists the destinations
+(`apps/desktop/src/lib/shellRoutes.ts`): Overseer, Issues (list and board),
+Needs you, Timeline, Graph, Threads, Docs, Runs (Settings' runs page, which
+links to Live) and Settings, which opens as a page in the main column. The
+Projects register (also the sidebar Projects section's "All"), Files, Terminals
+and Live open from the command menu (`apps/desktop/src/lib/paletteEntries.ts`),
+and ⌘P opens quick open over the project's files.
+
+**Design system.** Every view is built from `@dispatch/ui`, the Gr8r Studio
+design system: its components, and CSS modules on its tokens
+(`packages/ui/src/styles/tokens.css`). `packages/ui/README.md` lists the
+components and the rules for colour, status tone and type.
 
 **CLI** (`packages/cli`) — commands include `init`, `mcp`, `task`, `plan`,
 `milestone`, `serve`, `ui`, `doctor`, `run`, `runs`, `approve`, `message`,

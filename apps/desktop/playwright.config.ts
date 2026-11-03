@@ -13,8 +13,8 @@ export default defineConfig({
   testDir: './e2e',
   // Every spec file shares one live daemon and its fixture state —
   // overseer.spec.ts temporarily adds a needs-review run that views.spec.ts's
-  // count assertions would trip over, and edit-diff.spec.ts rewrites a diff
-  // views.spec.ts screenshots. One worker keeps the files from interleaving.
+  // count assertions would trip over, and edit-diff.spec.ts saves edits into a
+  // run of the same fixture. One worker keeps the files from interleaving.
   workers: 1,
   // Resolves the daemon's per-run auth token (see that file's own comment for
   // why this can't just be baked into `use.baseURL` below) and fails the run

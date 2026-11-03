@@ -24,29 +24,47 @@ FSL-1.1-ALv2, like the rest of this repository — see the root `LICENSE`.
 ## Dev workflow
 
 ```bash
-bun install
-bun ws desktop tauri dev   # needs Rust stable (rustup) installed
+pnpm install
+moonx desktop:tauri-dev --ignore-ci-checks   # needs Rust stable (rustup) installed
 ```
 
-Other useful commands, run from the repo root:
+Other useful commands, run from anywhere in the repo (they are this package's
+moon tasks, `apps/desktop/moon.yml`):
 
-- `bun ws desktop build` — `tsc -b && vite build` (frontend only).
-- `bun ws desktop test` — frontend unit tests (`bun test`).
-- `bun ws desktop tsc` — `tsc -b --noEmit` typecheck.
+- `moonx desktop:dev --ignore-ci-checks` — the Vite dev server alone, without
+  the Tauri window.
+- `moonx desktop:build` — `tsc -b && vite build` (frontend only).
+- `moonx desktop:test` — frontend unit tests (`bun test`), after the build:
+  `webkitFloor.test.ts` reads `dist/`.
+- `moonx desktop:typecheck` — `tsc -b --noEmit`.
+- `moonx desktop:e2e --ignore-ci-checks` — the Playwright suite against the
+  built app. Its screenshots are macOS (`-darwin`) baselines, so CI skips it;
+  `moonx desktop:e2e-update --ignore-ci-checks` rewrites them on a Mac.
 - `cd apps/desktop/src-tauri && cargo test` — Rust unit tests (parsers, cost
-  pricing, SQLite queries, tail/watcher logic). Not wired into the root
-  `bun run tsc`/`test` scripts this phase — Rust CI lands in Phase 6.
+  pricing, SQLite queries, tail/watcher logic). Not a moon task; CI runs it,
+  with `cargo fmt --check` and `cargo clippy`, in its own Rust job.
 - `cd apps/desktop/src-tauri && cargo build` — compile the Tauri binary without
   launching a window.
+
+## Theme
+
+The sidebar footer flips the theme between light and dark; Settings → General →
+Appearance offers System, Light or Dark, and the palette's "Follow the system
+theme" goes back to System. The choice is stored in `localStorage` under
+`dispatch:theme` (`src/lib/theme.ts`) and applied before first paint by the
+inline script `vite.config.ts` injects at the top of `<body>`. Storage is per
+origin: the Tauri app has one origin, so the choice holds for every project; in
+a browser (`dispatch ui`) each daemon port is its own origin and keeps its own
+choice.
 
 ## Toolchain notes
 
 - **Catalog reconciliation:** `react`, `react-dom` → `19.2.7`; `@types/react` →
   `19.2.17`; `@types/react-dom` → `19.2.3`; `@vitejs/plugin-react` → `6.0.3`.
-  This package's remaining deps (`@fontsource/inter`,
-  `@fontsource/jetbrains-mono`, `@tanstack/react-query`, `@tauri-apps/api`,
-  `@tauri-apps/cli`, `@types/node`) live in the root catalog. `typescript` stays
-  on the monorepo's catalog `5.9.2`.
+  Every other dependency, the fonts (`@fontsource-variable/geist`,
+  `@fontsource/geist-mono`) among them, comes from the root catalog too
+  (`catalog:` in `package.json`). `typescript` stays on the monorepo's catalog
+  `5.9.2`.
 - **vite 7 vs 8:** the whole monorepo is unified on vite 8 (catalog `8.1.4`).
   `@dispatch/web` (packages/web) was rebuilt and re-typechecked against vite 8
   with no changes needed — no fallback pin to vite 7 was required.

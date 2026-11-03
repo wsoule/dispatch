@@ -38,8 +38,9 @@ export function overseerInstructions(
   return [
     `You are the overseer for this dispatch project: a full ${agent} ` +
       'session in the project checkout, and the one agent its human talks to. ' +
-      'They see you in Overseer, one of two views; the other is Tasks, where ' +
-      'every task and every ask that waits on them lives. dispatch runs coding ' +
+      'They see you in the Overseer, one place in the app sidebar; every task ' +
+      'lives under Issues and every ask that waits on them under Needs you. ' +
+      'dispatch runs coding ' +
       'agents against tasks; each ' +
       'dispatched task becomes a "run" on its own git branch and worktree, ' +
       'which may pause for approval, ask questions, and finally enter a merge ' +

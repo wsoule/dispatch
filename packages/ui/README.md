@@ -106,15 +106,16 @@ token names" maps each to its Gr8r name).
 
 With nothing else set, the sheet styles the whole document: tokens on `:root`,
 the reset on every element, the shared classes anywhere. That is what the
-planner wants (it owns the page).
+planner wants (it owns the page). The Dispatch desktop runs page mode too:
+`apps/desktop` sets no `data-bt-ui-scoped`.
 
 ### Scoped mode (embedding in an app with its own design system)
 
-Page mode would take over a host such as Dispatch: both define `--accent`,
-`--accent-hover`, `--background`, `--foreground`, `--border`, `--muted`,
-`--font-sans`, `--font-mono` and `--ease-out-expo` on `:root` (and the page
-column is named `.pageBlock` so Dispatch's Tailwind `block` utility never gets
-its 1440px max-width, 40px margin and 48px padding); and the unlayered reset
+Page mode would take over a host that has its own design system (one that loads
+Tailwind, say): both may define `--accent`, `--accent-hover`, `--border`,
+`--surface`, `--text`, `--font-sans` and `--font-mono` on `:root` (and the page
+column is named `.pageBlock` so a host's Tailwind `block` utility never gets its
+1440px max-width, 40px margin and 48px padding); and the unlayered reset
 (`button { padding: 0; background: none; border-radius: 0 }`,
 `ul { list-style: none }`, `svg { display: block }`) beats Tailwind's layered
 utilities on every host element.
@@ -627,7 +628,7 @@ button is disabled with `aria-busy="true"` and its text reads `busyLabel`
 (default "Saving…"; an icon-only button keeps its icon). It never shows a
 spinner.
 
-From a shadcn-style button (Dispatch's `ui-legacy`):
+From a shadcn-style button (as Dispatch's former `ui-legacy` had):
 
 | Legacy                 | Gr8r                                                                              |
 | ---------------------- | --------------------------------------------------------------------------------- |
