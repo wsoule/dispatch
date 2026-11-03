@@ -201,7 +201,10 @@ interface PickerBaseProps extends DataAttributes {
   noneMark?: PickerMark;
   /** Printed when the search matches nothing. Default "No match". */
   emptyLabel?: string;
-  /** Options are being fetched: a loading row under the list. */
+  /** Options are being fetched: a loading row under the list. With
+      `filter={false}` it also says the options on screen answer an older
+      query: Enter then waits for the answer instead of picking from them
+      (see the component's "Host search" note). */
   loading?: boolean;
   /** Options failed to load: an error row, with a Retry option when
       onRetry is given. */
@@ -211,7 +214,10 @@ interface PickerBaseProps extends DataAttributes {
   query?: string;
   onQueryChange?: (query: string) => void;
   /** Filter `options` by the search text here. Default true; false when
-      the host already filtered them (server search). */
+      the host already filtered them (server search): set `loading` while
+      they still answer an older query. A new list keeps the row the arrow
+      keys had reached while it still holds it, else starts from its first
+      row. */
   filter?: boolean;
   /** Draw the search row. Default true; false for a short menu (Filter,
       Sort, a row's "…"): the list itself takes focus and the arrow keys,

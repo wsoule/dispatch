@@ -185,6 +185,14 @@ function keepInView(scroller: HTMLElement, el: HTMLElement): void {
  * Space to pick, Home / End for the first and last option, and typeahead
  * (letters jump to the next row starting with them). A search box keeps
  * Home / End for its caret while it holds text.
+ *
+ * Host search: with `filter={false}` the host answers each query, and
+ * `loading` says the rows on screen still answer an older one. Enter then
+ * waits for the answer and picks its first row (or the row the arrow keys
+ * had made active, if the answer still holds it) rather than a row of the
+ * old list; typing, the arrows, a pick by pointer or closing drop the
+ * waiting pick. A new answer keeps the arrowed row active while it still
+ * holds that row, and otherwise starts from its first row.
  */
 export function PickerPopover(props: PickerPopoverProps): ReactNode {
   const {
@@ -260,6 +268,13 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
   const [keyboardNav, setKeyboardNav] = useState(false);
   // A menu's typeahead: the letters typed so far and when the last came.
   const typed = useRef({ text: '', at: 0 });
+  // Enter pressed while a host search was still answering (see `stale`
+  // below): the query it was pressed on, and the row the arrow keys had
+  // made active then (null: the first row of the answer). Picked once the
+  // answer to that query arrives; typing, the arrow keys or closing drop it.
+  const waitingPick = useRef<{ query: string; key: string | null } | null>(
+    null
+  );
 
   const control = useSaveControl<PickerValue>(
     props.value,
@@ -335,6 +350,25 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
   if (createRow !== null) rows.push(createRow);
   if (showRetry) rows.push({ key: 'retry', kind: 'retry' });
   const rowIndex = new Map(rows.map((row, i) => [row.key, i]));
+
+  // A host search (filter={false}) still running: the rows on screen are
+  // the answer to an older query, so Enter must not pick from them.
+  const stale = searchable && !filter && loading;
+
+  // A new list of a host search (a search's answer, or options the host
+  // rebuilt from live data) keeps the row the arrow keys had reached when it
+  // still holds that row, as the waiting Enter below does, so the row Enter
+  // picks never depends on whether it came before or after the answer. A
+  // list that drops the row starts again from its first row (state adjusted
+  // during render, so the new list never draws with a row it lacks).
+  const resultsKey = filter
+    ? ''
+    : options.map((option) => optionKey(option)).join('\n');
+  const [seenResults, setSeenResults] = useState(resultsKey);
+  if (seenResults !== resultsKey) {
+    setSeenResults(resultsKey);
+    if (activeKey !== null && !rowIndex.has(activeKey)) setActiveKey(null);
+  }
   const rowId = (key: string): string | undefined => {
     const index = rowIndex.get(key);
     return index === undefined ? undefined : `${baseId}-row-${index}`;
@@ -374,6 +408,7 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
     onOpenChange?.(next);
     setActiveKey(null);
     setKeyboardNav(false);
+    waitingPick.current = null;
     if (!next && queryProp === undefined) setQueryState('');
   }
 
@@ -480,6 +515,10 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
   // ---- choosing ---------------------------------------------------------
 
   function choose(row: Row): void {
+    // Any pick (a click while an Enter waits, say) settles what Enter was
+    // waiting to pick: a multiple picker stays open, and must not then
+    // toggle a second row when the answer arrives.
+    waitingPick.current = null;
     if (row.kind === 'retry') {
       onRetry?.();
       return;
@@ -567,6 +606,7 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
   }
 
   function move(delta: 1 | -1): void {
+    waitingPick.current = null;
     if (rows.length === 0) return;
     const index = activeRow === null ? -1 : rows.indexOf(activeRow);
     const next =
@@ -581,6 +621,7 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
 
   /** Makes the first (0) or the last (-1) row active: Home and End. */
   function jump(to: 0 | -1): void {
+    waitingPick.current = null;
     const row = to === 0 ? rows[0] : rows[rows.length - 1];
     if (row === undefined) return;
     setActiveKey(row.key);
@@ -667,6 +708,10 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
         break;
       case 'Enter':
         event.preventDefault();
+        if (stale) {
+          waitForAnswer();
+          break;
+        }
         if (activeRow !== null) choose(activeRow);
         break;
       case 'Tab':
@@ -709,8 +754,39 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
     if (queryProp === undefined) setQueryState(next);
     onQueryChange?.(next);
     setActiveKey(null);
+    waitingPick.current = null;
   }
   const changeQueryRef = useLatest(changeQuery);
+
+  /**
+   * Enter while a host search is still answering: the rows on screen
+   * belong to an older query, so picking one could write the wrong item
+   * (a blocker that was never asked for). The pick waits for the answer
+   * instead, keeping the row the arrow keys had made active (if any); with
+   * nothing typed there is nothing to wait for and Enter does nothing.
+   */
+  function waitForAnswer(): void {
+    const explicit =
+      activeKey !== null && activeRow !== null && activeRow.key === activeKey;
+    waitingPick.current =
+      query.trim() === '' ? null : { query, key: explicit ? activeKey : null };
+  }
+
+  // The answer a waiting Enter was for has arrived: pick its first row, or
+  // the row the arrow keys had made active if the answer still holds it.
+  // Nothing is picked when the answer is empty, drops that row, or offers
+  // only Retry (an error is not a choice).
+  useEffect(() => {
+    const waiting = waitingPick.current;
+    if (waiting === null || stale) return;
+    waitingPick.current = null;
+    if (!isOpen || waiting.query !== query) return;
+    const row =
+      waiting.key === null
+        ? automaticRow()
+        : (rows.find((candidate) => candidate.key === waiting.key) ?? null);
+    if (row !== null && row.kind !== 'retry') choose(row);
+  });
 
   // ---- the trigger's face -----------------------------------------------
 

@@ -1899,6 +1899,19 @@ like a failed save and puts the text back in an empty search box; one create
 runs at a time. The host adds the new option to `options` (and usually to
 `value`). It is not offered in action mode (`action`) or without a search box.
 
+A host that searches on its server passes `filter={false}`, owns `query` /
+`onQueryChange`, and sets `loading` while the options on screen still answer an
+older query (`TaskRelationPicker` does all three). In that gap ↵ never picks
+from the old list: it waits for the answer to the typed text and then picks its
+first row, or the row ↑/↓ had made active if the answer still holds it; an empty
+answer, an error (Retry is not a choice), more typing, ↑/↓, a pick by pointer or
+closing drop the waiting pick, and with nothing typed ↵ does nothing. A new list
+(an answer, or options the host rebuilt from live data) keeps the row ↑/↓ had
+reached while it still holds that row, so ↵ picks the same row whether it came
+before or after the answer; a list that drops the row starts from its first row.
+A locally filtered picker (`filter` left on) picks at once while `loading`,
+since its rows always match the search.
+
 `DateField` is the browser's own date input with a Clear button; a complete date
 saves after `commitDelay`, at once on Enter or blur. `emptyLabel` ("No due
 date") is said in place of the browser's mm/dd/yyyy mask while the field is
