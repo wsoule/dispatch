@@ -467,6 +467,31 @@ const stats = (
   </>
 );
 
+// The Live header's one-row strip (variant="compact"): a meter and a toned
+// count, then the spend with its note.
+const compactStats = (
+  <StatsStrip
+    variant="compact"
+    label="Live"
+    data-slot="live-header"
+    cells={[
+      {
+        id: 'slots',
+        label: 'Slots',
+        value: <ProgressRule done={3} total={4} aria-label="Agent slots" />,
+      },
+      { id: 'running', label: 'Running', value: 2, tone: 'info' },
+      {
+        id: 'spend',
+        label: 'Spend',
+        value: '$4.20',
+        note: 'today',
+        'data-slot': 'live-spend',
+      },
+    ]}
+  />
+);
+
 console.log(
   JSON.stringify({
     hasWindow: typeof window !== 'undefined',
@@ -486,5 +511,6 @@ console.log(
     codeBlocksHosted: renderToString(codeBlocksHosted),
     checkboxChecklist: renderToString(checkboxChecklist),
     stats: renderToString(stats),
+    compactStats: renderToString(compactStats),
   })
 );

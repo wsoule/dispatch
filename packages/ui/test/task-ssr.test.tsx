@@ -21,6 +21,7 @@ interface SsrResult {
   codeBlocksHosted: string;
   checkboxChecklist: string;
   stats: string;
+  compactStats: string;
 }
 
 function serverRender(): SsrResult {
@@ -349,5 +350,20 @@ describe('task family server render', () => {
     );
     expect(html).toContain('aria-label="Agent slots"');
     expect(html).toContain('aria-valuetext="2 of 4 slots in use"');
+  });
+
+  test('the compact stat strip renders its list with no grid sizing', () => {
+    const html = result.compactStats;
+    expect(html).toMatch(
+      /^<ul data-slot="live-header"[^>]* data-variant="compact" aria-label="Live">/
+    );
+    expect(html).not.toContain('--stat-cols');
+    expect(html).not.toContain('--stat-span');
+    expect(html).toMatch(/<li[^>]* data-tone="info">/);
+    expect(html).toMatch(
+      /<li data-slot="live-spend"[^>]* data-tone="default">/
+    );
+    expect(html).toContain('role="progressbar"');
+    expect(html).toContain('today');
   });
 });

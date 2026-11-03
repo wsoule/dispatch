@@ -41,19 +41,28 @@ function lastCellSpan(count: number, columns: number): number {
    value and a quiet note. The cell's tone (data-tone) colours the value
    and its note: danger for an overdue count, warning for at risk, accent
    for new; default stays --text. Four across, two on phones, with the last
-   cell spanning the rest of its row so the panel closes. The host's data-*
+   cell spanning the rest of its row so the panel closes. variant="compact"
+   is a header's one-row strip instead: no panel, each cell's key, value
+   and note inline on a 26px row between soft rules, wrapping whole cells
+   onto a second row when the column is too narrow (and data-variant on
+   the list says so to hosts and tests). The host's data-*
    hooks land on the list and on each cell's <li> (with the cell's title as
    a hover hint); the cell's own data-tone wins over a host's. */
 export function StatsStrip(props: StatsStripProps) {
-  const { cells, label = 'Summary' } = props;
+  const { cells, label = 'Summary', variant = 'panel' } = props;
+  const compact = variant === 'compact';
   const columns = Math.max(1, Math.min(cells.length, MAX_COLUMNS));
-  const span = lastCellSpan(cells.length, columns);
+  const span = compact ? 1 : lastCellSpan(cells.length, columns);
   return (
     <ul
       {...dataAttributes(props)}
-      className={styles.strip}
+      className={cx(styles.strip, compact && styles.compact)}
+      // Only when compact, so a panel keeps a host's own data-variant.
+      {...(compact ? { 'data-variant': 'compact' } : null)}
       aria-label={label}
-      style={{ '--stat-cols': columns } as CSSProperties}
+      style={
+        compact ? undefined : ({ '--stat-cols': columns } as CSSProperties)
+      }
     >
       {cells.map((cell, i) => {
         const tone = cell.tone ?? 'default';

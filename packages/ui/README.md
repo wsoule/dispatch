@@ -888,6 +888,31 @@ host's own words say it on screen, so the edge is never the only signal. Forced
 colours keep the panel's, the tone's and the urgent row's edges (all borders)
 and draw the focus ring in CanvasText.
 
+### StatsStrip
+
+`StatsStrip` is a `<ul>` named by `label` ("Summary" by default), one `<li>` per
+cell: the key (after an optional 14px `icon`), the value in tabular figures and
+a quiet `note`, coloured by the cell's `tone`, a link with `href`, a hover hint
+with `title`. `variant` picks the shape:
+
+- `panel` (default): Gr8r's rounded panel of cells under soft rules, a 22px
+  value under each key, four across and two at 900px and below, the last cell
+  spanning what its row leaves.
+- `compact`: a page header's one-row strip (Live, Flight Plan) beside the
+  header's own controls. No panel: each cell's icon, key, value and note sit
+  inline on a 26px row (`--h-sm`, the height of the toolbar's controls), cells
+  parted by soft rules. A meter value (a `ProgressRule`, the agent slots) is
+  120px wide, its track and its "3/4". When the column is too narrow, whole
+  cells wrap onto another row (the strip never scrolls sideways), no row starts
+  with a rule, and a cell wider than the whole column folds its note under its
+  value. Toned values, linked cells (the fill on hover and focus) and the list
+  semantics are the panel's; the rules are borders, so forced colours keep them.
+  The list carries `data-variant="compact"` (the panel adds no attribute of its
+  own).
+
+In forced colours the panel's cells draw outlines, since the rules between them
+are its border colour showing through a gap.
+
 ### Lists: selection, drag, slots, toolbar, chips, bulk bar
 
 `TaskGroupTable` takes optional props for a list people act on (the planner's

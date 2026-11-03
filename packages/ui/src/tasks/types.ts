@@ -672,6 +672,14 @@ export interface StatsStripProps extends DataAttributes {
   cells: StatCell[];
   /** Accessible name of the strip. */
   label?: string;
+  /** panel (default): the rounded panel of cells, a 22px value under each
+   * key, four across (two on phones). compact: a page header's one-row
+   * strip (Live, Flight Plan) with no panel: each cell's icon, key, value
+   * and note inline on a 26px row, cells parted by soft rules, a meter
+   * value (ProgressRule) 120px wide; whole cells wrap onto further rows
+   * when the column is too narrow, so nothing scrolls sideways, and a row
+   * never starts with a rule. Same list, terms and tones as the panel. */
+  variant?: 'panel' | 'compact';
 }
 
 /* ---- the grouped task table -------------------------------------------- */

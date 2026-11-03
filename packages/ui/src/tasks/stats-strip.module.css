@@ -109,8 +109,118 @@ a.inner:focus-visible {
   }
 }
 
+/* ---- compact: a page header's one-row strip --------------------------- */
+
+/* No panel: the cells sit inline on the header's own surface, each a
+   26px row (--h-sm) of icon, key, value and note, parted by a soft rule
+   centred in the 25px gap (the cell's ::before, 13px left of it). When the
+   column is too narrow the whole cells wrap onto another row; the rule
+   that would then start a row sits left of the strip, where the
+   clip-path cuts it off. The clip reaches 6px out on both sides, so a
+   linked cell's fill (6px past its words) and its focus ring (3 to 5px
+   out) stay whole at either end of a row. */
+.compact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 25px;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  clip-path: inset(-4px -6px);
+}
+
+.compact .cell {
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+  background: none;
+}
+
+.compact .cell::before {
+  content: '';
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  left: -13px;
+  border-left: 1px solid var(--border);
+}
+
+/* Key, value and note on one line; a cell wider than the whole column (a
+   phone's long spend note) lets its note fold under the value. */
+.compact .inner {
+  flex-flow: row wrap;
+  align-items: center;
+  gap: 0 6px;
+  height: auto;
+  min-height: var(--h-sm);
+  padding: 0;
+}
+
+.compact .label,
+.compact .value {
+  white-space: nowrap;
+}
+
+.compact .value {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--fs);
+  line-height: 1.3;
+  letter-spacing: 0;
+}
+
+/* A meter value (ProgressRule) gets a fixed track to fill; an engine
+   without :has() draws its 40px minimum. */
+.compact .value:has([role='progressbar']) {
+  width: 120px;
+}
+
+.compact .note {
+  min-width: 0;
+}
+
+/* A linked cell's hover and focus fill reaches 6px past its words, on the
+   link itself (the cell stays clear). */
+.compact a.inner {
+  margin: 0 -6px;
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  transition: background-color var(--dur) ease;
+}
+
+.compact .cell:has(a.inner:focus-visible) {
+  background: none;
+}
+
+.compact a.inner:focus-visible {
+  background: var(--surface-2);
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .compact .cell:has(a.inner:hover) {
+    background: none;
+  }
+
+  .compact a.inner:hover {
+    background: var(--surface-2);
+  }
+}
+
+/* Forced colours drop backgrounds, so the panel's rules (its border colour
+   showing through a 1px gap) would vanish: each cell draws an outline
+   instead, the neighbours' lines meeting in that gap. The compact rules
+   are borders and stay. */
+@media (forced-colors: active) {
+  .strip:not(.compact) .cell {
+    outline: 1px solid CanvasText;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .cell {
+  .cell,
+  .compact a.inner {
     transition: none;
   }
 }

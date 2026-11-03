@@ -6,6 +6,7 @@ import {
   type ChecklistItem,
   type DeadlineGroup,
   DeadlineList,
+  ProgressRule,
   Register,
   RegisterCell,
   RegisterRow,
@@ -114,6 +115,155 @@ describe('StatsStrip', () => {
       );
     expect(hooks(getByRole('list', { name: 'Summary' }))).toEqual([]);
     expect(hooks(getAllByRole('listitem')[0])).toEqual(['data-tone']);
+  });
+});
+
+describe('StatsStrip variant="compact"', () => {
+  const file = 'tasks/stats-strip.module.css';
+
+  test('the same list, terms, tones and hooks, without the grid sizing', () => {
+    const { getByRole, getAllByRole } = render(
+      <StatsStrip
+        variant="compact"
+        label="Live"
+        data-slot="live-header"
+        cells={[
+          {
+            id: 'slots',
+            label: 'Slots',
+            value: (
+              <ProgressRule
+                done={3}
+                total={4}
+                aria-label="Agent slots"
+                valueText="3 of 4 slots in use"
+              />
+            ),
+          },
+          { id: 'running', label: 'Running', value: 2, tone: 'info' },
+          {
+            id: 'spend',
+            label: 'Spend',
+            value: '$4.20',
+            note: 'today · $8.10 of $60 ceilings',
+            title: 'Settled spend',
+            'data-slot': 'live-spend',
+          },
+        ]}
+      />
+    );
+    const list = getByRole('list', { name: 'Live' });
+    expect(list.getAttribute('data-variant')).toBe('compact');
+    expect(list.getAttribute('data-slot')).toBe('live-header');
+    // No column count or last-cell span: the row is a wrapping flex line.
+    expect(list.hasAttribute('style')).toBe(false);
+    const cells = getAllByRole('listitem');
+    expect(cells.map((c) => c.hasAttribute('style'))).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    expect(cells.map((c) => c.getAttribute('data-tone'))).toEqual([
+      'default',
+      'info',
+      'default',
+    ]);
+    expect(cells[2]?.textContent).toBe(
+      'Spend$4.20today · $8.10 of $60 ceilings'
+    );
+    expect(cells[2]?.getAttribute('title')).toBe('Settled spend');
+    expect(cells[2]?.getAttribute('data-slot')).toBe('live-spend');
+    expect(
+      getByRole('progressbar', { name: 'Agent slots' }).getAttribute(
+        'aria-valuetext'
+      )
+    ).toBe('3 of 4 slots in use');
+  });
+
+  test("compact's data-variant wins over a host's; a panel keeps the host's", () => {
+    const { getAllByRole } = render(
+      <>
+        <StatsStrip
+          variant="compact"
+          label="Compact"
+          data-variant="host"
+          cells={[{ id: 'o', label: 'Open', value: 1 }]}
+        />
+        <StatsStrip
+          label="Panel"
+          data-variant="host"
+          cells={[{ id: 'o', label: 'Open', value: 1 }]}
+        />
+      </>
+    );
+    expect(
+      getAllByRole('list').map((list) => list.getAttribute('data-variant'))
+    ).toEqual(['compact', 'host']);
+  });
+
+  test('a linked compact cell routes through the host link', () => {
+    const { getByRole } = render(
+      <UiLinkProvider link={HostLink}>
+        <StatsStrip
+          variant="compact"
+          cells={[{ id: 'o', label: 'Overdue', value: 2, href: '/timeline' }]}
+        />
+      </UiLinkProvider>
+    );
+    const link = getByRole('link');
+    expect(link.getAttribute('href')).toBe('/timeline');
+    expect(link.hasAttribute('data-host-link')).toBe(true);
+  });
+
+  test('one 26px wrapping row of inline cells, no panel', () => {
+    const strip = cssRule(file, '.compact');
+    expect(strip).toContain('display: flex;');
+    expect(strip).toContain('flex-wrap: wrap;');
+    expect(strip).toContain('border: 0;');
+    expect(strip).toContain('background: none;');
+    expect(strip).not.toContain('grid');
+    expect(cssRule(file, '.compact .cell')).toContain('max-width: 100%;');
+    const inner = cssRule(file, '.compact .inner');
+    expect(inner).toContain('flex-flow: row wrap;');
+    expect(inner).toContain('min-height: var(--h-sm);');
+    expect(inner).toContain('padding: 0;');
+    expect(cssRule(file, '.compact .label, .compact .value')).toBe(
+      'white-space: nowrap;'
+    );
+    // The value drops the panel's 22px figure for the body size.
+    expect(cssRule(file, '.compact .value')).toContain('font-size: var(--fs);');
+    expect(cssRule(file, ".compact .value:has([role='progressbar'])")).toBe(
+      'width: 120px;'
+    );
+  });
+
+  test('rules are borders centred in the gap, cut off where a row starts', () => {
+    const strip = cssRule(file, '.compact');
+    expect(strip).toContain('gap: 4px 25px;');
+    // The clip reaches 6px past the strip on both sides: as far as a
+    // linked cell's fill, past its focus ring (3 to 5px out), and short of
+    // a row-start rule 13px out.
+    expect(strip).toContain('clip-path: inset(-4px -6px);');
+    const link = cssRule(file, '.compact a.inner');
+    expect(link).toContain('margin: 0 -6px;');
+    const ring = cssRule(file, 'a.inner:focus-visible');
+    expect(ring).toContain('outline-offset: -3px;');
+    const rule = cssRule(file, '.compact .cell::before');
+    expect(rule).toContain('left: -13px;');
+    // A border, not a fill, so forced colours keep it.
+    expect(rule).toContain('border-left: 1px solid var(--border);');
+    expect(rule).not.toContain('background');
+  });
+
+  test('forced colours give the panel outlined cells', () => {
+    const sheet = readCss(file).replace(/\s+/g, ' ');
+    expect(sheet).toContain(
+      '@media (forced-colors: active) { .strip:not(.compact) .cell { outline: 1px solid CanvasText; } }'
+    );
+  });
+
+  test('tokens only: no hex in the stylesheet', () => {
+    expect(readCss(file)).not.toMatch(/#[0-9a-f]{3,8}\b/i);
   });
 });
 
