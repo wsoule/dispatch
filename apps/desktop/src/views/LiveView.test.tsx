@@ -337,6 +337,8 @@ describe('LiveView', () => {
       document.querySelector(`[data-slot=${slot}]`)?.textContent;
     const header = document.querySelector('[data-slot=live-header]');
     expect(header?.getAttribute('aria-label')).toBe('Live');
+    // The header's one-row strip (owner decision 2026-11-03), not the stats panel.
+    expect(header?.getAttribute('data-variant')).toBe('compact');
     const slots = header?.querySelector(
       '[data-slot=live-slots] [role=progressbar]'
     );

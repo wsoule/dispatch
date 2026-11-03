@@ -24,8 +24,8 @@ function ceilingNote(ceilings: LiveCeilings): string {
 
 // Today's spend as the cell's value with "today" and the fan-outs' ceilings as its note
 // (`$4.20` · `today · $8.10 of $60 ceilings`), else the ceilings alone (`$8.10` · `of $60
-// ceilings`), or null when there is neither. Only the short amount takes the strip's
-// large value type, so the cell never wraps a sentence at that size on a phone.
+// ceilings`), or null when there is neither. Only the short amount is the value; the
+// sentence is the note, which the compact strip sets inline after it in the quiet type.
 function liveSpend(
   today: number | null,
   ceilings: LiveCeilings | null
@@ -141,6 +141,9 @@ interface LiveHeaderProps {
  * fan-out, what is running, queued, waiting on a teammate and landing, and today's spend
  * against the fan-outs' ceilings; then one control for the whole fleet on the right —
  * Pause all while anything is filling slots, else Resume all for what someone paused.
+ * The strip is the compact variant (owner decision 2026-11-03): one 26px row of inline
+ * cells at desktop widths, whole cells wrapping onto more rows on a narrow column, so the
+ * bands keep the height the old panel took.
  */
 export const LiveHeader = memo(function LiveHeader({
   totals,
@@ -158,6 +161,7 @@ export const LiveHeader = memo(function LiveHeader({
     <div className={styles.header}>
       <div className={styles.strip}>
         <StatsStrip
+          variant="compact"
           data-slot="live-header"
           label="Live"
           cells={headerCells(totals, spend)}

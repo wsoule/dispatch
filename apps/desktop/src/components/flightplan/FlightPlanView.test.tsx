@@ -348,6 +348,12 @@ describe('FlightPlan', () => {
         .join('|');
     const view = mount(dataWith(tasks, []), undefined, 'e-p');
     expect(header()).toContain('Send agents');
+    // The header's one-row strip (owner decision 2026-11-03), not the stats panel.
+    expect(
+      document
+        .querySelector('[data-slot=flight-header] ul[aria-label="Flight plan"]')
+        ?.getAttribute('data-variant')
+    ).toBe('compact');
     expect(bandText()).toContain('Send agents');
     // The strip reads label then value, cell by cell; with no fan-out nothing is
     // queued, only ready.

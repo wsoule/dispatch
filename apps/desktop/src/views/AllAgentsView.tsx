@@ -363,6 +363,11 @@ export function AllAgentsView({
           columns={COLUMNS}
           header={HEADER}
           stackWithin={600}
+          // Show all on a long history mounts only the rows near the view (above the
+          // library's 150-row default; the 25-row cap draws every row, so the browser's
+          // find-in-page still reaches every row there). The view's .body is the scroller
+          // the register finds, and each child is one keyed, memoized row.
+          windowed
         >
           {shown.map((entry) =>
             entry.row === 'session' ? (

@@ -369,6 +369,36 @@ test('the list caps at 25 rows until Show all is pressed', () => {
   expect(within(list).getAllByRole('listitem')).toHaveLength(30);
 });
 
+// Show all on a long history windows the register (the library's `windowed`, above its
+// 150-row default): only the rows near the view mount, each telling assistive tech its
+// place in the whole list, and the 25-row cap before it stays a plain list.
+test('Show all on a long history mounts only the rows near the view', () => {
+  mount({
+    runs: Array.from({ length: 400 }, (_, i) =>
+      run({ id: `r-${String(i)}`, taskTitle: `Run ${String(i)}` })
+    ),
+  });
+  const list = screen.getByRole('list', { name: 'Agents' });
+  expect(list.closest('[data-windowed]')).toBeNull();
+  expect(within(list).getAllByRole('listitem')).toHaveLength(25);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Show all 400' }));
+  expect(list.closest('[data-windowed="true"]')).not.toBeNull();
+  const mounted = Array.from(list.querySelectorAll('li[data-row-id]'));
+  expect(mounted.length).toBeGreaterThan(0);
+  expect(mounted.length).toBeLessThan(400);
+  // The first row is the newest run, first in the whole list.
+  expect(mounted[0]?.textContent).toContain('Run 0');
+  expect(mounted[0]?.getAttribute('aria-posinset')).toBe('1');
+  expect(mounted.every((li) => li.getAttribute('aria-setsize') === '400')).toBe(
+    true
+  );
+  // The rest of the list stands as hidden gaps, so its scroll length is kept.
+  expect(
+    list.querySelector('li[data-row-gap][aria-hidden="true"]')
+  ).not.toBeNull();
+});
+
 // The empty states keep their words: a filter that matches nothing, and a repo with no
 // agents (with the archive hint when every run is archived).
 test('the empty states say why the list is empty', () => {
