@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import {
   applyThemeChoice,
+  holdThemeSwitch,
   readThemeChoice,
   showTheme,
   type ThemeChoice,
@@ -300,6 +301,37 @@ describe('showTheme', () => {
     await nextFrame();
     expect(switching()).toBe(false);
     expect(document.documentElement.dataset.theme).toBe('light');
+  });
+
+  test('a hold keeps transitions off past the swap, until two frames after its release', async () => {
+    const release = holdThemeSwitch();
+    expect(switching()).toBe(true);
+    showTheme('system');
+    // The swap's own end falls here, but the hold still needs the attribute.
+    await nextFrame();
+    await nextFrame();
+    await nextFrame();
+    expect(switching()).toBe(true);
+    release();
+    // Released: off for the frame that paints, then on again.
+    await nextFrame();
+    expect(switching()).toBe(true);
+    await nextFrame();
+    await nextFrame();
+    expect(switching()).toBe(false);
+    // A second release changes nothing (no hold count below zero).
+    release();
+    const again = holdThemeSwitch();
+    showTheme('dark');
+    await nextFrame();
+    await nextFrame();
+    await nextFrame();
+    expect(switching()).toBe(true);
+    again();
+    await nextFrame();
+    await nextFrame();
+    await nextFrame();
+    expect(switching()).toBe(false);
   });
 
   test('applyThemeChoice swaps through it', () => {

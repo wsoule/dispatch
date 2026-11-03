@@ -8,6 +8,7 @@ export { Link, UiLinkProvider, type UiLinkProviderProps } from './lib/link';
 export { type ThemeChoice, themeChoiceOf, themeScript } from './lib/theme';
 export {
   applyThemeChoice,
+  holdThemeSwitch,
   readThemeChoice,
   showTheme,
 } from './lib/theme-choice';

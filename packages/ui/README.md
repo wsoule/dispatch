@@ -265,11 +265,21 @@ following the OS live (its Playwright `colorScheme` projects rely on that).
   in WebKit), so a module whose `::before` or `::after` transitions a colour it
   draws at rest turns that off under `:root[data-theme-switching]` itself, as
   the picker's pills do.
+- `holdThemeSwitch()` keeps `data-theme-switching` on until the release it
+  returns is called, then for two more frames; `showTheme`'s own end waits for
+  every hold, and a second release does nothing. It is for a swap the page
+  cannot finish in one frame: the Dispatch app holds it after handing its
+  window's appearance back to the OS (System), because the webview's
+  `prefers-color-scheme` changes only once that native call lands.
 - `<ThemeToggle storageKey={KEY} />` flips `html[data-theme]` and saves the
   choice under the same key. It assumes `themeScript` ran (it toggles from
   whatever `<html>` says; from `system` it switches to the opposite of what the
   OS shows). Its glyph follows the nearest `data-theme` ancestor. It only flips,
-  so a way back to System goes through `applyThemeChoice(KEY, 'system')`.
+  so a way back to System goes through `applyThemeChoice(KEY, 'system')`. It
+  takes no change callback: a host that mirrors the theme somewhere else (the
+  Dispatch app sets its Tauri window's native appearance) watches
+  `html[data-theme]`, where `ThemeToggle`, `applyThemeChoice` and a `storage`
+  listener all write, so one observer sees every change.
 - `localStorage` is per origin, so the choice is too. In a browser each origin
   keeps its own: each Dispatch daemon port is an origin, so a choice made on one
   project's port does not carry to another. The Tauri app has one origin, so

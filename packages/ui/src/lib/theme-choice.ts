@@ -5,8 +5,23 @@
 // DOM-free for Node.
 import { type ThemeChoice, themeChoiceOf } from './theme';
 
-// The pending frame that ends the current theme swap (see showTheme).
+// The pending frame that ends the current theme swap (see showTheme), and
+// how many holdThemeSwitch() holds still keep it from ending.
 let swapEnd = 0;
+let holds = 0;
+
+// Takes html[data-theme-switching] off two frames from now (the frame that
+// first paints the new colours, then one more), unless a hold still needs
+// it. A later call restarts the wait.
+function endSwapSoon(): void {
+  const root = document.documentElement;
+  cancelAnimationFrame(swapEnd);
+  swapEnd = requestAnimationFrame(() => {
+    swapEnd = requestAnimationFrame(() => {
+      if (holds === 0) root.removeAttribute('data-theme-switching');
+    });
+  });
+}
 
 // Writes `theme` to html[data-theme] without animating the change. Many
 // rows, buttons and links transition their colours over --dur, so a bare
@@ -20,12 +35,27 @@ export function showTheme(theme: string): void {
   const root = document.documentElement;
   root.setAttribute('data-theme-switching', '');
   root.dataset.theme = theme;
-  cancelAnimationFrame(swapEnd);
-  swapEnd = requestAnimationFrame(() => {
-    swapEnd = requestAnimationFrame(() => {
-      root.removeAttribute('data-theme-switching');
-    });
-  });
+  endSwapSoon();
+}
+
+/**
+ * Keeps transitions off (html[data-theme-switching]) from now until the
+ * returned release is called, then for two more frames, as showTheme does;
+ * showTheme's own end waits for every hold. For a swap the page cannot finish
+ * in one frame: a desktop webview whose `prefers-color-scheme` follows its
+ * native window, which changes only after a call to the native side lands.
+ * Releasing twice does nothing.
+ */
+export function holdThemeSwitch(): () => void {
+  holds += 1;
+  document.documentElement.setAttribute('data-theme-switching', '');
+  let held = true;
+  return () => {
+    if (!held) return;
+    held = false;
+    holds -= 1;
+    endSwapSoon();
+  };
 }
 
 // The stored choice, or 'system' when nothing usable is stored or storage
