@@ -37,6 +37,12 @@ interface DispatchDialogProps {
   /** Live runs and their claimed files, so the preview can warn before this dispatch
    * lands on someone else's work. Optional: without it no overlap is checked. */
   liveClaims?: LiveClaim[];
+  /** For a milestone fan-out: who holds each task against the person starting it (core's
+   * `fanoutHolder`, `viewerHolderOf` in the app). A teammate's task shows a Teammate chip
+   * and is left out of the counts and the estimate, since the fan-out never starts it.
+   * Omitted for a hand dispatch of a selection, which starts each task whoever it
+   * belongs to. */
+  holderOf?: (task: TaskListItem) => string | null;
   /** Starting concurrency, from the project's config. */
   defaultConcurrency: number;
   /** The most agents the picker offers — the project's `orchestrator.maxConcurrency`.
@@ -66,14 +72,17 @@ const DISPOSITION_LABEL = {
   'starts-now': 'Starts now',
   queued: 'Queued',
   'not-ready': 'Cannot start',
+  teammate: 'Teammate',
 } as const;
 
 // Each disposition's chip tone (AGENTS.md status table): starting now is in progress
-// (blue), queued is inactive (grey), and a task that cannot start is blocked (amber).
+// (blue), queued is inactive (grey), a task that cannot start is blocked (amber), and a
+// teammate's task, which this fan-out leaves alone, is inactive (grey).
 const DISPOSITION_TONE = {
   'starts-now': 'info',
   queued: 'muted',
   'not-ready': 'warning',
+  teammate: 'muted',
 } as const;
 
 // From here the ceiling is what ends the fan-out, not the task list, and the hint says so.
@@ -145,6 +154,7 @@ export function DispatchDialog({
   readyIds,
   runningNow,
   liveClaims,
+  holderOf,
   defaultConcurrency,
   maxConcurrency = MAX_CONCURRENCY_HARD_CAP,
   runCostEstimateUsd = DEFAULT_RUN_COST_USD,
@@ -204,6 +214,7 @@ export function DispatchDialog({
         runCostEstimateUsd,
         ceilingUsd,
         liveClaims,
+        holderOf,
       }),
     [
       tasks,
@@ -213,6 +224,7 @@ export function DispatchDialog({
       runCostEstimateUsd,
       ceilingUsd,
       liveClaims,
+      holderOf,
     ]
   );
 

@@ -282,6 +282,37 @@ describe('DispatchDialog', () => {
     expect(within(rows[3] ?? first).getByText('Queued')).toBeDefined();
   });
 
+  // The disposition chips keep the status table's hues: starting now is in progress (blue),
+  // queued is inactive (grey), and a task that cannot start is blocked (amber), told in
+  // words as well as tone.
+  test('each disposition chip carries its status tone', () => {
+    mount({ readyIds: new Set(['t-1', 't-2', 't-3', 't-4']) });
+    const toneOf = (word: string) =>
+      screen
+        .getAllByText(word)[0]
+        ?.closest('[data-tone]')
+        ?.getAttribute('data-tone');
+    expect(toneOf('Starts now')).toBe('info');
+    expect(toneOf('Queued')).toBe('muted');
+    expect(toneOf('Cannot start')).toBe('warning');
+  });
+
+  test('a teammate’s task shows a muted Teammate chip and is not sent', () => {
+    const { confirmButton } = mount({
+      readyIds: new Set(['t-1', 't-2']),
+      holderOf: (t) => (t.meta.id === 't-2' ? 'human:sam' : null),
+    });
+    const row = document.querySelector<HTMLElement>(
+      '[data-disposition="teammate"]'
+    );
+    expect(row?.textContent).toContain('t-2');
+    expect(row?.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe(
+      'muted'
+    );
+    expect(row?.textContent).toContain('Teammate');
+    expect(confirmButton().textContent).toContain('Send 1 agent');
+  });
+
   test('a live claim on a task’s files is a warning note that names whose run', () => {
     mount({
       liveClaims: [
