@@ -22,6 +22,33 @@ import {
 
 afterEach(cleanup);
 
+/**
+ * Replaces `getBoundingClientRect` on `proto` (happy-dom lays nothing out) and
+ * returns the undo. The undo leaves the prototype as it found it: an own
+ * method is put back, and one `proto` only inherited (HTMLUListElement's comes
+ * from Element.prototype) is deleted rather than copied down, so no leftover
+ * own property shadows a later stub on Element.prototype in this file or the
+ * next one bun runs in the same process.
+ */
+function stubRect(
+  proto: Element,
+  rect: (this: Element) => DOMRect
+): () => void {
+  const own = Object.getOwnPropertyDescriptor(proto, 'getBoundingClientRect');
+  Object.defineProperty(proto, 'getBoundingClientRect', {
+    configurable: true,
+    writable: true,
+    value: rect,
+  });
+  return () => {
+    if (own === undefined) {
+      Reflect.deleteProperty(proto, 'getBoundingClientRect');
+    } else {
+      Object.defineProperty(proto, 'getBoundingClientRect', own);
+    }
+  };
+}
+
 // The pure arithmetic of TaskGroupTable's row windowing (row-window.ts):
 // which rows of a group meet the viewport band, which gaps stand for the
 // rest, and the first render's budget before anything is measured.
@@ -385,8 +412,7 @@ describe('useRowWindows for a host', () => {
     restore: () => void;
   } {
     let offset = 0;
-    const original = HTMLUListElement.prototype.getBoundingClientRect;
-    HTMLUListElement.prototype.getBoundingClientRect = function () {
+    const restore = stubRect(HTMLUListElement.prototype, function () {
       return {
         top: -offset,
         bottom: -offset,
@@ -398,14 +424,12 @@ describe('useRowWindows for a host', () => {
         y: -offset,
         toJSON: () => ({}),
       } as DOMRect;
-    };
+    });
     return {
       scrollBy: (px) => {
         offset += px;
       },
-      restore: () => {
-        HTMLUListElement.prototype.getBoundingClientRect = original;
-      },
+      restore,
     };
   }
 
@@ -541,7 +565,7 @@ describe('useRowWindows for a host', () => {
   // function.
   function stubRowHeights(px: (id: string) => number = () => 100): () => void {
     const original = Element.prototype.getBoundingClientRect;
-    Element.prototype.getBoundingClientRect = function (this: Element) {
+    return stubRect(Element.prototype, function (this: Element) {
       const id =
         this.tagName === 'LI' ? this.getAttribute('data-row-id') : null;
       if (id !== null) {
@@ -559,10 +583,7 @@ describe('useRowWindows for a host', () => {
         } as DOMRect;
       }
       return original.call(this);
-    };
-    return () => {
-      Element.prototype.getBoundingClientRect = original;
-    };
+    });
   }
 
   test('rowHeight wins over a measurement, and only measured heights make the mean', () => {
@@ -708,11 +729,10 @@ describe('useRowWindows for a host', () => {
     document.body.appendChild(scroller);
     scroller.getBoundingClientRect = () =>
       ({ top: 0, bottom: 600, height: 600 }) as DOMRect;
-    const original = HTMLUListElement.prototype.getBoundingClientRect;
-    HTMLUListElement.prototype.getBoundingClientRect = function () {
+    const restoreLists = stubRect(HTMLUListElement.prototype, function () {
       const top = 40 - scroller.scrollTop;
       return { top, bottom: top + 20 * 200, height: 20 * 200 } as DOMRect;
-    };
+    });
     const handle: { current: RowWindows | null } = { current: null };
     render(
       createElement(WindowHost, {
@@ -733,7 +753,7 @@ describe('useRowWindows for a host', () => {
       scroller,
       handle,
       restore: () => {
-        HTMLUListElement.prototype.getBoundingClientRect = original;
+        restoreLists();
         scroller.remove();
       },
     };
@@ -806,6 +826,34 @@ describe('the windowing and fold helpers are exported', () => {
     } finally {
       stop();
       window.sessionStorage.removeItem('test:folds');
+    }
+  });
+});
+
+describe('the rect stubs', () => {
+  test('leave the list prototype as found, so a later Element stub reaches lists', () => {
+    const before = Object.hasOwn(
+      HTMLUListElement.prototype,
+      'getBoundingClientRect'
+    );
+    const restore = stubRect(
+      HTMLUListElement.prototype,
+      () => ({ height: 1 }) as DOMRect
+    );
+    restore();
+    expect(
+      Object.hasOwn(HTMLUListElement.prototype, 'getBoundingClientRect')
+    ).toBe(before);
+    const restoreAll = stubRect(
+      Element.prototype,
+      () => ({ height: 42 }) as DOMRect
+    );
+    try {
+      expect(document.createElement('ul').getBoundingClientRect().height).toBe(
+        42
+      );
+    } finally {
+      restoreAll();
     }
   });
 });
