@@ -102,6 +102,9 @@ it('an SDK client asks over the listener, the owner answers through /api, the cl
   expect(task).toContain('Yes, final.');
 });
 
+// About 2.4 s idle, about 2 s of it BridgeWatch's fixed 1 s coalescing applied
+// twice: under half of Bun's 5 s default, so a loaded CI runner's slowdown
+// can time it out. 30 s, the budget the A2A daemon tests use.
 it('a streamed ask completes when the owner answers', async () => {
   const { client, caller } = await sdkClientFor('streamer');
   const events: string[] = [];
@@ -131,7 +134,7 @@ it('a streamed ask completes when the owner answers', async () => {
     events.push(JSON.stringify(StreamResponse.toJSON(event)));
   await answerLater;
   expect(events.at(-1)).toContain('TASK_STATE_COMPLETED');
-});
+}, 30_000);
 
 it('a client token is refused on /api while the listener serves it', async () => {
   await sdkClientFor('listening');

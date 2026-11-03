@@ -1963,6 +1963,8 @@ describe('MergeQueue restack edge cases', () => {
   // A run on a multi-parent stack base keeps every blocker's work: when one
   // blocker lands, its base is rebuilt over the new main plus the blockers
   // still unmerged, and only the run's own commits are replayed onto it.
+  // Real git work for three parents and a rebuilt base: about 1.7-2.1 s idle,
+  // over a third of Bun's 5 s default, which a loaded CI runner can exceed.
   it('restacks a three-parent dependent onto a rebuilt base when one blocker merges, using only git', async () => {
     const harness = makeHarness();
     const { blockers, dependentId, taskId } = await makeMultiParentDependent(
@@ -2076,7 +2078,7 @@ describe('MergeQueue restack edge cases', () => {
 
     // The whole sequence shelled out to git and nothing else.
     expect([...new Set(calls.map((c) => c[0]))]).toEqual(['git']);
-  });
+  }, 30_000);
 
   // Only a real conflict flags the run: the blockers left can't be combined
   // with the new main any more, so there is no correct base to move it to.
