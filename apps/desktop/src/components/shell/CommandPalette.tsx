@@ -13,8 +13,9 @@ import {
   PALETTE_SECTION_ORDER,
   toPaletteItems,
 } from '../../adapters/palette';
+import { useThemeChoice } from '../../hooks/useThemeChoice';
 import type { NavAction } from '../../lib/appNav';
-import type { PaletteEntry } from '../../lib/paletteEntries';
+import { entriesForTheme, type PaletteEntry } from '../../lib/paletteEntries';
 import { parseHref, taskHref, timelineHref } from '../../lib/routes';
 import { useShellActions } from './ShellActionsContext';
 
@@ -136,6 +137,9 @@ function OpenPalette({
   const { openOverseer } = useShellActions();
   const modLabel = useModKeyLabel();
   const [query, setQuery] = useState('');
+  // The theme is read here, while the menu is open, rather than in App: only
+  // the `Follow the system theme` row depends on it (entriesForTheme).
+  const theme = useThemeChoice();
 
   // The daemon's doc hits and the query they answer; they keep the daemon's
   // rank after the local rows, and hits for an earlier query are never shown
@@ -158,8 +162,12 @@ function OpenPalette({
   }, [query, searchDocs]);
 
   const localItems = useMemo(
-    () => floatRecent(toPaletteItems(entries, { modLabel }), recentIds),
-    [entries, modLabel, recentIds]
+    () =>
+      floatRecent(
+        toPaletteItems(entriesForTheme(entries, theme), { modLabel }),
+        recentIds
+      ),
+    [entries, theme, modLabel, recentIds]
   );
   const jumpItems = useMemo(
     () =>

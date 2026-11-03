@@ -85,7 +85,7 @@ export function DiffsSection() {
   return (
     <>
       <SettingsGroup
-        title="Appearance"
+        title="Diff appearance"
         hint="Saved in this browser only. Nothing here changes the project."
         keywords="diff display"
         requires="none"

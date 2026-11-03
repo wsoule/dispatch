@@ -521,3 +521,34 @@ test('text that matches nothing says so and what to try, Tab to the agent includ
     )
   ).toBeDefined();
 });
+
+// The palette reads the theme itself, so App's entries never change with it:
+// the row shows while a Light or Dark choice is on screen, not under System.
+test('Follow the system theme shows only while a Light or Dark choice is on screen', () => {
+  const root = document.documentElement;
+  const themeRow: PaletteEntry = {
+    id: 'action-theme-system',
+    label: 'Follow the system theme',
+    kind: 'action',
+    section: 'actions',
+    run: () => {},
+  };
+  const rowShown = () =>
+    screen
+      .queryAllByRole('option')
+      .some((o) => o.textContent?.includes('Follow the system theme'));
+  try {
+    root.dataset.theme = 'system';
+    const view = mount({ extraEntries: [themeRow] });
+    expect(rowShown()).toBe(false);
+    view.unmount();
+    for (const theme of ['light', 'dark']) {
+      root.dataset.theme = theme;
+      const shown = mount({ extraEntries: [themeRow] });
+      expect(rowShown()).toBe(true);
+      shown.unmount();
+    }
+  } finally {
+    delete root.dataset.theme;
+  }
+});

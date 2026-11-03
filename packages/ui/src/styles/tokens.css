@@ -308,10 +308,11 @@ html[data-theme='dark']:where(:not([data-bt-ui-scoped])),
 }
 
 /* data-theme="system": the block above whenever the OS is dark, for a host
-   that follows the OS live with no theme script (Dispatch wires its own dark
-   mode to prefers-color-scheme): data-theme="system" on <html> or on a
-   [data-bt-ui] wrapper. The declarations must stay identical to the block
-   above (test/styles-scope.test.ts compares them). */
+   that follows the OS live: data-theme="system" on <html> or on a
+   [data-bt-ui] wrapper, written with no script, or by
+   themeScript(key, { fallback: 'system' }) while nothing is stored
+   (Dispatch). The declarations must stay identical to the block above
+   (test/styles-scope.test.ts compares them). */
 @media (prefers-color-scheme: dark) {
   html[data-theme='system']:where(:not([data-bt-ui-scoped])),
   [data-bt-ui][data-theme='system'],
@@ -737,6 +738,19 @@ html:where(:not([data-bt-ui-scoped])) {
   html:where(:not([data-bt-ui-scoped])) {
     scroll-behavior: smooth;
   }
+}
+
+/* A theme change does not animate. Many rows, buttons and links transition
+   their colours over --dur; showTheme() (src/lib/theme-choice.ts, which
+   ThemeToggle and applyThemeChoice call) puts data-theme-switching on
+   <html> for the frame that first paints the new theme, so they change
+   with the surfaces behind them instead of fading in after them. Elements
+   only: a universal ::before/::after rule makes WebKit resolve both
+   pseudo-elements for every element (Dispatch's gr8r-rules guard), so a
+   module whose pseudo-element transitions a colour it draws at rest (the
+   picker's pills) turns it off under the same attribute itself. */
+:root:where(:not([data-bt-ui-scoped]))[data-theme-switching] * {
+  transition: none !important;
 }
 
 :where(html:not([data-bt-ui-scoped]), [data-bt-ui]) .srOnly {

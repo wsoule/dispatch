@@ -289,6 +289,29 @@ describe('DispatchShell', () => {
     expect(calls).toEqual(['out']);
   });
 
+  test('the sidebar footer has the theme toggle, which flips html[data-theme] and stores it', () => {
+    const root = document.documentElement;
+    root.dataset.theme = 'light';
+    try {
+      render(shell().element);
+      const toggle = screen.getByRole('button', {
+        name: 'Switch between light and dark',
+      });
+      // In the sidebar's footer, beside the person, not in the topbar.
+      expect(toggle.closest('aside')).not.toBeNull();
+      expect(toggle.closest('[data-tip="Switch theme"]')).not.toBeNull();
+      fireEvent.click(toggle);
+      expect(root.dataset.theme).toBe('dark');
+      expect(localStorage.getItem('dispatch:theme')).toBe('dark');
+      fireEvent.click(toggle);
+      expect(root.dataset.theme).toBe('light');
+      expect(localStorage.getItem('dispatch:theme')).toBe('light');
+    } finally {
+      delete root.dataset.theme;
+      localStorage.removeItem('dispatch:theme');
+    }
+  });
+
   test('a Tauri window gets the drag region and the traffic-light inset', () => {
     render(
       shell({

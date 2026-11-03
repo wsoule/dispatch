@@ -4,6 +4,7 @@
 // `components/shell/CommandPalette.tsx`.
 
 import type { DocHit } from '@dispatch/client';
+import type { ThemeChoice } from '@dispatch/ui';
 import type { ReactNode } from 'react';
 
 import { type GlobalView, HOST_VIEWS, type ProjectView } from './appNav';
@@ -68,6 +69,9 @@ export interface PaletteEntriesContext {
     copyTaskLink?: (taskId: string) => void;
     /** Brings the first-task guide back for the active project. */
     restartGuide?: () => void;
+    /** Drops the stored theme choice so the theme follows the OS again. The
+     *  palette shows its row only while a choice is stored (entriesForTheme). */
+    followSystemTheme?: () => void;
   };
 }
 
@@ -82,9 +86,28 @@ const TASKS_PAGES: (PaletteView & { href: string })[] = [
   { id: 'live', label: 'Live', href: '#/live' },
 ];
 
-/** The rows the command menu offers right now: actions (a `Copy link` when a task is up),
- * then navigation, the saved views, then one row per task (plus a "Dispatch …" row for
- * each ready one). Project-scoped rows are omitted while no project is active. */
+/** The id of the `Follow the system theme` row. */
+const FOLLOW_SYSTEM_THEME_ID = 'action-theme-system';
+
+/** `entries` as the palette shows them for the theme on screen: the `Follow the system
+ * theme` row only while a Light or Dark choice is stored, since under System it would
+ * undo nothing. The palette applies this itself (it reads the theme while open), so a
+ * theme change neither rebuilds App's entries nor re-renders App. */
+export function entriesForTheme(
+  entries: PaletteEntry[],
+  theme: ThemeChoice
+): PaletteEntry[] {
+  return theme === 'system'
+    ? entries.filter((entry) => entry.id !== FOLLOW_SYSTEM_THEME_ID)
+    : entries;
+}
+
+/** The rows the command menu offers right now: actions (a `Copy link` when a task is up,
+ * and `Follow the system theme`, with or without a project, because the sidebar's theme
+ * toggle only flips between Light and Dark; the palette hides it while nothing is stored,
+ * see entriesForTheme), then navigation, the saved views, then one row per task (plus a
+ * "Dispatch …" row for each ready one). Project-scoped rows are omitted while no project
+ * is active. */
 export function buildPaletteEntries(
   ctx: PaletteEntriesContext
 ): PaletteEntry[] {
@@ -149,6 +172,16 @@ export function buildPaletteEntries(
     shortcut: '?',
     run: actions.openShortcuts,
   });
+  const { followSystemTheme } = actions;
+  if (followSystemTheme !== undefined) {
+    entries.push({
+      id: FOLLOW_SYSTEM_THEME_ID,
+      label: 'Follow the system theme',
+      kind: 'action',
+      section: 'actions',
+      run: followSystemTheme,
+    });
+  }
   const { restartGuide } = actions;
   if (ctx.hasProject && restartGuide !== undefined) {
     entries.push({

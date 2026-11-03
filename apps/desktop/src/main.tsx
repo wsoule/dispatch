@@ -20,6 +20,7 @@ import './styles/markdown.css';
 import './styles/global.css';
 import { TeamLocalGate } from './components/shell/TeamLocalGate';
 import { ToastProvider } from './components/shell/Toasts';
+import { followThemeFromOtherWindows } from './hooks/useThemeChoice';
 import { warmBoot } from './lib/bootWarm';
 
 const queryClient = new QueryClient({
@@ -32,6 +33,10 @@ const queryClient = new QueryClient({
 
 // Before the first render, so the project and the task list are on their way meanwhile.
 void warmBoot(queryClient);
+
+// A theme picked in another tab on this daemon port shows here too, on every
+// screen (the gates as well as the app), for the life of the page.
+followThemeFromOtherWindows();
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

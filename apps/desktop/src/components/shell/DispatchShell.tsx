@@ -32,6 +32,7 @@ import type { AdminItem } from '../../lib/adminItems';
 import type { MainView, NavAction, NavSettingsPage } from '../../lib/appNav';
 import { parseHref } from '../../lib/routes';
 import { hrefFor, type ShellDestination } from '../../lib/shellRoutes';
+import { THEME_STORAGE_KEY } from '../../lib/theme';
 import { usePeople } from '../people/PeopleContext';
 import styles from './DispatchShell.module.css';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -293,8 +294,10 @@ function useScrollKeptUnderSettings(
 
 /**
  * The desktop's frame: @dispatch/ui's AppShell (sidebar with the brand row's
- * project switcher, the destinations and the Projects section; topbar with
- * crumbs, search and who is here)
+ * project switcher, the destinations and the Projects section; a footer with
+ * the person, the light/dark toggle (the library ThemeToggle, stored under
+ * THEME_STORAGE_KEY, which the pre-paint script in vite.config.ts reads back)
+ * and a team-local sign-out; topbar with crumbs, search and who is here)
  * around the two views, both mounted so each keeps its place, with the peek
  * drawer and the guide card floating over them. While Settings is open it
  * takes the main column in their place, over a gate too. It is an overlay
@@ -394,6 +397,7 @@ export function DispatchShell({
             sections={[projects]}
             settings={buildSettingsLink({ destination, adminItems })}
             user={user}
+            themeStorageKey={THEME_STORAGE_KEY}
             signOut={
               teamSession === undefined
                 ? undefined

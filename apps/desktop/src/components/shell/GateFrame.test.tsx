@@ -124,6 +124,29 @@ test('puts actions in the top row, outside the main', () => {
   expect(screen.getByRole('main').contains(settings)).toBe(false);
 });
 
+test('puts the theme toggle in the top row, stored under the app key', () => {
+  const root = document.documentElement;
+  root.dataset.theme = 'dark';
+  try {
+    render(
+      <GateFrame>
+        <p>the gate</p>
+      </GateFrame>
+    );
+    const toggle = screen.getByRole('button', {
+      name: 'Switch between light and dark',
+    });
+    expect(toggle.closest('header')).not.toBeNull();
+    expect(screen.getByRole('main').contains(toggle)).toBe(false);
+    fireEvent.click(toggle);
+    expect(root.dataset.theme).toBe('light');
+    expect(localStorage.getItem('dispatch:theme')).toBe('light');
+  } finally {
+    delete root.dataset.theme;
+    localStorage.removeItem('dispatch:theme');
+  }
+});
+
 afterEach(() => {
   window.location.hash = '';
 });

@@ -10,6 +10,7 @@ import {
 } from 'react';
 
 import { isShown } from '../../hooks/useGlobalKeyboard';
+import { THEME_STORAGE_KEY } from '../../lib/theme';
 import { ErrorBoundary } from './ErrorBoundary';
 import styles from './GateFrame.module.css';
 
@@ -71,7 +72,8 @@ function GateLink({ href, onClick, children, ...rest }: UiLinkProps) {
 /**
  * Dispatch's frame for a screen shown instead of the app shell (first-launch setup, the
  * agent check, the team-local sign-in): the library SignedOutFrame with the Dispatch brand
- * above the gate's content, so a gate has the same top row and the one <main> the shell
+ * and the light/dark toggle (stored under THEME_STORAGE_KEY, as the shell's is) above the
+ * gate's content, so a gate has the same top row and the one <main> the shell
  * would give it, and an error boundary of its own (the shell's is not around it).
  *
  * The wrapper fills its parent and scrolls on its own, so the frame works both as the
@@ -144,6 +146,7 @@ export function GateFrame({
               brandHref={brandHref}
               mainId={mainId}
               actions={actions}
+              themeStorageKey={THEME_STORAGE_KEY}
               chromeAttributes={
                 windowChrome?.dragRegion === true ? DRAG_REGION : undefined
               }

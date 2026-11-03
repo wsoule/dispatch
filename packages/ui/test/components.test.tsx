@@ -285,6 +285,20 @@ describe('ThemeToggle', () => {
     fireEvent.click(screen.getByRole('button'));
     expect(document.documentElement.dataset.theme).toBe('dark');
   });
+
+  // Through showTheme, so the colours do not animate (tokens.css).
+  test('a flip turns transitions off for the swap', () => {
+    const root = document.documentElement;
+    root.dataset.theme = 'light';
+    try {
+      render(<ThemeToggle storageKey="bt-test-theme" />);
+      fireEvent.click(screen.getByRole('button'));
+      expect(root.dataset.theme).toBe('dark');
+      expect(root.hasAttribute('data-theme-switching')).toBe(true);
+    } finally {
+      root.removeAttribute('data-theme-switching');
+    }
+  });
 });
 
 describe('GraphLegend focus swatch', () => {

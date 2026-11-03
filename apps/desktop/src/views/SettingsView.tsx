@@ -38,6 +38,7 @@ import {
 } from '../components/settings/access';
 import { AgentRosterSection } from '../components/settings/AgentRosterSection';
 import { AgentsSection } from '../components/settings/AgentsSection';
+import { AppearanceRow } from '../components/settings/AppearanceRow';
 import { BoardSyncGroup } from '../components/settings/BoardSyncGroup';
 import { ChecksSection } from '../components/settings/ChecksSection';
 import {
@@ -137,6 +138,10 @@ interface PageSpec {
   intro: string;
   /** Whether saves on this page go to config.yml (and so show the save line). */
   savesConfig: boolean;
+  /** Groups saved in this browser rather than config.yml (General's
+   *  Appearance): drawn first, above the read-only note, which speaks for the
+   *  config groups under it only, and shown before config has loaded. */
+  preferences?: () => ReactNode;
   render: (ctx: PageContext) => ReactNode;
 }
 
@@ -184,19 +189,17 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
         id: 'general',
         label: SETTINGS_PAGE_LABELS.general,
         icon: Settings2,
-        intro: "The board's columns and where pull-request checkouts go.",
+        intro:
+          "The theme in this browser, the board's columns and where pull-request checkouts go.",
         savesConfig: true,
-        render: (ctx) => (
-          <>
-            {ctx.config !== null && (
-              <GeneralSection
-                config={ctx.config}
-                onSave={ctx.save}
-                canOperate={ctx.canOperate}
-              />
-            )}
-          </>
-        ),
+        preferences: () => <AppearanceRow />,
+        render: withConfig((ctx) => (
+          <GeneralSection
+            config={ctx.config}
+            onSave={ctx.save}
+            canOperate={ctx.canOperate}
+          />
+        )),
       },
       {
         id: 'agents',
@@ -613,6 +616,7 @@ export function SettingsView({
                       page={entry}
                       onPick={() => selectPage(entry.id)}
                     >
+                      {entry.preferences?.()}
                       {entry.render(ctx)}
                     </SettingsResultPage>
                   </SearchScopeProvider>
@@ -635,6 +639,7 @@ export function SettingsView({
               status={spec.savesConfig ? saveLine : undefined}
               intro={spec.intro}
             />
+            {spec.preferences?.()}
             {/* No tier yet means no connection yet, not a refusal. */}
             {spec.savesConfig && data.myTier !== null && !access.canDecide && (
               <SettingsReadOnlyNote

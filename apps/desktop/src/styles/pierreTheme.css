@@ -18,7 +18,18 @@
    among others), which beats a value merely inherited from :root. A rule
    from the page that targets the host itself outranks a `:host` rule, so
    the app's tokens win there. @pierre/trees reads `*-override` slots it
-   never sets itself, so inheritance from :root is enough for them. */
+   never sets itself, so inheritance from :root is enough for them.
+
+   Both hosts also take :root's color-scheme. @pierre/diffs and
+   @pierre/trees each declare `:host { color-scheme: light dark }` in their
+   shadow root's base layer (and Pierre adds no scheme for its default
+   themeType 'system'), so light-dark() inside them (Shiki's token colours,
+   Pierre's defaults) would follow the OS rather than a stored Light or Dark.
+   The same precedence applies: a page rule on the host element outranks the
+   shadow's `:host` rule, so `color-scheme: inherit` on diffs-container and
+   file-tree-container (the tag names the two packages register) hands them
+   the scheme tokens.css sets on :root per data-theme: light, dark, or dark
+   under "system" only while the OS is dark. */
 :root,
 diffs-container {
   /* @pierre/diffs (PatchDiff) — background, foreground, fonts, and the
@@ -58,4 +69,10 @@ diffs-container {
      fill) and the accent is kept for the focus ring. */
   --trees-selected-bg-override: var(--surface-3);
   --trees-selected-fg-override: var(--text);
+}
+
+/* The hosts follow the app's theme choice, not the OS (see the header). */
+diffs-container,
+file-tree-container {
+  color-scheme: inherit;
 }

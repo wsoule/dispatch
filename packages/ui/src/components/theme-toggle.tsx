@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react';
 
+import { showTheme } from '../lib/theme-choice';
 import styles from './theme-toggle.module.css';
 
 export interface ThemeToggleProps {
@@ -25,7 +26,8 @@ export default function ThemeToggle({
         ? window.matchMedia('(prefers-color-scheme: dark)').matches
         : el.dataset.theme === 'dark';
     const next = dark ? 'light' : 'dark';
-    el.dataset.theme = next;
+    // Swapped without animating the colours (see showTheme).
+    showTheme(next);
     try {
       localStorage.setItem(storageKey, next);
     } catch {

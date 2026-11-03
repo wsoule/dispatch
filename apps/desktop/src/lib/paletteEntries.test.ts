@@ -1,11 +1,16 @@
 import type { DocHit } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
-import type { PaletteEntriesContext, PaletteSection } from './paletteEntries';
+import type {
+  PaletteEntriesContext,
+  PaletteEntry,
+  PaletteSection,
+} from './paletteEntries';
 import {
   addressEntries,
   buildPaletteEntries,
   docHitEntries,
+  entriesForTheme,
 } from './paletteEntries';
 import { parseHref } from './routes';
 
@@ -157,6 +162,50 @@ describe('buildPaletteEntries', () => {
     expect(entry?.label).toBe('Restart the first-task guide');
     entry?.run();
     expect(calls).toContain('restart-guide');
+  });
+});
+
+describe('Follow the system theme', () => {
+  // A context whose actions include followSystemTheme, logging to `calls`.
+  function withFollow(over: Partial<PaletteEntriesContext> = {}) {
+    const { ctx, calls } = context(over);
+    ctx.actions.followSystemTheme = () => calls.push('theme-system');
+    return { ctx, calls };
+  }
+
+  const themeRow = (entries: PaletteEntry[]) =>
+    entries.find((e) => e.id === 'action-theme-system');
+
+  test('it is built only with the action', () => {
+    expect(themeRow(buildPaletteEntries(context().ctx))).toBeUndefined();
+    expect(themeRow(buildPaletteEntries(withFollow().ctx))).toBeDefined();
+  });
+
+  for (const hasProject of [true, false]) {
+    test(`it follows Keyboard shortcuts and runs the action (project: ${String(hasProject)})`, () => {
+      const { ctx, calls } = withFollow({ hasProject });
+      const entries = buildPaletteEntries(ctx);
+      const index = entries.findIndex((e) => e.id === 'action-theme-system');
+      expect(entries[index - 1]?.id).toBe('action-shortcuts');
+      const row = entries[index];
+      expect(row?.label).toBe('Follow the system theme');
+      expect(row?.kind).toBe('action');
+      expect(row?.section).toBe('actions');
+      row?.run();
+      expect(calls).toEqual(['theme-system']);
+    });
+  }
+
+  // Shown only while a Light or Dark choice is stored; the rest are untouched.
+  test('entriesForTheme drops it under System and keeps it for Light or Dark', () => {
+    const entries = buildPaletteEntries(withFollow().ctx);
+    const ids = entries.map((e) => e.id);
+    expect(entriesForTheme(entries, 'system').map((e) => e.id)).toEqual(
+      ids.filter((id) => id !== 'action-theme-system')
+    );
+    for (const theme of ['light', 'dark'] as const) {
+      expect(entriesForTheme(entries, theme)).toBe(entries);
+    }
   });
 });
 

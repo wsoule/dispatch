@@ -182,13 +182,27 @@ measures every token pair in both themes.
 Dark mode is `data-theme="dark"`, on `<html>` (page mode) or on `<html>` or the
 wrapper (scoped mode; `data-theme="light"` on a wrapper keeps it light under a
 dark `<html>`). `data-theme="system"` (on `<html>` or a wrapper) follows the OS
-live through `prefers-color-scheme`, with no script: the simplest choice for a
-host like Dispatch that wires its own dark mode to the OS. Without any of these
-the UI is light, whatever the OS says.
+live through `prefers-color-scheme`, with no script. Without any of these the UI
+is light, whatever the OS says.
 
-- `themeScript(storageKey)` returns a parser-blocking script for the first child
-  of `<body>`: the saved choice, else the OS preference, written to
-  `html[data-theme]` before first paint (no flash).
+A person's choice is a `ThemeChoice`: `'system'`, `'light'` or `'dark'`. Only
+`'light'` and `'dark'` are stored, in `localStorage` under a key the host picks;
+no key means System. Dispatch stores a choice under `dispatch:theme` and runs
+`themeScript` with `fallback: 'system'`, so with nothing stored it keeps
+following the OS live (its Playwright `colorScheme` projects rely on that).
+
+- `themeScript(storageKey, opts?)` returns a parser-blocking script for the
+  first child of `<body>`: a stored `'light'` or `'dark'` is written to
+  `html[data-theme]` before first paint (no flash). Without one, `opts.fallback`
+  decides:
+  - `'os'` (the default, the same script as a call without `opts`): the OS
+    preference, read once through `matchMedia`, and `'light'` when storage
+    throws (private mode).
+  - `'system'`: `data-theme="system"`, for a missing, `'system'`, empty or
+    unknown value and when storage throws, so the page follows the OS live.
+
+  The emitted code is ES5, `var` and function expressions only, so Safari 14
+  runs it; the key goes in through `JSON.stringify`.
   - Next: `<script dangerouslySetInnerHTML={{ __html: themeScript(KEY) }} />`,
     with `suppressHydrationWarning` on `<html>` (the script changes its
     attribute before React hydrates).
@@ -209,10 +223,45 @@ the UI is light, whatever the OS says.
     };
     ```
 
+    Dispatch passes `themeScript(THEME_STORAGE_KEY, { fallback: 'system' })`.
+
+- `lib/theme.ts` (`themeScript`, `themeChoiceOf`, `ThemeChoice`) touches no DOM
+  and imports nothing, so it is safe in Node: a Vite config imports the subpath
+  `@dispatch/ui/lib/theme.ts`, never the package index (which pulls in React
+  components).
+- `themeChoiceOf(value)` parses a stored string: `'light'` and `'dark'` are
+  themselves; nothing, `''`, `'system'` and any other value are `'system'`.
+- `readThemeChoice(storageKey)` returns the stored choice, or `'system'` when
+  nothing usable is stored or storage throws.
+- `applyThemeChoice(storageKey, choice)` sets `html[data-theme]` to `choice`
+  first (through `showTheme`), then stores `'light'` or `'dark'`, or removes the
+  key for `'system'`. When storage throws, the theme still changes and simply
+  does not persist. A settings control that offers System, Light and Dark calls
+  it and shows `themeChoiceOf(document.documentElement.dataset.theme)`, not
+  `readThemeChoice`: `ThemeToggle` changes the attribute even when storage
+  throws, so a storage read would say System while Dark is on screen. `storage`
+  events do not fire in the document that wrote, so the control watches
+  `html[data-theme]` to stay in step with `ThemeToggle`; one `storage` listener
+  for the page (not one per control) shows a choice made in another window.
+- `showTheme(theme)` writes `html[data-theme]` without animating the change:
+  `data-theme-switching` on `<html>` turns every element's transitions off
+  (`tokens.css`) for the frame that first paints the new theme and comes off one
+  frame later, so rows and buttons that transition their colours change with the
+  surfaces behind them. `ThemeToggle` and `applyThemeChoice` call it; a host
+  that writes the attribute itself (a `storage` listener) should too.
+  Pseudo-elements are left out (a universal `::before`/`::after` rule is costly
+  in WebKit), so a module whose `::before` or `::after` transitions a colour it
+  draws at rest turns that off under `:root[data-theme-switching]` itself, as
+  the picker's pills do.
 - `<ThemeToggle storageKey={KEY} />` flips `html[data-theme]` and saves the
   choice under the same key. It assumes `themeScript` ran (it toggles from
   whatever `<html>` says; from `system` it switches to the opposite of what the
-  OS shows). Its glyph follows the nearest `data-theme` ancestor.
+  OS shows). Its glyph follows the nearest `data-theme` ancestor. It only flips,
+  so a way back to System goes through `applyThemeChoice(KEY, 'system')`.
+- `localStorage` is per origin, so the choice is too. In a browser each origin
+  keeps its own: each Dispatch daemon port is an origin, so a choice made on one
+  project's port does not carry to another. The Tauri app has one origin, so
+  there the choice holds everywhere. A choice does not roam between machines.
 - A host that follows the OS but needs the value in JavaScript can set the
   wrapper's attribute itself:
 
@@ -403,7 +452,7 @@ the types for the rest.
 | basics   | `StatusMark`                                                                                                                     | `status`, `label`                                                   |
 |          | `BlockBar` (a section heading row; `index` is ignored)                                                                           | `title`                                                             |
 |          | `Tabs` (prefixed ids; `label` names the tablist; empty renders nothing; `value` and `onChange` control it; host panel below)     | `items: TabItem[]` (`id`, `label`, optional `content`)              |
-|          | `ThemeToggle`                                                                                                                    | `storageKey`                                                        |
+|          | `ThemeToggle`, and under Theme `themeScript`, `readThemeChoice`, `applyThemeChoice`, `showTheme`, `themeChoiceOf`, `ThemeChoice` | `storageKey`                                                        |
 |          | `InitialsAvatar` (round, a pastel hue from the name; blank = nobody), `avatarHue(name)`                                          | `name`                                                              |
 | tasks    | `Button` (primary, secondary, quiet, danger; `size` sm / md / lg; `block`)                                                       | none (`href` renders a link)                                        |
 |          | `Checkbox` (`indeterminate` for a partly selected group), `Switch` (`hideLabel`), `SegmentedControl`, `Chip`                     | see `tasks/types.ts`                                                |
@@ -1893,7 +1942,10 @@ the shell's `[` and the palette's keys stand down inside it) and a host's
 All of it runs in effects and event handlers on the client; server rendering
 touches none of it.
 
-- `ThemeToggle` writes `html[data-theme]` and `localStorage`.
+- `ThemeToggle` writes `html[data-theme]` (and `data-theme-switching` for two
+  frames) and `localStorage`, and so does `applyThemeChoice` when the host calls
+  it; `showTheme` writes the attributes alone and `readThemeChoice` reads
+  `localStorage`. Call those three on the client only (an effect or a handler).
 - `AppShell` writes `html[data-shell-collapsed]` (and removes it on unmount),
   binds `[` to collapse the sidebar (unless `sidebarShortcut` is false; never
   from inside an open picker, menu or popover, a `[data-picker-popup]`), and

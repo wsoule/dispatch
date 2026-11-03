@@ -394,6 +394,18 @@
   border-radius: 50%;
 }
 
+/* A theme swap does not animate: while showTheme() (lib/theme-choice.ts)
+   holds data-theme-switching on <html>, tokens.css turns transitions off
+   on every element but not on pseudo-elements, so the pills here, which
+   are ::before boxes (the status line's --surface pill is drawn at rest),
+   stand down themselves. */
+:global(:root[data-theme-switching]) .value::before,
+:global(:root[data-theme-switching]) .mono::before,
+:global(:root[data-theme-switching]) .cell::before,
+:global(:root[data-theme-switching]) .mark::before {
+  transition: none;
+}
+
 /* Forced colours drop the fill: the frame keeps a ButtonText edge, and
    the open one the Highlight edge. */
 @media (forced-colors: active) {

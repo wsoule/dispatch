@@ -5,7 +5,12 @@
 export * from './types';
 export { COPIED_MS, writeClipboard } from './lib/clipboard';
 export { Link, UiLinkProvider, type UiLinkProviderProps } from './lib/link';
-export { themeScript } from './lib/theme';
+export { type ThemeChoice, themeChoiceOf, themeScript } from './lib/theme';
+export {
+  applyThemeChoice,
+  readThemeChoice,
+  showTheme,
+} from './lib/theme-choice';
 export {
   default as BlockBar,
   type BlockBarProps,

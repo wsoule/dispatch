@@ -136,7 +136,9 @@ test('the rail groups every page, and the page title is the H1', () => {
     'Background',
     'Diff display',
   ]);
-  expect(screen.getByText(/The board's columns/)).toBeDefined();
+  expect(
+    screen.getByText(/The theme in this browser, the board's columns/)
+  ).toBeDefined();
   selectPage('Autonomy');
   expect(screen.getByRole('slider', { name: 'Autonomy' })).toBeDefined();
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(
@@ -194,7 +196,24 @@ test('a page renders its sections as level-2 headings', () => {
   render(<SettingsView activeProject={project} data={data} />);
   expect(
     screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
-  ).toEqual(['Board columns', 'Pull requests']);
+  ).toEqual(['Appearance', 'Board columns', 'Pull requests']);
+});
+
+// The theme is a per-computer preference, not config, so General shows it
+// before the config has loaded, and Settings search finds it.
+test('General shows Appearance and the Theme control even with no config yet', () => {
+  render(
+    <SettingsView activeProject={project} data={dataWith({ config: null })} />
+  );
+  expect(
+    screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
+  ).toEqual(['Appearance']);
+  const theme = screen.getByRole('radiogroup', { name: 'Theme' });
+  expect(
+    within(theme)
+      .getAllByRole('radio')
+      .map((el) => el.textContent)
+  ).toEqual(['System', 'Light', 'Dark']);
 });
 
 // Search renders every page, so the client needs what the Autonomy page reads.
@@ -207,6 +226,18 @@ function search(value: string) {
     target: { value },
   });
 }
+
+test('Settings search for dark finds the Theme control', () => {
+  render(<SettingsView activeProject={project} data={searchData} />, {
+    wrapper: withQueryClient(),
+  });
+  search('dark');
+  // Diff display's own group is "Diff appearance", so the two never share a
+  // heading; the Theme control is the one under General.
+  const theme = screen.getByRole('radiogroup', { name: 'Theme' });
+  expect(within(theme).getByRole('radio', { name: 'Dark' })).toBeDefined();
+  expect(screen.queryByText('No settings match')).toBeNull();
+});
 
 // Search swaps the page for the matching settings from every page, grouped
 // under the page they live on, and each is still the real, editable control.
@@ -656,6 +687,40 @@ describe('below the decide tier, config is read-only', () => {
     }
   });
 
+  // The theme is saved in this browser, not config, so General draws it above
+  // the read-only note: the note then speaks only for the config below it.
+  test('General: Appearance sits above the note and stays editable', () => {
+    try {
+      renderAt(tierData({ myTier: 'request' }), 'general');
+      const note = screen.getByRole('note');
+      expect(note.textContent).toBe(NEEDS_DECIDE);
+      const follows = (a: Node, b: Node) =>
+        (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+      const appearance = screen.getByRole('heading', {
+        level: 2,
+        name: 'Appearance',
+      });
+      const columns = screen.getByRole('heading', {
+        level: 2,
+        name: 'Board columns',
+      });
+      expect(follows(appearance, note)).toBe(true);
+      expect(follows(note, columns)).toBe(true);
+      expect(headingLock('Appearance')).toBeNull();
+      const dark = within(
+        screen.getByRole('radiogroup', { name: 'Theme' })
+      ).getByRole('radio', { name: 'Dark' });
+      expect(isDisabled(dark)).toBe(false);
+      fireEvent.click(dark);
+      expect(localStorage.getItem('dispatch:theme')).toBe('dark');
+      expect(headingLock('Board columns')).toBe(NEEDS_DECIDE);
+    } finally {
+      localStorage.removeItem('dispatch:theme');
+      delete document.documentElement.dataset.theme;
+      document.documentElement.removeAttribute('data-theme-switching');
+    }
+  });
+
   // Can approve access isn't enough for an owner-only row, so its own lock
   // stays; in an attached window, restarting from the app unlocks both.
   test('owner-only rows keep their own lock inside a locked group', () => {
@@ -798,7 +863,7 @@ describe('below the decide tier, what has its own route stays usable', () => {
   test('Diff display: every control, and no read-only note', () => {
     renderAt(dataWith({ myTier: 'request' }), 'diffs');
     expect(screen.queryByRole('note')).toBeNull();
-    expect(headingLock('Appearance')).toBeNull();
+    expect(headingLock('Diff appearance')).toBeNull();
     for (const control of [
       selectTrigger('Diff layout'),
       selectTrigger('Diff change indicators'),

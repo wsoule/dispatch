@@ -102,4 +102,34 @@ describe('built bundle parses on the oldest supported WebKit', () => {
     expect(readFileSync(entry, 'utf8')).toContain(marker);
     expect(readFileSync(worker, 'utf8')).toContain(marker);
   });
+
+  test('the pre-paint theme script is inline, before #root, and parses as ES5', () => {
+    // vite.config.ts's dispatch-theme plugin injects themeScript() at
+    // body-prepend. It must be a classic script (no src, no type=module, which
+    // would defer it past first paint) ahead of the root. The bundle check
+    // above reads only dist's .js files, so this one parses the inline body
+    // itself, at ES5: themeScript promises var and function expressions only,
+    // stricter than the bundles' MAX_ECMA_VERSION.
+    const html = readFileSync(join(DIST_DIR, 'index.html'), 'utf8');
+    const rootAt = html.indexOf('<div id="root">');
+    expect(rootAt).toBeGreaterThan(-1);
+    const inline = [
+      ...html.matchAll(/<script(?<attrs>[^>]*)>(?<body>[\s\S]*?)<\/script>/g),
+    ]
+      .filter((match) => {
+        const attrs = match.groups?.attrs ?? '';
+        return !/\bsrc=/.test(attrs) && !/type=["']?module/.test(attrs);
+      })
+      .find((match) => (match.groups?.body ?? '').includes('dispatch:theme'));
+    if (inline === undefined) {
+      throw new Error(
+        'dist/index.html has no inline script reading dispatch:theme'
+      );
+    }
+    expect(inline.index).toBeLessThan(rootAt);
+    const body = inline.groups?.body ?? '';
+    expect(() =>
+      parse(body, { ecmaVersion: 5, sourceType: 'script' })
+    ).not.toThrow();
+  });
 });

@@ -117,6 +117,7 @@ import {
 import { useSavedViews } from './hooks/useSavedViews';
 import { useSidePanelNotifications } from './hooks/useSidePanelNotifications';
 import { tasksKey } from './hooks/useTaskDoc';
+import { setThemeChoice } from './hooks/useThemeChoice';
 import {
   threadListsKey,
   useA2APeers,
@@ -1381,6 +1382,8 @@ function App() {
           openSavedView,
           copyTaskLink,
           restartGuide: () => restartGuideRef.current(),
+          // The palette shows this row only while a choice is stored.
+          followSystemTheme: () => setThemeChoice('system'),
         },
       }),
       ...addressEntries({
