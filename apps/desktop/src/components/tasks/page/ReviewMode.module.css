@@ -119,10 +119,17 @@
   overflow: auto;
 }
 
+/* The checklist scrolls on its own. Its 6px inline padding holds the bleed of
+   the changed-files rows (`.files`), which would otherwise widen the scroll
+   box past its 300px and let the whole rail scroll sideways, clipping the left
+   edge of every section; the matching negative margin keeps the content where
+   it was. */
 .aside {
   flex: none;
   order: 1;
   max-height: 40%;
+  margin-inline: -6px;
+  padding-inline: 6px;
   overflow-y: auto;
 }
 
@@ -137,7 +144,8 @@
 
   .aside {
     order: 2;
-    width: 300px;
+    /* 300px of checklist plus the 6px inline padding on each side. */
+    width: 312px;
     max-height: none;
   }
 }
