@@ -67,10 +67,13 @@ export type GlobalKeyCommand =
   /** The quick-open chord while a modal is open: nothing opens, but the key is still the
    * app's, so the browser's print dialog never does either. */
   | 'quick-open-blocked'
-  /** The `g` chords: `g h` Home, `g s` Settings, `g i` Inbox, `g m` Threads (messages),
-   * `g t` Tasks, `g l` Timeline (`t` is taken), `g g` Graph, `g r` Projects (the
-   * roadmap), `g f` Live (work in flight), `g c` Control room, `g a` Overseer (Linear's
-   * "Agent"). */
+  /** The `g` chords, as lib/appNav.ts keyAction routes them: `g s` Settings, `g i` the
+   * Needs you preset, `g m` Threads (messages), `g t` Issues, `g l` Timeline (`t` is
+   * taken), `g g` Graph, `g f` the Moving preset (work in flight), `g r` the Review
+   * preset, and `g a`, `g o`, `g h` and `g c` the Overseer. Some command names predate
+   * their targets: goto-live is Moving, goto-projects is Review, and goto-home and
+   * goto-control-room are the Overseer. lib/shortcutGroups.ts lists the chords the
+   * shortcut sheet shows. */
   | 'goto-home'
   | 'goto-settings'
   | 'goto-inbox'
