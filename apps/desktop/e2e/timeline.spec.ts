@@ -12,9 +12,9 @@ import { navLink, openDestination, waitForShell } from './shell';
 
 const APP = { authorization: `Bearer ${APP_TOKEN}` };
 
-// The storefront fixture's milestones (its two milestones) have no project and no
-// date, so this spec gives one of them both, on its own daemon so the shared
-// fixture views.spec.ts screenshots stays as it was.
+// The storefront fixture's two milestones have no project and no date, so
+// this spec puts both in a new project and dates one of them, on its own
+// daemon so the shared fixture views.spec.ts screenshots stays as it was.
 let daemon: IsolatedDaemon | null = null;
 
 function requireDaemon(): IsolatedDaemon {
@@ -74,6 +74,11 @@ test('the Timeline draws a project lane with its dated milestone, zooms, and lis
     parent: project.meta.id,
     dueDate: dayFromNow(21),
   });
+  // The search epic joins the same project with no date. Left without a
+  // project it would sit in the synthetic "No project" lane, which is
+  // inactive and so never raises a banner (adapters/workspaceData.ts); in an
+  // active project its missing date is loud.
+  await api(request, 'PATCH', '/tasks/e-77b3e1', { parent: project.meta.id });
 
   await page.goto(daemon.appUrl);
   await waitForShell(page);
@@ -87,13 +92,16 @@ test('the Timeline draws a project lane with its dated milestone, zooms, and lis
     view.getByRole('heading', { level: 1, name: 'Timeline' })
   ).toBeVisible();
 
-  // The lane (the project, with "No lead" under its name) and its bar.
+  // The lane (the project, with "No lead" under its name), its bar, and the
+  // undated epic as a chip at the lane's end rather than a bar.
   const chart = view.getByRole('region', { name: /^Timeline, / });
-  await expect(
-    chart.getByRole('group', { name: /^Storefront relaunch\b/ })
-  ).toBeVisible();
+  const lane = chart.getByRole('group', { name: /^Storefront relaunch\b/ });
+  await expect(lane).toBeVisible();
   const bar = chart.getByRole('button', { name: /^Checkout rewrite, / });
   await expect(bar).toBeVisible();
+  await expect(
+    lane.getByRole('button', { name: /^Search relevance, No target date\b/ })
+  ).toBeVisible();
 
   // Weeks / Months.
   const zoom = view.getByRole('radiogroup', { name: 'Zoom' });
@@ -104,7 +112,7 @@ test('the Timeline draws a project lane with its dated milestone, zooms, and lis
   );
   await expect(bar).toBeVisible();
 
-  // The other epic still has no date, and the new project no lead.
+  // The search epic has no date, and the new project no lead.
   const banners = view.getByRole('region', { name: 'Missing inputs' });
   await expect(banners.getByText(/has no target date/)).toBeVisible();
   await expect(banners.getByText(/has no lead/)).toBeVisible();

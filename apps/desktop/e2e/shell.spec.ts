@@ -1,5 +1,6 @@
 import { expect, type Page, test } from '@playwright/test';
 
+import { type IsolatedDaemon, startIsolatedDaemon } from './isolatedDaemon';
 import { APP_TOKEN } from './paths';
 import {
   expectNeedsYouCount,
@@ -33,9 +34,18 @@ async function expectNoConversationLists(page: Page): Promise<void> {
   }
 }
 
+// The daemon of the one test that writes (see its own comment), on a copy of
+// the fixture; every other test here only reads the shared one.
+let daemon: IsolatedDaemon | null = null;
+
 test.beforeEach(() => {
   // The run's first load pays Vite's cold dependency bundling.
   test.setTimeout(90_000);
+});
+
+test.afterEach(async () => {
+  await daemon?.stop();
+  daemon = null;
 });
 
 test('the app opens on Overseer inside the shell, with one set of numbers', async ({
@@ -251,9 +261,12 @@ test('a row click quick-looks its task in the slide-over; Enter opens the page',
 
 test('a task’s conversation is one flat timeline with a composer locked to it', async ({
   page,
-  baseURL,
 }) => {
-  await page.goto(authedUrl(baseURL));
+  // Opening the conversation marks its two asks read on the daemon, which
+  // would take the Threads badge and the bold rows out of every views.spec.ts
+  // shot taken after it, so this test reads them on a copy of the fixture.
+  daemon = await startIsolatedDaemon('shell-conversation');
+  await page.goto(daemon.appUrl);
   await openDestination(page, 'Issues');
   // Enter opens the full page (a click would only quick-look the task).
   await page.getByText('Add address autocomplete').first().focus();
@@ -307,4 +320,68 @@ test('a route survives a reload: the Timeline row stays current, a task page sho
     })
   ).toBeVisible();
   await expect(navLink(page, 'Issues')).toHaveAttribute('aria-current', 'page');
+});
+
+test('a reload on the Overseer keeps the Tasks place beneath it, and Back returns there', async ({
+  page,
+  baseURL,
+}) => {
+  // The Overseer over t-6c40de's task page: Tasks' place rides in `?tasks=`,
+  // its own href without the `#/`, URI-encoded.
+  const tasksPlace = encodeURIComponent('task/t-6c40de');
+  await page.goto(`${authedUrl(baseURL)}#/overseer?tasks=${tasksPlace}`);
+  await waitForShell(page);
+  await expect(page.getByTestId('overseer-view')).toBeVisible();
+  await page.reload();
+  await waitForShell(page);
+  await expect(page.getByTestId('overseer-view')).toBeVisible();
+  await expect(navLink(page, 'Overseer')).toHaveAttribute(
+    'aria-current',
+    'page'
+  );
+  // The route is kept as it was, place beneath and all.
+  await expect(page).toHaveURL(new RegExp(`#/overseer\\?tasks=${tasksPlace}$`));
+  // Back (⌘[ or Ctrl+[) steps down to the place beneath: the task page.
+  await page.keyboard.press('ControlOrMeta+BracketLeft');
+  await expect(
+    page.getByTestId('tasks-view').getByRole('heading', {
+      level: 1,
+      name: 'Persist the cart across devices',
+    })
+  ).toBeVisible();
+  await expect(page.getByTestId('overseer-view')).toBeHidden();
+  await expect(page).toHaveURL(/#\/task\/t-6c40de$/);
+  await expect(navLink(page, 'Issues')).toHaveAttribute('aria-current', 'page');
+});
+
+test('a reload on Issues narrowed to a project keeps its Project chip; removing it clears ?project=', async ({
+  page,
+  baseURL,
+}) => {
+  // The storefront fixture's containers are its two milestones, and the
+  // route narrows to any container: Checkout rewrite stands in for a project.
+  await page.goto(`${authedUrl(baseURL)}#/issues?project=e-4a19c2`);
+  await waitForShell(page);
+  await page.reload();
+  await waitForShell(page);
+  const view = page.getByTestId('tasks-view');
+  const table = page.getByTestId('issues-table');
+  const chips = view.getByRole('group', { name: 'Filters' });
+  await expect(chips).toContainText('Project');
+  await expect(chips).toContainText('Checkout rewrite');
+  await expect(page).toHaveURL(/#\/issues\?project=e-4a19c2$/);
+  // Only the project's issues: a Checkout rewrite task, no Search relevance one.
+  await expect(
+    table.getByText('Persist the cart across devices').first()
+  ).toBeVisible();
+  await expect(
+    table.getByText('Rank exact SKU matches above fuzzy')
+  ).toHaveCount(0);
+
+  await chips.getByRole('button', { name: 'Remove project filter' }).click();
+  await expect(chips).toHaveCount(0);
+  await expect(page).toHaveURL(/#\/issues$/);
+  await expect(
+    table.getByText('Rank exact SKU matches above fuzzy').first()
+  ).toBeVisible();
 });

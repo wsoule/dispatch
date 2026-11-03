@@ -56,10 +56,10 @@ async function getRun(
  * path (nothing changes), and the approve path (a fake-dispatched run really
  * appears).
  *
- * Unlike `edit-diff.spec.ts`, this spec HAS been executed and debugged green
- * against the real app (2026-08-10, storefront fixture seeded locally): it
- * passed twice back-to-back, and the fixture counts views.spec.ts pins
- * ('1 Failed' / '5 Needs review') were re-verified intact afterward. It also
+ * This spec was first executed and debugged green against the real app on
+ * 2026-08-10 (storefront fixture seeded locally): it passed twice
+ * back-to-back, and the fixture counts views.spec.ts pins ('1 Failed' /
+ * '5 Needs review') were re-verified intact afterward. It also
  * caught a real race on its first run — a turn settling before the start
  * response landed left the transcript on the pending spinner forever — fixed
  * in useOverseerSession by invalidating the record query after each mutation

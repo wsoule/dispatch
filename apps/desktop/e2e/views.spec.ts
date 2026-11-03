@@ -107,59 +107,58 @@ for (const view of VIEWS) {
 // absorb, and the header renders identically either way — so this asserts
 // real code content is present before ever taking one.
 //
-// Scoped to its own describe for a wider viewport: the review grid's three
-// fixed-width columns (190/200/290px + gaps, 728px minimum) leave the
-// flexible diff column only a sliver of the suite's shared 1036px viewport —
-// too narrow to show anything, which is a real but distinct layout gap from
-// the height bug this test exists to catch. A wider viewport isolates the two
-// rather than asserting around whichever one happens to be squeezing the pane.
-//
-// FIXME (branch: the task-centric consolidation, 98bf1858): the review queue
-// this once drove is gone; it now opens the run's task from the Tasks list
-// instead. What has no replacement is the next step: the run review surface no longer renders a
-// changed-files tree at all (`RunReviewView` hands the whole patch to
-// `PierreReviewDiff` with no `only` narrowing), so the `treeitem` click below
-// — the step that selects the one file whose content is then asserted — has
-// nothing to click. Rewriting the assertion needs the real DOM of the new
-// surface, and Playwright cannot launch in the environment this branch was
-// written in (its webServer cannot `posix_spawn` git), so it is left explicit
-// rather than guessed at.
+// The review surface is a task page's Review tab: t-2e91aa ("Move cart state
+// to the session store") has a finished, unreviewed run whose diff the
+// fixture keeps as a snapshot (r-2e91aa.diff.json under storefront-home), so
+// the page opens on Review. Its own describe for a wider viewport: the page
+// sets the diff beside a review rail and the task's properties rail, which
+// leave the diff column too narrow to read at the suite's shared 1036px.
 test.describe('review detail', () => {
   test.use({ viewport: { width: 1600, height: 1100 } });
 
-  test.fixme('renders an open diff', async ({ page, baseURL }) => {
+  test('renders an open diff', async ({ page, baseURL }) => {
+    await page.clock.setFixedTime(FIXED_NOW);
     await page.goto(authedUrl(baseURL));
     await assertFixtureDataLoaded(page);
     await openDestination(page, 'Issues');
 
-    // The task's row in the Tasks list opens its page beside the list.
+    // The task's row opens its page: Enter on a row, as a person does.
     const taskRow = page
-      .getByTestId('tasks-view')
-      .getByRole('link', { name: 'Rate limit the search endpoint' });
+      .getByTestId('issues-table')
+      .getByText('Move cart state to the session store')
+      .first();
     await expect(
       taskRow,
-      'the "Rate limit the search endpoint" task is not in the Tasks list — ' +
-        "this machine's seeded fixture (.agents/ignore/storefront-home) may " +
+      'the "Move cart state to the session store" task is not in the Tasks ' +
+        "list — this machine's seeded fixture (.agents/ignore/storefront) may " +
         'be stale rather than this being a real regression'
     ).toBeVisible();
-    await taskRow.click();
+    await taskRow.focus();
+    await page.keyboard.press('Enter');
+    const view = page.getByTestId('tasks-view');
+    await expect(
+      view.getByRole('heading', {
+        level: 1,
+        name: 'Move cart state to the session store',
+      })
+    ).toBeVisible();
+    // A finished run's task opens on its review.
+    await expect(
+      view
+        .getByRole('navigation', { name: 'Lifecycle' })
+        .getByRole('link', { name: /^Review/ })
+    ).toHaveAttribute('aria-current', 'page');
 
-    // The changed-files list is keyed off this run's own diff snapshot
-    // (.agents/ignore/storefront-home/.dispatch/runs/**/r-de238d.diff.json),
-    // which is gitignored and machine-local — a known, accepted limitation of
-    // this harness. Fail with a legible reason rather than a bare locator
-    // timeout if that snapshot is ever missing on the machine running this.
-    //
-    // Matched by role/name rather than title: the list is `@pierre/trees`'
-    // `FileTree`, whose rows are `role="treeitem"` with the filename as their
-    // accessible name (see `getFileTreeRowAriaLabel` in
-    // `@pierre/trees/dist/render/FileTreeView.js`) — it sets `title` only on
-    // the git-status icon, not the row itself.
-    const fileRow = page.getByRole('treeitem', { name: 'rate_limit.ts' });
+    // The review rail lists the run's changed files; picking one scrolls the
+    // whole-patch diff to it. The list is the run's own diff snapshot, which
+    // is gitignored and machine-local, so a missing row fails with a reason.
+    const fileRow = view.getByRole('button', {
+      name: 'M src/cart/CartProvider.ts',
+    });
     await expect(
       fileRow,
-      "rate_limit.ts is not in the changed-files list — this run's seeded " +
-        'diff snapshot is gitignored/machine-local and appears to be ' +
+      "src/cart/CartProvider.ts is not in the changed-files list — this run's " +
+        'seeded diff snapshot is gitignored/machine-local and appears to be ' +
         'missing or stale here, rather than this being a real render ' +
         'regression'
     ).toBeVisible();
@@ -167,30 +166,40 @@ test.describe('review detail', () => {
 
     // The actual failure mode: the file header renders regardless of the bug
     // (it sits outside the virtualized region), so asserting only on it
-    // would pass against an empty pane. `rule0` is the first token of the
-    // first line of the real file content, so its presence means `CodeView`
-    // measured a real, non-zero viewport and rendered rows into it — not
-    // just mounted.
-    const firstLine = page.getByText('rule0', { exact: true });
+    // would pass against an empty pane. This comment is a line the run added,
+    // so its presence means `CodeView` measured a real, non-zero viewport and
+    // rendered rows into it — not just mounted.
+    const addedLine = view.getByText('Cart state lives in the session store');
     await expect(
-      firstLine,
-      'rate_limit.ts diff pane shows no code — CodeView likely measured a ' +
-        'zero-height scroll container (the exact failure fixed in 60e99e8)'
+      addedLine,
+      'the CartProvider.ts diff pane shows no code — CodeView likely ' +
+        'measured a zero-height scroll container (the exact failure fixed in ' +
+        '60e99e8)'
     ).toBeVisible({ timeout: 10_000 });
     // `toBeVisible` alone is not enough: a zero-height `overflow-auto`
     // container still leaves its virtualizer's overscan rows attached with a
-    // non-empty bounding box, so `rule0` can be "visible" by that check alone
+    // non-empty bounding box, so the line can be "visible" by that check alone
     // while actually clipped to nothing by its own ancestor — the exact shape
     // of the regression this test exists to catch. `toBeInViewport` instead
     // checks the element's intersection with the page after clipping, which
     // a collapsed scroll container drives to zero.
     await expect(
-      firstLine,
-      "rate_limit.ts's first line is attached but clipped to nothing — " +
+      addedLine,
+      "CartProvider.ts's added line is attached but clipped to nothing — " +
         "CodeView's scroll container likely has zero real height"
     ).toBeInViewport();
 
-    // Same settle as every other view shot, for the same reason.
+    // The review rail scrolls up and down only. A row wider than the rail let
+    // it scroll sideways, and a click on a changed file could then shift every
+    // section's left edge out of view.
+    const rail = view.getByRole('complementary', { name: 'Review checklist' });
+    expect(
+      await rail.evaluate((el) => el.scrollWidth - el.clientWidth),
+      'the review rail is wider inside than out, so it scrolls sideways'
+    ).toBe(0);
+
+    // Same pointer park and settle as every other view shot.
+    await page.mouse.move(0, 0);
     await page.waitForTimeout(1000);
     await expect(page).toHaveScreenshot('review-detail.png', {
       fullPage: true,

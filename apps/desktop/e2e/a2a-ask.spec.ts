@@ -1,28 +1,17 @@
 import { expect, test } from '@playwright/test';
 import { createServer } from 'node:net';
 
-import { APP_TOKEN, DAEMON_PORT } from './paths';
+import { type IsolatedDaemon, startIsolatedDaemon } from './isolatedDaemon';
+import { APP_TOKEN } from './paths';
 import { openDestination } from './shell';
 
-const DAEMON = `http://localhost:${DAEMON_PORT}`;
 // The listener and client routes are decide-tier, so the daemon is driven with the app token.
 const APP = { authorization: `Bearer ${APP_TOKEN}` };
 
-// Duplicated from messaging.spec.ts, following the convention edit-diff.spec.ts documents.
-function requireToken(): string {
-  const token = process.env.DISPATCH_E2E_TOKEN;
-  if (!token) {
-    throw new Error(
-      'DISPATCH_E2E_TOKEN is unset: global-setup.ts should have resolved it.'
-    );
-  }
-  return token;
-}
-
-function authedUrl(baseURL: string | undefined): string {
-  if (!baseURL) throw new Error('baseURL is not configured');
-  return `${baseURL}&token=${requireToken()}&appToken=${APP_TOKEN}`;
-}
+// This spec's own daemon on a copy of the fixture: the ask it answers stays in
+// the copy's Threads (a stamped thread and a decided row), so on the shared
+// daemon it would show up in every views.spec.ts shot taken after it.
+let daemon: IsolatedDaemon | null = null;
 
 // A loopback port nothing listens on now, for the A2A listener.
 function freePort(): Promise<number> {
@@ -61,30 +50,23 @@ async function readEvents(res: Response): Promise<string[]> {
   }
 }
 
-let added: { address: string } | null = null;
-
 test.describe('A2A ask end to end', () => {
-  test.afterEach(async ({ request }) => {
-    // Leave the fixture as found: listener off, the test client revoked.
-    await request.delete(`${DAEMON}/api/a2a/listener`, { headers: APP });
-    if (added !== null) {
-      await request.post(
-        `${DAEMON}/api/agents/${encodeURIComponent(added.address)}/revoke`,
-        { headers: APP }
-      );
-    }
-    added = null;
+  // The copy goes with its daemon, so the listener and the client need no undoing.
+  test.afterAll(async () => {
+    await daemon?.stop();
+    daemon = null;
   });
 
   test('an A2A client streams an ask, the owner answers in Threads, and the stream ends COMPLETED', async ({
     page,
-    baseURL,
     request,
   }, testInfo) => {
     test.skip(testInfo.project.name !== 'dark', 'theme-independent flow');
+    daemon = await startIsolatedDaemon('a2a-ask');
+    const { origin, appUrl } = daemon;
 
     const port = await freePort();
-    const listener = await request.put(`${DAEMON}/api/a2a/listener`, {
+    const listener = await request.put(`${origin}/api/a2a/listener`, {
       headers: APP,
       data: {
         enabled: true,
@@ -97,20 +79,16 @@ test.describe('A2A ask end to end', () => {
       },
     });
     expect(await listener.json()).toMatchObject({ listening: true });
-    // A revoked name is never reusable, so each run takes a fresh one.
+    // The stamp names the client and the question, so the Threads row below
+    // can only be this ask.
     const stamp = Date.now();
-    const created = await request.post(`${DAEMON}/api/a2a/clients`, {
+    const created = await request.post(`${origin}/api/a2a/clients`, {
       headers: APP,
       data: { name: `e2e-${stamp}`, approve: true },
     });
     expect(created.status()).toBe(201);
-    const { address, token } = (await created.json()) as {
-      address: string;
-      token: string;
-    };
-    added = { address };
+    const { token } = (await created.json()) as { token: string };
 
-    // Stamped, so a question an earlier failed attempt left open never matches.
     const ask = `Is /sessions final? (${stamp})`;
     const stream = fetch(`http://127.0.0.1:${port}/a2a/v1/message:stream`, {
       method: 'POST',
@@ -128,7 +106,7 @@ test.describe('A2A ask end to end', () => {
       }),
     }).then(readEvents);
 
-    await page.goto(authedUrl(baseURL));
+    await page.goto(appUrl);
     await openDestination(page, 'Threads');
     const question = page
       .getByRole('group', { name: 'Needs you', exact: true })
