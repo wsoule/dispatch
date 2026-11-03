@@ -174,10 +174,12 @@ export function currentShellDestination(state: NavState): ShellDestination {
 
 /**
  * The topbar's last crumb under the current destination: the open task's
- * title on a task page, and "Live" on the Live page, so the trail reads
- * project / Runs / Live with Runs a link back to the Runs page and Live the
- * current page (the topbar marks its last crumb current). Null when the
- * destination itself is the page.
+ * title on a task page, "Live" on the Live page, and the page's own name on
+ * Files, Terminals and Projects, which keep the Issues row current. So the
+ * trail reads project / Runs / Live or project / Issues / Files, with the
+ * destination a link back and the page the current one (the topbar marks its
+ * last crumb current, so it must never be "Issues" on another page). Null
+ * when the destination itself is the page.
  */
 export function currentShellPageTitle(
   state: NavState,
@@ -185,11 +187,23 @@ export function currentShellPageTitle(
 ): string | null {
   if (state.settings !== null) return null;
   if (onLivePage(state)) return LIVE_PAGE_TITLE;
+  const page = state.tasksPage;
+  if (state.mainView === 'tasks' && page.kind === 'view') {
+    return UNLISTED_PAGE_TITLES[page.view] ?? taskTitle;
+  }
   return taskTitle;
 }
 
 /** The Live page's name: its h1 and its crumb under Runs. */
 export const LIVE_PAGE_TITLE = 'Live';
+
+/** The hosted pages under Issues with no sidebar row of their own, by the
+ * name their heading and their crumb share. */
+const UNLISTED_PAGE_TITLES: Partial<Record<HostedView, string>> = {
+  files: 'Files',
+  terminals: 'Terminals',
+  projects: 'Projects',
+};
 
 /** Whether a hosted page is one of the sidebar's rows (Threads, Timeline,
  * Graph), rather than a page reached another way (Files, Terminals, Projects),

@@ -264,6 +264,44 @@ describe('currentShellDestination', () => {
     expect(currentShellPageTitle(after([]), null)).toBeNull();
   });
 
+  test('Files, Terminals and Projects end the trail at their own name, under Issues', () => {
+    for (const [view, name] of [
+      ['files', 'Files'],
+      ['terminals', 'Terminals'],
+      ['projects', 'Projects'],
+    ] as const) {
+      const page = after([
+        { type: 'showTasks' },
+        { type: 'setProjectView', view },
+      ]);
+      // The sidebar keeps Issues current, and the trail links back to it,
+      // so "Issues" is never announced as the current page here.
+      expect(currentShellDestination(page)).toBe('issues');
+      expect(currentShellPageTitle(page, null)).toBe(name);
+      expect(
+        buildCrumbs({
+          projectName: 'storefront',
+          destination: currentShellDestination(page),
+          taskTitle: currentShellPageTitle(page, null),
+          settingsPage: page.settings,
+        })
+      ).toEqual([
+        { label: 'storefront', href: '#/overseer' },
+        { label: 'Issues', href: hrefFor('issues') },
+        { label: name },
+      ]);
+      // Settings over the page has its own trail.
+      const over = after([{ type: 'openSettings', page: 'general' }], page);
+      expect(currentShellPageTitle(over, null)).toBeNull();
+    }
+    // A page with its own row ends at that row.
+    const threads = after([
+      { type: 'showTasks' },
+      { type: 'setProjectView', view: 'threads' },
+    ]);
+    expect(currentShellPageTitle(threads, null)).toBeNull();
+  });
+
   test('the docs and threads pages are their own rows', () => {
     expect(
       currentShellDestination(after([{ type: 'setProjectView', view: 'docs' }]))
