@@ -1258,6 +1258,25 @@ export interface RegisterProps extends DataAttributes {
   /** grid-template-columns of a stacked card; the first cell (the row's
    * subject) spans the full width. Default two equal columns. */
   stackedColumns?: string;
+  /** Opt-in row windowing for a long register (Runs' "Show all"): above
+   * `windowAbove` rows only the rows near the scroll viewport (about eight
+   * rows of overscan each side, plus the focused row) are mounted, the
+   * rest standing as `<li role="presentation" aria-hidden data-row-gap>`
+   * gaps of their measured height, and each mounted row carries
+   * aria-posinset / aria-setsize. Each child must be one keyed element
+   * that renders one RegisterRow (the key is the row's id, set on its
+   * `<li>` as data-row-id exactly as written, `:` and `=` included). The
+   * browser's find-in-page cannot reach rows that are not mounted, so a
+   * windowed register wants a filter of its own. Default false: every row
+   * is drawn, exactly as before. */
+  windowed?: boolean;
+  /** With `windowed`: windowing starts above this many rows; at or below
+   * it every row is drawn. Default 150. */
+  windowAbove?: number;
+  /** With `windowed`: the element the register scrolls in, a function
+   * returning it (keep it stable), or 'window'. Default the nearest
+   * ancestor with overflow-y auto or scroll, else the window. */
+  scrollParent?: TaskScrollParent;
 }
 
 interface RegisterRowCommonProps extends DataAttributes {

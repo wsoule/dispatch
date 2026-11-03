@@ -158,6 +158,15 @@ export interface RowWindowsOptions {
       a band of short rows hides. A host whose rows are tall and few per
       band (a board's cards, all its columns in one commit) turns it on. */
   flushOnScroll?: boolean;
+  /** A value that changes when every row may have changed height at once
+      without a window resize or a scroll (a list whose own width changed,
+      so its rows rewrap or a container query stacks them into cards). On a
+      change the measured heights are forgotten (a row that is not drawn
+      then stands at the running mean of the drawn ones, which are measured
+      again at once) and the windows are measured again before paint.
+      Omit it (or keep it constant) for lists whose rows only change height
+      with the viewport. */
+  layoutKey?: string | number;
 }
 
 /** What the table scrolls in: an element, or the document (the window). */
@@ -224,6 +233,7 @@ export function useRowWindows({
   initialRows = INITIAL_ROWS,
   overscan: overscanRows = OVERSCAN_ROWS,
   flushOnScroll = false,
+  layoutKey,
 }: RowWindowsOptions): RowWindows {
   // Group id → its window; null until the first measurement (the server and
   // the first client render draw initialSegments instead).
@@ -442,6 +452,20 @@ export function useRowWindows({
   useClientLayoutEffect(() => {
     if (enabled) measure();
   }, [enabled, groupsKey, dragging, rowHeight, measure]);
+
+  // The rows' layout changed as a whole (layoutKey): every measured height
+  // is stale, so it is dropped with the running mean, and the drawn rows
+  // are measured again before paint. The first value is the baseline, not
+  // a change.
+  const lastLayoutKey = useRef(layoutKey);
+  useClientLayoutEffect(() => {
+    if (lastLayoutKey.current === layoutKey) return;
+    lastLayoutKey.current = layoutKey;
+    heights.clear();
+    measured.sum = 0;
+    measured.n = 0;
+    if (enabled) measure();
+  }, [layoutKey, enabled, heights, measured, measure]);
 
   // A row asked for focus before it was mounted: focus it the moment it is.
   useClientLayoutEffect(() => {

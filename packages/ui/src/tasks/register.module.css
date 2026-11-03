@@ -58,6 +58,19 @@
   border-top: 1px solid var(--divider);
 }
 
+/* A windowed register's stand-in for rows that are not mounted: only its
+   height (set inline), so the scroll range is as if they were. The row
+   after it keeps its divider, as it would after the rows it stands for. */
+.gap {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+.gap + .row {
+  border-top: 1px solid var(--divider);
+}
+
 /* The row the host has open: Gr8r's selected row, the accent tint, with
    a 2px accent bar inside its left edge (the tint alone is 1.1:1 against
    the panel, under WCAG 1.4.11's 3:1; the bar is 4.1:1 light, 3.4:1

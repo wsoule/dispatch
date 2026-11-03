@@ -811,6 +811,66 @@ settings page (three to five narrow columns) stays a table at the app's default
 window size on 480 or 600, where 700 would turn every row into a card (amended
 2026-11-02, B4, as an L35 follow-up: the steps started at 700).
 
+**Windowing (opt-in).** A long register (Runs' "Show all") passes `windowed`:
+above `windowAbove` rows (default 150) only the rows near the scroll viewport
+are mounted (about eight rows of overscan each side, plus the focused row),
+through the same `useRowWindows` machinery as `TaskGroupTable`. The rest stand
+as `<li role="presentation" aria-hidden data-row-gap="n">` gaps of their
+measured height (the running mean of the rows measured so far for rows never
+drawn), so the scroll range and document order are as in a full list, and each
+mounted row's `<li>` carries `aria-posinset` / `aria-setsize` (the list's own
+count, since assistive tech cannot count rows that are not mounted) and
+`data-row-id`. Without `windowed`, or at or below the threshold, every row is
+drawn and none of that markup appears; a `windowed` register keeps its rows
+keyed by id either way, so a count that crosses the threshold (a run arriving, a
+filter typed) adds or removes gaps without remounting a row or losing focus.
+
+- **Children.** Each child is one keyed element that renders one `RegisterRow`
+  (a memoized host row component is the intended shape); the key is the row's
+  id, set on its `<li>` as `data-row-id` exactly as written (`run:r-1` stays
+  `run:r-1`; the register owns that attribute there). Rows may come as more than
+  one array; a key two arrays both use keeps React's generated key the second
+  time, so ids stay unique. A fragment counts as one row, and `null` children
+  are dropped. A register nested in a row (a `span="row"` cell) gives its own
+  rows no place of the outer one.
+- **Scroll container.** `scrollParent`: an element, a function returning it
+  (keep it stable), or `'window'`; by default the nearest ancestor with
+  `overflow-y: auto` or `scroll`, found in an effect, else the window.
+- **Focus.** The focused row stays mounted while the list scrolls away from it,
+  so focus never falls to the body (it stays pinned while the window or app
+  loses focus). Tab from a row's last stop (Shift+Tab from its first) into a row
+  that is not mounted scrolls that row into view, mounts it and focuses its
+  first stop (its last, going back), instead of leaving the list across the gap.
+  A row with nothing to Tab to (no link, no button) is passed over as the
+  browser would, gap after gap if need be, and with no stop left in the list
+  focus moves on past it, so the list never traps Tab. A register has no
+  arrow-key model of its own, so that is its whole keyboard story.
+- **Stacked cards.** Rows are measured by their border box, so the card layout
+  (`stackBelow`, `stackWithin`) needs no separate mode; when the register's own
+  width changes (a container query stacking the rows, a sidebar folding) the
+  measured heights are dropped and the drawn rows measured again before paint
+  (`useRowWindows`' `layoutKey`).
+- **Scroll restoration.** The windows read the scroll offset when they start, so
+  an offset restored before the register mounts draws the rows there on the
+  first frame; one restored after mount draws them on the scroll event it fires.
+  The offset is in pixels and rows not measured yet stand at the mean of the
+  measured ones (49px, a one-line row, before any), so a list of even rows comes
+  back on the same rows and one of uneven rows near them.
+- **Server render.** The server (and the first client render, corrected in a
+  layout effect before paint) draws the first 60 rows and one estimated gap, so
+  a hydration agrees.
+- **Find in page.** The browser's find cannot reach rows that are not mounted,
+  so a windowed register wants a filter of its own (Runs has its filters), and a
+  short list (Runs' first 25 rows, before "Show all") stays under the threshold,
+  where every row is drawn and find reaches them all.
+
+Measured with 2,000 rows (a memoized host row of four cells and an Archive
+button, happy-dom, `bun test`): the first render took about 215 ms and drew
+36,005 DOM nodes drawing every row, against about 13 ms and 565 nodes (31 rows)
+windowed; a scroll that crosses a row edge re-renders in about 0.4 ms, and a
+jump of 50 rows in about 4.5 ms, where a register drawing every row does no work
+on scroll but the browser lays out all of them.
+
 ### ListItem
 
 `ListItem` is the row of a host's own list (the Overseer's columns and inbox, a
