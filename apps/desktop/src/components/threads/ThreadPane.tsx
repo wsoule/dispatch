@@ -58,7 +58,8 @@ export interface ThreadPaneProps {
   /** The Assistant is mid-turn or taking a message, so it would refuse another. */
   overseerBusy: boolean;
   onOpenOverseer: () => void;
-  /** How the reply box names the Overseer: "the Assistant", or "your agent" in Two views. */
+  /** How the reply box names the Overseer: "the Assistant" (the default, the Threads
+   * page), or "your agent" (the thread peek). */
   overseerVoice?: OverseerVoice;
 }
 

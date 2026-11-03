@@ -17,7 +17,7 @@ export interface FlightPlanHost {
   onOpenTask: (taskId: string, tab?: TaskTab, runId?: string) => void;
   onPeekTask: (taskId: string) => void;
   /** A pending "open Send agents on this container" ask, from Plans' "Create &
-   * send agents…" in Two views. */
+   * send agents…". */
   sendAgents?: { milestoneId: string; nonce: number } | null;
   onSendAgentsServed?: (nonce: number) => void;
 }

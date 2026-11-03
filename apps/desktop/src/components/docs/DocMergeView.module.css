@@ -2,7 +2,7 @@
    resolution, then one section per marked block (its picks, the base fold,
    the head and yours labels, the split diff, the hand-merged text). The
    picks are bordered toggle Buttons; the chosen side leads with a check as
-   well as the pressed fill. */
+   well as the pressed look (the accent tint in a 3:1 accent edge). */
 
 .merge {
   display: flex;

@@ -762,9 +762,10 @@ function ContextMeter({ percent }: { percent: number }) {
 
 interface OverseerChatProps {
   overseer: OverseerSession;
-  /** Replaces both composers' placeholders (Two views says "say something"). */
+  /** Replaces both composers' placeholders (the Overseer page says "say something"). */
   placeholder?: string;
-  /** Sits between the transcript and the composer: Two views' door to the asks. */
+  /** Sits between the transcript and the composer: the Overseer page puts its posts
+   * and docked asks here on a narrow window. */
   aboveComposer?: ReactNode;
   /** Locks the composer, as for a revoked Overseer. */
   disabled?: boolean;
@@ -776,9 +777,9 @@ interface OverseerChatProps {
  * The overseer conversation itself — transcript, composer, and the approve/deny
  * confirm cards — rendering the one `useOverseerSession` the App mounts. Status
  * questions are answered directly; anything mutating shows up as a confirm
- * card in the transcript and runs only once approved there. It is Two views'
- * one conversation: typing during a turn queues, Stop ends the turn, the
- * status line shows its spend, and ⌘F searches it.
+ * card in the transcript and runs only once approved there. It is the Overseer
+ * page's one conversation: typing during a turn queues, Stop ends the turn,
+ * the status line shows its spend, and ⌘F searches it.
  */
 export function OverseerChat({
   overseer,

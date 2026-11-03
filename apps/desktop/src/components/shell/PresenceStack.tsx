@@ -9,7 +9,7 @@ interface PresenceStackProps {
    *  words rather than an id. Absent, the id is shown. */
   taskTitle?: (id: string) => string | undefined;
   className?: string;
-  /** Makes each face a button that opens that person (Two views' person peek). */
+  /** Makes each face a button that opens that person's peek (a drawer over the view). */
   onOpenPerson?: (ref: string) => void;
 }
 

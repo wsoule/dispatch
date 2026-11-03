@@ -81,8 +81,9 @@ export type OverseerFocus =
   | { kind: 'address'; address: string };
 
 /**
- * Overseer in Two views: the open conversation in the middle; on a wide window
- * the asks and any set-aside conversations sit in a column on the right.
+ * The Overseer page: the open conversation in the middle; on a wide window
+ * the asks and any set-aside conversations sit in a column on the right. (The
+ * component keeps the name of the retired Two views layout, where it began.)
  */
 export function TwoViewOverseer({
   data,

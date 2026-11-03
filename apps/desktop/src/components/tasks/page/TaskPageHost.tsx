@@ -98,9 +98,10 @@ export interface TaskPageHost {
    * column), where the run's Files keeps its quick open to itself rather than in
    * the app's navigation, which only knows the Tasks page's tab. */
   filesView?: (runId: string, embedded: boolean) => ReactNode;
-  /** Summary lists the memory this task's runs wrote (Two views). */
+  /** Summary lists the memory this task's runs wrote (App's task page sets it). */
   showLessons?: boolean;
-  /** A milestone's plan opens a task as its own page, not a pane beside the plan (Two views). */
+  /** A container's Plan tab opens a node as its full page instead of its quick look
+   * (App's task page sets it). */
   planOpensPages?: boolean;
   /** A run's pull request reviewed in place; without it "Review PR" leaves for the PR page. */
   prView?: (runId: string, onClose: () => void) => ReactNode;

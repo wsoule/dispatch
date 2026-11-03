@@ -3,7 +3,7 @@ import type { Message } from '@dispatch/client';
 import { gateOf, isSystemMarker } from './gates';
 
 /**
- * Where a message goes in Two views:
+ * Where a message goes:
  * - `gate`: Needs you, nowhere else;
  * - `machine`: folded into "Agent chatter" in its home;
  * - `for-you`: a post in Overseer plus its home;

@@ -453,7 +453,7 @@ describe('navigation shortcuts', () => {
   });
 });
 
-describe('Two views shortcuts', () => {
+describe('the place shortcuts', () => {
   test('⌘, opens Settings, even while typing', () => {
     expect(
       resolveGlobalKeyCommand(key(',', { metaKey: true }), baseGlobalCtx)

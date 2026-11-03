@@ -1,4 +1,4 @@
-/* The Overseer in Two views (TwoViewOverseer.tsx): Coming in, the talk (or a
+/* The Overseer page (TwoViewOverseer.tsx): Coming in, the talk (or a
    focus in its place) and Going out, left to right. The root is the `overseer`
    container: FlowColumns.module.css shows its columns once this view is wide
    enough (and widens them on a wider one), and the narrow-only pieces here

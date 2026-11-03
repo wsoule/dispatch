@@ -52,9 +52,9 @@ interface HunkProps {
 }
 
 // One side pick of a conflict (Take head, Take yours, Edit): a bordered
-// toggle whose chosen state leads with a check as well as the pressed fill,
-// so the side taken never rests on a faint fill alone (the fill is about
-// 1.2:1 on the surface; the check is drawn in the text's ink).
+// toggle whose chosen state is the library's pressed look (the accent tint in
+// a 3:1 accent edge) and leads with a check as well, so the side taken is a
+// shape too, not colour alone (the check is drawn in the text's ink).
 function PickButton({
   chosen,
   onClick,

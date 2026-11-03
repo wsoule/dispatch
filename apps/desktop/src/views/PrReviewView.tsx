@@ -28,7 +28,9 @@ interface PrReviewViewProps {
   /** Which repo pull request is open — `navReducer`'s `activePrNumber`. */
   prNumber: number;
   onBack: () => void;
-  /** Two views: the Tasks back chip leads the header and the crumb starts at Pull requests. */
+  /** Hosted as a page under Tasks: the Tasks back chip leads the header and the crumb
+   * starts at Pull requests. Unset inside a task page, where the crumb walks back
+   * through the merge queue and a Back button closes the review. */
   tasksPage?: boolean;
 }
 

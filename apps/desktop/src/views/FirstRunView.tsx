@@ -15,7 +15,8 @@ export interface FirstRunViewProps {
    *  matters: someone who opened the app to look around, not to describe
    *  work, must not be stuck behind a textarea. */
   onBrowseBoard: () => void;
-  /** Two views: set the prompt aside for a conversation with the agent. */
+  /** Sets the prompt aside for a conversation with the agent on the Overseer page;
+   *  omitted, the screen offers no way to. */
   onTalkToAgent?: () => void;
   /** False when the default agent can't draft from a sentence: a two-field form creates the task directly. */
   planner?: boolean;

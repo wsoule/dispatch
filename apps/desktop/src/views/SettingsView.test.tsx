@@ -1222,7 +1222,7 @@ describe('Board sync by storage backend', () => {
   });
 });
 
-// Two views folds whole views (Sessions, All agents) into Settings as pages.
+// App folds whole views (Usage, Runs) into Settings as pages.
 test('a hosted page joins the rail and renders full width', () => {
   render(
     <SettingsView

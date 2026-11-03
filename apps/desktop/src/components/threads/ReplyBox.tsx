@@ -31,7 +31,8 @@ export type ReplyBoxProps = Pick<
 
 export type OverseerVoice = 'assistant' | 'agent';
 
-// The Overseer's name in each layout: classic says Assistant, Two views says your agent.
+// The Overseer's name in each place: the Threads page says Assistant, the thread peek says
+// your agent (ThreadPane's `overseerVoice`).
 const VOICE: Record<
   OverseerVoice,
   { elsewhere: string; open: string; to: string; busy: string; reply: string }

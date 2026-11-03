@@ -94,9 +94,9 @@ interface SettingsViewProps {
   /** The page to open on — `navState.settingsPage`, which the rail's Connect Linear and
    *  the strip's gear set to Integrations. A new value while mounted switches the page. */
   initialPage?: SettingsPage | HostedSettingsPage['id'];
-  /** Whole views shown as extra pages (Two views folds Sessions and All agents in here). */
+  /** Whole views shown as extra pages (App folds Usage and Runs in here). */
   hostedPages?: readonly HostedSettingsPage[];
-  /** Shown after a page's own groups (Two views puts memory's Recent under Memory). */
+  /** Shown after a page's own groups (App puts memory's Recent under Memory). */
   pageExtras?: Partial<Record<SettingsPage, ReactNode>>;
   /** A page picked in the rail or from search results. App dispatches
    *  `openSettings` with it, so the hash and the crumbs follow; the view also

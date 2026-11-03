@@ -25,8 +25,9 @@ const SCOPES: { id: DocFilter['scope']; label: string }[] = [
   { id: 'personal', label: 'Personal' },
 ];
 
-// A pressed filter toggle leads with a check, so on reads as a shape and
-// not only as the pressed fill (about 1.2:1 on the toolbar).
+// A pressed filter toggle leads with a check: the library draws the pressed
+// state as the accent tint in a 3:1 accent edge, and the check adds a shape,
+// so on never rests on colour alone.
 const PRESSED_MARK = <Check size={14} strokeWidth={1.8} />;
 
 // One template for every row: the title takes the room, then the badges and

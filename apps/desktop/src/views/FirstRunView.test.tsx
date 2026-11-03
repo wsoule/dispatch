@@ -109,7 +109,7 @@ test('offers a way past the prompt to the ordinary board', () => {
   expect(onBrowseBoard).toHaveBeenCalled();
 });
 
-test('Two views can set the prompt aside for the agent', () => {
+test('the first run can set the prompt aside for the agent', () => {
   const onTalkToAgent = mock(() => {});
   render(
     <FirstRunView

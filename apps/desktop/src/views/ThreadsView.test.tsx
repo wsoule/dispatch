@@ -218,7 +218,7 @@ test('a rail that failed to load says why, in the danger tone', async () => {
   expect(alert.getAttribute('data-tone')).toBe('danger');
 });
 
-test('under Two views the head leads with the back chip and names only Threads', () => {
+test('with onBack the head leads with the back chip and names only Threads', () => {
   const onBack = mock(() => {});
   render(
     <QueryClientProvider

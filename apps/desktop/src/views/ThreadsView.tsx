@@ -19,7 +19,7 @@ import { participantLabel, replyRoute } from '../lib/threadSources';
 import styles from './ThreadsView.module.css';
 
 export interface ThreadsViewProps {
-  /** Two views: the page leads with the back chip to the Tasks list. */
+  /** The back chip to the Tasks list the page leads with; omitted, no chip. */
   onBack?: () => void;
   data: DispatchProjectData;
   projectName: string | null;
