@@ -50,6 +50,7 @@ import type { NeedsYou } from '../lib/needsYou';
 import { issuesHref } from '../lib/routes';
 import { useStatusModelOf } from '../lib/statusModel';
 import {
+  containerMatcher,
   EMPTY_TASK_FILTER_SET,
   FILTER_NONE,
   type FilterFacet,
@@ -184,6 +185,12 @@ export interface IssuesViewProps {
   /** Narrows the list and board to one question; All shows everything. */
   preset: TasksPreset;
   onPreset: (preset: TasksPreset) => void;
+  /** The container the route narrows the list and board to
+   * (`#/issues?project=<id>`, a Projects register row's Issues link): only
+   * the tasks below it show, under a Project chip whose × (or Clear all)
+   * calls `onClearProject`. Null or left out: no narrowing. */
+  project?: string | null;
+  onClearProject?: () => void;
   presetContext: PresetContext;
   /** A click on a row or card: the quick-look drawer; with a tab, the full page
    * on that tab (a phase drill). */
@@ -221,6 +228,8 @@ export function IssuesView({
   onModeChange,
   preset,
   onPreset,
+  project = null,
+  onClearProject,
   presetContext,
   onSelectTask,
   onOpenTask,
@@ -240,6 +249,7 @@ export function IssuesView({
   const [prefs, setPrefs] = useState<TasksDisplayPrefs>(readIssuesDisplay);
   const [search, setSearch] = useState('');
   const searchInput = useRef<HTMLInputElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   // Open state lives here so `f` and `⇧V` on the list or board can open the menus.
   const [filterOpen, setFilterOpen] = useState(false);
   const [displayOpen, setDisplayOpen] = useState(false);
@@ -279,6 +289,7 @@ export function IssuesView({
     setPrefs(view.display);
     onModeChange(view.display.layout);
     if (preset !== 'all') onPreset('all');
+    if (project !== null) onClearProject?.();
     if (full) onClosePage();
   };
   useEffect(() => {
@@ -293,16 +304,30 @@ export function IssuesView({
 
   const { filterContext, menuContext, aiFilter } = useTaskFilterMenu(data);
   const filtersActive = hasActiveTaskFilters(filters);
-  // The preset and the filter clauses as one predicate; `undefined` when neither narrows.
+  // The live and the archived tasks together, where the routed project is
+  // looked up: an archived row's parent chain resolves through it, and an
+  // archived project still names its chip.
+  const allTasks = useMemo(
+    () => (project === null ? [] : [...data.tasks, ...data.archivedTasks]),
+    [project, data.tasks, data.archivedTasks]
+  );
+  const byProject = useMemo(
+    () => (project === null ? undefined : containerMatcher(project, allTasks)),
+    [project, allTasks]
+  );
+  // The preset, the routed project and the filter clauses as one predicate;
+  // `undefined` when none narrows.
   const taskFilter = useMemo(() => {
+    const tests: ((doc: TaskListItem) => boolean)[] = [];
     const byPreset = presetMatcher(preset, presetContext);
-    if (!filtersActive) return byPreset;
-    const byClauses = (doc: TaskListItem) =>
-      matchesTaskFilterSet(doc, filters, filterContext);
-    return byPreset === undefined
-      ? byClauses
-      : (doc: TaskListItem) => byPreset(doc) && byClauses(doc);
-  }, [preset, presetContext, filtersActive, filters, filterContext]);
+    if (byPreset !== undefined) tests.push(byPreset);
+    if (byProject !== undefined) tests.push(byProject);
+    if (filtersActive) {
+      tests.push((doc) => matchesTaskFilterSet(doc, filters, filterContext));
+    }
+    if (tests.length < 2) return tests[0];
+    return (doc: TaskListItem) => tests.every((test) => test(doc));
+  }, [preset, presetContext, byProject, filtersActive, filters, filterContext]);
   const requestFilter = useCallback(() => setFilterOpen(true), []);
   const requestDisplay = useCallback(() => setDisplayOpen(true), []);
   const byPerson = groupedByPerson(prefs, mode);
@@ -314,20 +339,20 @@ export function IssuesView({
     const mine = presetMatcher('mine', presetContext);
     return mine === undefined ? 0 : data.tasks.filter(mine).length;
   }, [data.tasks, presetContext]);
-  // Each tab's href is the list's route on its preset (a real link); a plain
-  // click narrows in place.
+  // Each tab's href is the list's route on its preset, in the routed project
+  // when there is one (a real link); a plain click narrows in place.
   const tabs = useMemo(
     () =>
       presetTabs(counts, {
         current: preset,
         mine: mineCount,
         starred: presetContext.starred.size,
-        hrefFor: issuesHref,
+        hrefFor: (id) => issuesHref(id, project),
       }).map((tab) => ({
         ...tab,
         onFollow: () => onPreset(tab.id as TasksPreset),
       })),
-    [counts, preset, mineCount, presetContext.starred, onPreset]
+    [counts, preset, mineCount, presetContext.starred, onPreset, project]
   );
 
   // ---- the filter chips ---------------------------------------------------
@@ -389,7 +414,22 @@ export function IssuesView({
     },
     [filterContext, menuContext, model, data.people, data.executors, data.me]
   );
-  const chips = useMemo<FilterChipData[]>(
+  // The routed project's chip, first in the row: its title (the id, tinted
+  // as unknown, when no task, live or archived, has it), cleared by its ×
+  // like any filter.
+  const projectChip = useMemo<FilterChipData | null>(() => {
+    if (project === null) return null;
+    const title = allTasks.find((task) => task.meta.id === project)?.meta.title;
+    return {
+      id: 'routed-project',
+      field: 'Project',
+      summary: title ?? project,
+      unknown: title === undefined,
+      removeLabel: 'Remove project filter',
+      onRemove: () => onClearProject?.(),
+    };
+  }, [project, allTasks, onClearProject]);
+  const clauseChips = useMemo<FilterChipData[]>(
     () =>
       filterChips(filters, filterContext).map((chip: FilterChipModel) => {
         const clause = filters.clauses[chip.index];
@@ -428,6 +468,29 @@ export function IssuesView({
       }),
     [filters, filterContext, facetOptions]
   );
+  // The toolbar's Filter button. The last chip takes the whole chips bar
+  // with it (FilterChips leaves focus to the host then), so its × and Clear
+  // all hand focus here first: it never falls to the body.
+  const focusFilterButton = useCallback(() => {
+    rootRef.current
+      ?.querySelector<HTMLElement>('button[aria-haspopup][aria-label="Filter"]')
+      ?.focus({ preventScroll: true });
+  }, []);
+  const chips = useMemo(() => {
+    const all =
+      projectChip === null ? clauseChips : [projectChip, ...clauseChips];
+    const only = all.length === 1 ? all[0] : undefined;
+    if (only === undefined) return all;
+    return [
+      {
+        ...only,
+        onRemove: () => {
+          focusFilterButton();
+          only.onRemove();
+        },
+      },
+    ];
+  }, [projectChip, clauseChips, focusFilterButton]);
 
   // ---- render -------------------------------------------------------------
 
@@ -441,7 +504,7 @@ export function IssuesView({
   );
 
   return (
-    <div data-testid="tasks-view" className={styles.root}>
+    <div ref={rootRef} data-testid="tasks-view" className={styles.root}>
       {/* The list's own chrome: a page that replaces the list (a task, the
           Timeline, Threads, Docs) has its own header, so the search, filters
           and presets go with the list. */}
@@ -530,8 +593,12 @@ export function IssuesView({
           </div>
           <FilterChips
             chips={chips}
-            onClearAll={() => setFilters(EMPTY_TASK_FILTER_SET)}
-            clearDisabled={!filtersActive}
+            onClearAll={() => {
+              focusFilterButton();
+              setFilters(EMPTY_TASK_FILTER_SET);
+              if (project !== null) onClearProject?.();
+            }}
+            clearDisabled={!filtersActive && project === null}
           />
         </>
       )}

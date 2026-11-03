@@ -357,6 +357,45 @@ export function applyTaskFilters(
   return tasks.filter((doc) => matchesTaskFilterSet(doc, filters, ctx));
 }
 
+/**
+ * The routed container clause (`#/issues?project=<id>`, the Projects register's Issues
+ * link): whether a task sits anywhere below `containerId`, through any depth of `parent`
+ * links (a project's milestones, their issues, sub-issues). The container itself does not
+ * pass. `tasks` is every task a parent link may name (the live and the archived lists), so
+ * the chain is read once per list; each parent's answer is remembered, and a cycle or a
+ * parent missing from the list ends the walk as "not below". Unlike the Milestone facet,
+ * which matches the direct parent, this is not a stored clause: the route owns it.
+ */
+export function containerMatcher(
+  containerId: string,
+  tasks: readonly TaskListItem[]
+): (doc: TaskListItem) => boolean {
+  const parentOf = new Map<string, string | null>();
+  for (const task of tasks) parentOf.set(task.meta.id, task.meta.parent);
+  const below = new Map<string, boolean>([[containerId, true]]);
+  // Whether `id` is the container or sits below it; every id walked on the way
+  // up learns the same answer.
+  function within(start: string | null): boolean {
+    const path: string[] = [];
+    let answer = false;
+    for (let id = start; id !== null; ) {
+      const known = below.get(id);
+      if (known !== undefined) {
+        answer = known;
+        break;
+      }
+      if (path.includes(id)) break;
+      path.push(id);
+      const parent = parentOf.get(id);
+      if (parent === undefined) break;
+      id = parent;
+    }
+    for (const id of path) below.set(id, answer);
+    return answer;
+  }
+  return (doc) => doc.meta.id !== containerId && within(doc.meta.parent);
+}
+
 const RUN_STATE_LABEL: Record<RunState, string> = {
   provisioning: 'Provisioning',
   running: 'Working',

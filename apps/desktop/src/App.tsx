@@ -2530,6 +2530,10 @@ function App() {
           onModeChange={(mode) => dispatchNav({ type: 'setTasksMode', mode })}
           preset={navState.tasksPreset}
           onPreset={(preset) => dispatchNav({ type: 'setTasksPreset', preset })}
+          project={navState.tasksProject}
+          onClearProject={() =>
+            dispatchNav({ type: 'setTasksProject', project: null })
+          }
           presetContext={presetContext}
           onSelectTask={selectBoardTask}
           onOpenTask={(taskId) => openTaskView(taskId)}

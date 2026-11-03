@@ -11,7 +11,7 @@ import {
   StatusMark,
   ViewToolbar,
 } from '@dispatch/ui';
-import { ArrowUpRight, Network } from 'lucide-react';
+import { ArrowUpRight, ListTodo, Network } from 'lucide-react';
 import { memo, useMemo, useRef, useState } from 'react';
 
 import { plural } from '../adapters/planningFormat';
@@ -28,6 +28,7 @@ import { useShellActions } from '../components/shell/ShellActionsContext';
 import { TasksBackButton } from '../components/tasks/TasksPageHeader';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { type Planning, usePlanningContext } from '../hooks/usePlanning';
+import { issuesHref } from '../lib/routes';
 import styles from './ProjectsView.module.css';
 
 // The Projects register (the planner's /projects page, ported): every project
@@ -37,19 +38,24 @@ import styles from './ProjectsView.module.css';
 // once over the open project (hooks/usePlanning, through PlanningContext)
 // mapped by adapters/projects; this view keeps only the toolbar's search and
 // filter. Every link is a real href: the row opens the project's timeline
-// lane, the end cell its graph and its page, the group's Graph button the
-// initiative's graph; DispatchShell's link provider resolves them to routes.
+// lane, the end cell its issues (the Issues list narrowed to the project),
+// its graph and its page, the group's Graph button the initiative's graph;
+// DispatchShell's link provider resolves them to routes.
 // A page under Tasks (the Projects section's "All", the palette's Open
 // Projects), led by the Tasks back chip when hosted and carrying New project.
 
 const ICON = { size: 14, strokeWidth: 1.8 } as const;
 
-/* Seven columns readable down to a register 900px wide: each keeps a floor
-   that fits its content (a "2 agents working" chip on one line, the end
-   cell its two 26px ghost icon buttons). Narrower, the rows become cards:
-   the project on top, the other cells in as many 150px columns as fit. */
+/* Seven columns readable down to a register 900px wide (stackWithin 900):
+   each keeps a floor that fits its content (a "2 agents working" chip on
+   one line, the end cell its three 26px ghost icon buttons and their two
+   2px gaps, the milestone's name wrapping). The floors add up to 752px,
+   which with six 20px gaps and the row's 28px of padding is the 900px the
+   register stacks under (ProjectsView.test.tsx checks the sum). Narrower,
+   the rows become cards: the project on top, the other cells in as many
+   150px columns as fit. */
 const COLUMNS =
-  'minmax(150px, 1.3fr) 100px minmax(140px, 1.4fr) 96px minmax(84px, 0.8fr) minmax(116px, 1fr) 64px';
+  'minmax(150px, 1.3fr) 100px minmax(124px, 1.4fr) 96px minmax(84px, 0.8fr) minmax(116px, 1fr) 82px';
 const STACKED_COLUMNS = 'repeat(auto-fill, minmax(150px, 1fr))';
 
 const HEADER = [
@@ -331,6 +337,14 @@ const ProjectRow = memo(function ProjectRow({ row }: { row: ProjectRowModel }) {
       </RegisterCell>
       <RegisterCell align="end">
         <span className={styles.links}>
+          <Button
+            href={issuesHref('all', row.id)}
+            variant="quiet"
+            size="sm"
+            icon={<ListTodo {...ICON} />}
+            title="Issues in the project"
+            aria-label={`Issues of ${row.name}`}
+          />
           <Button
             href={row.graphHref}
             variant="quiet"

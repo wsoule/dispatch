@@ -26,6 +26,10 @@ const PROJECT: NavState = navReducer(initialNavState, {
   projectId: '/repo',
 });
 
+/** A place written into another route's parameter, as `hrefForState` encodes
+ * it (`?tasks=`, `?under=`). */
+const enc = encodeURIComponent;
+
 function run(actions: readonly NavAction[], from: NavState = PROJECT) {
   return actions.reduce(navReducer, from);
 }
@@ -120,6 +124,53 @@ describe('hrefForState ↔ parseHref', () => {
     ['#/room/release', [{ type: 'openAddress', address: 'channel:release' }]],
     ['#/runs', [{ type: 'openSettings', page: 'runs' }]],
     ['#/settings/general', [{ type: 'openSettings' }]],
+    ['#/issues?project=p-1', [{ type: 'showTasks', project: 'p-1' }]],
+    [
+      '#/issues?preset=failed&project=p-1&mode=board',
+      [
+        { type: 'showTasks', preset: 'failed', project: 'p-1' },
+        { type: 'setTasksMode', mode: 'board' },
+      ],
+    ],
+    [
+      '#/needs-you?project=p-1',
+      [{ type: 'showTasks', preset: 'needs-you', project: 'p-1' }],
+    ],
+    // A place over another carries the one beneath.
+    [
+      `#/overseer?tasks=${enc('task/t-1')}`,
+      [{ type: 'openTask', taskId: 't-1' }, { type: 'showOverseer' }],
+    ],
+    [
+      `#/overseer?tasks=${enc('issues?preset=failed&mode=board')}`,
+      [
+        { type: 'showTasks', preset: 'failed' },
+        { type: 'setTasksMode', mode: 'board' },
+        { type: 'showOverseer' },
+      ],
+    ],
+    [
+      `#/settings/agents?under=${enc('timeline?project=p-1')}`,
+      [
+        { type: 'openTimeline', project: 'p-1' },
+        { type: 'openSettings', page: 'agents' },
+      ],
+    ],
+    [
+      '#/runs?under=live',
+      [
+        { type: 'setProjectView', view: 'live' },
+        { type: 'openSettings', page: 'runs' },
+      ],
+    ],
+    [
+      `#/settings/team?under=${enc('overseer?tasks=graph')}`,
+      [
+        { type: 'setProjectView', view: 'graph' },
+        { type: 'showOverseer' },
+        { type: 'openSettings', page: 'team' },
+      ],
+    ],
     ['#/settings/usage', [{ type: 'setGlobalView', view: 'sessions' }]],
     [
       '#/settings/integrations',
@@ -137,6 +188,67 @@ describe('hrefForState ↔ parseHref', () => {
     expect(landed.mainView).toBe(state.mainView);
     expect(landed.tasksPage).toEqual(state.tasksPage);
     expect(landed.settings).toBe(state.settings);
+    expect(landed.tasksPreset).toBe(state.tasksPreset);
+    expect(landed.tasksProject).toBe(state.tasksProject);
+    expect(landed.tasksMode).toBe(state.tasksMode);
+  });
+
+  test('a reload on the Overseer or under Settings keeps the Tasks side', () => {
+    // Left on the list (narrowed, on the board) or on a task page's Review
+    // tab, then the Overseer, then Settings: each href names what the reducer
+    // would return to, as much as the Tasks place's own href does.
+    const onList = run([
+      { type: 'showTasks', preset: 'failed', project: 'p-1' },
+      { type: 'setTasksMode', mode: 'board' },
+    ]);
+    const onTask = run([{ type: 'openTask', taskId: 't-1', tab: 'review' }]);
+    for (const left of [onList, onTask]) {
+      const overseer = run([{ type: 'showOverseer' }], left);
+      const settings = run([{ type: 'openSettings', page: 'team' }], overseer);
+      for (const state of [overseer, settings]) {
+        const landed = land(hrefForState(state));
+        expect(landed).not.toBeNull();
+        if (landed === null) return;
+        expect(hrefForState(landed)).toBe(hrefForState(state));
+        expect(landed.mainView).toBe('overseer');
+        expect(landed.settings).toBe(state.settings);
+        expect(landed.tasksPage).toEqual(left.tasksPage);
+        expect(landed.tasksPreset).toBe(left.tasksPreset);
+        expect(landed.tasksProject).toBe(left.tasksProject);
+        expect(landed.tasksMode).toBe(left.tasksMode);
+        // Back from the Overseer reaches the Tasks place, as before the reload.
+        const back = run([{ type: 'closeSettings' }, { type: 'back' }], landed);
+        expect(back.mainView).toBe('tasks');
+        expect(back.tasksPage).toEqual(left.tasksPage);
+      }
+    }
+    expect(hrefForState(run([{ type: 'showOverseer' }], onList))).toBe(
+      `#/overseer?tasks=${enc('issues?preset=failed&project=p-1&mode=board')}`
+    );
+  });
+
+  test('the place beneath is left out when a reload lands there anyway', () => {
+    // Tasks on its bare list under the Overseer; the Overseer under Settings.
+    expect(hrefForState(run([{ type: 'showOverseer' }]))).toBe('#/overseer');
+    expect(
+      hrefForState(
+        run([
+          { type: 'showTasks' },
+          { type: 'showOverseer' },
+          { type: 'openSettings', page: 'agents' },
+        ])
+      )
+    ).toBe('#/settings/agents');
+    // A thread peek over the Overseer is the Overseer's, not Tasks' side.
+    expect(
+      hrefForState(
+        run([
+          { type: 'setProjectView', view: 'threads' },
+          { type: 'showOverseer' },
+          { type: 'openThread', messageId: 'm-1' },
+        ])
+      )
+    ).toBe('#/overseer?tasks=threads');
   });
 
   test('ids are percent-encoded on the way out and decoded on the way back', () => {
@@ -172,15 +284,17 @@ describe('hrefForState ↔ parseHref', () => {
     expect(hrefForState(run([{ type: 'openThread', messageId: 'm-1' }]))).toBe(
       '#/overseer'
     );
-    // Settings open is the place, whatever view is under it.
+    // Settings open is the place; the view under it rides in `?under=`, and
+    // a task peek beneath it stays out, as it does everywhere.
     expect(
       hrefForState(
         run([
           { type: 'openTask', taskId: 't-1' },
+          { type: 'openPeek', taskId: 't-2' },
           { type: 'openSettings', page: 'team' },
         ])
       )
-    ).toBe('#/settings/team');
+    ).toBe(`#/settings/team?under=${enc('task/t-1')}`);
   });
 
   test('the sidebar’s hrefs each parse to their row’s action', () => {
@@ -226,6 +340,18 @@ describe('parseHref rejects what is not a route', () => {
     '#/issues?preset=bogus',
     '#/issues?mode=grid',
     '#/needs-you?mode=lanes',
+    '#/issues?project=',
+    '#/overseer?tasks=',
+    '#/overseer?tasks=overseer',
+    `#/overseer?tasks=${enc('settings/team')}`,
+    '#/overseer?tasks=runs',
+    '#/overseer?tasks=nowhere',
+    `#/overseer?tasks=${enc('issues?preset=bogus')}`,
+    `#/settings/team?under=${enc('settings/general')}`,
+    '#/settings/team?under=runs',
+    '#/runs?under=settings',
+    '#/settings?under=nowhere',
+    `#/settings/team?under=${enc('overseer?tasks=overs')}`,
     '#/task/t-1?tab=nope',
     '#/task/%E0%A4%A',
     'https://example.com/#/issues',
@@ -267,6 +393,9 @@ describe('the href builders', () => {
     expect(issuesHref('all')).toBe('#/issues');
     expect(issuesHref('needs-you')).toBe('#/needs-you');
     expect(issuesHref('failed')).toBe('#/issues?preset=failed');
+    expect(issuesHref('all', 'p-1')).toBe('#/issues?project=p-1');
+    expect(issuesHref('needs-you', 'p 1')).toBe('#/needs-you?project=p%201');
+    expect(issuesHref('mine', 'p-1')).toBe('#/issues?preset=mine&project=p-1');
     expect(graphHref({ level: 'issue', milestoneId: 'ms-1' })).toBe(
       '#/graph?milestone=ms-1'
     );
@@ -279,6 +408,7 @@ describe('the href builders', () => {
   test('every builder’s href parses and lands where it says', () => {
     expect(land(issuesHref('failed'))?.tasksPreset).toBe('failed');
     expect(land(issuesHref('needs-you'))?.tasksPreset).toBe('needs-you');
+    expect(land(issuesHref('all', 'p/1'))?.tasksProject).toBe('p/1');
     expect(
       land(graphHref({ level: 'issue', milestoneId: 'ms-1' }))?.tasksPage
     ).toEqual({

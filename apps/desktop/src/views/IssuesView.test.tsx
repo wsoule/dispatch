@@ -246,18 +246,23 @@ interface HarnessProps {
   page?: TasksPage;
   /** The task in the quick-look drawer. */
   peekTaskId?: string | null;
+  /** The routed project (`#/issues?project=`) the list opens narrowed to. */
+  initialProject?: string | null;
 }
 
-// App's side of the view: the mode and preset live in its reducer.
+// App's side of the view: the mode, preset and routed project live in its
+// reducer.
 function Harness({
   data,
   log,
   initialMode = 'list',
   page = LIST,
   peekTaskId = null,
+  initialProject = null,
 }: HarnessProps) {
   const [mode, setMode] = useState<TasksMode>(initialMode);
   const [preset, setPreset] = useState<TasksPreset>('all');
+  const [project, setProject] = useState<string | null>(initialProject);
   return (
     <IssuesView
       data={data}
@@ -269,6 +274,8 @@ function Harness({
       onModeChange={setMode}
       preset={preset}
       onPreset={setPreset}
+      project={project}
+      onClearProject={() => setProject(null)}
       presetContext={{ bucketOf: () => null, starred: new Set(), me: ME }}
       onSelectTask={(id) => log.opened.push(id)}
       onOpenTask={(id) => log.pages.push(id)}
@@ -292,6 +299,7 @@ interface MountOptions {
   initialMode?: TasksMode;
   page?: TasksPage;
   peekTaskId?: string | null;
+  project?: string | null;
   deepLink?: DeepLinkActions | null;
   people?: { ref: string; name: string; placeholder?: boolean }[];
 }
@@ -311,6 +319,7 @@ function mount(options: MountOptions = {}) {
         initialMode={options.initialMode}
         page={page}
         peekTaskId={peekTaskId}
+        initialProject={options.project}
       />
     );
     if (options.deepLink !== undefined && options.deepLink !== null) {
@@ -508,6 +517,104 @@ test('a stored filter narrows the list and shows as a chip that removes', () => 
   );
   expect(rowIds()).toEqual(['t-1', 't-2', 't-3']);
   expect(screen.queryByRole('group', { name: 'Filters' })).toBeNull();
+});
+
+test('a routed project narrows the rows under a Project chip that clears', () => {
+  mount({ project: 'e-1' });
+  expect(rowIds()).toEqual(['t-1', 't-2']);
+  const chips = screen.getByRole('group', { name: 'Filters' });
+  expect(chips.textContent).toContain('Project');
+  expect(chips.textContent).toContain('Payments');
+  // The preset tabs stay inside the project: their hrefs carry it.
+  const tabs = screen.getByRole('navigation', { name: 'Presets' });
+  expect(
+    within(tabs).getByRole('link', { name: /^Mine/ }).getAttribute('href')
+  ).toBe('#/issues?preset=mine&project=e-1');
+  fireEvent.click(
+    within(chips).getByRole('button', { name: 'Remove project filter' })
+  );
+  expect(rowIds()).toEqual(['t-1', 't-2', 't-3']);
+  expect(screen.queryByRole('group', { name: 'Filters' })).toBeNull();
+  expect(
+    within(tabs).getByRole('link', { name: /^Mine/ }).getAttribute('href')
+  ).toBe('#/issues?preset=mine');
+});
+
+test('a routed project and the clauses narrow together; Clear all clears both', () => {
+  window.localStorage.setItem(
+    'dispatch:two-views-tasks-filters-v1',
+    JSON.stringify({
+      join: 'and',
+      clauses: [{ facet: 'status', op: 'is', values: ['todo'] }],
+    })
+  );
+  mount({ project: 'e-1' });
+  expect(rowIds()).toEqual(['t-1']);
+  const chips = screen.getByRole('group', { name: 'Filters' });
+  fireEvent.click(within(chips).getByRole('button', { name: 'Clear all' }));
+  expect(rowIds()).toEqual(['t-1', 't-2', 't-3']);
+});
+
+test('removing the only chip from the keyboard hands focus to the Filter button', () => {
+  mount({ project: 'e-1' });
+  const chips = screen.getByRole('group', { name: 'Filters' });
+  const remove = within(chips).getByRole('button', {
+    name: 'Remove project filter',
+  });
+  act(() => remove.focus());
+  // A keyboard Enter on a button is its click.
+  act(() => {
+    fireEvent.keyDown(remove, { key: 'Enter' });
+    fireEvent.click(remove);
+  });
+  expect(screen.queryByRole('group', { name: 'Filters' })).toBeNull();
+  expect(document.activeElement).toBe(
+    screen.getByRole('button', { name: 'Filter' })
+  );
+});
+
+test('Clear all hands focus to the Filter button as the chips go', () => {
+  window.localStorage.setItem(
+    'dispatch:two-views-tasks-filters-v1',
+    JSON.stringify({
+      join: 'and',
+      clauses: [{ facet: 'status', op: 'is', values: ['todo'] }],
+    })
+  );
+  mount({ project: 'e-1' });
+  const chips = screen.getByRole('group', { name: 'Filters' });
+  const clear = within(chips).getByRole('button', { name: 'Clear all' });
+  act(() => clear.focus());
+  act(() => {
+    fireEvent.click(clear);
+  });
+  expect(screen.queryByRole('group', { name: 'Filters' })).toBeNull();
+  expect(document.activeElement).toBe(
+    screen.getByRole('button', { name: 'Filter' })
+  );
+});
+
+test('a routed project that is archived still names its chip', () => {
+  // Archived: only in the archived list, not in the live one.
+  const archived = task('e-9', 'Old payments', 'done', null, 'milestone');
+  mount({
+    project: 'e-9',
+    data: {
+      archivedTasks: [archived],
+      tasksIncludingArchived: [...TASKS, archived],
+    },
+  });
+  const chips = screen.getByRole('group', { name: 'Filters' });
+  expect(chips.textContent).toContain('Old payments');
+  expect(chips.querySelector('[data-unknown]')).toBeNull();
+});
+
+test('a routed project no task has shows its id, tinted unknown, and nothing else', () => {
+  mount({ project: 'p-gone' });
+  expect(rowIds()).toEqual([]);
+  const chips = screen.getByRole('group', { name: 'Filters' });
+  expect(chips.textContent).toContain('p-gone');
+  expect(chips.querySelector('[data-unknown]')).not.toBeNull();
 });
 
 test('a chip reopens its values; toggling one edits the clause', async () => {

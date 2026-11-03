@@ -17,9 +17,11 @@ function initialHash(): string | null {
 
 /**
  * Keeps `location.hash` and the nav state in step, both ways. Mounted once in
- * App. The hash is the top place only (lib/routes.ts): a reload on the
- * Overseer, or with Settings open, comes back there with Tasks on its list,
- * not on the page the reducer had left it on.
+ * App. The hash is the top place plus the place beneath it (lib/routes.ts):
+ * a reload on the Overseer, or with Settings open, comes back there with
+ * Tasks on the page it was left on, and on the list also on its preset,
+ * project and layout (a task page keeps only the page: those three are the
+ * list's parameters).
  *
  * Out: every state change is written to the hash with `history.replaceState`,
  * never `pushState` — the reducer owns history (the back and forward keys walk

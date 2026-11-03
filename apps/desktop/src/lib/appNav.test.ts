@@ -937,6 +937,56 @@ describe('the Tasks preset', () => {
   });
 });
 
+describe('the routed project', () => {
+  test('a showTasks naming a project narrows the list to it, with or without a preset', () => {
+    const state = run([
+      { type: 'openTask', taskId: 't-1' },
+      { type: 'showTasks', project: 'p-store' },
+    ]);
+    expect(state.tasksProject).toBe('p-store');
+    expect(state.tasksPreset).toBe('all');
+    expect(state.tasksPage).toEqual({ kind: 'list' });
+    const failed = run([
+      { type: 'showTasks', preset: 'failed', project: 'p-store' },
+    ]);
+    expect(failed.tasksProject).toBe('p-store');
+    expect(failed.tasksPreset).toBe('failed');
+  });
+
+  test('a preset tab, the layout and a page keep it; any other showTasks clears it', () => {
+    const narrowed = run([
+      { type: 'showTasks', project: 'p-store' },
+      { type: 'setTasksPreset', preset: 'moving' },
+      { type: 'setTasksMode', mode: 'board' },
+      { type: 'openTask', taskId: 't-1' },
+      { type: 'closePage' },
+    ]);
+    expect(narrowed.tasksProject).toBe('p-store');
+    expect(run([{ type: 'showTasks' }], narrowed).tasksProject).toBeNull();
+    expect(
+      run([{ type: 'showTasks', preset: 'needs-you' }], narrowed).tasksProject
+    ).toBeNull();
+    expect(
+      run([{ type: 'showOverseer' }, { type: 'showTasks' }], narrowed)
+        .tasksProject
+    ).toBeNull();
+  });
+
+  test('the chip clears it in place, and a project switch drops it', () => {
+    const narrowed = run([{ type: 'showTasks', project: 'p-store' }]);
+    const cleared = run([{ type: 'setTasksProject', project: null }], narrowed);
+    expect(cleared.tasksProject).toBeNull();
+    expect(cleared.history).toBe(narrowed.history);
+    expect(
+      navReducer(cleared, { type: 'setTasksProject', project: null })
+    ).toBe(cleared);
+    expect(
+      run([{ type: 'selectProject', projectId: '/other' }], narrowed)
+        .tasksProject
+    ).toBeNull();
+  });
+});
+
 describe('opening an address', () => {
   test('a person or an outside agent opens in a peek over the current view', () => {
     expect(run([{ type: 'openAddress', address: 'human:sam' }]).peek).toEqual({

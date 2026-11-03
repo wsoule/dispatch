@@ -21,12 +21,21 @@ import { TASKS_PRESETS, type TasksPreset } from './tasksPresets';
 // URL, with two exceptions that are destinations in their own right:
 // `#/threads?message=` opens Threads with that thread's peek, and
 // `#/settings/<page>` (or `#/runs`) opens Settings on a page, since the
-// sidebar has rows for both. Only the top place is routed,
-// too: on the Overseer the hash is `#/overseer` whatever Tasks page, preset
-// or layout the reducer would return to, and `#/settings/<page>` says nothing
-// about the view beneath, so a reload there lands Tasks on its list. Within a
-// session the reducer keeps all of it; across a reload the hash is the whole
-// memory, by design (one place, one href).
+// sidebar has rows for both.
+//
+// Across a reload the hash is the whole memory, so a place that sits over
+// another carries the one beneath in a parameter, written as that place's
+// own href without its `#/`: the Overseer names where Tasks was left (its
+// page, and on the list also its preset, project and layout, as in
+// `#/overseer?tasks=` plus `issues?preset=mine` URI-encoded; a task page
+// keeps only the page, `#/overseer?tasks=task%2Ft-1`), and Settings names
+// the place under it (`#/settings/team?under=timeline`, which may itself be
+// the Overseer with its `?tasks=`). Each is left out when it is what a
+// reload lands on anyway (Tasks on its bare list; the Overseer), so
+// the common hrefs stay `#/overseer` and `#/settings/<page>`, and the
+// sidebar's links, which name no parameter, open the top place over whatever
+// shows. The list's routed project (`#/issues?project=<id>`, the Projects
+// register's Issues link) is a parameter of the list like its preset.
 
 export { graphHref } from '../adapters/graphScope';
 
@@ -45,12 +54,18 @@ export function timelineHref(projectId: string): string {
  * initiative), which has no sidebar row. */
 export const PROJECTS_HREF = '#/projects';
 
-/** The Issues list narrowed to one preset; All is the bare list. Needs you
- * keeps the sidebar's own href. */
-export function issuesHref(preset: TasksPreset): string {
-  if (preset === 'all') return '#/issues';
-  if (preset === 'needs-you') return '#/needs-you';
-  return `#/issues?preset=${encodeURIComponent(preset)}`;
+/** The Issues list narrowed to one preset, and to one container's issues
+ * when `project` names it (a project's task id); All with no project is the
+ * bare list. Needs you keeps the sidebar's own href. */
+export function issuesHref(
+  preset: TasksPreset,
+  project: string | null = null
+): string {
+  if (preset === 'needs-you') return href('needs-you', [], { project });
+  return href('issues', [], {
+    preset: preset === 'all' ? null : preset,
+    project,
+  });
 }
 
 /** One doc, scrolled to `anchor`'s section when set. */
@@ -105,16 +120,21 @@ function isSettingsPage(value: string): value is NavSettingsPage {
   return (NAV_SETTINGS_PAGES as readonly string[]).includes(value);
 }
 
-/** The list's `?preset=` and `?mode=` as actions, after the `showTasks` that
- * opens it; null when either names a value that does not exist. */
+/** The list's `?preset=`, `?project=` and `?mode=` as actions, after the
+ * `showTasks` that opens it; null when one names a value that does not exist
+ * (an empty project included). */
 function listParams(
   params: URLSearchParams,
   preset: TasksPreset | undefined
 ): NavAction[] | null {
-  const actions: NavAction[] =
-    preset === undefined
-      ? [{ type: 'showTasks' }]
-      : [{ type: 'showTasks', preset }];
+  const show: NavAction = { type: 'showTasks' };
+  if (preset !== undefined) show.preset = preset;
+  const project = params.get('project');
+  if (project !== null) {
+    if (project === '') return null;
+    show.project = project;
+  }
+  const actions: NavAction[] = [show];
   const mode = params.get('mode');
   if (mode !== null) {
     if (mode !== 'list' && mode !== 'board') return null;
@@ -141,32 +161,102 @@ function pageRoute(
   };
 }
 
+/** Where a reload lands Tasks when the Overseer's href names no `?tasks=`. */
+const BARE_LIST = '#/issues';
+/** Where a reload lands under Settings when its href names no `?under=`. */
+const BARE_OVERSEER = '#/overseer';
+
+/** The heads that cannot be the place under Settings: Settings itself. */
+const NOT_UNDER_SETTINGS: ReadonlySet<string> = new Set(['runs', 'settings']);
+/** The heads that cannot be Tasks' side of the Overseer: anything not Tasks. */
+const NOT_UNDER_OVERSEER: ReadonlySet<string> = new Set([
+  'overseer',
+  'runs',
+  'settings',
+]);
+
+/** A place written into another route's parameter (the Overseer's `?tasks=`,
+ * Settings' `?under=`): its href without the leading `#/`, or null (the key
+ * left out) when it is `fallback`, the place a reload lands on without it. */
+function nestedPlace(place: NavState, fallback: string): string | null {
+  const inner = hrefForState(place);
+  return inner === fallback ? null : inner.slice(2);
+}
+
+/** The actions of the place a route's parameter names, to apply before the
+ * route's own: none when the parameter is absent, null when its value is not
+ * a route or is one of `refused`'s heads (a place that cannot sit there). */
+function nestedActions(
+  value: string | null,
+  refused: ReadonlySet<string>
+): NavAction[] | null {
+  if (value === null) return [];
+  const route = parseRoute(`#/${value}`);
+  return route === null || refused.has(route.head) ? null : route.actions;
+}
+
+/** `open` (Settings on a page), after the actions of the place its
+ * `?under=` names. */
+function settingsActions(
+  params: URLSearchParams,
+  open: NavAction
+): NavAction[] | null {
+  const under = nestedActions(params.get('under'), NOT_UNDER_SETTINGS);
+  return under === null ? null : [...under, open];
+}
+
+/** The `?under=` parameter of a Settings href: the place below it. */
+function underParam(state: NavState): Record<string, string | null> {
+  return { under: nestedPlace({ ...state, settings: null }, BARE_OVERSEER) };
+}
+
 // In write order: Settings takes the main column over the views, so while
 // it is open it (or Runs, its page with a row of its own) is the place; then
 // the Overseer; then Tasks' list and each page under it.
 const ROUTES: readonly Route[] = [
   {
     head: 'runs',
-    write: (state) => (state.settings === 'runs' ? href('runs') : null),
-    read: (rest) =>
-      rest.length === 0 ? [{ type: 'openSettings', page: 'runs' }] : null,
+    write: (state) =>
+      state.settings === 'runs' ? href('runs', [], underParam(state)) : null,
+    read: (rest, params) =>
+      rest.length === 0
+        ? settingsActions(params, { type: 'openSettings', page: 'runs' })
+        : null,
   },
   {
     head: 'settings',
     write: (state) =>
-      state.settings === null ? null : href('settings', [state.settings]),
-    read: (rest) => {
-      if (rest.length === 0) return [{ type: 'openSettings' }];
+      state.settings === null
+        ? null
+        : href('settings', [state.settings], underParam(state)),
+    read: (rest, params) => {
+      if (rest.length === 0) {
+        return settingsActions(params, { type: 'openSettings' });
+      }
       const [page] = rest;
       return rest.length === 1 && page !== undefined && isSettingsPage(page)
-        ? [{ type: 'openSettings', page }]
+        ? settingsActions(params, { type: 'openSettings', page })
         : null;
     },
   },
   {
     head: 'overseer',
-    write: (state) => (state.mainView === 'overseer' ? href('overseer') : null),
-    read: (rest) => (rest.length === 0 ? [{ type: 'showOverseer' }] : null),
+    // Tasks' side is written without its peek: a thread peek opened over the
+    // Overseer belongs to the Overseer, which routes none.
+    write: (state) =>
+      state.mainView === 'overseer'
+        ? href('overseer', [], {
+            tasks: nestedPlace(
+              { ...state, mainView: 'tasks', peek: null },
+              BARE_LIST
+            ),
+          })
+        : null,
+    read: (rest, params) => {
+      if (rest.length !== 0) return null;
+      const tasks = nestedActions(params.get('tasks'), NOT_UNDER_OVERSEER);
+      return tasks === null ? null : [...tasks, { type: 'showOverseer' }];
+    },
   },
   {
     head: 'needs-you',
@@ -175,6 +265,7 @@ const ROUTES: readonly Route[] = [
       state.tasksPage.kind === 'list' &&
       state.tasksPreset === 'needs-you'
         ? href('needs-you', [], {
+            project: state.tasksProject,
             mode: state.tasksMode === 'list' ? null : state.tasksMode,
           })
         : null,
@@ -187,6 +278,7 @@ const ROUTES: readonly Route[] = [
       state.mainView === 'tasks' && state.tasksPage.kind === 'list'
         ? href('issues', [], {
             preset: state.tasksPreset === 'all' ? null : state.tasksPreset,
+            project: state.tasksProject,
             mode: state.tasksMode === 'list' ? null : state.tasksMode,
           })
         : null,
@@ -382,10 +474,19 @@ export function hrefForState(state: NavState): string {
  * The actions a hash href leads to, or null for anything that is not a route:
  * another anchor (`#main`), a path outside the table, a trailing slash, an
  * extra segment, an id that fails to decode, or a parameter naming a value
- * that does not exist (`?preset=bogus`). Parameters the route does not read
- * are ignored. Applied in order to the reducer, the actions land on the place.
+ * that does not exist (`?preset=bogus`, a `?tasks=` or `?under=` that is not
+ * a place that can sit there). Parameters the route does not read are
+ * ignored. Applied in order to the reducer, the actions land on the place.
  */
 export function parseHref(href: string): NavAction[] | null {
+  return parseRoute(href)?.actions ?? null;
+}
+
+/** `parseHref`, keeping the route's head, which a nested place is checked
+ * against (`nestedActions`). */
+function parseRoute(
+  href: string
+): { head: string; actions: NavAction[] } | null {
   if (!href.startsWith('#/')) return null;
   const at = href.indexOf('?');
   const path = at === -1 ? href.slice(2) : href.slice(2, at);
@@ -404,5 +505,6 @@ export function parseHref(href: string): NavAction[] | null {
   if (head === undefined) return null;
   const route = ROUTE_BY_HEAD.get(head);
   if (route === undefined) return null;
-  return route.read(rest, new URLSearchParams(query));
+  const actions = route.read(rest, new URLSearchParams(query));
+  return actions === null ? null : { head, actions };
 }

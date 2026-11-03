@@ -310,7 +310,7 @@ describe('ProjectsView', () => {
     expect(within(archive).getByText('Inactive')).toBeTruthy();
   });
 
-  test('the row and its cells are real hrefs: the timeline lane, the graph, the page', () => {
+  test('the row and its cells are real hrefs: the timeline lane, the issues, the graph, the page', () => {
     mount();
     const store = row('Storefront');
     expect(
@@ -318,6 +318,11 @@ describe('ProjectsView', () => {
         .getByRole('link', { name: 'Storefront on the timeline' })
         .getAttribute('href')
     ).toBe('#/timeline?project=p-store');
+    expect(
+      within(store)
+        .getByRole('link', { name: 'Issues of Storefront' })
+        .getAttribute('href')
+    ).toBe('#/issues?project=p-store');
     expect(
       within(store)
         .getByRole('link', { name: 'Graph of Storefront' })
@@ -328,6 +333,34 @@ describe('ProjectsView', () => {
         .getByRole('link', { name: 'Open Storefront' })
         .getAttribute('href')
     ).toBe('#/task/p-store');
+  });
+
+  test('the column floors fit the register width it stacks under', () => {
+    mount();
+    const register = row('Storefront').closest<HTMLElement>('[data-stack]');
+    if (register === null) throw new Error('no register');
+    // The register stacks its rows under its own width (stackWithin), so
+    // above that width every row must fit: the floors of the tracks, a 20px
+    // gap between each and 14px of padding each side (register.module.css's
+    // --register-gap and --register-pad-x). Over it, the end cell's Open
+    // button is clipped by the panel.
+    const stack = /^container-(\d+)$/.exec(
+      register.getAttribute('data-stack') ?? ''
+    );
+    const within = Number(stack?.[1]);
+    expect(within).toBe(900);
+    const columns = register.style.getPropertyValue('--register-cols');
+    const tracks = columns.match(/minmax\([^)]*\)|\S+/g) ?? [];
+    expect(tracks.length).toBe(7);
+    const floors = tracks.map((track) =>
+      Number(/^(?:minmax\()?(\d+)px/.exec(track)?.[1])
+    );
+    expect(floors.every((px) => Number.isFinite(px))).toBe(true);
+    const total =
+      floors.reduce((sum, px) => sum + px, 0) + 20 * (tracks.length - 1) + 28;
+    expect(total).toBeLessThanOrEqual(within);
+    // The end cell's floor holds its three 26px buttons and their 2px gaps.
+    expect(floors.at(-1)).toBeGreaterThanOrEqual(3 * 26 + 2 * 2);
   });
 
   test('agents working under a project or its milestones fill the allocation cell', () => {

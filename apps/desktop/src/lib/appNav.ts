@@ -272,6 +272,12 @@ export interface NavState extends Place {
   tasksMode: TasksMode;
   /** What the list and board show: All, or one question like Needs you or Failed. */
   tasksPreset: TasksPreset;
+  /** The container (a project, by task id) the list and board are narrowed
+   * to through their route, `#/issues?project=<id>` (the Projects register's
+   * Issues link), or null. Like the preset it is not part of a place: any
+   * `showTasks` sets or clears it, and the Issues toolbar's Project chip
+   * clears it (`setTasksProject`). */
+  tasksProject: string | null;
   peek: Peek | null;
   /** The open Settings page, or `null` while Settings is closed. While set,
    * Settings fills the main column over the place below (the views stay
@@ -351,10 +357,14 @@ export type NavAction =
    * clearing the next layer. */
   | { type: 'escape' }
   | { type: 'showOverseer' }
-  /** Tasks on its list, narrowed to `preset`; without one, back to where Tasks
-   * was left (or to the list, when already there) with the filter cleared. */
-  | { type: 'showTasks'; preset?: TasksPreset }
+  /** Tasks on its list, narrowed to `preset` and to `project`'s issues;
+   * without a preset, back to where Tasks was left (or to the list, when
+   * already there) with the filter cleared. Either way the project narrowing
+   * is `project` (none when left out). */
+  | { type: 'showTasks'; preset?: TasksPreset; project?: string | null }
   | { type: 'setTasksPreset'; preset: TasksPreset }
+  /** Narrows the list to one container's issues, or clears it with null. */
+  | { type: 'setTasksProject'; project: string | null }
   | { type: 'setTasksMode'; mode: TasksMode }
   | { type: 'openSettings'; page?: NavSettingsPage }
   | { type: 'closeSettings' }
@@ -392,6 +402,7 @@ export const initialNavState: NavState = {
   tasksPage: LIST,
   tasksMode: 'list',
   tasksPreset: 'all',
+  tasksProject: null,
   peek: null,
   settings: null,
   composerOpen: false,
@@ -830,19 +841,31 @@ export function navReducer(state: NavState, action: NavAction): NavState {
       return state;
     case 'showOverseer':
       return applyDestination(state, { kind: 'overseer' });
-    case 'showTasks':
-      if (action.preset !== undefined)
-        return { ...toTasks(state, LIST), tasksPreset: action.preset };
+    case 'showTasks': {
+      const tasksProject = action.project ?? null;
+      if (action.preset !== undefined) {
+        return {
+          ...toTasks(state, LIST),
+          tasksPreset: action.preset,
+          tasksProject,
+        };
+      }
       // Coming from Overseer returns to where Tasks was left; pressing Tasks
       // while already there goes back to the list, like any tab pressed twice.
       return state.mainView === 'tasks'
-        ? { ...toTasks(state, LIST), tasksPreset: 'all' }
+        ? { ...toTasks(state, LIST), tasksPreset: 'all', tasksProject }
         : {
             ...go(state, { mainView: 'tasks', tasksPage: state.tasksPage }),
             tasksPreset: 'all',
+            tasksProject,
           };
+    }
     case 'setTasksPreset':
       return { ...state, tasksPreset: action.preset };
+    case 'setTasksProject':
+      return state.tasksProject === action.project
+        ? state
+        : { ...state, tasksProject: action.project };
     case 'setTasksMode':
       return { ...state, tasksMode: action.mode };
     case 'openSettings':

@@ -7,6 +7,7 @@ import {
   applyDatePick,
   applyTaskFilters,
   clauseParts,
+  containerMatcher,
   DATE_PICKS,
   datePickBound,
   DAY_MS,
@@ -136,6 +137,47 @@ describe('clauses', () => {
     expect(applyTaskFilters(TASKS, filters).map((t) => t.meta.id)).toEqual([
       't-3',
     ]);
+  });
+});
+
+describe('the routed container clause', () => {
+  // Store › Beta › Cart › Cart sub-issue, a loose task, a task under a parent
+  // missing from the list, and a parent cycle that never reaches the store.
+  const TREE = [
+    task('p-store', { kind: 'project' }),
+    task('ms-beta', { kind: 'milestone', parent: 'p-store' }),
+    task('t-cart', { parent: 'ms-beta' }),
+    task('t-sub', { parent: 't-cart' }),
+    task('t-direct', { parent: 'p-store' }),
+    task('t-loose'),
+    task('t-orphan', { parent: 'gone' }),
+    task('c-a', { parent: 'c-b' }),
+    task('c-b', { parent: 'c-a' }),
+  ];
+
+  test('passes everything below the container at any depth, never the container', () => {
+    const inStore = containerMatcher('p-store', TREE);
+    expect(TREE.filter(inStore).map((t) => t.meta.id)).toEqual([
+      'ms-beta',
+      't-cart',
+      't-sub',
+      't-direct',
+    ]);
+  });
+
+  test('a task outside the list is judged by its parent chain (an archived row)', () => {
+    const inBeta = containerMatcher('ms-beta', TREE);
+    expect(inBeta(task('t-archived', { parent: 't-cart' }))).toBe(true);
+    expect(inBeta(task('t-archived', { parent: 't-loose' }))).toBe(false);
+  });
+
+  test('an unknown container passes nothing, and a cycle ends the walk', () => {
+    expect(TREE.filter(containerMatcher('p-nope', TREE))).toEqual([]);
+    // c-b sits below c-a; from p-store the c-a/c-b loop is walked and left.
+    const inA = containerMatcher('c-a', TREE);
+    expect(TREE.filter(inA).map((t) => t.meta.id)).toEqual(['c-b']);
+    const inStore = containerMatcher('p-store', TREE);
+    expect(inStore(task('c-x', { parent: 'c-a' }))).toBe(false);
   });
 });
 
