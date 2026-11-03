@@ -586,16 +586,15 @@ Agents, runs and people talk over one persistent bus
 **Desktop** (`apps/desktop`, ~105.5k lines of TypeScript) is the primary
 surface. Its sidebar lists the destinations
 (`apps/desktop/src/lib/shellRoutes.ts`): Overseer, Issues (list and board),
-Needs you, Timeline, Graph, Threads, Docs, Runs (Settings' runs page, which
-links to Live) and Settings, which opens as a page in the main column. The
-Projects register (also the sidebar Projects section's "All"), Files, Terminals
-and Live open from the command menu (`apps/desktop/src/lib/paletteEntries.ts`),
-and ⌘P opens quick open over the project's files.
-
-**Design system.** Every view is built from `@dispatch/ui`, the Gr8r Studio
-design system: its components, and CSS modules on its tokens
-(`packages/ui/src/styles/tokens.css`). `packages/ui/README.md` lists the
-components and the rules for colour, status tone and type.
+Needs you, Timeline, Graph, Threads, Docs, Runs (Settings' runs page) and
+Settings, which opens as a page in the main column. Live opens from the Runs
+page and sits under it: the sidebar marks Runs current there, and Escape or the
+"Runs" chip goes back to it. The Projects register (also the sidebar Projects
+section's "All"), Files, Terminals and Live also open from the command menu
+(`apps/desktop/src/lib/paletteEntries.ts`), and the quick-open chord (⌘P on
+macOS, Ctrl+P elsewhere) opens quick open over the project's files. Every view
+is built from `@dispatch/ui`; the rules it follows are under
+[Desktop design system](#desktop-design-system).
 
 **CLI** (`packages/cli`) — commands include `init`, `mcp`, `task`, `plan`,
 `milestone`, `serve`, `ui`, `doctor`, `run`, `runs`, `approve`, `message`,
@@ -609,6 +608,201 @@ components and the rules for colour, status tone and type.
 directly and need no daemon; the other sixteen require a running `dispatchd` and
 return a clear error without one. A `workflow://onboarding` resource briefs a
 connecting agent on the conventions.
+
+## Desktop design system
+
+The desktop has one UI layer, `@dispatch/ui` (`packages/ui`): Gr8r Studio's
+layout and look with a purple accent, ported from Better-Tracker, whose
+`docs/architecture.md` §8.2 was its spec. This section holds the rules Dispatch
+follows. `packages/ui/README.md` is the API reference (every component, prop and
+behaviour), and `.agents/skills/desktop-ui/SKILL.md` tells a contributor what to
+reach for. Checked against the tree on 2026-11-03.
+
+Two tests hold most of it. `packages/ui/test/styles-contrast.test.ts` checks
+every text token at 4.5:1 and every mark and control edge at 3:1 on every
+surface in both themes, the tone hook's mapping, the dark floor and that no
+library file reads a retired token. `apps/desktop/src/styles/gr8r-rules.test.ts`
+scans every file under `apps/desktop/src` for hex values, retired tokens,
+unresolved `var()` reads, utility classes, removed focus outlines and uppercase
+text.
+
+**Layout.** A sidebar shell (`AppShell`) with a command palette; tasks in
+grouped lists (`TaskGroupTable`) with a Kanban board as the Issues list's other
+mode; a Gantt Timeline; a dependency Graph; a Projects register; a slide-over
+drawer and a full page for a task; Flight Plan inside container pages (projects
+and milestones); Live under Runs. Live's and Flight Plan's headers use the
+compact `StatsStrip` (one 26px row of inline cells that wraps whole cells on a
+narrow column), so the bands and the canvas keep their height.
+
+### Tokens only
+
+- Every colour, size, radius, shadow and motion value is a token from
+  `packages/ui/src/styles/tokens.css`. No hex anywhere else; the one exemption
+  is `apps/desktop/src/lib/terminalPalette.ts` (the 16 ANSI colours). A tint the
+  tokens do not cover is added to `tokens.css` first, then used.
+- The pre-Gr8r names (`--paper`, `--ink`, `--background`, `--foreground`,
+  `--muted`, `--grey*`, `--tint`, `--hatch`, the `-ink` steps and the rest of
+  `RETIRED` in `packages/ui/test/contrast-helpers.ts`) are removed and never
+  come back.
+- **Surfaces**, back to front: `--bg` (behind everything), `--bg-side` (the
+  sidebar), `--surface` (main column, panels, drawer, menus), `--surface-2`
+  (hover), `--surface-3` (pressed, tracks), `--sunken` (recessed wells),
+  `--overlay` (the scrim). Light is
+  `#fbfaf8 / #f4f3f0 / #ffffff / #f6f5f2 / #eeede9 / #f7f6f3`. Dark is a soft
+  warm charcoal, redefined rather than inverted, and nothing is darker than
+  `#1a1a19` (the sidebar):
+  `#1c1c1b / #1a1a19 / #20201f / #272726 / #2e2e2c / #1c1c1b`.
+- **Lines**: `--divider` < `--border` < `--border-strong` are decoration. The
+  edge of anything a person types in or toggles is `--control-border` (`#8c8880`
+  light, `#7c7974` dark), 3:1 on every surface.
+- **Text**: `--text`, `--text-2` and `--text-3` hold 4.5:1 on every surface in
+  both themes; `--text-4` is for idle icons only, never words; `--text-inv` is
+  text on an inverted fill (a toast, a tooltip, the bulk bar).
+- **Accent** `#9747ff` in both themes, in Gr8r's accent role only: the primary
+  button (one per view), focus rings, selection, progress fills, the timeline's
+  today, unread dots and counts, query highlights and links. It never means a
+  status. Purple text is `--accent-ink` (`#7c33ea` light, `#b385ff` dark).
+- **Elevation** only on things that float or can be picked up: popovers, menus,
+  pickers, dialogs, the palette, toasts and the bulk bar (`--shadow-pop`), the
+  drawer (`--shadow-drawer`), a dragged card or row (`--shadow-drag`). Panels,
+  rows, banners, chips and inputs have none.
+- **Shape**: radius from `--r-xs` (4px) to `--r-xl` (12px); row heights,
+  paddings and text sizes come from the primitives, so neighbouring surfaces
+  line up. A missing variant is added to `packages/ui` with a test and a README
+  line, never restyled locally.
+
+### Status colours
+
+The hue table (owner decision Q6, the same as Better-Tracker's): **red** is
+overdue and failed; **amber** is at risk, blocked, a missing input and waiting
+on you; **green** is on track and succeeded, which includes review (the agent's
+work succeeded and waits on a person); **blue** is in progress and live
+(working, landing, an active session); **grey** is paused and inactive. Done,
+landed and merged are the filled neutral mark, never green beside a red. The
+purple accent is never a status.
+
+A status is coloured only through a `UiTone` (`default`, `muted`, `accent`,
+`danger`, `warning`, `success`, `info`). A component renders its tone as
+`data-tone`, and the hook in `tokens.css` gives that element `--tone` (the hue:
+fills, dots, outlines), `--tone-ink` (its text, 4.5:1), `--tone-soft` (the
+tint), `--tone-line` (a tinted border) and `--on-tone` (text on a solid fill). A
+status word in a host's own markup is `<span class="toneText" data-tone="…">`;
+never `color: var(--red)`. Dispatch's states map through these helpers (paths
+under `apps/desktop/src/`; the skill lists the rest):
+
+| States                                                                 | `danger` | `warning`                             | `success`    | `info`                                    | `muted`                                                | neutral mark                      |
+| ---------------------------------------------------------------------- | -------- | ------------------------------------- | ------------ | ----------------------------------------- | ------------------------------------------------------ | --------------------------------- |
+| task status (`statusTone`, `lib/statusTone.ts`)                        | —        | held by a dependency (`BLOCKED_TONE`) | review       | working, landing, a started custom status | draft, ready, dropped, triage, backlog, todo, canceled | landed, a completed custom status |
+| feed state (`feedStateTone`, `lib/feedState.ts`)                       | broken   | your move, blocked                    | review       | the machine's move                        | resting                                                | —                                 |
+| milestone child (`phaseTone`, `lib/milestoneSession.ts`)               | failed   | capped, held, waiting, blocked        | needs review | working, reviewing, fixing, landing       | —                                                      | the rest                          |
+| session (`sessionStatusTone`, `components/sessions/sessionDisplay.ts`) | —        | —                                     | —            | active                                    | ended                                                  | —                                 |
+
+- **Four looks, loud to quiet**: the tinted badge (`Chip filled`, `Notice`,
+  `AlertStrip`, a count) for the stronger claim or a call to action; the dot
+  pill (an unfilled status `Chip`: neutral, a 6px dot in the hue) for a
+  lifecycle status that is not a problem; toned text (`.toneText`) for a bare
+  word, number or date; plain quiet text for muted. No solid status slab, and no
+  row rule: a row that needs action says so with a tinted chip or a toned cell.
+- **Colour is never the only cue.** Every status keeps its shape and its words
+  (a visible label, an `aria-label` or a tooltip). Milestone statuses are
+  diamonds and task states circles (`StateGlyph`), so the two never look alike;
+  done is the neutral fill with a knocked-out tick, because a green fill is as
+  light as the red one.
+
+### Contrast, forced colours and motion
+
+- Text holds 4.5:1; marks, control edges and the focus ring hold 3:1, in both
+  themes. A pressed toggle (`Button` or `ChipButton` with `aria-pressed`) is the
+  accent tint in a full `--accent` edge, which holds 3:1 on `--bg`, `--bg-side`,
+  `--surface`, `--surface-2` and `--sunken` (not on `--surface-3`, so toggles
+  stay off that ground).
+- Code fences in Markdown are highlighted by Shiki with GitHub's high-contrast
+  themes (`github-light-high-contrast`, `github-dark-high-contrast`): every
+  token colour holds 4.5:1 on the fence's `--sunken`, `--surface` and
+  `--surface-2` in its theme
+  (`apps/desktop/src/components/runs/markdown/highlight.test.ts`).
+- Focus is a 2px `--focus-ring` outline, never `outline: none`.
+- Forced colours keep every shape: anything drawn with backgrounds alone takes
+  `forced-color-adjust: none` and system colours, and edges are borders.
+- Reduced motion is a designed state: transitions off, no scale, lift or
+  shimmer. Hover styles apply only under `(hover: hover)` at 901px and wider. A
+  theme change never animates.
+
+### Type
+
+Geist (`--font-sans`) for every word, in sentence case, at weights 400, 450, 500
+and 600 on the `--fs-2xs` to `--fs-2xl` scale. The one uppercase voice is the
+library's `.eyebrow` (sidebar, menu and palette section headings). Geist Mono
+(`--font-mono`, `.mono`) is only for machine-read strings: task ids, keys,
+paths, commands and code. Counts and dates are Geist with tabular figures
+(`.num`). Icons are Lucide. The fonts come from `@fontsource-variable/geist` and
+`@fontsource/geist-mono`.
+
+### Theme
+
+Light, dark or System. `html[data-theme]` is `light`, `dark` or `system` (which
+follows the OS live through `prefers-color-scheme`). A choice of Light or Dark
+is stored in `localStorage` under `dispatch:theme`; nothing stored means System.
+The inline `themeScript` (injected by `apps/desktop/vite.config.ts`) applies it
+before first paint. The sidebar footer's toggle flips between light and dark,
+Settings → General → Appearance offers all three, and the palette's "Follow the
+system theme" goes back to System. Storage is per origin: one for the Tauri app,
+one per daemon port in a browser. The Tauri window's native appearance (its
+background before first paint, the area a resize exposes, native menus) follows
+the OS, not the stored choice.
+
+### Overlays: one layer stack
+
+Every overlay renders in place on the layer stack
+(`packages/ui/src/shell/layer.ts`), never in a portal. The floating layers
+(`Popover`, `PickerPopover`, `Menu`, `Tooltip`, `Dialog`, `ConfirmDialog`) use
+the browser's top layer; a modal panel over a scrim (a modal `SlideOver`, a host
+panel on `useModalSurface`) stays out of it. Escape closes the topmost layer
+only, one per press: its handler calls `preventDefault()` and
+`stopPropagation()`, document listeners check `defaultPrevented`, and focus
+returns to each opener in turn. A modal surface sets `aria-modal="true"`, so
+`useGlobalKeyboard` stays quiet while it is open.
+
+### Slide-over or full page
+
+A task opens two ways, with the same sections in the same order (Gr8r's task
+drawer):
+
+- **Slide-over** (`TaskSlideOver`, 620px from the right): a row click or Space.
+  On a desktop it has no scrim, so the list beside it stays usable; on a phone
+  it covers the page over the scrim. Escape closes the nearest thing first (an
+  open picker, a field being edited), then the drawer.
+- **Full page** (`TaskDetail` with `layout="page"`): Enter or `o` on a focused
+  row, or Open page in the slide-over. Escape or Back returns to the list with
+  focus on the row it came from.
+
+A form over a page (the task composer) is a modal `SlideOver`, a short focused
+form a `Dialog`, a destructive confirm a `ConfirmDialog`.
+
+### Keyboard map
+
+Resolved in `apps/desktop/src/lib/keyboard.ts` (pure) and wired by
+`hooks/useGlobalKeyboard.ts`; `?` shows the shortcuts sheet. "Mod" is ⌘ on macOS
+and Ctrl elsewhere.
+
+- **Command palette**: Mod+K anywhere, or `/` outside a text field.
+- **Quick open** (go to file): ⌘P on macOS, Ctrl+P on other platforms. It works
+  while typing. On macOS, Ctrl+P is never claimed: it keeps Cocoa's "previous
+  line" in every text field. Over a modal the chord is claimed and does nothing,
+  so the browser's print dialog never opens in its place.
+- **Modifier chords** (work while typing): Mod+, Settings; Mod+[ and Mod+] back
+  and forward; Mod+1 Overseer, Mod+2 Issues, Mod+3 to Mod+9 the Issues presets
+  in chip order; Mod+= / Mod+- / Mod+0 zoom. Mod+D (Drop a thought) and Mod+B
+  (sidebar) stay dead while typing or under a modal.
+- **Bare keys** (never while typing or under a modal): `c` new task, `[`
+  sidebar, `?` shortcuts, and the `g` chords: `g a` or `g o` Overseer, `g t`
+  Issues, `g i` Needs you, `g l` Timeline, `g g` Graph, `g m` Threads, `g s`
+  Settings, `g f` and `g r` the in-flight and review presets.
+- **On a focused list** (`resolveListKeyCommand`; each view takes the subset it
+  handles, the Issues list all of them): `j`/`k` or the arrows move, Enter or
+  `o` opens the page, Space the slide-over, `x` selects, `s` `p` `a` `l` `m` set
+  status, priority, assignee, labels and milestone, `d` dispatches, `f` filters,
+  ⇧V opens display options, Escape clears the selection.
 
 ## Team collaboration
 

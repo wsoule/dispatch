@@ -57,6 +57,13 @@ origin: the Tauri app has one origin, so the choice holds for every project; in
 a browser (`dispatch ui`) each daemon port is its own origin and keeps its own
 choice.
 
+Known limit: the Tauri window's native appearance is not set from the stored
+choice, so it follows the OS. With the OS light and Dark chosen, the window's
+background before first paint, the area a resize exposes and native menus are
+still light. Setting it needs `getCurrentWindow().setTheme` at startup and on
+every change, and the `core:window:allow-set-theme` capability in
+`src-tauri/capabilities/`.
+
 ## Toolchain notes
 
 - **Catalog reconciliation:** `react`, `react-dom` → `19.2.7`; `@types/react` →

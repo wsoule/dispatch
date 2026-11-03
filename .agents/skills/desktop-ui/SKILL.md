@@ -30,8 +30,9 @@ the rest) and `src/lib/shellRoutes.ts`. Paths below are under
 - Settings is an overlay place in the main column (`views/SettingsView.tsx`,
   `components/settings/SettingsLayout.tsx`, `lib/appNav.ts`); Escape returns to
   where you were.
-- Palette rows come from `adapters/palette.ts` and `lib/paletteEntries.ts`. ⌘P
-  (quick open) is a global command (`lib/keyboard.ts`).
+- Palette rows come from `adapters/palette.ts` and `lib/paletteEntries.ts`.
+  Quick open is a global command (`lib/keyboard.ts`): ⌘P on macOS, where Ctrl+P
+  keeps its text meaning and is never claimed, and Ctrl+P elsewhere.
 - The theme is stored per origin under `dispatch:theme` (`lib/theme.ts`,
   `hooks/useThemeChoice.ts`).
 
@@ -79,6 +80,10 @@ Tone helpers (under `apps/desktop/src/`): `feedStateTone` (`lib/feedState.ts`),
 `docBadgeTone` (`lib/docs.ts`), `messageBadgeTone` (`lib/threadSources.ts`).
 
 ## Rules
+
+The binding design rules (tokens, the status hue table, contrast, forced
+colours, motion, type, theme, overlays, slide-over versus full page, the
+keyboard map) are in `docs/ARCHITECTURE.md` "Desktop design system".
 
 - **Reach for the library first.** Search `packages/ui` before writing markup.
 - **Missing variant? Add it to `packages/ui`,** with a test and a README line,

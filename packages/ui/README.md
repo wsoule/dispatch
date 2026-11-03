@@ -4,10 +4,11 @@ React components for the task UI in Gr8r Studio's layout and look (sidebar
 shell, command palette, grouped task lists, Gantt timeline, slide-over drawer;
 warm neutral surfaces, soft borders, radius, soft shadows only on floating
 things, tinted status colours, sentence-case Geist), with one purple accent
-`#9747ff` in Gr8r's accent role (owner decision 2026-10-23;
-`docs/architecture.md` §8.2). It was written in Better-Tracker, the Milestone
-Planner (a Next.js host, "the planner" below), and moved here with that
-project's sunset; the Dispatch desktop app (Vite + Tauri) is its host now.
+`#9747ff` in Gr8r's accent role (owner decision 2026-10-23; the binding rules
+are in `docs/ARCHITECTURE.md` "Desktop design system"). It was written in
+Better-Tracker, the Milestone Planner (a Next.js host, "the planner" below), and
+moved here with that project's sunset; the Dispatch desktop app (Vite + Tauri)
+is its host now.
 
 The package has no framework or domain coupling: no `next/*`, no imports from
 another workspace package, no `process.env`, and no `window`/`document` read
@@ -70,7 +71,7 @@ classes the components use by name. Everything else is in CSS modules.
 | `--divider` < `--border` < `--border-strong`; `--control-border`                                                                                                                                                                  | row separators, container edges, chip and button outlines (decoration); the 3:1 edge of a field, checkbox or switch |
 | `--text`, `--text-2`, `--text-3`, `--text-4`, `--text-inv`                                                                                                                                                                        | primary, secondary, meta, icons only (never words), text on an inverted fill                                        |
 | `--accent`, `--on-accent`, `--accent-ink`(`-hover`), `--accent-soft`, `--accent-line`, `--accent-hover`, `--accent-active`                                                                                                        | the purple: primary, focus, selection, progress, today, unread, links; never a status                               |
-| `--red`, `--amber`, `--green`, `--blue` (text-safe and 3:1 as marks), `--gray` (inactive mark), each `-soft` / `-line` tint, `--on-<hue>` (`--on-danger`), `--<hue>-ink-inverse` and `--accent-ink-inverse` (on an inverted fill) | status and risk (the mapping in `docs/architecture.md` §8.2)                                                        |
+| `--red`, `--amber`, `--green`, `--blue` (text-safe and 3:1 as marks), `--gray` (inactive mark), each `-soft` / `-line` tint, `--on-<hue>` (`--on-danger`), `--<hue>-ink-inverse` and `--accent-ink-inverse` (on an inverted fill) | status and risk (the mapping in `docs/ARCHITECTURE.md`)                                                             |
 | `--violet`, `--teal`, `--rose`, `--orange`                                                                                                                                                                                        | avatars and swatches only                                                                                           |
 | `--st-triage` … `--st-done`                                                                                                                                                                                                       | `StateGlyph`'s workflow colours                                                                                     |
 | `--shadow-sm`, `--shadow-raised`, `--shadow-card`, `--shadow-pop`, `--shadow-drag`, `--shadow-drawer`                                                                                                                             | elevation, only for things that float or can be picked up                                                           |
@@ -99,8 +100,16 @@ The pre-Gr8r names (`--paper`, `--ink`, `--background`, `--foreground`,
 `--hairline-inverse`, `--ease-out-quint`, `--ease-out-expo`) were deprecated
 aliases onto the Gr8r tokens while the sheets moved, and are removed:
 `tokens.css` no longer declares them, so a host's CSS that still reads one gets
-nothing (`RETIRED` in `test/contrast-helpers.ts`; docs/architecture.md §8.2 "Old
-token names" maps each to its Gr8r name).
+nothing (`RETIRED` in `test/contrast-helpers.ts`). Each maps to the Gr8r token
+that does its job: `--paper` and `--background` → `--surface`; `--ink`,
+`--foreground` and `--ink-soft` → `--text`; `--muted` → `--text-2`;
+`--grey-2-ink` → `--text-3`; `--grey-2` → `--text-4`; `--grey-3` →
+`--border-strong`; `--grey-4` → `--surface-3`; `--grey` → `--gray`;
+`--hairline-faint` → `--divider`; `--tint` → `--surface-2`; the `-ink` hue steps
+→ the hue itself (`--red`, `--amber`, `--green`, `--blue`); `--hatch` → nothing
+(a dashed edge, `.hatched`); `--ease-out-quint` / `--ease-out-expo` →
+`--ease-drawer` / `--ease`; the three `-inverse` names went with the ink floods
+that used them.
 
 ### Page mode (default)
 
@@ -321,17 +330,18 @@ function HostLink({ href, onClick, ...rest }: UiLinkProps) {
 ```
 
 `UiLinkProps` is `href`, `className`, `children`, `aria-current`, `aria-label`,
-`title`, `target`, `rel` and `onClick`. The planner's adapter is
-`apps/planner/app/(app)/components/next-ui-link.tsx` (`next/link`, with plain
-anchors for `/api/*`).
+`title`, `target`, `rel` and `onClick`. Dispatch's adapter is `DispatchLink` in
+`apps/desktop/src/components/shell/DispatchShell.tsx` (a plain left click on a
+hash route the app knows dispatches that route's actions; a modified or middle
+click is left to the browser). The planner's was `next/link`.
 
 ## Status vocabulary
 
 A milestone's status is a 12px diamond coloured by the status hues (the mapping
 of the owner decision of 2026-10-22, drawn the Gr8r way since 2026-10-23; the
-full table is in `docs/architecture.md` §8.2 "Status colours"). The shape always
-differs too, and the label is always there for assistive tech, so colour is
-never the only cue:
+Dispatch's table is in `docs/ARCHITECTURE.md` "Desktop design system › Status
+colours"). The shape always differs too, and the label is always there for
+assistive tech, so colour is never the only cue:
 
 | `UiStatus` | mark                                                       |
 | ---------- | ---------------------------------------------------------- |
@@ -448,57 +458,58 @@ exported from the package root (`TaskDetailProps`, `TimelineChartProps`,
 `UiLinkProviderProps`, `PickerMarkViewProps`, …). Required props are listed; see
 the types for the rest.
 
-| family   | component                                                                                                                        | required props                                                      |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| basics   | `StatusMark`                                                                                                                     | `status`, `label`                                                   |
-|          | `BlockBar` (a section heading row; `index` is ignored)                                                                           | `title`                                                             |
-|          | `Tabs` (prefixed ids; `label` names the tablist; empty renders nothing; `value` and `onChange` control it; host panel below)     | `items: TabItem[]` (`id`, `label`, optional `content`)              |
-|          | `ThemeToggle`, and under Theme `themeScript`, `readThemeChoice`, `applyThemeChoice`, `showTheme`, `themeChoiceOf`, `ThemeChoice` | `storageKey`                                                        |
-|          | `InitialsAvatar` (round, a pastel hue from the name; blank = nobody), `avatarHue(name)`                                          | `name`                                                              |
-| tasks    | `Button` (primary, secondary, quiet, danger; `size` sm / md / lg; `block`)                                                       | none (`href` renders a link)                                        |
-|          | `Checkbox` (`indeterminate` for a partly selected group), `Switch` (`hideLabel`), `SegmentedControl`, `Chip`                     | see `tasks/types.ts`                                                |
-|          | `ChipButton` (a chip that is a button, a toggle with `selected`, or a link with `href`; below)                                   | `children`                                                          |
-|          | `SearchField` (a search box with a clear button; Escape clears; below)                                                           | `value`, `onChange`, `label`                                        |
-|          | `CopyValue` (a value in a code well with a Copy button; below)                                                                   | `value`, `label`                                                    |
-|          | `CodeBlock` (code in a Geist Mono well: filename, language label, actions, Copy, wrap, `maxHeight`, host `tokens`; below)        | `code`                                                              |
-|          | `TaskGroupTable` (grouped issue list; selection, drag and slots below)                                                           | `sections`                                                          |
-|          | `ViewToolbar` (list toolbar: an optional search, the host's Filter / Sort / Group, end actions), `ToolbarBadge`                  | `controls` (`search` optional)                                      |
-|          | `FilterChips` ("Project is …" chips joined by "and", + Filter, Clear all)                                                        | `chips`                                                             |
-|          | `BulkBar` (the floating bar of a selection; confirm strip, busy, note), `useBulkBarHeight()` (its height while up)               | `count`, `onClear`, `children`                                      |
-|          | `DeadlineList`, `StatsStrip` (`data-*` on the list and each cell; a cell's `title` hint), `ProgressRule` (`valueText`, `data-*`) | `groups`; `cells`; `done`/`total`                                   |
-|          | `Register`, `RegisterRow` (`pressed` on a button row), `RegisterCell` (`span="row"` takes the whole row)                         | `columns`, `label`, `children`                                      |
-|          | `Notice` (`role` status, alert or note), `EmptyState` (a centred icon, optional `label` title, the sentence, an action)          | see `tasks/types.ts`                                                |
-|          | `NavTabs` (`items`, or `groups` for a grouped vertical sub-nav; below), `Checklist` (the rubric; `onToggle` for Checkbox rows)   | `label` and `items` or `groups`; `items` (`onToggle` optional)      |
-|          | `Disclosure` (a fold: a trigger and the panel it shows or hides; below)                                                          | `children`                                                          |
-|          | `SectionHeader` (a heading row over a band of rows: fold chevron, tone, count, actions, "+"; Lists below)                        | `name`                                                              |
-|          | `ProgressPie` (Linear's ring and pie, done of total; Status vocabulary above)                                                    | `done`, `total`, `label`                                            |
-|          | `ListItem` (a row of a host's own list: leading, title and crumb, meta, trailing, date; below)                                   | `title`                                                             |
-|          | `Panel` (a bordered box with a 40px heading row), `PanelRow` (its rows; `onActivate`, `urgent`; below)                           | `children`                                                          |
-| shell    | `AppShell` (sidebar, topbar, phone tab bar; `workspaceSwitcher` makes the brand row a workspace menu, below)                     | `appName`, `brandHref`, `nav`                                       |
-|          | `CommandPaletteProvider` + `CommandPalette`                                                                                      | none; pass `navigate` (the default is `window.location.assign`)     |
-|          | `ToastProvider` + `useToast()` (`useOptionalToast()`: null without a provider)                                                   | none                                                                |
-|          | `SlideOver` (`contentKey`: a swap in place moves focus; `modal`, `size`, `footer` for a form surface)                            | `open`, `onClose`, `title`                                          |
-|          | `Dialog` (a centred modal: sm / md / lg), `ConfirmDialog` (an alertdialog before a destructive write)                            | `open`, `onClose`, `title`; `confirmLabel`, `onConfirm`, `onCancel` |
-|          | `useModalSurface` (a host's own panel over a scrim, out of the top layer; below)                                                 | `open`, `onClose`, `panelRef`                                       |
-|          | `Tooltip` (hover and keyboard focus, no provider), `Spinner` (in-flight agent or network work only)                              | `content`, `children`; none                                         |
-|          | `SignedOutFrame` (`chromeAttributes` for a desktop host, below), `PropertyList`, `AlertStrip`                                    | see `shell/types.ts`                                                |
-|          | `Skeleton*`, `Kbd`, `KbdKeys`                                                                                                    | see `shell/types.ts`                                                |
-| timeline | `TimelineChart` (Gantt)                                                                                                          | `today`, `windowStart`, `windowEnd`, `zoom`, `groups`, `onOpenBar`  |
-| graph    | `DependencyGraph`                                                                                                                | `nodes`, `edges`, `ariaSummary`, `emptyMessage`                     |
-|          | `GraphLegend`, `MermaidSource`                                                                                                   | see `graph/types.ts`                                                |
-| task     | `TaskDetail` (`layout="drawer"` or `"page"`)                                                                                     | `taskKey`, `title`, `status`, `properties`                          |
-|          | `TaskSlideOver` (TaskDetail in a SlideOver)                                                                                      | the above plus `open`, `onClose`                                    |
-|          | `TaskDescription`, `TaskRelationList`, `TaskCommentList`, `TaskActivityList`, `TaskCrumbs`                                       | see `task/types.ts`                                                 |
-| edit     | `StatePicker`, `AssigneePicker`, `PriorityPicker`, `LabelPicker`, `ProjectPicker`, `MilestonePicker`, `EstimatePicker`           | the choices (`states`, `people`, …), `value`, `onChange`            |
-|          | `PickerPopover` (the generic picker)                                                                                             | see `edit/types.ts`                                                 |
-|          | `Popover` (a non-modal panel for a host's own controls)                                                                          | `open`, `onOpenChange`, `label`, `children`                         |
-|          | `TaskRelationPicker`                                                                                                             | `label`, `search`, `onSelect`                                       |
-|          | `InlineTextField`, `TextAreaEditor`                                                                                              | `label`, `onSave` (and `value` for the field)                       |
-|          | `DateField`                                                                                                                      | `label`, `value`, `onChange`                                        |
-| controls | `TextField` (field or inline; `start` / `end` adornments), `TextArea` (grows with its content)                                   | none (native attributes pass through)                               |
-|          | `Field` (label, `hint`, `error`; the control inside takes its id and description)                                                | `label`, `children`                                                 |
-|          | `Select` (a field-look `PickerPopover` without search), `RadioGroup` (native radios; `cards`, `badge`, `aside`, `children`)      | `value`, `options`, `onChange` (and `label` for Select)             |
-|          | `Menu` (actions, radio rows, groups, separators, submenus; it and each open submenu are layers of the overlay stack)             | `label`, `trigger` (spread its props onto a `Button`), `items`      |
+| family   | component                                                                                                                                                           | required props                                                      |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| basics   | `StatusMark`                                                                                                                                                        | `status`, `label`                                                   |
+|          | `BlockBar` (a section heading row; `index` is ignored)                                                                                                              | `title`                                                             |
+|          | `Tabs` (prefixed ids; `label` names the tablist; empty renders nothing; `value` and `onChange` control it; host panel below)                                        | `items: TabItem[]` (`id`, `label`, optional `content`)              |
+|          | `ThemeToggle`, and under Theme `themeScript`, `readThemeChoice`, `applyThemeChoice`, `showTheme`, `themeChoiceOf`, `ThemeChoice`                                    | `storageKey`                                                        |
+|          | `InitialsAvatar` (round, a pastel hue from the name; blank = nobody), `avatarHue(name)`                                                                             | `name`                                                              |
+| tasks    | `Button` (primary, secondary, quiet, danger; `size` sm / md / lg; `block`)                                                                                          | none (`href` renders a link)                                        |
+|          | `Checkbox` (`indeterminate` for a partly selected group), `Switch` (`hideLabel`), `SegmentedControl`, `Chip`                                                        | see `tasks/types.ts`                                                |
+|          | `ChipButton` (a chip that is a button, a toggle with `selected`, or a link with `href`; below)                                                                      | `children`                                                          |
+|          | `SearchField` (a search box with a clear button; Escape clears; below)                                                                                              | `value`, `onChange`, `label`                                        |
+|          | `CopyValue` (a value in a code well with a Copy button; below)                                                                                                      | `value`, `label`                                                    |
+|          | `CodeBlock` (code in a Geist Mono well: filename, language label, actions, Copy, wrap, `maxHeight`, host `tokens`; below)                                           | `code`                                                              |
+|          | `TaskGroupTable` (grouped issue list; selection, drag and slots below)                                                                                              | `sections`                                                          |
+|          | `ViewToolbar` (list toolbar: an optional search, the host's Filter / Sort / Group, end actions), `ToolbarBadge`                                                     | `controls` (`search` optional)                                      |
+|          | `FilterChips` ("Project is …" chips joined by "and", + Filter, Clear all)                                                                                           | `chips`                                                             |
+|          | `BulkBar` (the floating bar of a selection; confirm strip, busy, note), `useBulkBarHeight()` (its height while up)                                                  | `count`, `onClear`, `children`                                      |
+|          | `DeadlineList`, `StatsStrip` (`variant` panel or compact, below; `data-*` on the list and each cell; a cell's `title` hint), `ProgressRule` (`valueText`, `data-*`) | `groups`; `cells`; `done`/`total`                                   |
+|          | `Register` (`stackWithin`, `windowed` for a long list; below), `RegisterRow` (`pressed` on a button row), `RegisterCell` (`span="row"` takes the whole row)         | `columns`, `label`, `children`                                      |
+|          | `Notice` (`role` status, alert or note), `EmptyState` (a centred icon, optional `label` title, the sentence, an action)                                             | see `tasks/types.ts`                                                |
+|          | `NavTabs` (`items`, or `groups` for a grouped vertical sub-nav; below), `Checklist` (the rubric; `onToggle` for Checkbox rows)                                      | `label` and `items` or `groups`; `items` (`onToggle` optional)      |
+|          | `Disclosure` (a fold: a trigger and the panel it shows or hides; below)                                                                                             | `children`                                                          |
+|          | `SectionHeader` (a heading row over a band of rows: fold chevron, tone, count, actions, "+"; Lists below)                                                           | `name`                                                              |
+|          | `ProgressPie` (Linear's ring and pie, done of total; Status vocabulary above)                                                                                       | `done`, `total`, `label`                                            |
+|          | `ListItem` (a row of a host's own list: leading, title and crumb, meta, trailing, date; below)                                                                      | `title`                                                             |
+|          | `Panel` (a bordered box with a 40px heading row), `PanelRow` (its rows; `onActivate`, `urgent`, `urgentLabel`; below)                                               | `children`                                                          |
+| shell    | `AppShell` (sidebar, topbar, phone tab bar; `workspaceSwitcher` makes the brand row a workspace menu, below)                                                        | `appName`, `brandHref`, `nav`                                       |
+|          | `CommandPaletteProvider` + `CommandPalette`                                                                                                                         | none; pass `navigate` (the default is `window.location.assign`)     |
+|          | `ToastProvider` + `useToast()` (`useOptionalToast()`: null without a provider)                                                                                      | none                                                                |
+|          | `SlideOver` (`contentKey`: a swap in place moves focus; `modal`, `size` wide or narrow, `footer` for a form surface)                                                | `open`, `onClose`, `title`                                          |
+|          | `Dialog` (a centred modal: sm / md / lg), `ConfirmDialog` (an alertdialog before a destructive write)                                                               | `open`, `onClose`, `title`; `confirmLabel`, `onConfirm`, `onCancel` |
+|          | `useModalSurface` (a host's own panel over a scrim, out of the top layer; below)                                                                                    | `open`, `onClose`, `panelRef`                                       |
+|          | `Tooltip` (hover and keyboard focus, no provider), `Spinner` (in-flight agent or network work only)                                                                 | `content`, `children`; none                                         |
+|          | `SignedOutFrame` (`chromeAttributes` for a desktop host, below), `PropertyList`, `AlertStrip`                                                                       | see `shell/types.ts`                                                |
+|          | `Skeleton*`, `Kbd`, `KbdKeys`                                                                                                                                       | see `shell/types.ts`                                                |
+| timeline | `TimelineChart` (Gantt)                                                                                                                                             | `today`, `windowStart`, `windowEnd`, `zoom`, `groups`, `onOpenBar`  |
+| graph    | `DependencyGraph`                                                                                                                                                   | `nodes`, `edges`, `ariaSummary`, `emptyMessage`                     |
+|          | `GraphLegend`, `MermaidSource`                                                                                                                                      | see `graph/types.ts`                                                |
+| task     | `TaskDetail` (`layout="drawer"` or `"page"`)                                                                                                                        | `taskKey`, `title`, `status`, `properties`                          |
+|          | `TaskSlideOver` (TaskDetail in a SlideOver)                                                                                                                         | the above plus `open`, `onClose`                                    |
+|          | `TaskDescription`, `TaskRelationList`, `TaskCommentList`, `TaskActivityList`, `TaskCrumbs`                                                                          | see `task/types.ts`                                                 |
+|          | `TaskDetailSection` (a titled section in TaskDetail's look: `count`, `meta`, a `note` line under the heading, `headingLevel`, `hideTitle`), `SaveErrorLine`         | `title`                                                             |
+| edit     | `StatePicker`, `AssigneePicker`, `PriorityPicker`, `LabelPicker`, `ProjectPicker`, `MilestonePicker`, `EstimatePicker`                                              | the choices (`states`, `people`, …), `value`, `onChange`            |
+|          | `PickerPopover` (the generic picker)                                                                                                                                | see `edit/types.ts`                                                 |
+|          | `Popover` (a non-modal panel for a host's own controls)                                                                                                             | `open`, `onOpenChange`, `label`, `children`                         |
+|          | `TaskRelationPicker`                                                                                                                                                | `label`, `search`, `onSelect`                                       |
+|          | `InlineTextField`, `TextAreaEditor`                                                                                                                                 | `label`, `onSave` (and `value` for the field)                       |
+|          | `DateField`                                                                                                                                                         | `label`, `value`, `onChange`                                        |
+| controls | `TextField` (field or inline; `start` / `end` adornments), `TextArea` (grows with its content)                                                                      | none (native attributes pass through)                               |
+|          | `Field` (label, `hint`, `error`; the control inside takes its id and description)                                                                                   | `label`, `children`                                                 |
+|          | `Select` (a field-look `PickerPopover` without search), `RadioGroup` (native radios; `cards`, `badge`, `aside`, `children`)                                         | `value`, `options`, `onChange` (and `label` for Select)             |
+|          | `Menu` (actions, radio rows, groups, separators, submenus; it and each open submenu are layers of the overlay stack)                                                | `label`, `trigger` (spread its props onto a `Button`), `items`      |
 
 Pure helpers are exported too: the timeline's date scale (`createScale`,
 `xForDate`, …), the graph layout (`layoutGraph`, `upstreamChain`, …), the
@@ -1930,9 +1941,12 @@ a phone keeps its sheet). `returnFocus={() => element}` sends focus there
 instead of to the trigger when the picker closes on Esc, a choice or a close
 button (a picker a host's single-key shortcut opened from a row's title goes
 back to that title); Tab and an outside click are unchanged. A disabled option
-wraps, so a menu's note or a reason can be a whole sentence. `useModKeyLabel()`
-is "⌘" on Apple platforms and "Ctrl" elsewhere (the server renders "Ctrl"), for
-a host's own shortcut rows.
+wraps, so a menu's note or a reason can be a whole sentence. A
+`PickerOption.hint` (a folder path beside a project's name) takes up to 45% of
+the row and is cut with an ellipsis past that, the label giving way first; its
+`title` shows it whole on hover, and the option's name holds all of it.
+`useModKeyLabel()` is "⌘" on Apple platforms and "Ctrl" elsewhere (the server
+renders "Ctrl"), for a host's own shortcut rows.
 
 A `PickerOption.keepOpen` option is a step, not a value (a filter menu's facet,
 "Back to filters"): picking it calls `onChange` with its value in single mode,
