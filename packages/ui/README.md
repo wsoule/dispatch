@@ -114,7 +114,12 @@ that used them.
 ### Page mode (default)
 
 With nothing else set, the sheet styles the whole document: tokens on `:root`,
-the reset on every element, the shared classes anywhere. That is what the
+the reset on every element, the shared classes anywhere. The reset's
+`box-sizing: border-box` reaches elements, not their `::before` and `::after` (a
+universal pseudo-element rule made each style recalculation resolve both for
+every element, 15 to 20 per cent of that time on a 2,000-task list), so a module
+whose pseudo-element draws a sized box with a border or padding sets
+`box-sizing: border-box` on it itself, as the done ticks do. That is what the
 planner wants (it owns the page). The Dispatch desktop runs page mode too:
 `apps/desktop` sets no `data-bt-ui-scoped`.
 

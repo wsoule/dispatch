@@ -115,6 +115,7 @@
 
 .line::before {
   content: counter(line);
+  box-sizing: border-box;
   counter-increment: line;
   display: inline-block;
   width: 44px;

@@ -89,6 +89,7 @@
    7px one was. */
 .legendDiamond::after {
   content: '';
+  box-sizing: border-box;
   position: absolute;
   top: 50%;
   right: -4.5px;
@@ -318,6 +319,7 @@
    check without a turn of its own. */
 .m_done::after {
   content: '';
+  box-sizing: border-box;
   position: absolute;
   top: 46%;
   left: 54%;

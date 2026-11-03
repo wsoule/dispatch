@@ -532,6 +532,7 @@ div.node {
 
 .done::after {
   content: '';
+  box-sizing: border-box;
   position: absolute;
   top: 45%;
   left: 50%;

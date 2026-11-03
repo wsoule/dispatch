@@ -84,6 +84,7 @@
 
 .done::after {
   content: '';
+  box-sizing: border-box;
   position: absolute;
   left: 50%;
   top: 45%;

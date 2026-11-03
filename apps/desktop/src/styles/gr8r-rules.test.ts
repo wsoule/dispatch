@@ -23,9 +23,8 @@ import ts from 'typescript';
 // Exemptions, each named below: this file (its fixtures spell out what the checks catch), the
 // hex fixtures of Linear-supplied colours in three tests and the xterm fixtures in two
 // terminal tests (HEX_FIXTURE_EXEMPT), the xterm palette in lib/terminalPalette.ts, which
-// must hand xterm literal colours (TERMINAL_HEX_EXEMPT), and the library reset's box-sizing
-// rule for every ::before and ::after (LIBRARY_UNIVERSAL_EXEMPT). Comments are stripped before
-// every check; a TypeScript source is parsed for that, so a glob string never hides code.
+// must hand xterm literal colours (TERMINAL_HEX_EXEMPT). No sheet, the library's included, is
+// exempt from the pseudo-element check. Comments are stripped before every check; a TypeScript source is parsed for that, so a glob string never hides code.
 
 const srcDir = path.join(import.meta.dir, '..');
 
@@ -487,15 +486,6 @@ function universalPseudoRules(
     );
 }
 
-/** The one library rule that reaches every element's ::before and ::after: the page-mode
-    reset's `box-sizing: border-box` in tokens.css, there since the library landed. It is the
-    library's to narrow (a pseudo-element that draws a box can set its own box-sizing); it is
-    recorded here so that a second universal rule, in the library or the app, fails. */
-const LIBRARY_UNIVERSAL_EXEMPT = {
-  file: 'styles/tokens.css',
-  body: 'box-sizing: border-box;',
-};
-
 describe('every desktop source follows the design system', () => {
   test('every source is found, and this file and the deleted sheets are not', () => {
     const files = code.map(({ file }) => file);
@@ -599,14 +589,16 @@ describe('every desktop source follows the design system', () => {
     ).toEqual([]);
   });
 
-  test('the library’s sheets carry only the recorded universal ::before/::after rule', () => {
+  // The page-mode reset's `box-sizing: border-box` (tokens.css) reaches elements only; a
+  // pseudo-element that draws a sized box with a border or padding sets its own in its module.
+  test('no library sheet styles every element’s ::before or ::after', () => {
     const library = librarySheets();
     expect(library.map(({ file }) => file)).toContain('styles/tokens.css');
     expect(
       library.flatMap(({ file, text }) =>
-        universalPseudoRules(text).map(({ body }) => ({ file, body }))
+        universalPseudoRules(text).map(({ selector }) => `${file}: ${selector}`)
       )
-    ).toEqual([LIBRARY_UNIVERSAL_EXEMPT]);
+    ).toEqual([]);
   });
 
   test('the pseudo-element scan catches a universal or descendant rule, not a scoped one', () => {

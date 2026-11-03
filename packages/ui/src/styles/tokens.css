@@ -463,10 +463,14 @@ html[data-theme='dark']:where(:not([data-bt-ui-scoped])),
    RESET
    ========================================================================== */
 
+/* Elements only. A universal ::before/::after rule makes Blink and WebKit
+   resolve both pseudo-elements' styles for every element on each style
+   recalculation: on the 2,000-task Issues list it took 15 to 20 per cent
+   of that time in a theme switch and in a scroll. A pseudo-element that
+   draws a sized box with a border or padding (a done tick, an activity
+   ring, a line-number gutter) sets its own box-sizing in its module. */
 :where(html:not([data-bt-ui-scoped]), [data-bt-ui]),
-:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) *,
-:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) *::before,
-:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) *::after {
+:where(html:not([data-bt-ui-scoped]), [data-bt-ui]) * {
   box-sizing: border-box;
 }
 
