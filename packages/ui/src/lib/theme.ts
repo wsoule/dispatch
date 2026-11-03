@@ -16,6 +16,18 @@ export function themeChoiceOf(value: string | null | undefined): ThemeChoice {
   return value === 'light' || value === 'dark' ? value : 'system';
 }
 
+// A JS string literal for `value` that is safe inside an inline <script>:
+// JSON.stringify quotes and escapes it, then every '<' becomes \u003c (so
+// neither '</script>' nor '<!--' can close or confuse the element) and the
+// line separators U+2028 and U+2029 become escapes (older engines read them
+// as line ends inside a string). The literal still evaluates to `value`.
+function scriptString(value: string): string {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
 /**
  * Parser-blocking script for the first thing in <body>: a saved 'light' or
  * 'dark' under `storageKey` wins and is written to html[data-theme] before
@@ -29,13 +41,14 @@ export function themeChoiceOf(value: string | null | undefined): ThemeChoice {
  *   and a storage throw all land here.
  *
  * The emitted code is ES5 (var and function expressions only) so it runs on
- * the oldest WebKit a host supports; the key goes in through JSON.stringify.
+ * the oldest WebKit a host supports; the key goes in through scriptString,
+ * so no key can end the inline <script> early.
  */
 export function themeScript(
   storageKey: string,
   opts?: { fallback?: 'os' | 'system' }
 ): string {
-  const key = JSON.stringify(storageKey);
+  const key = scriptString(storageKey);
   const followSystem = opts?.fallback === 'system';
   const unset = followSystem
     ? '"system"'

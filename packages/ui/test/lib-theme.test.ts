@@ -161,6 +161,37 @@ describe('themeScript', () => {
     }
   });
 
+  // A key is a host constant, but the script is inlined as HTML: nothing in
+  // it may close the <script> element, open an HTML comment or end a line.
+  test('a key cannot break out of the inline <script>', () => {
+    const hostile = '</script><script>alert(1)</script><!--\u2028\u2029';
+    for (const fallback of ['os', 'system'] as const) {
+      const script = themeScript(hostile, { fallback });
+      expect(script.toLowerCase()).not.toContain('</script');
+      expect(script).not.toContain('<!--');
+      expect(script).not.toContain('<');
+      expect(script).not.toContain('\u2028');
+      expect(script).not.toContain('\u2029');
+      expect(script).toContain(
+        'localStorage.getItem("\\u003c/script>\\u003cscript>alert(1)\\u003c/script>\\u003c!--\\u2028\\u2029")'
+      );
+    }
+  });
+
+  // The escapes change only how the key is written: the script still reads
+  // a choice stored under the exact key.
+  test('an escaped key still reads the choice stored under it', () => {
+    const hostile = '</script>\u2028key\u2029';
+    for (const fallback of ['os', 'system'] as const) {
+      localStorage.setItem(hostile, 'dark');
+      // oxlint-disable-next-line typescript-eslint/no-implied-eval
+      new Function(themeScript(hostile, { fallback }))();
+      expect(document.documentElement.dataset.theme).toBe('dark');
+      localStorage.clear();
+      document.documentElement.removeAttribute('data-theme');
+    }
+  });
+
   for (const osDark of [true, false]) {
     const os = osDark ? 'an OS in dark' : 'an OS in light';
 

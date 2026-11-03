@@ -212,7 +212,9 @@ following the OS live (its Playwright `colorScheme` projects rely on that).
     unknown value and when storage throws, so the page follows the OS live.
 
   The emitted code is ES5, `var` and function expressions only, so Safari 14
-  runs it; the key goes in through `JSON.stringify`.
+  runs it. The key goes in through `JSON.stringify` with every `<` and the line
+  separators U+2028 and U+2029 escaped, so no key can close the inline
+  `<script>` or open an HTML comment.
   - Next: `<script dangerouslySetInnerHTML={{ __html: themeScript(KEY) }} />`,
     with `suppressHydrationWarning` on `<html>` (the script changes its
     attribute before React hydrates).
