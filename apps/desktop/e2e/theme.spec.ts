@@ -5,8 +5,9 @@ import { openSettings, waitForShell } from './shell';
 
 // The localStorage key lib/theme.ts exports (THEME_STORAGE_KEY); spelled out
 // here because a spec should fail when the stored key changes under it. Each
-// test gets a fresh browser context (playwright.config.ts sets no
-// storageState), so every test starts with nothing stored: on "system".
+// test gets a fresh browser context whose storage holds only Setup's done
+// flag (playwright.config.ts's storageState), so every test starts with no
+// theme stored: on "system".
 const THEME_KEY = 'dispatch:theme';
 
 function authedUrl(baseURL: string | undefined): string {

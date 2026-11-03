@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { type IsolatedDaemon, startIsolatedDaemon } from './isolatedDaemon';
-import { REPO } from './paths';
+import { REPO, SETUP_DONE } from './paths';
 import { openDestination, waitForShell } from './shell';
 
 // Two daemons with no A2A listener, paired over a bare repo in the e2e
@@ -83,7 +83,9 @@ test.describe('pairing over a teammate link', () => {
     const code = (await shown.textContent()) ?? '';
 
     // B enters it; the SAS shows at once, with no request to A.
-    const pageB = await (await browser.newContext()).newPage();
+    const pageB = await (
+      await browser.newContext({ storageState: SETUP_DONE })
+    ).newPage();
     await pageB.goto(b.appUrl);
     await openA2ASettings(pageB);
     await pageB.getByLabel('Pairing code').fill(code);

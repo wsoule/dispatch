@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 import { createServer } from 'node:net';
 
 import { type IsolatedDaemon, startIsolatedDaemon } from './isolatedDaemon';
-import { APP_TOKEN } from './paths';
+import { APP_TOKEN, SETUP_DONE } from './paths';
 import { waitForShell } from './shell';
 
 // Listener and pairing setup are operator-tier on loopback: the app token.
@@ -84,7 +84,9 @@ test.describe('rotating the card key', () => {
       /^New key (\S+)\./.exec((await note.textContent()) ?? '')?.[1] ?? '';
     expect(fingerprint).not.toBe('');
 
-    const pageB = await (await browser.newContext()).newPage();
+    const pageB = await (
+      await browser.newContext({ storageState: SETUP_DONE })
+    ).newPage();
     await pageB.goto(b.appUrl);
     await openA2ASettings(pageB);
     await expect(pageB.getByText(/^Signed · Active/)).toBeVisible();

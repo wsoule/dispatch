@@ -6,6 +6,7 @@ import {
   HOME,
   REPO,
   ROOT,
+  SETUP_DONE,
   VITE_PORT,
 } from './e2e/paths';
 
@@ -65,6 +66,8 @@ export default defineConfig({
   use: {
     baseURL: `http://localhost:${VITE_PORT}/?root=${ROOT}&port=${DAEMON_PORT}`,
     viewport: { width: 1036, height: 1161 },
+    // Setup counts as done, whatever agent CLIs this machine has: see SETUP_DONE.
+    storageState: SETUP_DONE,
   },
   // Both themes get baselines: the spec's headline decision is full light/dark
   // parity, and dark-only shots hid a `failed` mark that was invisible on white.
