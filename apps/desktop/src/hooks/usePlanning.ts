@@ -24,10 +24,8 @@ import {
   createElement,
   type ReactNode,
   useContext,
-  useEffect,
   useMemo,
   useRef,
-  useState,
 } from 'react';
 
 import {
@@ -37,6 +35,7 @@ import {
 import { taskHref } from '../lib/shellRoutes';
 import { useStatusModelOf } from '../lib/statusModel';
 import type { DispatchProjectData } from './useDispatchProject';
+import { useMinuteClock } from './useMinuteClock';
 
 // The planning chain over the open project, in the renderer: Dispatch's task
 // list synthesized into @dispatch/planning's WorkspaceData (adapters/
@@ -100,29 +99,6 @@ function scopeKey(scope: GraphScope): string {
   return container.kind === 'workspace'
     ? `${scope.level}@workspace`
     : `${scope.level}@${container.kind}:${container.id}`;
-}
-
-/** How often the clock the planning reads may move. */
-const CLOCK_TICK_MS = 60_000;
-
-/** Now, truncated to the minute. */
-function currentMinute(): number {
-  return Math.floor(Date.now() / CLOCK_TICK_MS) * CLOCK_TICK_MS;
-}
-
-/**
- * The clock "today", "days left" and "stalled" are read against: the current
- * minute, advanced by a 60 s ticker. A primitive, so the chain below
- * recomputes at most once a minute (the ticker re-renders only when the
- * minute moved) rather than on every render.
- */
-function useMinuteClock(): number {
-  const [minute, setMinute] = useState(currentMinute);
-  useEffect(() => {
-    const id = setInterval(() => setMinute(currentMinute()), CLOCK_TICK_MS);
-    return () => clearInterval(id);
-  }, []);
-  return minute;
 }
 
 type RunStarts = ReadonlyMap<string, Pick<RunMeta, 'createdAt'>>;

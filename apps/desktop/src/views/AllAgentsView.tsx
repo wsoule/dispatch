@@ -13,11 +13,13 @@ import {
 } from '@dispatch/ui';
 import { Archive, Radio } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { StateMark } from '../components/status/StateMark';
 import { ShimmerLabel } from '../components/transcript/ShimmerLabel';
+import { useEventCallback } from '../hooks/useEventCallback';
+import { useMinuteClock } from '../hooks/useMinuteClock';
 import {
   AGENT_SESSION_KIND_LABEL,
   agentSessionBucket,
@@ -231,6 +233,13 @@ export function AllAgentsView({
 }: AllAgentsViewProps) {
   const [showAll, setShowAll] = useState(false);
   const [stateFilter, setStateFilter] = useState<AgentFilter>('all');
+  // Stable handlers and a minute clock for the memoized rows below: the host passes fresh
+  // inline handlers on every render (App's `onArchiveRun` is an arrow), which would redraw
+  // every row on one run's poll update, and the clock moves each row's relative time once a
+  // minute while nothing else changes.
+  const jumpToRun = useEventCallback(onJumpToRun);
+  const archiveRun = useEventCallback(onArchiveRun);
+  const minute = useMinuteClock();
 
   const options = useMemo((): SegmentedOption[] => {
     const counts = filterCounts(runs, sessions);
@@ -357,13 +366,18 @@ export function AllAgentsView({
         >
           {shown.map((entry) =>
             entry.row === 'session' ? (
-              <SessionRow key={entry.key} session={entry.session} />
+              <SessionRow
+                key={entry.key}
+                session={entry.session}
+                minute={minute}
+              />
             ) : (
               <RunRow
                 key={entry.key}
                 run={entry.run}
-                onJumpToRun={onJumpToRun}
-                onArchiveRun={onArchiveRun}
+                minute={minute}
+                onJumpToRun={jumpToRun}
+                onArchiveRun={archiveRun}
               />
             )
           )}
@@ -387,6 +401,11 @@ export function AllAgentsView({
     </div>
   );
 }
+
+/** The minute clock (useMinuteClock) as a row prop. The row reads the time itself, through
+ * formatRelativeTimeFromIso; the prop is there only so the memoized row re-renders when the
+ * minute moves. */
+type RowClock = number;
 
 /** The subject cell both row kinds share: the state mark, the title, and the agent's kind
  * or model as a chip (left out when there is no word to show). The title and chip share a
@@ -430,31 +449,27 @@ function OutcomeCell({ word, live }: { word: string; live: boolean }) {
 
 /** A run row's button name: every fact the row prints, in its order (title, agent, outcome,
  * progress, time), as the old row (a role=button named by its whole text) was read. Two runs
- * of one task then differ by name, not only by position. */
-function runRowLabel(
-  run: RunMeta,
-  agent: string,
-  progress: string | undefined
-): string {
-  return [
-    run.taskTitle,
-    agent,
-    outcomeLabel(run),
-    progress,
-    formatRelativeTimeFromIso(run.updatedAt),
-  ]
+ * of one task then differ by name, not only by position. Empty facts are left out. */
+function rowLabel(parts: readonly (string | undefined)[]): string {
+  return parts
     .filter((part): part is string => part !== undefined && part !== '')
     .join(', ');
 }
 
 /** A task run's row: the whole row jumps to the run, and the archive button in the last
- * cell sits above the row's stretched button. An archived run steps back (muted). */
-function RunRow({
+ * cell sits above the row's stretched button. An archived run steps back (muted).
+ *
+ * Memoized on the run object, the minute clock and the two (stable) handlers: the runs
+ * query keeps an unchanged run's object across refetches (structural sharing), so a poll
+ * re-renders only the rows whose run changed, and the clock re-renders every row once a
+ * minute so its relative time ("5m ago") and its button name keep moving. */
+const RunRow = memo(function RunRow({
   run,
   onJumpToRun,
   onArchiveRun,
 }: {
   run: RunMeta;
+  minute: RowClock;
   onJumpToRun: (runId: string) => void;
   onArchiveRun: (runId: string, archived: boolean) => void;
 }) {
@@ -467,10 +482,12 @@ function RunRow({
   const agent = kind !== 'agent' ? kind : (modelDisplayName(run.model) ?? '');
   const archived = run.archivedAt !== undefined;
   const progress = runProgress(run);
+  const outcome = outcomeLabel(run);
+  const updated = formatRelativeTimeFromIso(run.updatedAt);
   return (
     <RegisterRow
       onActivate={() => onJumpToRun(run.id)}
-      rowLabel={runRowLabel(run, agent, progress)}
+      rowLabel={rowLabel([run.taskTitle, agent, outcome, progress, updated])}
       tone={archived ? 'muted' : undefined}
       data-row="run"
     >
@@ -480,14 +497,14 @@ function RunRow({
         agent={agent}
       />
       <OutcomeCell
-        word={outcomeLabel(run)}
+        word={outcome}
         live={feedState !== null && isInFlightState(feedState)}
       />
       <RegisterCell label="Progress" variant="mono">
         {progress}
       </RegisterCell>
       <RegisterCell label="Updated" variant="mono">
-        {formatRelativeTimeFromIso(run.updatedAt)}
+        {updated}
       </RegisterCell>
       <RegisterCell align="end">
         {/* Shown on the row's hover or focus on a pointer that can hover (and always while
@@ -513,11 +530,17 @@ function RunRow({
       </RegisterCell>
     </RegisterRow>
   );
-}
+});
 
 /** A conversation agent's row. Not clickable: a conversation agent has no run detail page to
- * jump to — its own surface (Plans, the drafts tray, Overseer) owns the full record. */
-function SessionRow({ session }: { session: AgentSessionMeta }) {
+ * jump to — its own surface (Plans, the drafts tray, Overseer) owns the full record. Memoized
+ * on the session object and the minute clock, for the same reasons as RunRow. */
+const SessionRow = memo(function SessionRow({
+  session,
+}: {
+  session: AgentSessionMeta;
+  minute: RowClock;
+}) {
   const feedState = agentSessionFeedState(session);
   return (
     <RegisterRow data-row="session">
@@ -542,4 +565,4 @@ function SessionRow({ session }: { session: AgentSessionMeta }) {
       <RegisterCell />
     </RegisterRow>
   );
-}
+});

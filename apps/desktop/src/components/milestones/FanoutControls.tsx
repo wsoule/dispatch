@@ -1,5 +1,4 @@
 import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
-import { isCompletedStatus } from '@dispatch-foo/core/browser';
 import type { MilestoneProgress, MilestoneSession } from '@dispatch/client';
 import { Button, Chip, ProgressPie } from '@dispatch/ui';
 import {
@@ -14,6 +13,7 @@ import {
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 
+import { fanoutVerbs } from '../../lib/fanoutVerbs';
 import {
   pausedReasonLabel,
   PHASE_CHIP_ORDER,
@@ -90,9 +90,6 @@ export interface FanoutControlsProps {
    * milestones page, progress children on the board); `undefined` while that source has
    * not resolved hides the glyph and keeps Send agents… on offer. */
   count?: { done: number; total: number };
-  /** Every child done or cancelled and the milestone not yet landed — the caller applies the
-   * server's rule; Land replaces Send agents… while it holds. */
-  landable: boolean;
   /** The board lane's concurrency `SelectPill`; rendered before Send agents… in the
    * no-session state only, since a running session chose its concurrency already. */
   concurrencyPicker?: ReactNode;
@@ -132,7 +129,10 @@ export function sessionIdle(session: MilestoneSession | null): boolean {
 /**
  * The fan-out controls one milestone header carries — rendered in the board's
  * `MilestoneLaneHeader` `actions` slot and in the Flight plan and Live heads, so they
- * cannot drift. Left to right by session state: `◔ done/total`, the caller's pills, then
+ * cannot drift. Which verbs show is `fanoutVerbs` (lib/fanoutVerbs.ts), the rule the
+ * Issues list's group menu also reads; `count.total` stands in for the children while the
+ * progress has not resolved. Left to right by session state: `◔ done/total`, the caller's
+ * pills, then
  *
  * - no session (or a finished one): Send agents… — or Land once every child is done, and
  *   nothing for a landed milestone or one with no children to send;
@@ -148,7 +148,6 @@ export function FanoutControls({
   model,
   progress,
   count,
-  landable,
   concurrencyPicker,
   children,
   onSendAgents,
@@ -166,9 +165,12 @@ export function FanoutControls({
   const [error, setError] = useState<string | null>(null);
   const milestoneId = milestone.meta.id;
   const session = progress?.session ?? null;
-  const active = session?.state === 'active';
-  const paused = session?.state === 'paused';
   const progressChildren = progress?.children ?? [];
+  const verbs = fanoutVerbs(milestone, model, progress, count?.total);
+  // Active and paused imply a resolved progress with a session; the narrowing keeps the
+  // types honest.
+  const active = verbs.includes('pause') && progress !== undefined;
+  const paused = verbs.includes('resume') && session !== null;
 
   // One verb at a time; a rejected handler's message replaces the verbs' error pill.
   async function run(action: () => Promise<void>) {
@@ -205,7 +207,7 @@ export function FanoutControls({
   }
 
   let controls: ReactNode;
-  if (active && progress !== undefined) {
+  if (active) {
     // Counting nothing leaves no chips, for a caller that shows its own counts.
     const counts = phaseCounts(phases ? progressChildren : []);
     const spend = progress.spend;
@@ -254,7 +256,7 @@ export function FanoutControls({
         </Verb>
       </>
     );
-  } else if (paused && session !== null) {
+  } else if (paused) {
     // The ceiling that tripped stays on screen next to Raise ceiling….
     controls = (
       <>
@@ -291,7 +293,7 @@ export function FanoutControls({
         </Verb>
       </>
     );
-  } else if (landable && onLand !== undefined) {
+  } else if (verbs.includes('land') && onLand !== undefined) {
     controls = (
       <Verb
         disabled={busy}
@@ -301,14 +303,13 @@ export function FanoutControls({
         Land
       </Verb>
     );
-  } else if (
-    isCompletedStatus(milestone.meta.status, model) ||
-    count?.total === 0
-  ) {
+  } else if (verbs.length === 0) {
     // Nothing to send: a landed milestone is done, and an empty milestone would open a dialog
     // whose confirm is disabled.
     controls = null;
   } else {
+    // Send agents… — also where Land falls back for a caller with no land wiring, as the
+    // board did before Land existed.
     controls = (
       <>
         {concurrencyPicker}

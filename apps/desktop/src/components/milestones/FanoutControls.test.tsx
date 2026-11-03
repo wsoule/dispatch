@@ -10,6 +10,7 @@ import type {
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
+import { FANOUT_VERB_LABEL, fanoutVerbs } from '../../lib/fanoutVerbs';
 import { FanoutControls } from './FanoutControls';
 
 const payments = {
@@ -102,7 +103,6 @@ function mount(
               total: children.length,
             }
       }
-      landable={false}
       onSendAgents={(id) => {
         calls.push(`send:${id}`);
       }}
@@ -166,7 +166,6 @@ test('the concurrency picker only shows before a session exists', () => {
       model={DEFAULT_STATUS_MODEL}
       progress={noSession}
       count={{ done: 1, total: 2 }}
-      landable={false}
       concurrencyPicker={picker}
       onSendAgents={() => {}}
       onStop={() => Promise.resolve()}
@@ -183,7 +182,6 @@ test('the concurrency picker only shows before a session exists', () => {
         session: sessionWith('active'),
       })}
       count={{ done: 0, total: 1 }}
-      landable={false}
       concurrencyPicker={picker}
       onSendAgents={() => {}}
       onStop={() => Promise.resolve()}
@@ -385,8 +383,7 @@ test('landable: Land replaces Send agents… once every child is done', async ()
   const { calls } = mount(
     progressWith([child('t-1', 'landed'), child('t-2', 'landed')], {
       session: sessionWith('complete'),
-    }),
-    { landable: true }
+    })
   );
   expect(buttonNames()).toEqual(['Land', '']);
   await settle(() => {
@@ -495,4 +492,70 @@ test('waves={false} drops the wave strip and keeps the verbs', () => {
   mount(active, { waves: false });
   expect(document.querySelector('ol')).toBeNull();
   expect(screen.getByRole('button', { name: 'Pause' })).not.toBeNull();
+});
+
+// A caller with no land wiring keeps the board's old offer: Send agents… where Land would be.
+test('Land without an onLand handler falls back to Send agents…', () => {
+  mount(progressWith([child('t-1', 'landed')]), { onLand: undefined });
+  expect(buttonNames()).toEqual(['Send agents…', '']);
+});
+
+// The header and the Issues list's group menu read one rule: for every session state and
+// child mix, the verbs FanoutControls draws are the ones `fanoutVerbs` offers (Raise
+// ceiling… rides along with Resume, and Open is the header's own button).
+test('the verbs drawn are exactly the ones fanoutVerbs offers', () => {
+  const landed = {
+    ...payments,
+    meta: { ...payments.meta, status: 'landed' },
+  } as TaskDoc;
+  const allDone = [child('t-1', 'landed'), child('t-2', 'landed')];
+  const mixed = [child('t-1', 'working'), child('t-2', 'landed')];
+  const cases: [string, TaskDoc, MilestoneProgress | undefined, number?][] = [
+    ['no progress', payments, undefined],
+    ['no progress, empty', payments, undefined, 0],
+    ['no session, mixed', payments, progressWith(mixed)],
+    ['no session, all done', payments, progressWith(allDone)],
+    ['no session, no children', payments, progressWith([])],
+    ['landed', landed, progressWith(allDone)],
+    [
+      'active',
+      payments,
+      progressWith(mixed, { session: sessionWith('active') }),
+    ],
+    [
+      'paused',
+      payments,
+      progressWith(mixed, { session: sessionWith('paused') }),
+    ],
+    [
+      'stopped, all done',
+      payments,
+      progressWith(allDone, { session: sessionWith('stopped') }),
+    ],
+    [
+      'complete, mixed',
+      payments,
+      progressWith(mixed, { session: sessionWith('complete') }),
+    ],
+  ];
+  const verbWords = new Set(Object.values(FANOUT_VERB_LABEL));
+  for (const [name, milestone, progress, total] of cases) {
+    const { unmount } = mount(progress, {
+      milestone,
+      showOpen: false,
+      count: total === undefined ? undefined : { done: 0, total },
+    });
+    const drawn = screen
+      .queryAllByRole('button')
+      .map((b) => b.textContent ?? '')
+      .filter((word) => verbWords.has(word));
+    const offered = fanoutVerbs(
+      milestone,
+      DEFAULT_STATUS_MODEL,
+      progress,
+      total
+    ).map((verb) => FANOUT_VERB_LABEL[verb]);
+    expect({ name, drawn }).toEqual({ name, drawn: offered });
+    unmount();
+  }
 });

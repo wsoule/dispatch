@@ -1,5 +1,5 @@
 import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
-import { isCompletedStatus, isDoneStatus } from '@dispatch-foo/core/browser';
+import { isDoneStatus } from '@dispatch-foo/core/browser';
 import type { MilestoneProgress } from '@dispatch/client';
 import { Button, cx } from '@dispatch/ui';
 import { ChevronRight, Shapes, Waypoints } from 'lucide-react';
@@ -138,20 +138,11 @@ function BandControls({
 }) {
   const id = container.meta.id;
   const progress = actions.progressOf(id);
-  const session = progress?.session ?? null;
-  const kids = progress?.children ?? [];
-  const landable =
-    session?.state !== 'active' &&
-    session?.state !== 'paused' &&
-    kids.length > 0 &&
-    kids.every((c) => isDoneStatus(c.status, actions.model)) &&
-    !isCompletedStatus(container.meta.status, actions.model);
   return (
     <FanoutControls
       milestone={container}
       model={actions.model}
       progress={progress}
-      landable={landable}
       phases={false}
       waves={false}
       showOpen={false}

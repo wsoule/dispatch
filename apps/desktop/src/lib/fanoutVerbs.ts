@@ -3,11 +3,11 @@ import { isCompletedStatus, isDoneStatus } from '@dispatch-foo/core/browser';
 import type { MilestoneProgress } from '@dispatch/client';
 
 // Which fan-out verbs a container (an initiative, project, milestone or
-// parent issue) offers right now, as one pure rule the Issues list's group
-// menu reads. The rules are FanoutControls' (components/milestones) and
-// MilestoneLaneHeader's `landable`, stated once without React so a menu with
-// no header to draw can ask the same question. A verb here is an offer: the
-// server stays the authority and answers a stale one with its own reason.
+// parent issue) offers right now, as one pure rule. The Issues list's group
+// menu reads it, and so does FanoutControls (components/milestones), which the
+// board's MilestoneLaneHeader and the Flight Plan and Live heads draw, so a
+// header and a menu can never disagree. A verb here is an offer: the server
+// stays the authority and answers a stale one with its own reason.
 
 export type FanoutVerb = 'send' | 'pause' | 'resume' | 'stop' | 'land';
 

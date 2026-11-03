@@ -1,5 +1,5 @@
 import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
-import { isCompletedStatus, isDoneStatus } from '@dispatch-foo/core/browser';
+import { isDoneStatus } from '@dispatch-foo/core/browser';
 import type { MilestoneProgress } from '@dispatch/client';
 import {
   Button,
@@ -59,9 +59,10 @@ interface MilestoneLaneHeaderProps {
   onRaiseCeiling?: (milestoneId: string) => void;
   onStop: (milestoneId: string) => Promise<void>;
   /** Lands the finished milestone branch on the default base (one PR or one local merge, decided
-   * server-side). Optional so a header rendered without land wiring stays valid; the Land
-   * button only renders once every child is done/cancelled, replacing the then-useless
-   * Send agents… button. */
+   * server-side). Optional so a header rendered without land wiring stays valid; when Land
+   * is offered (`fanoutVerbs`: every child done or cancelled, the milestone not landed, no
+   * session running) it replaces the then-useless Send agents… button. The server stays
+   * the authority and answers a stale offer with its reason in the error pill. */
   onLand?: (milestoneId: string) => Promise<void>;
   /** A `+` on the right that presets the milestone in the task creator. */
   onAdd?: () => void;
@@ -102,24 +103,11 @@ export function MilestoneLaneHeader({
   const shell = useShellActions();
   const [concurrency, setConcurrency] = useState(concurrencyDefault);
   const session = progress?.session ?? null;
-  const active = progress?.active ?? false;
-  const paused = session?.state === 'paused';
 
   const doneCount =
     progress?.children.filter((c) => isDoneStatus(c.status, model)).length ?? 0;
   const totalCount = progress?.children.length ?? 0;
   const liveCount = progress?.liveRuns.length ?? 0;
-  // Same "finished" rule the server's land validation applies (every child done or
-  // cancelled) — the button still only *requests*; the server is the authority and 409s
-  // with its reason into the error pill.
-  const landable =
-    onLand !== undefined &&
-    milestone !== null &&
-    !active &&
-    !paused &&
-    totalCount > 0 &&
-    doneCount === totalCount &&
-    !isCompletedStatus(milestone.meta.status, model);
   const rollup =
     milestone !== null ? rollupMilestoneStatus(childTasks, model) : null;
 
@@ -169,7 +157,6 @@ export function MilestoneLaneHeader({
                 ? undefined
                 : { done: doneCount, total: totalCount }
             }
-            landable={landable}
             concurrencyPicker={
               <Menu
                 label={`Concurrency for ${milestone.meta.id}`}

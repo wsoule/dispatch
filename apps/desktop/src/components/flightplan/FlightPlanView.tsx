@@ -3,7 +3,6 @@ import {
   DEFAULT_STATUS_MODEL,
   fanoutCoverers,
   fanoutScope,
-  isCompletedStatus,
   isDoneStatus,
   isUnstartedStatus,
   statusModelOf,
@@ -633,13 +632,6 @@ export function FlightPlan({
       const milestoneId = milestone.meta.id;
       const progress = data.milestoneProgressById.get(milestoneId);
       const session = progress?.session ?? null;
-      const progressChildren = progress?.children ?? [];
-      const landable =
-        session?.state !== 'active' &&
-        session?.state !== 'paused' &&
-        progressChildren.length > 0 &&
-        progressChildren.every((c) => isDoneStatus(c.status, model)) &&
-        !isCompletedStatus(milestone.meta.status, model);
       const choices = concurrencyChoices(
         data.config?.orchestrator.milestoneConcurrency ?? 3,
         data.config?.orchestrator.maxConcurrency
@@ -685,7 +677,6 @@ export function FlightPlan({
             milestone={milestone}
             model={model}
             progress={progress}
-            landable={landable}
             phases={false}
             onSendAgents={(id) => setDialog({ milestoneId: id, mode: 'start' })}
             onPause={data.handlePauseMilestone}
@@ -794,14 +785,6 @@ export function FlightPlan({
         : (scope.bands?.find((b) => b.key === dialog.milestoneId)?.container ??
           null);
   // A teammate's task can never start in the fan-out, so the dialog never says it will.
-  const dialogReadyIds =
-    dialog === null
-      ? data.readyIds
-      : new Set(
-          [...data.readyIds].filter(
-            (id) => planNodeById.get(id)?.state !== 'teammate'
-          )
-        );
   const dialogSession =
     dialog?.mode === 'raise'
       ? (data.milestoneProgressById.get(dialog.milestoneId)?.session ?? null)
@@ -848,7 +831,9 @@ export function FlightPlan({
             dialog.milestoneId,
             (id) => children.get(id) ?? []
           ).filter((t) => !containerIds.has(t.meta.id))}
-          readyIds={dialogReadyIds}
+          readyIds={data.readyIds}
+          // A teammate's task never starts in a fan-out: the dialog marks it Teammate.
+          holderOf={viewerHolder}
           runningNow={data.liveRunStateByTaskId.size}
           liveClaims={liveClaims}
           defaultConcurrency={

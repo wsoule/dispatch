@@ -1,12 +1,13 @@
 import type { AgentSessionMeta, ApiClient, RunMeta } from '@dispatch/client';
 import {
+  act,
   cleanup,
   fireEvent,
   render,
   screen,
   within,
 } from '@testing-library/react';
-import { expect, test } from 'bun:test';
+import { expect, jest, test } from 'bun:test';
 
 import {
   agentSessionBucket,
@@ -513,4 +514,100 @@ test('the empty state sits in the list-filling empty slot', () => {
   mount({ runs: [] });
   const empty = screen.getByText('No agents have run yet');
   expect(empty.closest('[data-slot="agents-empty"]')).not.toBeNull();
+});
+
+/** A run whose title read is counted: RunRow reads `taskTitle` on every render, so the
+ * count says how many times that run's row rendered. */
+function countedRun(id: string, renders: Map<string, number>): RunMeta {
+  const base = run({ id, taskTitle: `Run ${id}` });
+  return Object.defineProperty({ ...base }, 'taskTitle', {
+    enumerable: true,
+    get() {
+      renders.set(id, (renders.get(id) ?? 0) + 1);
+      return `Run ${id}`;
+    },
+  });
+}
+
+// The perf contract behind Show all on a 2,000-run project: a poll that changes one run
+// (the runs query keeps every other run's object) re-renders that row only, even though the
+// host passes fresh inline handlers each render, and the rows still call the newest ones.
+test('a poll re-renders only the rows whose run changed', () => {
+  const renders = new Map<string, number>();
+  const runs = ['a', 'b', 'c'].map((id) => countedRun(id, renders));
+  const baseProps = {
+    sessions: [] as AgentSessionMeta[],
+    archivedRunCount: 0,
+    showArchived: false,
+    onSetShowArchived: () => {},
+    portLoading: false,
+    portError: false,
+    portErrorDetail: null,
+    client: {} as ApiClient,
+    onRetry: () => {},
+  };
+  const { rerender } = render(
+    <AllAgentsView
+      {...baseProps}
+      runs={runs}
+      onJumpToRun={() => {}}
+      onArchiveRun={() => {}}
+    />
+  );
+  const before = new Map(renders);
+
+  const jumped: string[] = [];
+  const archived: string[] = [];
+  const [first, , third] = runs;
+  if (first === undefined || third === undefined) return;
+  rerender(
+    <AllAgentsView
+      {...baseProps}
+      runs={[first, countedRun('b', renders), third]}
+      onJumpToRun={(id) => jumped.push(id)}
+      onArchiveRun={(id, next) => archived.push(`${id}:${String(next)}`)}
+    />
+  );
+  expect(renders.get('a')).toBe(before.get('a'));
+  expect(renders.get('c')).toBe(before.get('c'));
+  expect(renders.get('b')).toBeGreaterThan(before.get('b') ?? 0);
+
+  // An unchanged (not re-rendered) row calls the handlers from the latest render.
+  fireEvent.click(screen.getByRole('button', { name: /^Run a, / }));
+  fireEvent.click(screen.getByRole('button', { name: 'Archive Run c' }));
+  expect(jumped).toEqual(['a']);
+  expect(archived).toEqual(['c:true']);
+});
+
+// The rows are memoized, so nothing but the minute clock redraws an unchanged row: its
+// "Updated" time and its button name still move while the page stays open.
+test('an unchanged row’s relative time moves with the minute clock', () => {
+  jest.useFakeTimers();
+  try {
+    const now = new Date(Date.now()).toISOString();
+    mount({
+      runs: [run({ id: 'r-1', taskTitle: 'Quiet run', updatedAt: now })],
+      sessions: [session({ title: 'quiet plan', updatedAt: now })],
+    });
+    const button = screen.getByRole('button', { name: /^Quiet run, / });
+    expect(button.getAttribute('aria-label')).toMatch(/, just now$/);
+    // Each row's Updated value: the text after the cell's "Updated" label.
+    const updated = () =>
+      Array.from(document.querySelectorAll('[data-row]'), (row) => {
+        const label = Array.from(row.querySelectorAll('span')).find(
+          (span) => span.textContent === 'Updated'
+        );
+        return label?.nextElementSibling?.textContent ?? null;
+      });
+    const before = updated();
+    expect(before).toEqual(['just now', 'just now']);
+    act(() => {
+      jest.advanceTimersByTime(120_000);
+    });
+    expect(button.getAttribute('aria-label')).toMatch(/, 2m ago$/);
+    expect(updated()).not.toEqual(before);
+    expect(updated().every((text) => text === '2m ago')).toBe(true);
+  } finally {
+    jest.useRealTimers();
+  }
 });
