@@ -16,6 +16,7 @@ import {
 import { SHELL } from '../components/tasks/page/pageHost.test-helper';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { type PlanningInput, PlanningProvider } from '../hooks/usePlanning';
+import { perfBudgetMs } from '../lib/perfBudget.test-helper';
 import { dayFromNow } from '../lib/taskDates';
 import { taskDoc } from '../lib/taskDoc.test-helper';
 import { ProjectsView } from './ProjectsView';
@@ -458,6 +459,6 @@ describe('ProjectsView', () => {
     expect(rowNames()).toHaveLength(300);
     // eslint-disable-next-line no-console
     console.log(`300 projects: planning + register in ${elapsed.toFixed(0)}ms`);
-    expect(elapsed).toBeLessThan(1000);
+    expect(elapsed).toBeLessThan(perfBudgetMs(1000));
   });
 });

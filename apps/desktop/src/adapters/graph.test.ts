@@ -9,6 +9,7 @@ import type { GraphNodeData } from '@dispatch/ui';
 import { longestChain, longestChains, measureNode } from '@dispatch/ui';
 import { describe, expect, test } from 'bun:test';
 
+import { perfBudgetMs } from '../lib/perfBudget.test-helper';
 import {
   buildGraphPage,
   clusterData,
@@ -2774,7 +2775,7 @@ describe('at the draw limits', () => {
     expect(model.clusters).toHaveLength(77);
     expect(Object.keys(model.details)).toHaveLength(700);
     expect(model.meta).toBe('700 issues · 1000 edges');
-    expect(elapsed).toBeLessThan(1500);
+    expect(elapsed).toBeLessThan(perfBudgetMs(1500));
     // The same drawing again is a cache hit: the layout object is reused.
     const again = buildGraphPage({
       graph,
