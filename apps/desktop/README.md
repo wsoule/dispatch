@@ -15,9 +15,7 @@ Two planes, one app:
   (`packages/server`), one instance per project root, serving git-native tasks
   over HTTP/WS.
 - One React frontend (`src/`). Its design system is `@dispatch/ui`
-  (`packages/ui/src/styles/tokens.css`, Gr8r Studio's tokens); while the older
-  views are restyled, `src/styles/legacy-bridge.css` aliases the token names
-  they still read onto those tokens.
+  (`packages/ui/src/styles/tokens.css`, Gr8r Studio's tokens).
 
 ## License
 

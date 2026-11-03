@@ -8,7 +8,6 @@
   ],
   "compilerOptions": {
     "paths": {
-      "@/ui/*": ["../../packages/ui-legacy/src/*"],
       "@/*": ["./src/*"]
     }
   }

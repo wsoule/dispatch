@@ -13,6 +13,13 @@ html {
      it. Geist Mono needs nothing: @fontsource/geist-mono registers 'Geist Mono', the name
      `--font-mono` already falls back to. */
   --font-geist: 'Geist Variable';
+  /* A tab in code and tool output (a transcript <pre>, a Markdown fence, a diff in a tool card)
+     is four columns, not the browser's eight. Inherited, so this one declaration covers every
+     <pre>; CodeBlock and Pierre set their own. */
+  tab-size: 4;
+  /* No grey box flashed over a tapped row or button on a touch screen: every control draws its
+     own pressed and focus states. */
+  -webkit-tap-highlight-color: transparent;
 }
 
 html,
@@ -53,42 +60,49 @@ button {
   background: var(--accent-soft);
 }
 
-/* A slim always-drawn scrollbar for panes that scroll inside a small box. Deliberately no
-   `scrollbar-width`: setting it makes the engine ignore these rules entirely. */
-.scroll-affordance::-webkit-scrollbar {
-  width: 8px;
+/* WebKit and Blink fixes for native fields that @dispatch/ui's reset leaves out (Tailwind's
+   preflight carried them until Phase 7 removed it). Each selects only the inside of its own
+   kind of input, so no other element pays for the rules. */
+
+/* SearchField's type="search" input: drop WebKit's inner decoration padding, which would add
+   to the field's own icon inset. */
+::-webkit-search-decoration {
+  -webkit-appearance: none;
 }
 
-.scroll-affordance::-webkit-scrollbar-thumb {
-  background: rgb(128 128 128 / 45%);
-  border: 2px solid transparent;
-  background-clip: content-box;
-  border-radius: 4px;
+/* DateField's type="date" input: the value keeps a line's height when empty and the field's
+   alignment (iOS Safari), and the edit fields add no padding of their own. */
+::-webkit-date-and-time-value {
+  min-height: 1lh;
+  text-align: inherit;
 }
 
-.scroll-affordance::-webkit-scrollbar-track {
-  background: transparent;
+::-webkit-datetime-edit {
+  display: inline-flex;
 }
 
-/* Keyframes that Tailwind's `animate-[name_...]` arbitrary values reference by name (they
-   name a `@keyframes` rule, not a class), so they stay global until B16 retires Tailwind. */
-
-/* The working dot: a stepped dim, cheap on the GPU (`animate-status-pulse`). */
-@keyframes status-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
+::-webkit-datetime-edit-fields-wrapper {
+  padding: 0;
 }
 
-@keyframes shimmer-text {
-  0% {
-    background-position: 150%;
-  }
-  100% {
-    background-position: -50%;
-  }
+::-webkit-datetime-edit,
+::-webkit-datetime-edit-year-field,
+::-webkit-datetime-edit-month-field,
+::-webkit-datetime-edit-day-field,
+::-webkit-datetime-edit-hour-field,
+::-webkit-datetime-edit-minute-field,
+::-webkit-datetime-edit-second-field,
+::-webkit-datetime-edit-millisecond-field,
+::-webkit-datetime-edit-meridiem-field {
+  padding-block: 0;
+}
+
+::-webkit-calendar-picker-indicator {
+  line-height: 1;
+}
+
+/* The dispatch form's type="number" inputs: the spin buttons fit the field's height. */
+::-webkit-inner-spin-button,
+::-webkit-outer-spin-button {
+  height: auto;
 }

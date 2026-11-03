@@ -1,280 +1,56 @@
+// cspell:ignore xytblrse -- Tailwind's padding and margin side letters in a regex class below
 import { describe, expect, test } from 'bun:test';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import ts from 'typescript';
 
-// Dispatch's own Gr8r code (the shell around @dispatch/ui and the adapters that feed it) and
-// the two transitional sheets in this directory follow the design system's rules
-// (packages/ui/README.md): no colour of their own (a hex literal lives only in
+// Every source under apps/desktop/src (.css, .ts, .tsx, tests included) follows the design
+// system's rules (packages/ui/README.md): no colour of its own (a hex literal lives only in
 // packages/ui/src/styles/tokens.css), none of the retired pre-Gr8r token names, no removed
 // focus outline (Gr8r's `:focus-visible` ring is the focus indicator), no uppercase (the
-// `.eyebrow` class is the one uppercase voice), and no Tailwind utilities in Gr8r code (it is
-// styled by CSS modules; Tailwind leaves with packages/ui-legacy). The planner had the same
-// scan (apps/planner/test/gr8r-tokens.test.ts in Better-Tracker). The Gr8r code (GR8R_SCOPE,
-// not the sheets) is also held to the Phase 7 ratchet: it imports neither the legacy library
-// nor `cn`; every `var(--name)` it reads resolves to tokens.css, an app stylesheet other than
-// the bridge and the Tailwind entry (legacy-bridge.css, tailwind.css), or a property the file
-// sets itself; and it never builds a name from
-// the bridge's `--project-color-`, `--state-` or `--status-` families, nor any name from a
-// template expression (`var(--${tone}-ink)`), which no static scan can resolve.
+// `.eyebrow` class is the one uppercase voice), no Tailwind utility in a className (the app is
+// styled by CSS modules; Tailwind left with packages/ui-legacy in Phase 7 B16) and no rule
+// that styles every element's ::before or ::after (checked in the library's sheets too, since
+// they load on the same page). The planner had the same scan
+// (apps/planner/test/gr8r-tokens.test.ts in Better-Tracker). Every file also keeps the Phase 7
+// ratchet: it imports neither the legacy library, `cn`, nor a retired styling package
+// (clsx, cmdk, Base UI, cva, tailwind-merge, react-virtual, Tailwind); every `var(--name)` it
+// reads resolves to tokens.css, an app stylesheet, or a property the file sets itself; and it
+// never builds a name from the old bridge's `--project-color-`, `--state-` or `--status-`
+// families, nor any name from a template expression (`var(--${tone}-ink)`), which no static
+// scan can resolve.
+//
+// Exemptions, each named below: this file (its fixtures spell out what the checks catch), the
+// hex fixtures of Linear-supplied colours in three tests and the xterm fixtures in two
+// terminal tests (HEX_FIXTURE_EXEMPT), the xterm palette in lib/terminalPalette.ts, which
+// must hand xterm literal colours (TERMINAL_HEX_EXEMPT), and the library reset's box-sizing
+// rule for every ::before and ::after (LIBRARY_UNIVERSAL_EXEMPT). Comments are stripped before
+// every check; a TypeScript source is parsed for that, so a glob string never hides code.
 
 const srcDir = path.join(import.meta.dir, '..');
 
-/** Dispatch's Gr8r code, named relative to src/: the ratchet. An entry with a .css, .ts or
-    .tsx extension is one file and must exist; any other entry is a directory, scanned
-    recursively for those extensions, and an absent one scans as empty (`shell` does not exist
-    yet; it stays listed so the first shell file is covered the day it lands). Files that sit
-    in directories the legacy views share (lib/ the reducers, views/ the pages) are listed
-    one by one; components/shell is scanned whole since B14 moved its last legacy file. Every
-    Phase 7 batch appended the files it converted. Since B15 (App.tsx) every file the legacy
-    stack touched is covered except main.tsx (B16 rewrites it) and the Tailwind, preflight and
-    bridge sheets (B16 deletes them; legacy-bridge.css is scanned meanwhile as one of SHEETS).
-    B16 then replaces the list with a scan of all of src/, exempting the xterm hexes in
-    lib/terminalPalette.ts and the hex fixtures in lib/terminalPalette.test.ts and
-    lib/terminalScreen.test.ts. */
-const GR8R_SCOPE: readonly string[] = [
-  'shell',
-  'adapters',
-  'components/graph/GraphTooLarge.tsx',
-  'components/graph/GraphTooLarge.module.css',
-  'components/shell',
-  'components/tasks/detail',
-  'components/tasks/page',
-  'components/timeline/TimelineBanners.tsx',
-  'components/timeline/TimelineBanners.module.css',
-  'components/timeline/TimelineBanners.test.tsx',
-  'hooks/useHashRoute.ts',
-  'hooks/usePlanning.ts',
-  'lib/routes.ts',
-  'lib/shellRoutes.ts',
-  'lib/shortcutGroups.ts',
-  'lib/shortcutGroups.test.ts',
-  'lib/fanoutVerbs.ts',
-  'lib/issueSearch.ts',
-  'views/GraphView.tsx',
-  'views/GraphView.module.css',
-  'views/GraphView.test.tsx',
-  'views/IssuesView.tsx',
-  'views/IssuesView.module.css',
-  'views/IssuesViewMenus.tsx',
-  'views/IssuesViewTable.tsx',
-  'views/ProjectsView.tsx',
-  'views/ProjectsView.module.css',
-  'views/ProjectsView.test.tsx',
-  'views/TimelineView.tsx',
-  'views/TimelineView.module.css',
-  'views/TimelineView.test.tsx',
-  'lib/format.ts',
-  'lib/format.test.ts',
-  'lib/taskDates.ts',
-  'lib/taskDates.test.ts',
-  'lib/feedState.ts',
-  'lib/feedState.test.ts',
-  'components/issues',
-  'lib/taskFilters.ts',
-  'lib/taskFilters.test.ts',
-  'hooks/useTaskFilterMenu.ts',
-  'components/tasks/TaskComposerSlideOver.tsx',
-  'components/tasks/TaskComposerSlideOver.module.css',
-  'components/tasks/TaskComposerSlideOver.test.tsx',
-  'views/DraftView.tsx',
-  'views/DraftView.module.css',
-  'views/DraftView.test.tsx',
-  'components/tasks/TasksPageHeader.tsx',
-  'components/tasks/TasksPageHeader.module.css',
-  'components/tasks/TasksPageHeader.test.tsx',
-  'components/gr8r',
-  'App.module.css',
-  'hooks/useTextSelection.ts',
-  'hooks/useTextSelection.test.ts',
-  'components/gates',
-  'components/plans',
-  'components/runs',
-  'components/tasks/NeedsYouBlock.tsx',
-  'components/tasks/NeedsYouBlock.module.css',
-  'components/tasks/NeedsYouBlock.test.tsx',
-  'components/tasks/TasksExtraGroups.tsx',
-  'components/tasks/TasksExtraGroups.module.css',
-  'components/tasks/TasksExtraGroups.test.tsx',
-  'components/code',
-  'components/failure',
-  'components/milestones',
-  'components/files',
-  'components/impact',
-  'components/terminal',
-  'components/ledger',
-  'lib/milestoneSession.ts',
-  'lib/milestoneSession.test.ts',
-  'components/settings',
-  'views/SettingsView.tsx',
-  'views/SettingsView.test.tsx',
-  'lib/appNav.ts',
-  'lib/appNav.test.ts',
-  'lib/keyboard.ts',
-  'lib/keyboard.test.ts',
-  'views/FilesView.tsx',
-  'views/FilesView.module.css',
-  'views/FilesView.test.tsx',
-  'views/TerminalsView.tsx',
-  'views/TerminalsView.module.css',
-  'views/TerminalsView.test.tsx',
-  'lib/highlight.ts',
-  'lib/highlight.test.ts',
-  'lib/terminalSplits.ts',
-  'lib/terminalSplits.test.ts',
-  'lib/shellRoutes.test.ts',
-  'components/sessions',
-  'components/status',
-  'components/transcript',
-  'views/AllAgentsView.tsx',
-  'views/AllAgentsView.module.css',
-  'views/AllAgentsView.test.tsx',
-  'views/SessionsHubView.tsx',
-  'views/SessionsHubView.module.css',
-  'views/SessionsHubView.test.tsx',
-  'views/DiffModal.tsx',
-  'views/DiffModal.module.css',
-  'lib/runState.ts',
-  'lib/runState.test.ts',
-  'lib/agentSessions.ts',
-  'components/tasks/TaskBoard.tsx',
-  'components/tasks/TaskBoard.module.css',
-  'components/tasks/TaskBoard.test.tsx',
-  'components/tasks/BoardPane.tsx',
-  'components/tasks/BoardPane.module.css',
-  'components/tasks/boardWindow.ts',
-  'components/tasks/boardWindow.test.ts',
-  'components/tasks/TaskCardTile.tsx',
-  'components/tasks/TaskCardTile.module.css',
-  'components/tasks/TaskCardTile.test.tsx',
-  'components/tasks/LaneHeader.tsx',
-  'components/tasks/LaneHeader.module.css',
-  'components/tasks/MilestoneLaneHeader.tsx',
-  'components/tasks/MilestoneLaneHeader.module.css',
-  'components/tasks/AssigneeAvatar.tsx',
-  'components/tasks/AssigneeAvatar.module.css',
-  'components/tasks/AssigneeAvatar.test.tsx',
-  'components/tasks/LandingBadge.tsx',
-  'components/tasks/LandingBadge.module.css',
-  'components/tasks/StatusIcon.tsx',
-  'components/tasks/StatusIcon.module.css',
-  'components/tasks/StatusIcon.test.tsx',
-  'components/tasks/DispatchDialog.tsx',
-  'components/tasks/DispatchDialog.module.css',
-  'components/tasks/DispatchDialog.test.tsx',
-  'components/graph/BranchGraph.tsx',
-  'components/graph/BranchGraph.module.css',
-  'components/graph/BranchGraph.test.tsx',
-  'lib/statusTone.ts',
-  'lib/statusTone.test.ts',
-  'lib/listGrouping.ts',
-  'lib/listGrouping.test.ts',
-  'lib/labelColor.ts',
-  'lib/labelColor.test.ts',
-  'lib/statusTypeSurfaces.test.tsx',
-  'views/IssuesView.test.tsx',
-  'components/overseer',
-  'hooks/useStreamedText.ts',
-  'hooks/useStreamedText.test.ts',
-  'views/TwoViewOverseer.tsx',
-  'views/TwoViewOverseer.module.css',
-  'views/TwoViewOverseer.test.tsx',
-  'views/OverseerFocusView.tsx',
-  'views/OverseerFocusView.module.css',
-  'views/OverseerFocusView.test.tsx',
-  'views/PrReviewView.tsx',
-  'views/PrReviewView.module.css',
-  'hooks/useElapsed.ts',
-  'hooks/useElapsed.test.ts',
-  'lib/mergeLadder.ts',
-  'lib/mergeLadder.test.ts',
-  'lib/reviewAttention.ts',
-  'lib/reviewAttention.test.ts',
-  'lib/transcriptGutter.ts',
-  'lib/transcriptGutter.test.ts',
-  'styles/markdown.css',
-  'styles/pierreTheme.css',
-  'components/tasks/EnrichReview.tsx',
-  'components/tasks/EnrichReview.module.css',
-  'components/tasks/StackRail.tsx',
-  'components/tasks/StackRail.module.css',
-  'components/tasks/TaskPreviewTab.tsx',
-  'components/tasks/TaskPreviewTab.module.css',
-  'components/tasks/TaskPreviewTab.test.tsx',
-  'components/tasks/LabelChip.tsx',
-  'lib/findings.ts',
-  'lib/findings.test.ts',
-  'lib/fixLoopStatus.ts',
-  'lib/fixLoopStatus.test.ts',
-  'lib/reviewCriteria.ts',
-  'components/flightplan',
-  'components/live',
-  'views/LiveView.tsx',
-  'views/LiveView.module.css',
-  'views/LiveView.test.tsx',
-  'lib/cockpit.ts',
-  'lib/cockpit.test.ts',
-  'lib/cockpitKeys.ts',
-  'lib/cockpitKeys.test.ts',
-  'components/threads',
-  'components/docs',
-  'components/memory',
-  'components/conversation',
-  'components/peek',
-  'views/ThreadsView.tsx',
-  'views/ThreadsView.module.css',
-  'views/ThreadsView.test.tsx',
-  'views/DocsView.tsx',
-  'views/DocsView.module.css',
-  'views/DocsView.test.tsx',
-  'lib/docs.ts',
-  'lib/docs.test.ts',
-  'lib/threadSources.ts',
-  'lib/threadSources.test.ts',
-  'components/chat',
-  'components/guide',
-  'views/FirstRunView.tsx',
-  'views/FirstRunView.module.css',
-  'views/FirstRunView.test.tsx',
-  'hooks/useFirstTaskGuide.ts',
-  'hooks/useFirstTaskGuide.test.tsx',
-  'hooks/useGlobalKeyboard.ts',
-  'hooks/useGlobalKeyboard.test.ts',
-  'components/setup',
-  'views/SetupView.tsx',
-  'views/SetupView.module.css',
-  'views/SetupView.test.tsx',
-  'views/SignInView.tsx',
-  'views/SignInView.module.css',
-  'views/SignInView.test.tsx',
-  'App.tsx',
-  'components/people',
-];
+/** This file, named relative to src/. It is left out of every scan: its fixtures trip the
+    Tailwind, import, resolver, prefix and expression checks on purpose. */
+const SELF = 'styles/gr8r-rules.test.ts';
 
-/** Test files whose hex literals are Linear-supplied data, not colours of their own: a
-    workflow state's or a label's configured `color` fed in as a fixture, which the code under
-    test must carry through (the label registry, a swatch mark) or ignore (statusTone). Only
-    a scoped test file may be listed; every other check still applies to it. */
+/** Test files whose hex literals are data, not colours of their own: a Linear workflow
+    state's or label's configured `color` fed in as a fixture, which the code under test must
+    carry through (the label registry, a swatch mark) or ignore (statusTone), and the xterm
+    colours the terminal palette and screen tests assert. Only a test file may be listed;
+    every other check still applies to it. */
 const HEX_FIXTURE_EXEMPT: ReadonlySet<string> = new Set([
   'components/tasks/TaskCardTile.test.tsx',
   'lib/labelColor.test.ts',
   'lib/statusTone.test.ts',
+  'lib/terminalPalette.test.ts',
+  'lib/terminalScreen.test.ts',
 ]);
 
-/** GR8R_SCOPE directory entries allowed to be absent. Every other directory entry must exist
-    and hold at least one scanned file, so a misspelt or renamed entry fails instead of
-    silently scanning nothing. `shell` is the one placeholder (see GR8R_SCOPE). */
-const PENDING_DIRS: ReadonlySet<string> = new Set(['shell']);
-
-/** True when a GR8R_SCOPE entry names one file (it carries a scanned extension) rather than a
-    directory. */
-function isFileEntry(entry: string): boolean {
-  return /\.(css|tsx?)$/.test(entry);
-}
-
-/** The transitional sheets: the legacy alias layer and the host's global sheet. */
-const SHEETS = ['legacy-bridge.css', 'global.css'].map((name) =>
-  path.join(import.meta.dir, name)
-);
+/** Source files that may write hex colours: xterm draws on a canvas and takes literal colours,
+    not custom properties, so its palette is the one place the app spells them out. */
+const TERMINAL_HEX_EXEMPT: ReadonlySet<string> = new Set([
+  'lib/terminalPalette.ts',
+]);
 
 /** The retired pre-Gr8r token names: a copy of `RETIRED` in
     packages/ui/test/contrast-helpers.ts. A test below keeps the copy in step with it; importing
@@ -308,10 +84,64 @@ const RETIRED: readonly string[] = [
 
 type Source = { file: string; text: string };
 
-/** A file's text without its comments: CSS block comments and TypeScript line comments that
-    stand on their own line (a `//` inside a URL string is left alone). */
-function uncommented(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+/** The syntax kinds whose text is data, not code: string, template and regular expression
+    literals, and JSX text. A `/*` or `//` inside one is not a comment. */
+const LITERAL_KINDS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.StringLiteral,
+  ts.SyntaxKind.NoSubstitutionTemplateLiteral,
+  ts.SyntaxKind.TemplateHead,
+  ts.SyntaxKind.TemplateMiddle,
+  ts.SyntaxKind.TemplateTail,
+  ts.SyntaxKind.RegularExpressionLiteral,
+  ts.SyntaxKind.JsxText,
+]);
+
+/** The [start, end) offsets of every literal (LITERAL_KINDS) in a TypeScript source, in order,
+    found by parsing it: a regular expression cannot tell a glob string such as 'src/**' or
+    'image/*' from the start of a block comment. */
+function literalSpans(file: string, text: string): Array<[number, number]> {
+  const source = ts.createSourceFile(
+    file,
+    text,
+    ts.ScriptTarget.Latest,
+    false,
+    file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+  );
+  const spans: Array<[number, number]> = [];
+  const visit = (node: ts.Node): void => {
+    if (!LITERAL_KINDS.has(node.kind)) {
+      ts.forEachChild(node, visit);
+      return;
+    }
+    // JSX text has no leading trivia: its text starts at `pos`. Every other literal starts after
+    // the comments and whitespace before it, which belong to the code around it.
+    const start =
+      node.kind === ts.SyntaxKind.JsxText ? node.pos : node.getStart(source);
+    spans.push([start, node.end]);
+  };
+  visit(source);
+  return spans.sort((a, b) => a[0] - b[0]);
+}
+
+/** Code with its block and line comments blanked to spaces (line breaks kept). */
+function blankComments(code: string): string {
+  return code.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (comment) =>
+    comment.replace(/[^\n]/g, ' ')
+  );
+}
+
+/** A file's text without its comments, so a check reads only what the code does. A stylesheet
+    loses its block comments. A TypeScript source loses its block and line comments outside its
+    literals (literalSpans), so a `/*` or `//` inside a string stays and hides nothing after it. */
+function uncommented(file: string, text: string): string {
+  if (file.endsWith('.css')) return text.replace(/\/\*[\s\S]*?\*\//g, '');
+  let out = '';
+  let at = 0;
+  for (const [start, end] of literalSpans(file, text)) {
+    out += blankComments(text.slice(at, start)) + text.slice(start, end);
+    at = end;
+  }
+  return out + blankComments(text.slice(at));
 }
 
 /** Every .css, .ts and .tsx file under a directory (none when it does not exist), named
@@ -322,29 +152,13 @@ function sources(dir: string): Source[] {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) return sources(full);
     if (!/\.(css|tsx?)$/.test(entry.name)) return [];
-    return [
-      {
-        file: path.relative(srcDir, full),
-        text: uncommented(readFileSync(full, 'utf8')),
-      },
-    ];
+    const file = path.relative(srcDir, full);
+    return [{ file, text: uncommented(file, readFileSync(full, 'utf8')) }];
   });
 }
 
-/** The sources of one GR8R_SCOPE entry: the file itself, or every scanned file under the
-    directory (none when an absent directory is listed). */
-function scopeSources(entry: string): Source[] {
-  const full = path.join(srcDir, entry);
-  if (!isFileEntry(entry)) return sources(full);
-  return [{ file: entry, text: uncommented(readFileSync(full, 'utf8')) }];
-}
-
-const code = GR8R_SCOPE.flatMap(scopeSources);
-const sheets: Source[] = SHEETS.map((file) => ({
-  file: path.relative(srcDir, file),
-  text: uncommented(readFileSync(file, 'utf8')),
-}));
-const all = [...code, ...sheets];
+/** Every scanned source in src/ except this file. */
+const code = sources(srcDir).filter(({ file }) => file !== SELF);
 
 /** "file: match" for every match of a pattern in a set of files. */
 function findings(files: Source[], pattern: RegExp): string[] {
@@ -374,13 +188,135 @@ function classWords(text: string): string[] {
   return words;
 }
 
-/** A Tailwind-shaped utility: an optional variant chain, then either a prefixed token
-    (`bg-surface`, `hover:text-red`, `px-2`, `size-4`, `items-center`, `min-w-0`, `z-10`,
-    `outline-none`) or one of the bare utilities (`flex`, `grid-cols-2`, `truncate`, `hidden`,
-    `shrink-0`, `tabular-nums`, `sr-only`, `uppercase`). The same list as the Phase 7 scratch
-    scan, made permanent here. */
-const TAILWIND_WORD =
-  /^(?:[a-z-]+:)*(?:(?:bg|text|border|rounded|shadow|gap|p[xy]?|m[xy]?|w|h|outline|size|min-w|min-h|max-w|max-h|items|justify|font|leading|tracking|ring|fill|stroke|top|left|right|bottom|inset|z|opacity|cursor|overflow|whitespace|line-clamp|animate|duration|ease|space-[xy])-[\w[\]()/.%-]+|flex|grid|flex-[\w-]+|grid-[\w-]+|truncate|hidden|block|inline-flex|relative|absolute|sticky|fixed|shrink-0|grow|uppercase|italic|tabular-nums|sr-only|contents|underline)$/;
+/** A Tailwind variant chain before a utility: `hover:`, `md:`, `dark:`, a container query
+    (`@min-[400px]:`), a named group (`group-hover/item:`), a data or arbitrary variant
+    (`data-[state=open]:`, `[&>svg]:`), any number of them. */
+const TAILWIND_VARIANTS = String.raw`(?:(?:@?[\w-]+(?:\[[^\]]*\])?|\[[^\]]*\])(?:/[\w-]+)?:)*`;
+
+/** Tailwind utilities that take a value after a dash (`bg-surface`, `px-2`, `pl-2`, `-mt-1`,
+    `ms-2`, `size-4`, `min-w-0`, `col-span-2`, `select-none`, `transition-colors`). */
+const TAILWIND_PREFIXES = [
+  'bg',
+  'text',
+  'border',
+  'rounded',
+  'shadow',
+  'gap(?:-[xy])?',
+  'p[xytblrse]?',
+  'm[xytblrse]?',
+  'w',
+  'h',
+  'size',
+  'min-w',
+  'min-h',
+  'max-w',
+  'max-h',
+  'items',
+  'justify',
+  'self',
+  'place-(?:items|content|self)',
+  'content',
+  'font',
+  'leading',
+  'tracking',
+  'ring',
+  'fill',
+  'stroke',
+  'top',
+  'left',
+  'right',
+  'bottom',
+  'inset(?:-[xy])?',
+  'z',
+  'opacity',
+  'cursor',
+  'overflow(?:-[xy])?',
+  'whitespace',
+  'line-clamp',
+  'animate',
+  'duration',
+  'delay',
+  'ease',
+  'transition',
+  'space-[xy]',
+  'select',
+  'pointer-events',
+  'col-(?:span|start|end)',
+  'row-(?:span|start|end)',
+  'order',
+  'basis',
+  'aspect',
+  'translate-[xy]',
+  'scale(?:-[xy])?',
+  'rotate',
+  'origin',
+  'divide(?:-[xy])?',
+  'decoration',
+  'underline-offset',
+  'outline',
+  'break',
+  'flex',
+  'grid',
+  'shrink',
+  'grow',
+].join('|');
+
+/** Tailwind utilities that stand alone (`flex`, `truncate`, `inline-block`, `sr-only`). */
+const TAILWIND_BARE = [
+  'flex',
+  'grid',
+  'truncate',
+  'hidden',
+  'block',
+  'inline',
+  'inline-block',
+  'inline-flex',
+  'inline-grid',
+  'table',
+  'contents',
+  'relative',
+  'absolute',
+  'sticky',
+  'fixed',
+  'static',
+  'isolate',
+  'invisible',
+  'visible',
+  'shrink',
+  'grow',
+  'uppercase',
+  'lowercase',
+  'capitalize',
+  'normal-case',
+  'italic',
+  'not-italic',
+  'underline',
+  'no-underline',
+  'line-through',
+  'tabular-nums',
+  'antialiased',
+  'sr-only',
+  'not-sr-only',
+  'transition',
+  'transform',
+  'container',
+  'border',
+  'rounded',
+  'shadow',
+  'outline',
+  'ring',
+  'invert',
+  'grayscale',
+].join('|');
+
+/** A Tailwind-shaped className word: any word that opens with the `dark:` variant or a
+    container query (`@container/main`, `@min-[400px]:flex`), or an optional variant chain, an
+    optional negative sign, then a prefixed or bare utility. A className check, never a raw text
+    ban: Shiki's `{ dark: 'github-dark' }` theme key must pass. The Phase 7 entry gates' scan,
+    made permanent here. */
+const TAILWIND_WORD = new RegExp(
+  String.raw`^(?:dark:|@container|@(?:min|max)-)|^${TAILWIND_VARIANTS}-?(?:(?:${TAILWIND_PREFIXES})-[\w[\]()/.%#,:-]+|${TAILWIND_BARE})$`
+);
 
 /** Every module specifier a TypeScript source names: `from '...'` (imports and re-exports),
     a bare `import '...'`, a dynamic `import('...')`, a `require('...')` and a test's
@@ -393,13 +329,37 @@ function specifiers(text: string): string[] {
   ].map((match) => match[2] ?? '');
 }
 
-/** True when a specifier reaches code a Gr8r file may not use: the legacy library (through
-    the `@/ui` alias or by package name) or the Tailwind class joiner `cn` in src/lib/utils.ts
-    (through the alias or a relative path, resolved against the importing file's directory so
-    another file named `utils` does not trip it). */
+/** The retired styling packages, banned by exact name or any subpath (`clsx/lite`,
+    `tailwindcss/preflight.css`): the class joiners, the old command menu and primitives, the
+    list virtualizer the board dropped, and Tailwind with its plugins. */
+const RETIRED_PACKAGES: readonly string[] = [
+  'clsx',
+  'cmdk',
+  'class-variance-authority',
+  'tailwind-merge',
+  '@tanstack/react-virtual',
+  'tailwindcss',
+  'tw-animate-css',
+];
+
+/** Package scopes banned whole: every package under them is retired. */
+const RETIRED_SCOPES: readonly string[] = ['@base-ui/', '@tailwindcss/'];
+
+/** True when a specifier reaches code the app may no longer use: the legacy library (through
+    the `@/ui` alias or by package name), a retired styling package (RETIRED_PACKAGES,
+    RETIRED_SCOPES) or the Tailwind class joiner `cn` in src/lib/utils.ts (through the alias or
+    a relative path, resolved against the importing file's directory so another file named
+    `utils` does not trip it). */
 function isBannedImport(file: string, specifier: string): boolean {
   if (specifier.startsWith('@/ui/')) return true;
   if (specifier.startsWith('@dispatch/ui-legacy')) return true;
+  if (
+    RETIRED_PACKAGES.some(
+      (name) => specifier === name || specifier.startsWith(`${name}/`)
+    )
+  )
+    return true;
+  if (RETIRED_SCOPES.some((scope) => specifier.startsWith(scope))) return true;
   const bare = specifier.replace(/\.(?:ts|js)$/, '');
   if (bare === '@/lib/utils') return true;
   if (!bare.startsWith('.')) return false;
@@ -454,7 +414,7 @@ function unresolvedVars(
   });
 }
 
-/** The bridge's generated families, banned as prefixes: a static resolver cannot expand
+/** The retired bridge's generated families, banned as prefixes: a static resolver cannot expand
     `var(--project-color-${n})`, and tokens.css declares none of these names. */
 const BRIDGE_PREFIX = /var\(\s*--(?:project-color|state|status)-/g;
 
@@ -463,90 +423,126 @@ const BRIDGE_PREFIX = /var\(\s*--(?:project-color|state|status)-/g;
     the whole name from a typed map instead. */
 const DYNAMIC_VAR = /var\(\s*--\$\{/g;
 
-/** Every custom property the scoped code may read without setting it: tokens.css (found
-    through the dependency, as the retired-list test below does) and every app stylesheet
-    except the bridge and the Tailwind entry, CSS modules included. */
+/** packages/ui/src/styles, found through the dependency (`@dispatch/ui/styles.css` is its
+    index.css) rather than a relative path out of this app. */
+const uiStylesDir = path.dirname(
+  Bun.resolveSync('@dispatch/ui/styles.css', import.meta.dir)
+);
+
+/** Every custom property the app may read without setting it: tokens.css and every app
+    stylesheet, CSS modules included. */
 function declaredNames(): Set<string> {
-  const tokens = path.join(
-    path.dirname(Bun.resolveSync('@dispatch/ui/styles.css', import.meta.dir)),
-    'tokens.css'
-  );
-  const appSheets = sources(srcDir).filter(
-    ({ file }) =>
-      file.endsWith('.css') &&
-      file !== 'styles/legacy-bridge.css' &&
-      file !== 'styles/tailwind.css'
-  );
+  const tokens = path.join(uiStylesDir, 'tokens.css');
+  const appSheets = code.filter(({ file }) => file.endsWith('.css'));
   return new Set([
-    ...declaredIn(uncommented(readFileSync(tokens, 'utf8'))),
+    ...declaredIn(uncommented(tokens, readFileSync(tokens, 'utf8'))),
     ...appSheets.flatMap(({ text }) => declaredIn(text)),
   ]);
 }
 
-describe('the Gr8r code and the transitional sheets follow the design system', () => {
-  test('the sheets and the shell files are found', () => {
-    expect(sheets.map(({ file }) => file)).toEqual([
-      'styles/legacy-bridge.css',
-      'styles/global.css',
-    ]);
-    expect(code.map(({ file }) => file)).toEqual(
+/** Every stylesheet under packages/ui/src, named relative to it, comments stripped: the
+    library's sheets load on the desktop's page before the app's own. */
+function librarySheets(): Source[] {
+  const root = path.join(uiStylesDir, '..');
+  const walk = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return walk(full);
+      return entry.name.endsWith('.css') ? [full] : [];
+    });
+  return walk(root).map((full) => {
+    const file = path.relative(root, full);
+    return { file, text: uncommented(file, readFileSync(full, 'utf8')) };
+  });
+}
+
+/** A CSS text reduced to its rules: comments out, every run of whitespace one space and none
+    beside a brace, comma or semicolon, one quote style. A space between selectors is a
+    descendant combinator, so it stays (`.board *::before` must not read as `.board*::before`). */
+function normalizeCss(css: string): string {
+  return css
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*([{},;])\s*/g, '$1')
+    .replaceAll('"', "'")
+    .trim();
+}
+
+/** One selector of a list that reaches every element's ::before or ::after, or every
+    descendant's or child's: a bare `::after`, `*::before`, `.board *::before`, `.list > *::after`.
+    WebKit then creates both pseudo-elements for each element it matches, about a third of what
+    mounting a board card or a list row costs there (measured when the preflight was vendored). A
+    pseudo-element on a class or element (`.row::before`, `:where(.row)::after`) passes. */
+const UNIVERSAL_PSEUDO = /(?:^|[\s;>+~])\*?::?(?:before|after)$/;
+
+/** Every innermost rule (an @media block's rules, not the block) whose selector list has a
+    UNIVERSAL_PSEUDO selector, as its selector and its declarations, both normalized. */
+function universalPseudoRules(
+  css: string
+): Array<{ selector: string; body: string }> {
+  return [...normalizeCss(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map((rule) => ({ selector: rule[1] ?? '', body: rule[2] ?? '' }))
+    .filter(({ selector }) =>
+      selector.split(',').some((part) => UNIVERSAL_PSEUDO.test(part.trim()))
+    );
+}
+
+/** The one library rule that reaches every element's ::before and ::after: the page-mode
+    reset's `box-sizing: border-box` in tokens.css, there since the library landed. It is the
+    library's to narrow (a pseudo-element that draws a box can set its own box-sizing); it is
+    recorded here so that a second universal rule, in the library or the app, fails. */
+const LIBRARY_UNIVERSAL_EXEMPT = {
+  file: 'styles/tokens.css',
+  body: 'box-sizing: border-box;',
+};
+
+describe('every desktop source follows the design system', () => {
+  test('every source is found, and this file and the deleted sheets are not', () => {
+    const files = code.map(({ file }) => file);
+    expect(files).toEqual(
       expect.arrayContaining([
-        'adapters/shell.ts',
+        'App.tsx',
+        'main.tsx',
+        'styles/global.css',
+        'styles/markdown.css',
+        'styles/pierreTheme.css',
+        'lib/terminalPalette.ts',
         'components/shell/DispatchShell.tsx',
-        'components/shell/DispatchShell.module.css',
-        'components/tasks/detail/TaskDrawer.tsx',
-        'components/tasks/detail/useTaskDetail.ts',
-        'lib/feedState.ts',
-        'lib/format.ts',
-        'lib/shellRoutes.ts',
-        'lib/taskDates.ts',
-        'views/IssuesView.tsx',
-        'views/IssuesViewTable.tsx',
       ])
     );
-  });
-
-  test('every scope directory exists and holds files, except the pending ones', () => {
-    const empty = GR8R_SCOPE.filter(
-      (entry) =>
-        !isFileEntry(entry) &&
-        !PENDING_DIRS.has(entry) &&
-        scopeSources(entry).length === 0
-    );
-    expect(empty).toEqual([]);
-    expect(
-      [...PENDING_DIRS].filter((entry) => !GR8R_SCOPE.includes(entry))
-    ).toEqual([]);
+    for (const absent of [
+      SELF,
+      'styles/legacy-bridge.css',
+      'styles/tailwind.css',
+      'styles/preflight.css',
+    ])
+      expect(files).not.toContain(absent);
   });
 
   test('no file writes a hex colour of its own', () => {
     expect(
       findings(
-        all.filter(({ file }) => !HEX_FIXTURE_EXEMPT.has(file)),
+        code.filter(
+          ({ file }) =>
+            !HEX_FIXTURE_EXEMPT.has(file) && !TERMINAL_HEX_EXEMPT.has(file)
+        ),
         /#[0-9a-f]{3,8}\b/gi
       )
     ).toEqual([]);
   });
 
-  test('only scoped test files may hold hex fixtures', () => {
+  test('every hex exemption exists, and every fixture exemption is a test', () => {
+    const exempt = [...HEX_FIXTURE_EXEMPT, ...TERMINAL_HEX_EXEMPT];
     expect(
-      [...HEX_FIXTURE_EXEMPT].filter(
-        (file) => !/\.test\.tsx?$/.test(file) || !GR8R_SCOPE.includes(file)
-      )
+      exempt.filter((file) => !existsSync(path.join(srcDir, file)))
+    ).toEqual([]);
+    expect(
+      [...HEX_FIXTURE_EXEMPT].filter((file) => !/\.test\.tsx?$/.test(file))
     ).toEqual([]);
   });
 
   test('no file reads or sets a retired token name', () => {
-    // The bridge declares the old names on purpose (that is its job), so in the sheets only a
-    // READ counts: the left-hand side of every declaration is dropped before the scan. Gr8r
-    // code may neither read nor declare one.
-    const found = [
-      ...code,
-      ...sheets.map(({ file, text }) => ({
-        file,
-        text: text.replace(/^\s*--[\w-]+\s*:/gm, ''),
-      })),
-    ].flatMap(({ file, text }) =>
+    const found = code.flatMap(({ file, text }) =>
       RETIRED.filter((name) =>
         new RegExp(`(?<![\\w-])${name}(?![\\w-])`).test(text)
       ).map((name) => `${file}: ${name}`)
@@ -555,16 +551,18 @@ describe('the Gr8r code and the transitional sheets follow the design system', (
   });
 
   test('no file removes the focus outline', () => {
-    expect(findings(all, /outline\s*:\s*['"]?(?:none|0)(?![\w.])/gi)).toEqual(
+    expect(findings(code, /outline\s*:\s*['"]?(?:none|0)(?![\w.])/gi)).toEqual(
       []
     );
   });
 
   test('no file sets uppercase text', () => {
-    expect(findings(all, /text-?transform\s*:\s*['"]?uppercase/gi)).toEqual([]);
+    expect(findings(code, /text-?transform\s*:\s*['"]?uppercase/gi)).toEqual(
+      []
+    );
   });
 
-  test('no Gr8r code carries a Tailwind utility class', () => {
+  test('no file carries a Tailwind utility class', () => {
     const found = code
       .filter(({ file }) => /\.tsx?$/.test(file))
       .flatMap(({ file, text }) =>
@@ -575,20 +573,61 @@ describe('the Gr8r code and the transitional sheets follow the design system', (
     expect(found).toEqual([]);
   });
 
-  test('no scoped file imports the legacy library or cn', () => {
+  test('no file imports the legacy library, cn or a retired styling package', () => {
     expect(bannedImports(code)).toEqual([]);
   });
 
-  test('every var() read in a scoped file resolves', () => {
+  test('every var() read resolves', () => {
     expect(unresolvedVars(code, declaredNames())).toEqual([]);
   });
 
-  test('no scoped file reads a bridge status or project colour family', () => {
+  test('no file reads a bridge status or project colour family', () => {
     expect(findings(code, BRIDGE_PREFIX)).toEqual([]);
   });
 
-  test('no scoped file builds a custom property name from an expression', () => {
+  test('no file builds a custom property name from an expression', () => {
     expect(findings(code, DYNAMIC_VAR)).toEqual([]);
+  });
+
+  test('no stylesheet styles every element’s ::before or ::after', () => {
+    const sheets = code.filter(({ file }) => file.endsWith('.css'));
+    expect(sheets.map(({ file }) => file)).toContain('styles/global.css');
+    expect(
+      sheets.flatMap(({ file, text }) =>
+        universalPseudoRules(text).map(({ selector }) => `${file}: ${selector}`)
+      )
+    ).toEqual([]);
+  });
+
+  test('the library’s sheets carry only the recorded universal ::before/::after rule', () => {
+    const library = librarySheets();
+    expect(library.map(({ file }) => file)).toContain('styles/tokens.css');
+    expect(
+      library.flatMap(({ file, text }) =>
+        universalPseudoRules(text).map(({ body }) => ({ file, body }))
+      )
+    ).toEqual([LIBRARY_UNIVERSAL_EXEMPT]);
+  });
+
+  test('the pseudo-element scan catches a universal or descendant rule, not a scoped one', () => {
+    const universal = (css: string) => universalPseudoRules(css).length > 0;
+    expect(universal('*, ::before, ::after { box-sizing: border-box; }')).toBe(
+      true
+    );
+    expect(universal('.a {}\n*::after { content: ""; }')).toBe(true);
+    expect(universal('.board *::before { content: ""; }')).toBe(true);
+    expect(universal(':where(html) *::after {}')).toBe(true);
+    expect(universal('.list > *::after {}')).toBe(true);
+    expect(universal('@media (hover: hover) {\n  .list ::before {}\n}')).toBe(
+      true
+    );
+    expect(universal('/* *::before { } */ .a::before { content: ""; }')).toBe(
+      false
+    );
+    expect(universal('.row:hover::after, .row::before { opacity: 1; }')).toBe(
+      false
+    );
+    expect(universal(':where(.row)::before {}')).toBe(false);
   });
 
   test('the Tailwind scan catches layout and type utilities, not module classes', () => {
@@ -601,12 +640,75 @@ describe('the Gr8r code and the transitional sheets follow the design system', (
     ).toEqual(['truncate', 'items-center', 'size-4', 'uppercase', 'sr-only']);
     expect(
       flagged(
+        'const a = <span className="pl-2 pr-3 pt-2 pb-1 mt-1 mb-4 ms-2 -mt-1" />;'
+      )
+    ).toEqual([
+      'pl-2',
+      'pr-3',
+      'pt-2',
+      'pb-1',
+      'mt-1',
+      'mb-4',
+      'ms-2',
+      '-mt-1',
+    ]);
+    expect(
+      flagged(
+        'const a = <span className="inline-block select-none pointer-events-none transition-colors self-center col-span-2" />;'
+      )
+    ).toEqual([
+      'inline-block',
+      'select-none',
+      'pointer-events-none',
+      'transition-colors',
+      'self-center',
+      'col-span-2',
+    ]);
+    expect(
+      flagged(
+        'const a = <div className="dark:bg-red-500 dark:invert @container/main @min-[400px]:flex group-hover/item:flex data-[state=open]:bg-accent" />;'
+      )
+    ).toEqual([
+      'dark:bg-red-500',
+      'dark:invert',
+      '@container/main',
+      '@min-[400px]:flex',
+      'group-hover/item:flex',
+      'data-[state=open]:bg-accent',
+    ]);
+    expect(
+      flagged(
         "const a = <div className={cx(styles.row, open && 'is-open')} />;"
       )
     ).toEqual([]);
+    expect(
+      flagged(
+        'const a = <div className="dispatch-md dispatch-md-prose num mono toneText srOnly input select textarea pele prose row" />;'
+      )
+    ).toEqual([]);
+    expect(flagged("const themes = { dark: 'github-dark' };")).toEqual([]);
   });
 
-  test('the import ban catches the legacy alias and cn, not the library', () => {
+  test('a comment opener inside a string hides no code from the scans', () => {
+    const text = [
+      "const writes = 'src/**';",
+      'const a = <div className="flex" />;',
+      'const b = 1; // */ a trailing comment',
+      '/* #ffffff */',
+    ].join('\n');
+    const stripped = uncommented('views/Fixture.tsx', text);
+    expect(
+      classWords(stripped).filter((word) => TAILWIND_WORD.test(word))
+    ).toEqual(['flex']);
+    expect(stripped).toContain("'src/**'");
+    expect(stripped).not.toContain('trailing');
+    expect(stripped).not.toContain('#ffffff');
+    expect(uncommented('views/Fixture.module.css', '.a { /* x */ }')).toBe(
+      '.a {  }'
+    );
+  });
+
+  test('the import ban catches the legacy alias, cn and retired packages, not the library', () => {
     const fixture = (text: string): Source[] => [
       { file: 'views/Fixture.tsx', text },
     ];
@@ -632,6 +734,42 @@ describe('the Gr8r code and the transitional sheets follow the design system', (
       'views/Fixture.tsx: @/ui/button',
       'views/Fixture.tsx: @/ui/kbd',
     ]);
+    expect(
+      bannedImports(
+        fixture(
+          [
+            "import clsx from 'clsx';",
+            "import { clsx as lite } from 'clsx/lite';",
+            "import { Command } from 'cmdk';",
+            "import { Menu } from '@base-ui/react/menu';",
+            "import { cva } from 'class-variance-authority';",
+            "import { twMerge } from 'tailwind-merge';",
+            "import { useVirtualizer } from '@tanstack/react-virtual';",
+            "import 'tailwindcss';",
+            "import tailwind from '@tailwindcss/vite';",
+            "import 'tw-animate-css';",
+          ].join('\n')
+        )
+      )
+    ).toEqual([
+      'views/Fixture.tsx: clsx',
+      'views/Fixture.tsx: clsx/lite',
+      'views/Fixture.tsx: cmdk',
+      'views/Fixture.tsx: @base-ui/react/menu',
+      'views/Fixture.tsx: class-variance-authority',
+      'views/Fixture.tsx: tailwind-merge',
+      'views/Fixture.tsx: @tanstack/react-virtual',
+      'views/Fixture.tsx: tailwindcss',
+      'views/Fixture.tsx: @tailwindcss/vite',
+      'views/Fixture.tsx: tw-animate-css',
+    ]);
+    expect(
+      bannedImports(
+        fixture(
+          "import { useQuery } from '@tanstack/react-query';\nimport x from 'clsx-like';"
+        )
+      )
+    ).toEqual([]);
     expect(bannedImports(fixture("import './utils';"))).toEqual([]);
     expect(
       bannedImports(fixture("import { cx } from '@dispatch/ui';"))

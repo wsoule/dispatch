@@ -30,10 +30,9 @@ const EXPECTED: Record<string, string> = {
   '@dispatch/server': 'FSL-1.1-ALv2 AND Elastic-2.0',
   '@dispatch/tokens': 'FSL-1.1-ALv2',
   // Better-Tracker's component library and planning view-models, adopted
-  // by the desktop app (2026-10-26); the product's licence, like ui-legacy.
+  // by the desktop app (2026-10-26); the product's licence.
   '@dispatch/ui': 'FSL-1.1-ALv2',
   '@dispatch/planning': 'FSL-1.1-ALv2',
-  '@dispatch/ui-legacy': 'FSL-1.1-ALv2',
   '@dispatch/web': 'FSL-1.1-ALv2',
   '@dispatch/demo': 'FSL-1.1-ALv2',
   '@dispatch/sandbox': 'FSL-1.1-ALv2',

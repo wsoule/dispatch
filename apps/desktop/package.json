@@ -48,7 +48,6 @@
     "@dispatch-foo/core": "workspace:*",
     "@happy-dom/global-registrator": "catalog:",
     "@playwright/test": "catalog:",
-    "@tailwindcss/vite": "catalog:",
     "@tauri-apps/cli": "catalog:",
     "@testing-library/dom": "catalog:",
     "@testing-library/react": "catalog:",
@@ -58,8 +57,6 @@
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
     "acorn": "catalog:",
-    "tailwindcss": "catalog:",
-    "tw-animate-css": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:"
   }

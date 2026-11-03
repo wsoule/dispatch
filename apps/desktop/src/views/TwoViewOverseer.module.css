@@ -134,8 +134,9 @@
    in for them over the composer goes: the column doors, the posts and docked
    chips (they are in the columns), and the asks door when the asks
    themselves are in Coming in. 980px of content is the legacy 1280px window
-   (Tailwind's xl) less the 252px sidebar and this root's 24px padding each
-   side, the same width FlowColumns.module.css shows the columns from. */
+   (the old xl breakpoint) less the 252px sidebar and this root's 24px
+   padding each side, the same width FlowColumns.module.css shows the
+   columns from. */
 @container overseer (width >= 980px) {
   .columnDoors,
   .narrowOnly {

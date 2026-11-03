@@ -5,7 +5,7 @@
    shows only on a wide `overseer` container (TwoViewOverseer's root) and
    widens on a wider one; in a sheet it always shows and fills it. The
    widths keep the legacy window breakpoints: columns from a 1280px window
-   (Tailwind's xl), 340px from 1440px. With the 252px sidebar and the
+   (the old xl breakpoint), 340px from 1440px. With the 252px sidebar and the
    root's 24px (--s-6) padding each side (a container query measures the
    content box), those windows are 980px and 1140px of content below.
    Row motion runs only under prefers-reduced-motion: no-preference.

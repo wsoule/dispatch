@@ -33,9 +33,6 @@
       "path": "packages/client/tsconfig.json"
     },
     {
-      "path": "packages/ui-legacy/tsconfig.json"
-    },
-    {
       "path": "packages/ui/tsconfig.json"
     },
     {

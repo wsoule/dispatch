@@ -1,4 +1,3 @@
-import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -22,16 +21,10 @@ const polyfills = readFileSync(
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react()],
   resolve: {
     alias: {
-      // The component library lives in packages/ui-legacy (@dispatch/ui-legacy) but keeps its
-      // historical `@/ui/…` import path; this must precede the bare `@` alias so it wins the
-      // match.
-      '@/ui': fileURLToPath(
-        new URL('../../packages/ui-legacy/src', import.meta.url)
-      ),
-      // shadcn/ui components import from `@/…`; map it to src/.
+      // App modules import from `@/…`; map it to src/.
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },

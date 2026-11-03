@@ -161,14 +161,6 @@ tasks:
     options:
       runInCI: 'always'
 
-  lint-chrome:
-    command: 'bun scripts/check-chrome-utilities.ts'
-    inputs:
-      - 'scripts/check-chrome-utilities.ts'
-      - 'apps/desktop/src/**/*'
-    options:
-      runInCI: 'always'
-
   # Through audit-gate.ts: a critical advisory fails; an unreachable registry
   # warns and passes — npm timeouts failed two otherwise-green CI runs.
   audit:

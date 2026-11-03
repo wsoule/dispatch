@@ -10,18 +10,11 @@ import App from './App.tsx';
 // font stack.
 import '@fontsource-variable/geist';
 import '@fontsource/geist-mono/400.css';
-// Stylesheet order is the cascade: Tailwind first, its preflight and theme in layers, so
-// everything unlayered after it wins. @dispatch/ui/styles.css is the design system (Gr8r's
-// tokens on :root, the unlayered reset and shared classes): it beats Tailwind's layered base,
-// and a name both declared would end up Gr8r's (so tailwind.css declares no `--border` of its
-// own). The bridge only adds aliases from the legacy token names the old views still read onto
-// Gr8r's; it declares nothing Gr8r does. Tailwind's utilities are imported unlayered (see
-// tailwind.css) so a legacy `px-3` still beats Gr8r's `button { padding: 0 }` reset. The
-// hand-rolled sheets come last so the few rules they keep (the body surface, the markdown
-// prose, Pierre's theme slots) win their overlaps.
-import './styles/tailwind.css';
+// Stylesheet order is the cascade. @dispatch/ui/styles.css loads first: the design system,
+// with Gr8r's tokens on :root, the unlayered page-mode reset and the shared classes. The app's
+// own sheets (pierreTheme.css, markdown.css, global.css) load after it, so the few rules they
+// keep (the body surface, the markdown prose, Pierre's theme slots) win their overlaps.
 import '@dispatch/ui/styles.css';
-import './styles/legacy-bridge.css';
 import './styles/pierreTheme.css';
 import './styles/markdown.css';
 import './styles/global.css';

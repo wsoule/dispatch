@@ -2,10 +2,18 @@
 name: desktop-ui
 description:
   Use when building or changing any UI in apps/desktop (views, components,
-  pages, peeks, menus, rows, buttons) or in packages/ui-legacy.
+  pages, peeks, menus, rows, buttons) or in packages/ui.
 ---
 
 # Desktop UI
+
+> **Interim note (Phase 7 B16).** `packages/ui-legacy`, the `@/ui` alias,
+> Tailwind and `lib/utils.ts` `cn` are deleted. Build UI from `@dispatch/ui`
+> (`packages/ui/README.md`) and the Dispatch components in
+> `apps/desktop/src/components/`, styled by a CSS module on the Gr8r tokens;
+> `src/styles/gr8r-rules.test.ts` enforces it. Where the sections below name
+> ui-legacy, `@/ui/*`, shadcn or Tailwind, they are stale and this note wins
+> until the skill is rewritten.
 
 Every interactive element and repeated pattern in `apps/desktop` comes from
 `packages/ui-legacy`, imported as `@/ui/*`. Do not hand-roll a `<button>`, row,
