@@ -11,11 +11,16 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { CalendarCheck } from 'lucide-react';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { useState } from 'react';
 
 import AppShell from '../src/shell/app-shell';
 import { CommandPaletteProvider } from '../src/shell/command-palette';
 import { ToastProvider } from '../src/shell/toast';
-import type { AppShellProps, ShellWorkspaceSwitcher } from '../src/shell/types';
+import type {
+  AppShellProps,
+  ShellWorkspace,
+  ShellWorkspaceSwitcher,
+} from '../src/shell/types';
 
 // The brand row as the workspace switcher (AppShellProps.workspaceSwitcher):
 // its name and ARIA, the menu (rows by name, the current one active and
@@ -94,7 +99,7 @@ function trigger(): HTMLElement {
 }
 
 function listbox(): HTMLElement {
-  return screen.getByRole('listbox', { name: 'Workspace' });
+  return screen.getByRole('listbox');
 }
 
 function activeOption(): HTMLElement | null {
@@ -170,6 +175,8 @@ describe('the workspace switcher', () => {
     render(<AppShell {...props(switcher())} />);
     fireEvent.click(trigger());
     expect(document.activeElement).toBe(listbox());
+    // Without a menuLabel the listbox keeps its default name.
+    expect(screen.getByRole('listbox', { name: 'Workspace' })).toBe(listbox());
     expect(optionLabels()).toEqual([
       'AAcmelinear.app/acme',
       'GglobexGuest',
@@ -177,6 +184,10 @@ describe('the workspace switcher', () => {
       'Connect another workspace',
     ]);
     const acme = screen.getByRole('option', { name: /Acme/ });
+    // A hint cut short by the row's width reads whole on hover.
+    expect(
+      within(acme).getByText('linear.app/acme').getAttribute('title')
+    ).toBe('linear.app/acme');
     expect(activeOption()).toBe(acme);
     expect(acme.getAttribute('aria-selected')).toBe('true');
     expect(acme.querySelector('svg.lucide-check')).not.toBeNull();
@@ -356,6 +367,174 @@ describe('the workspace switcher', () => {
         .filter((option) => option.getAttribute('aria-selected') === 'true')
     ).toHaveLength(0);
     expect(activeOption()?.textContent).toContain('Globex');
+  });
+});
+
+// A desktop host's switcher (Dispatch's projects): its own words, a
+// connect row that opens the host's dialog in place, and a list loaded
+// the first time the menu opens.
+describe('the switcher with host words, an in-place connect row and a lazy list', () => {
+  const PROJECT_NAME = 'Milestone Planner Acme, switch project';
+
+  function projects(
+    overrides: Partial<ShellWorkspaceSwitcher> = {}
+  ): ShellWorkspaceSwitcher {
+    return switcher({
+      label: 'Switch project',
+      menuLabel: 'Project',
+      groupLabel: 'Projects',
+      ...overrides,
+    });
+  }
+
+  test("label, menuLabel and groupLabel reach the row's name, the menu and its heading", () => {
+    const pending = deferred();
+    render(
+      <AppShell {...props(projects({ onSwitch: () => pending.promise }))} />
+    );
+    const button = screen.getByRole('button', { name: PROJECT_NAME });
+    expect(button.closest('[data-tip]')?.getAttribute('data-tip')).toBe(
+      'Acme · Switch project'
+    );
+    fireEvent.click(button);
+    expect(screen.getByRole('dialog', { name: 'Project' })).toBeTruthy();
+    const list = screen.getByRole('listbox', { name: 'Project' });
+    const groups = within(list).getAllByRole('group');
+    const titles = groups.map(
+      (group) =>
+        document.getElementById(group.getAttribute('aria-labelledby') ?? '')
+          ?.textContent
+    );
+    expect(titles).toEqual(['Projects', 'Connect']);
+    // The polite status names the menu as the host does.
+    fireEvent.click(screen.getByRole('option', { name: /globex/ }));
+    expect(
+      screen
+        .getAllByRole('status')
+        .some((status) => status.textContent === 'Switching Project')
+    ).toBe(true);
+  });
+
+  test('a connect row with onSelect closes the menu, focuses the row, then runs once', () => {
+    const onSwitch = mock((_id: string) => undefined);
+    const focusAt: (Element | null)[] = [];
+    const onSelect = mock(() => {
+      focusAt.push(document.activeElement);
+    });
+    render(
+      <AppShell
+        {...props(
+          projects({
+            onSwitch,
+            connect: { label: 'Add project…', onSelect },
+          })
+        )}
+      />
+    );
+    const button = screen.getByRole('button', { name: PROJECT_NAME });
+    fireEvent.click(button);
+    const add = screen.getByRole('option', { name: 'Add project…' });
+    expect(add.getAttribute('aria-selected')).toBe('false');
+    expect(add.querySelector('svg.lucide-plus')).not.toBeNull();
+    fireEvent.click(add);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(focusAt).toEqual([button]);
+    expect(onSwitch).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(button);
+    // No "Switching" anywhere: the line, the note and the status.
+    expect(button.textContent).toBe('MPMilestone PlannerAcme');
+    expect(document.querySelector('[data-edit-pending]')).toBeNull();
+    expect(
+      screen
+        .getAllByRole('status')
+        .some((status) => (status.textContent ?? '').includes('Switching'))
+    ).toBe(false);
+    // By keyboard too: End reaches it, Enter runs it.
+    fireEvent.click(button);
+    const list = screen.getByRole('listbox', { name: 'Project' });
+    fireEvent.keyDown(list, { key: 'End' });
+    fireEvent.keyDown(list, { key: 'Enter' });
+    expect(onSelect).toHaveBeenCalledTimes(2);
+    expect(onSwitch).not.toHaveBeenCalled();
+  });
+
+  test('onOpenChange hears the menu open and close', () => {
+    const onOpenChange = mock((_open: boolean) => undefined);
+    render(<AppShell {...props(projects({ onOpenChange }))} />);
+    const button = screen.getByRole('button', { name: PROJECT_NAME });
+    fireEvent.click(button);
+    fireEvent.keyDown(screen.getByRole('listbox', { name: 'Project' }), {
+      key: 'Escape',
+    });
+    expect(onOpenChange.mock.calls).toEqual([[true], [false]]);
+  });
+
+  test('the shell still hides its rail tooltip while a host listens', () => {
+    localStorage.setItem(KEY, '1');
+    const onOpenChange = mock((_open: boolean) => undefined);
+    render(<AppShell {...props(projects({ onOpenChange }))} />);
+    const button = screen.getByRole('button', { name: PROJECT_NAME });
+    fireEvent.mouseOver(button);
+    expect(screen.getByText('Acme · Switch project')).toBeTruthy();
+    fireEvent.click(button);
+    expect(onOpenChange.mock.calls).toEqual([[true]]);
+    expect(screen.queryByText('Acme · Switch project')).toBeNull();
+  });
+
+  test('only the current project known: the menu renders, then grows in place', async () => {
+    const acme = { id: 'org-acme', name: 'Acme', current: true };
+    let loaded = false;
+    function Host() {
+      const [list, setList] = useState<ShellWorkspace[]>([acme]);
+      return (
+        <AppShell
+          {...props(
+            projects({
+              workspaces: list,
+              onOpenChange: (open) => {
+                if (open && !loaded) {
+                  loaded = true;
+                  // A lazy host's load landing while the menu is open.
+                  queueMicrotask(() =>
+                    setList([
+                      acme,
+                      { id: 'org-zeta', name: 'Zeta', hint: '~/zeta' },
+                      { id: 'org-beta', name: 'Beta', hint: '~/beta' },
+                    ])
+                  );
+                }
+              },
+            })
+          )}
+        />
+      );
+    }
+    render(<Host />);
+    const button = screen.getByRole('button', { name: PROJECT_NAME });
+    fireEvent.click(button);
+    expect(optionLabels()).toEqual(['AAcme', 'Connect another workspace']);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    {
+      const list = screen.getByRole('listbox', { name: 'Project' });
+      expect(
+        within(list)
+          .getAllByRole('option')
+          .map((option) => option.textContent)
+      ).toEqual([
+        'AAcme',
+        'BBeta~/beta',
+        'ZZeta~/zeta',
+        'Connect another workspace',
+      ]);
+      // Still open on the current project, ticked and active.
+      const current = within(list).getByRole('option', { name: /Acme/ });
+      expect(current.getAttribute('aria-selected')).toBe('true');
+      expect(list.getAttribute('aria-activedescendant')).toBe(current.id);
+      expect(document.activeElement).toBe(list);
+    }
   });
 });
 

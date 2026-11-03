@@ -1,19 +1,25 @@
 import type { ProviderState, SetupFix } from '@dispatch-foo/core/browser';
 import type { ApiClient } from '@dispatch/client';
+import {
+  Button,
+  Chip,
+  cx,
+  Field,
+  RadioGroup,
+  type RadioOption,
+  TextField,
+  type UiTone,
+} from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { SETUP_REPORT_STALE_MS, setupReportKey } from '../../lib/setupState';
 import { openUrl } from '../../lib/tauri';
+import { RawDetails } from '../gr8r/RawText';
 import { CommandTerminal } from './CommandTerminal';
-import { DetailsDisclosure } from './DetailsDisclosure';
 import { errorText } from './errorText';
+import styles from './setup.module.css';
 import { SetupStepRow } from './SetupStepRow';
-import { Badge } from '@/ui/badge';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
-import { Label } from '@/ui/label';
-import { RadioGroup, RadioGroupItem } from '@/ui/radio-group';
 
 interface AgentStepProps {
   client: ApiClient;
@@ -46,6 +52,17 @@ function stateLabel(p: ProviderState): string {
   if (p.auth === 'signed-in') return 'Signed in';
   if (p.auth === 'signed-out') return 'Signed out';
   return 'Installed';
+}
+
+/* The state chip's tone, read from the same facts as its words: ready is green, a
+   provider that wants a sign-in is amber, one that will not start is red, and one that
+   is not installed (or has nothing to report) is grey. */
+function stateTone(p: ProviderState): UiTone {
+  if (!p.installed) return 'muted';
+  if (!p.works) return 'danger';
+  if (p.usingApiKey || p.auth === 'signed-in') return 'success';
+  if (p.auth === 'signed-out') return 'warning';
+  return 'muted';
 }
 
 /** Pick an agent, install it, sign in (or paste a key), and continue. Works for every catalog provider. */
@@ -171,131 +188,153 @@ export function AgentStep({
     }
   }
 
+  // Opens the key form for one provider with an empty field, so a key typed for another
+  // provider is never saved under this one.
+  function openKeyForm(p: ProviderState) {
+    setKeyFor(p.id);
+    setKey('');
+  }
+
+  // The API-key controls under a checked card: the key form, the "using a key" line
+  // with Replace and Remove, or the offer to use a key instead of the sign-in.
+  function keyBlock(p: ProviderState) {
+    if (p.apiKeyEnv === undefined || !p.installed) return null;
+    if (keyFor === p.id) {
+      return (
+        <div className={styles.keyForm}>
+          <Field label={`${p.name} API key`} className={styles.keyField}>
+            <TextField
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              className={styles.keyInput}
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+            />
+          </Field>
+          <Button disabled={key.trim() === ''} onClick={() => void saveKey(p)}>
+            Save key
+          </Button>
+        </div>
+      );
+    }
+    if (p.usingApiKey) {
+      return (
+        <div className={styles.keyLine}>
+          <span className={styles.keyNote}>
+            Using an API key instead of your {p.name} sign-in.
+          </span>
+          <Button size="sm" variant="quiet" onClick={() => openKeyForm(p)}>
+            Replace key
+          </Button>
+          <Button size="sm" variant="quiet" onClick={() => void removeKey(p)}>
+            Remove key
+          </Button>
+        </div>
+      );
+    }
+    return (
+      <Button
+        size="sm"
+        variant="quiet"
+        className={styles.keyOffer}
+        onClick={() => openKeyForm(p)}
+      >
+        Use an API key instead
+      </Button>
+    );
+  }
+
+  // One provider as a card: its name and blurb pick it; the state chip and the
+  // Install / Sign in buttons sit beside it, outside the radio's name; the key controls
+  // show under it while it is the checked card. A running install or sign-in terminal is
+  // not among them (see the step's body below).
+  function providerOption(p: ProviderState): RadioOption {
+    const keys = keyBlock(p);
+    return {
+      value: p.id,
+      label: p.name,
+      hint: p.blurb,
+      'aria-label': `Use ${p.name}`,
+      disabled: !p.installed,
+      aside: (
+        <div className={styles.providerAside}>
+          <Chip tone={stateTone(p)}>{stateLabel(p)}</Chip>
+          {p.install !== undefined && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => p.install && act(p, p.install)}
+            >
+              {p.install.label}
+            </Button>
+          )}
+          {p.installed && p.works && !p.ready && p.signIn !== undefined && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => p.signIn && act(p, p.signIn)}
+            >
+              Sign in
+            </Button>
+          )}
+        </div>
+      ),
+      children: keys ?? undefined,
+    };
+  }
+
   return (
     <SetupStepRow
       status={step.status}
       title="Your AI agent"
       message={step.message}
       action={
-        <Button disabled={!canContinue} onClick={() => void proceed()}>
+        <Button
+          variant="primary"
+          disabled={!canContinue}
+          onClick={() => void proceed()}
+        >
           {continueLabel}
         </Button>
       }
       {...(step.detail === undefined ? {} : { detail: step.detail })}
     >
       {problem !== null && (
-        <div className="flex flex-col gap-1">
-          <p className="text-sm text-(--state-error-fg)" role="alert">
+        <div className={styles.problem}>
+          <p
+            className={cx(styles.alert, 'toneText')}
+            data-tone="danger"
+            role="alert"
+          >
             {problem.sentence}
           </p>
-          <DetailsDisclosure text={problem.detail} />
+          <RawDetails text={problem.detail} />
         </div>
       )}
       <RadioGroup
-        value={selected ?? ''}
-        onValueChange={(value) => setChosen(String(value))}
-        className="flex flex-col gap-2"
-      >
-        {ordered.map((p) => (
-          <div
-            key={p.id}
-            className="border-border flex flex-col gap-2 rounded-md border p-3"
-          >
-            <div className="flex items-center gap-2">
-              <RadioGroupItem
-                value={p.id}
-                aria-label={`Use ${p.name}`}
-                disabled={!p.installed}
-              />
-              <div className="flex min-w-0 flex-1 flex-col">
-                <span className="text-sm font-medium">{p.name}</span>
-                <span className="text-muted-foreground text-xs">{p.blurb}</span>
-              </div>
-              <Badge variant={p.ready ? 'secondary' : 'outline'}>
-                {stateLabel(p)}
-              </Badge>
-              {p.install !== undefined && (
-                <Button
-                  size="sm"
-                  onClick={() => p.install && act(p, p.install)}
-                >
-                  {p.install.label}
-                </Button>
-              )}
-              {p.installed && p.works && !p.ready && p.signIn !== undefined && (
-                <Button size="sm" onClick={() => p.signIn && act(p, p.signIn)}>
-                  Sign in
-                </Button>
-              )}
-            </div>
-            {running?.providerId === p.id && (
-              <CommandTerminal
-                key={running.fix.command.join(' ')}
-                client={client}
-                command={running.fix.command}
-                title={running.title}
-                onExit={() => {
-                  setRunning(null);
-                  void recheck();
-                }}
-              />
-            )}
-            {p.apiKeyEnv !== undefined &&
-              p.installed &&
-              (keyFor === p.id ? (
-                <div className="flex items-end gap-2">
-                  <div className="flex flex-1 flex-col gap-1">
-                    <Label htmlFor={`key-${p.id}`}>{p.name} API key</Label>
-                    <Input
-                      id={`key-${p.id}`}
-                      type="password"
-                      value={key}
-                      onChange={(e) => setKey(e.target.value)}
-                    />
-                  </div>
-                  <Button
-                    size="sm"
-                    disabled={key.trim() === ''}
-                    onClick={() => void saveKey(p)}
-                  >
-                    Save key
-                  </Button>
-                </div>
-              ) : p.usingApiKey ? (
-                <div className="flex flex-wrap items-center gap-x-3">
-                  <span className="text-muted-foreground text-xs">
-                    Using an API key instead of your {p.name} sign-in.
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="link"
-                    className="px-0"
-                    onClick={() => setKeyFor(p.id)}
-                  >
-                    Replace key
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="link"
-                    className="px-0"
-                    onClick={() => void removeKey(p)}
-                  >
-                    Remove key
-                  </Button>
-                </div>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="link"
-                  className="self-start px-0"
-                  onClick={() => setKeyFor(p.id)}
-                >
-                  Use an API key instead
-                </Button>
-              ))}
-          </div>
-        ))}
-      </RadioGroup>
+        variant="cards"
+        label="Choose your AI agent"
+        options={ordered.map(providerOption)}
+        value={selected ?? null}
+        onChange={setChosen}
+      />
+      {/* The running install or sign-in sits under the cards, not inside one: a card's
+          children show only while it is checked, and picking another card must not
+          unmount a terminal whose command is still running (its exit re-checks the
+          agents, and a remount would start the command again). */}
+      {running !== null && (
+        <CommandTerminal
+          key={`${running.providerId} ${running.fix.command.join(' ')}`}
+          client={client}
+          command={running.fix.command}
+          title={running.title}
+          onExit={() => {
+            setRunning(null);
+            void recheck();
+          }}
+        />
+      )}
     </SetupStepRow>
   );
 }

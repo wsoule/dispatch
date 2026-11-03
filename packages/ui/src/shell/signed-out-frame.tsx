@@ -13,7 +13,9 @@ import type { SignedOutFrameProps } from './types';
    above the content column, and, when given, a quiet row of footer links
    (privacy · terms · contact) under it. The dots between the links are
    drawn by CSS and hidden from assistive technology; the links sit in a
-   list inside a named navigation landmark. */
+   list inside a named navigation landmark. The top row is the window
+   chrome of a desktop host: it takes `chromeAttributes` (a Tauri drag
+   region) and reads `--shell-brand-inset` like AppShell's brand row. */
 export default function SignedOutFrame({
   appName,
   brandHref,
@@ -22,6 +24,7 @@ export default function SignedOutFrame({
   actions,
   footerLinks,
   footerLabel = 'About this site',
+  chromeAttributes,
   mainId = 'main',
   children,
 }: SignedOutFrameProps): ReactNode {
@@ -30,7 +33,7 @@ export default function SignedOutFrame({
       <Link href={`#${mainId}`} className="skipLink">
         Skip to content
       </Link>
-      <header className={styles.bar}>
+      <header {...chromeAttributes} className={styles.bar}>
         <Link href={brandHref} className={styles.brand}>
           <span className={styles.logo} aria-hidden="true">
             {initials(appName)}

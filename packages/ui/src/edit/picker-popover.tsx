@@ -67,7 +67,13 @@ type Row =
   | { key: 'create'; kind: 'create'; text: string }
   | { key: 'retry'; kind: 'retry' };
 
-type CloseReason = 'escape' | 'select' | 'tab' | 'outside' | 'button';
+type CloseReason =
+  | 'escape'
+  | 'select'
+  | 'action'
+  | 'tab'
+  | 'outside'
+  | 'button';
 
 /** How far the trigger's drawn frame reaches outside the button (see the
     ::before rules in the stylesheet): the popover lines up with the frame,
@@ -122,6 +128,16 @@ function optionKey(option: PickerOption): string {
   return `o:${option.value}`;
 }
 
+/** A row that is never a value: a link out (PickerOption.href) or an
+    action in place (PickerOption.onSelect). It is never chosen, never
+    saved, and draws no checkbox in a multiple picker. */
+function leavesValue(row: Row): boolean {
+  return (
+    row.kind === 'option' &&
+    (row.option.href !== undefined || row.option.onSelect !== undefined)
+  );
+}
+
 /** Moves a list's scroll so `el` is fully visible, without scrolling the
     page (scrollIntoView would also scroll every ancestor). */
 function keepInView(scroller: HTMLElement, el: HTMLElement): void {
@@ -144,6 +160,8 @@ function keepInView(scroller: HTMLElement, el: HTMLElement): void {
  * multiple: toggles and stays open); Esc closes and returns focus to the
  * trigger; Tab closes and moves on from the trigger. An option with an
  * `href` is a link out: picking it closes the popover and loads the URL.
+ * An option with `onSelect` acts in place: picking it closes the popover
+ * with focus back on the trigger, then calls it.
  * ARIA: the trigger is a button with aria-haspopup="dialog"; the popover
  * is a non-modal dialog holding a combobox input (aria-activedescendant)
  * that controls the listbox; groups are role="group".
@@ -324,7 +342,7 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
 
   function isChosen(row: Row): boolean {
     if (row.kind === 'retry' || row.kind === 'create') return false;
-    if (row.kind === 'option' && row.option.href !== undefined) return false;
+    if (leavesValue(row)) return false;
     if (row.kind === 'option' && row.option.keepOpen === true) return false;
     // An action menu has no value: the host marks the current option.
     if (action) return row.kind === 'option' && row.option.selected === true;
@@ -365,6 +383,16 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
       // and the popover is gone from the DOM by then, so Tab moves on from
       // the trigger (and a host's focus trap sees the real neighbours).
       triggerRef.current?.focus({ preventScroll: true });
+      flushSync(() => setOpen(false));
+      return;
+    }
+    if (reason === 'action') {
+      // An in-place action (PickerOption.onSelect) runs right after this:
+      // focus goes back first and the popover leaves the DOM at once, so
+      // a dialog the action opens records the trigger as its opener and
+      // finds no closing popover on the layer stack under it.
+      const target = returnFocus?.() ?? triggerRef.current;
+      target?.focus({ preventScroll: true });
       flushSync(() => setOpen(false));
       return;
     }
@@ -465,6 +493,15 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
       const href = row.option.href;
       close('select');
       window.location.assign(href);
+      return;
+    }
+    // An action in place ("Add project…") runs once the popover is gone
+    // and focus is back on the trigger, so a dialog it opens takes the
+    // trigger as its opener. Never a value: no save, no pending note.
+    if (row.kind === 'option' && row.option.onSelect !== undefined) {
+      const run = row.option.onSelect;
+      close('action');
+      run();
       return;
     }
     // A step (a facet, "Back"): the host swaps the options next, so the
@@ -846,8 +883,9 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
           choose(row);
         }}
       >
-        {boxes && row.kind === 'create' ? (
-          // No box to tick: the plus lines up with the other rows' marks.
+        {boxes && (row.kind === 'create' || leavesValue(row)) ? (
+          // No box to tick (the create row, a link out, an action in
+          // place): its mark lines up with the other rows' marks.
           <span className={styles.checkSpace} aria-hidden="true" />
         ) : boxes && row.kind !== 'retry' ? (
           <span
@@ -867,7 +905,11 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
           {text}
         </span>
         {hint !== undefined && hint !== '' ? (
-          <span className={styles.hint}>{hint}</span>
+          // The hint is cut with an ellipsis past 45% of the row (a long
+          // folder path); the title shows it whole on hover.
+          <span className={styles.hint} title={hint}>
+            {hint}
+          </span>
         ) : null}
         {!boxes && chosen ? (
           <Check
@@ -901,7 +943,9 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
           {option.label}
         </span>
         {option.hint !== undefined && option.hint !== '' ? (
-          <span className={styles.hint}>{option.hint}</span>
+          <span className={styles.hint} title={option.hint}>
+            {option.hint}
+          </span>
         ) : null}
       </div>
     );

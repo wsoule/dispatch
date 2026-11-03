@@ -431,7 +431,7 @@ the types for the rest.
 |          | `Dialog` (a centred modal: sm / md / lg), `ConfirmDialog` (an alertdialog before a destructive write)                            | `open`, `onClose`, `title`; `confirmLabel`, `onConfirm`, `onCancel` |
 |          | `useModalSurface` (a host's own panel over a scrim, out of the top layer; below)                                                 | `open`, `onClose`, `panelRef`                                       |
 |          | `Tooltip` (hover and keyboard focus, no provider), `Spinner` (in-flight agent or network work only)                              | `content`, `children`; none                                         |
-|          | `SignedOutFrame`, `PropertyList`, `AlertStrip`                                                                                   | see `shell/types.ts`                                                |
+|          | `SignedOutFrame` (`chromeAttributes` for a desktop host, below), `PropertyList`, `AlertStrip`                                    | see `shell/types.ts`                                                |
 |          | `Skeleton*`, `Kbd`, `KbdKeys`                                                                                                    | see `shell/types.ts`                                                |
 | timeline | `TimelineChart` (Gantt)                                                                                                          | `today`, `windowStart`, `windowEnd`, `zoom`, `groups`, `onOpenBar`  |
 | graph    | `DependencyGraph`                                                                                                                | `nodes`, `edges`, `ariaSummary`, `emptyMessage`                     |
@@ -1415,6 +1415,15 @@ or middle click still opens the link.
   brand row also reads `--shell-brand-inset` (default 0) as extra left padding,
   expanded and collapsed, so a window with an overlay title bar can set the row
   in from macOS's traffic lights: set it on the shell's wrapper or above.
+- `SignedOutFrame` takes the same `chromeAttributes` for a desktop host's gate
+  screens (first-run setup, sign-in), spread onto its header row and nothing
+  else (never its `<main>`), and its header row reads the same
+  `--shell-brand-inset` as extra left padding at every width, so the brand
+  clears the traffic lights there too. The header row spans the frame's full
+  width (its padding keeps the contents in the 1440px column), so the drag
+  region reaches the window's corners, and it stays at the top on `--bg` while
+  the content scrolls (a host that scrolls the frame inside a fixed-height box
+  keeps its drag region and nothing slides under the traffic lights).
 - `toggleShellCollapsed(storageKey?, defaultCollapsed?)` collapses or expands
   the rail from outside the component, exactly as the brand-row button does (it
   flips `html[data-shell-collapsed]`, saves the choice under `storageKey` and
@@ -1636,14 +1645,15 @@ Comments, Activity, `children`.
 ### Shell: the workspace switcher
 
 `AppShellProps.workspaceSwitcher` (`ShellWorkspaceSwitcher`: `workspaces`,
-`onSwitch`, optional `connect` and `label`) turns the brand row into Gr8r's
-workspace switcher; without it the brand row is the link to `brandHref`, exactly
-as before. The row keeps the brand link's face (the product's initials tile, the
-product name over the workspace name) plus a 13px chevrons-up-down mark on the
-right, and opens a `PickerPopover` menu (`searchable={false}`, single choice,
-the `brand` appearance). Its accessible name puts the visible words first
-("Milestone Planner Acme, switch workspace"; `label` changes the action's
-words), and its rail tooltip reads "Acme · Switch workspace".
+`onSwitch`, optional `connect`, `label`, `menuLabel`, `groupLabel` and
+`onOpenChange`) turns the brand row into Gr8r's workspace switcher; without it
+the brand row is the link to `brandHref`, exactly as before. The row keeps the
+brand link's face (the product's initials tile, the product name over the
+workspace name) plus a 13px chevrons-up-down mark on the right, and opens a
+`PickerPopover` menu (`searchable={false}`, single choice, the `brand`
+appearance). Its accessible name puts the visible words first ("Milestone
+Planner Acme, switch workspace"; `label` changes the action's words), and its
+rail tooltip reads "Acme · Switch workspace".
 
 - **Rows**: the `ShellWorkspace` list sorted by name (whatever the order given)
   under a "Workspaces" heading: a 20px initials tile (the current workspace in
@@ -1651,8 +1661,12 @@ words), and its rail tooltip reads "Acme · Switch workspace".
   colours each keeps a `CanvasText` edge and the current one a `CanvasText`
   fill, as the brand row's tile keeps its edge), the name, the `hint` ("Guest",
   "linear.app/acme"), the accent tick on the `current` one, where the menu
-  opens. `connect` adds a last row under a bare divider ("Connect another
-  workspace", a plus icon) that is a full page load of its `href`.
+  opens. `connect` (`ShellWorkspaceConnect`) adds a last row under a bare
+  divider ("Connect another workspace", a plus icon): with `href` a full page
+  load of it; with `onSelect` an action in place (a desktop host's "Add
+  project…", which opens its own `Dialog`): the menu closes with focus back on
+  the brand row, then `onSelect` runs once, so the dialog takes the row as its
+  opener and returns focus there (`PickerOption.onSelect`).
 - **Switching**: picking another workspace calls `onSwitch(id)` through the edit
   family's save contract. While its promise runs the workspace line reads
   "Switching to Globex" (the polite status says "Switching Workspace"); a
@@ -1660,7 +1674,8 @@ words), and its rail tooltip reads "Acme · Switch workspace".
   menu's foot repeats it. The menu reloads nothing: on success the host
   navigates (a full page load), and a host that reloads can leave the promise
   pending so the line stays until the page goes. Picking the current workspace
-  calls nothing; the connect row never shows "Switching".
+  calls nothing; the connect row never shows "Switching" and never calls
+  `onSwitch`.
 - **Collapsed rail**: only the tile shows (dimmed while a switch runs). A
   refused switch also goes to a toast when a `ToastProvider` is mounted, and the
   line under the tile is then dropped; without a provider it stays for assistive
@@ -1668,6 +1683,16 @@ words), and its rail tooltip reads "Acme · Switch workspace".
   over the drawer.
 - Keys pressed inside the open menu (or any picker) never reach the shell's `[`
   or the palette's shortcuts.
+- **A host's own words**: `menuLabel` names the open menu (its dialog and
+  listbox, and the end of the polite "Switching Workspace"; default "Workspace")
+  and `groupLabel` heads the rows (default "Workspaces"). Dispatch's project
+  switcher passes `label` "Switch project", `menuLabel` "Project" and
+  `groupLabel` "Projects", so its row reads "Dispatch dispatch, switch project".
+- **A lazy list**: `onOpenChange(open)` hears the menu open and close (after the
+  shell's own handler, which hides the rail tooltip). A host that loads its list
+  the first time the menu opens can pass only the current workspace until then;
+  when `workspaces` grows the open menu shows the new rows in name order, still
+  open on the current one.
 
 The palette has no switcher of its own: give `CommandPaletteProvider` plain
 items in a section of your own (the planner's "Workspaces": "Switch to `<name>`"
@@ -1731,23 +1756,32 @@ never sees them; the other appearances leave both keys to the button.
 `StatePicker`, `PriorityPicker`, `AssigneePicker` and `LabelPicker` take it
 through their props like any picker. A `PickerOption.href` makes a row a link
 out: picking it closes the popover and loads the URL (`window.location.assign`)
-instead of choosing it, so it is never ticked, never calls `onChange` and shows
-no pending note. `groupTitleHidden` on a group's first option draws that group
-under Gr8r's bare divider (its title still names the group for assistive tech).
-A multiple picker whose groups each hold one choice (Sort, Group) takes
-`marks="tick"`: the single picker's trailing tick instead of checkbox squares. A
-`PickerOption.tone` colours the trigger's face text (from the `data-tone` hook)
-while that option is the value shown, a pending one included; `PriorityPicker`
-takes it per level as `priorityTones` (a list cell's `{ 1: 'danger' }`: "Urgent"
-red the moment it is picked, a pending "High" never red).
-`anchorPoint={{ x, y }}` opens the popover at a viewport point instead of under
-its trigger (a context menu at the pointer; a phone keeps its sheet).
-`returnFocus={() => element}` sends focus there instead of to the trigger when
-the picker closes on Esc, a choice or a close button (a picker a host's
-single-key shortcut opened from a row's title goes back to that title); Tab and
-an outside click are unchanged. A disabled option wraps, so a menu's note or a
-reason can be a whole sentence. `useModKeyLabel()` is "⌘" on Apple platforms and
-"Ctrl" elsewhere (the server renders "Ctrl"), for a host's own shortcut rows.
+instead of choosing it, so it is never ticked (a multiple picker draws it no
+checkbox), never calls `onChange` and shows no pending note. A
+`PickerOption.onSelect` makes a row an action in place (the switcher's "Add
+project…"): picking it (click, ↵ or Space) closes the popover and returns focus
+to the trigger (or `returnFocus`) first, then calls it once, so a `Dialog` it
+opens records the trigger as its opener; like `href` it is never ticked or
+`aria-selected` (not even when its `value` is the value), never calls
+`onChange`, shows no pending note and announces no "Saving", in single, multiple
+and action mode alike (a multiple picker draws it no checkbox and closes for
+it). `href` and `onSelect` are exclusive: `href` wins when both are set.
+`groupTitleHidden` on a group's first option draws that group under Gr8r's bare
+divider (its title still names the group for assistive tech). A multiple picker
+whose groups each hold one choice (Sort, Group) takes `marks="tick"`: the single
+picker's trailing tick instead of checkbox squares. A `PickerOption.tone`
+colours the trigger's face text (from the `data-tone` hook) while that option is
+the value shown, a pending one included; `PriorityPicker` takes it per level as
+`priorityTones` (a list cell's `{ 1: 'danger' }`: "Urgent" red the moment it is
+picked, a pending "High" never red). `anchorPoint={{ x, y }}` opens the popover
+at a viewport point instead of under its trigger (a context menu at the pointer;
+a phone keeps its sheet). `returnFocus={() => element}` sends focus there
+instead of to the trigger when the picker closes on Esc, a choice or a close
+button (a picker a host's single-key shortcut opened from a row's title goes
+back to that title); Tab and an outside click are unchanged. A disabled option
+wraps, so a menu's note or a reason can be a whole sentence. `useModKeyLabel()`
+is "⌘" on Apple platforms and "Ctrl" elsewhere (the server renders "Ctrl"), for
+a host's own shortcut rows.
 
 A `PickerOption.keepOpen` option is a step, not a value (a filter menu's facet,
 "Back to filters"): picking it calls `onChange` with its value in single mode,

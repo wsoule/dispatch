@@ -1,5 +1,5 @@
 import type { PresenceEntry } from '@dispatch/client';
-import { cx, Tooltip } from '@dispatch/ui';
+import { cx, InitialsAvatar, Tooltip } from '@dispatch/ui';
 
 import styles from './PresenceStack.module.css';
 
@@ -13,19 +13,33 @@ interface PresenceStackProps {
   onOpenPerson?: (ref: string) => void;
 }
 
-// At most this many initials before collapsing the rest into "+N". Three
+// At most this many faces before collapsing the rest into "+N". Three
 // fits the 36px strip at any window width the app supports; past that a
-// row of letters stops being glanceable, which is the strip's whole job.
+// row of faces stops being glanceable, which is the strip's whole job.
 const MAX_SHOWN = 3;
 
-/** Up to two letters from a handle, for the chip. Handles are
- *  `[a-z0-9._-]`, so splitting on the separators gives a sensible "AL" for
- *  `ada.lovelace` and "AD" for plain `ada`. */
-export function initialsFor(handle: string): string {
-  const parts = handle.split(/[._-]+/).filter((p) => p !== '');
-  const letters =
-    parts.length >= 2 ? `${parts[0][0]}${parts[1][0]}` : handle.slice(0, 2);
-  return letters.toUpperCase();
+/** The name an avatar reads its initials from: a handle's separators
+ *  (`[._-]`) as spaces, so `ada.lovelace` reads "AL" and `ada` reads "A". */
+function avatarName(handle: string): string {
+  return handle.replace(/[._-]+/g, ' ');
+}
+
+/** One person's face: their avatar with the handle beside it for screen
+ *  readers (so a name is never initials only), ringed in the info hue
+ *  while they have a live agent. */
+function Face({ entry }: { entry: PresenceEntry }) {
+  return (
+    <>
+      <span
+        className={styles.ring}
+        data-tone={entry.runs.length > 0 ? 'info' : undefined}
+        aria-hidden="true"
+      >
+        <InitialsAvatar name={avatarName(entry.handle)} size="sm" />
+      </span>
+      <span className="srOnly">{entry.handle}</span>
+    </>
+  );
 }
 
 /** One line of tooltip per person: who, since when, what they are running,
@@ -50,7 +64,7 @@ export function presenceLine(
 }
 
 /**
- * Who else is on this daemon, as a row of initials on the status strip.
+ * Who else is on this daemon, as a row of avatars in the topbar.
  *
  * Renders nothing when only one person is present. That is every solo
  * project, and a lone chip reading "you are here" is noise; the stack earns
@@ -92,19 +106,13 @@ export function PresenceStack({
               aria-label={`Open ${entry.handle}`}
               onClick={() => onOpenPerson(entry.ref)}
               className={styles.face}
-              data-busy={entry.runs.length > 0 ? '' : undefined}
             >
-              {initialsFor(entry.handle)}
+              <Face entry={entry} />
             </button>
           ) : (
             // Side by side, not overlapped, and ringed while that person has a live agent.
-            <span
-              key={entry.handle}
-              aria-hidden="true"
-              className={styles.face}
-              data-busy={entry.runs.length > 0 ? '' : undefined}
-            >
-              {initialsFor(entry.handle)}
+            <span key={entry.handle} className={styles.face}>
+              <Face entry={entry} />
             </span>
           )
         )}
@@ -125,7 +133,7 @@ interface AlsoViewingProps {
 }
 
 /**
- * Who else has this task open, as initials in the task header. The question
+ * Who else has this task open, as avatars in the task header. The question
  * it answers is "am I about to trip over someone" — two people editing one
  * task's body, or both about to dispatch it — so it shows only when the
  * answer is yes.
@@ -147,8 +155,8 @@ export function AlsoViewing({ viewers }: AlsoViewingProps) {
         className={styles.stack}
       >
         {viewers.slice(0, MAX_SHOWN).map((v) => (
-          <span key={v.handle} aria-hidden="true" className={styles.face}>
-            {initialsFor(v.handle)}
+          <span key={v.handle} className={styles.face}>
+            <Face entry={v} />
           </span>
         ))}
       </span>

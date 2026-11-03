@@ -1,7 +1,12 @@
 /* Gr8r's auth frame: the warm --bg page with a plain top row (the 22px
    brand tile and the product name on the left, a quiet badge for the
    mode, the theme toggle on the right) above the content. No box, no
-   rule, no texture. */
+   rule, no texture.
+
+   --shell-brand-inset: a host's extra left padding on the top row (0 by
+   default), the same property AppShell's brand row reads, so a Tauri
+   window with an overlay title bar sets the brand in from macOS's
+   traffic lights. The host sets it on the frame or above. */
 
 .frame {
   min-height: 100dvh;
@@ -10,15 +15,30 @@
   background: var(--bg);
 }
 
+/* The top row spans the frame's width (a desktop host's drag region reaches
+   every edge, the traffic-light corner included) while its contents keep
+   the 1440px column: the side padding grows with the width beyond it. It
+   stays at the top on --bg while the content scrolls under it, so the
+   window can still be dragged by it and nothing slides under the traffic
+   lights. z-index 30, as AppShell's sticky topbar: above the content's own
+   raised layers (a radio card's aside, a register row's link), under the
+   overlays. */
 .bar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
   display: flex;
   align-items: center;
   gap: 12px;
   width: 100%;
-  max-width: 1440px;
-  margin: 0 auto;
   min-height: 62px;
-  padding: 12px 24px;
+  padding-block: 12px;
+  padding-right: max(24px, calc((100% - 1440px) / 2 + 24px));
+  padding-left: max(
+    calc(24px + var(--shell-brand-inset, 0px)),
+    calc((100% - 1440px) / 2 + 24px)
+  );
+  background: var(--bg);
 }
 
 .brand {
@@ -84,13 +104,12 @@
   gap: 8px;
 }
 
+/* The skip link's target (tabIndex -1). No outline rule of its own: the
+   browser draws its ring only for :focus-visible (a keyboard skip), never
+   for the focus a click inside the column gives it. */
 .main {
   flex: 1 1 auto;
   min-width: 0;
-}
-
-.main:focus {
-  outline: none;
 }
 
 /* The footer links: one quiet row under the content, centred, the links
@@ -144,7 +163,7 @@
 @media (width <= 640px) {
   .bar {
     min-height: 54px;
-    padding: 8px 12px 8px 16px;
+    padding: 8px 12px 8px calc(16px + var(--shell-brand-inset, 0px));
   }
   .footer {
     padding: 16px 16px 24px;

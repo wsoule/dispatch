@@ -6,6 +6,7 @@ import {
   Panel,
   Spinner,
   TextArea,
+  useModKeyLabel,
 } from '@dispatch/ui';
 import {
   ChevronDown,
@@ -483,6 +484,9 @@ export function FirstTaskGuide({
 }: FirstTaskGuideProps) {
   const { view, actions } = body;
   const narrow = useNarrowMain();
+  // The palette's key as the search trigger prints it: "⌘K", or "Ctrl K".
+  const mod = useModKeyLabel();
+  const paletteKey = mod === '⌘' ? '⌘K' : `${mod} K`;
   const collapsed = chosen ?? narrow;
   const done = view.stage === 'done';
   // Past Describe, closing ends the guide for this project, so it asks first.
@@ -574,8 +578,8 @@ export function FirstTaskGuide({
         }}
         onCancel={() => setConfirmClose(false)}
       >
-        Your task keeps going without it. You can start the guide again from
-        Help in the project menu.
+        Your task keeps going without it. You can start it again from the
+        command palette ({paletteKey}): Restart the first-task guide.
       </ConfirmDialog>
     </section>
   );

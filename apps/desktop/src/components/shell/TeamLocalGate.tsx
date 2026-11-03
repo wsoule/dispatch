@@ -10,6 +10,7 @@ import {
   saveTeamSession,
 } from '../../lib/teamLocal';
 import { checkTeamSession, SignInView } from '../../views/SignInView';
+import { GateFrame } from './GateFrame';
 import styles from './TeamLocalGate.module.css';
 
 interface TeamLocalGateProps {
@@ -64,20 +65,26 @@ function TeamLocalSignIn({ children }: TeamLocalGateProps) {
     };
   }, [state]);
 
+  // Both gate screens sit in GateFrame with no window chrome: a team-local page is always
+  // a browser tab, never the desktop window.
   if (state === 'checking') {
     return (
-      <div className={styles.checking}>
-        <Spinner size="lg" label="Checking your session" />
-      </div>
+      <GateFrame>
+        <div className={styles.checking}>
+          <Spinner size="lg" label="Checking your session" />
+        </div>
+      </GateFrame>
     );
   }
   if (state === 'signed-out') {
     return (
-      <SignInView
-        baseUrl={window.location.origin}
-        notice={notice}
-        onSignedIn={() => window.location.reload()}
-      />
+      <GateFrame errorLabel="the sign-in">
+        <SignInView
+          baseUrl={window.location.origin}
+          notice={notice}
+          onSignedIn={() => window.location.reload()}
+        />
+      </GateFrame>
     );
   }
   return <>{children}</>;

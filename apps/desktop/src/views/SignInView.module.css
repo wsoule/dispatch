@@ -1,0 +1,52 @@
+/* The team-local sign-in (views/SignInView.tsx), inside GateFrame: one column of at most
+   420px, centred across the page and set a little above the middle, holding the heading,
+   the intro, the notice, the token field and the button. */
+
+.root {
+  display: flex;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: clamp(var(--s-8), 14vh, 160px) var(--s-4) var(--s-12);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  width: 100%;
+  max-width: 420px;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.title {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
+.intro {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+  color: var(--text-2);
+}
+
+/* The CLI command and the token are machine-read strings: Geist Mono. */
+.code,
+.token {
+  font-family: var(--font-mono);
+}
+
+.code {
+  font-size: 0.92em;
+  color: var(--text);
+}

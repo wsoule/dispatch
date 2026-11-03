@@ -15,13 +15,17 @@ import type { ShellWorkspace, ShellWorkspaceSwitcher } from './types';
 /** The action's default words (ShellWorkspaceSwitcher.label). */
 export const SWITCH_WORKSPACE_LABEL = 'Switch workspace';
 
-/** The menu's heading over the workspace rows (the CSS uppercases it). */
+/** The menu's default name (ShellWorkspaceSwitcher.menuLabel). */
+const MENU_LABEL = 'Workspace';
+/** The default heading over the workspace rows
+    (ShellWorkspaceSwitcher.groupLabel). */
 const WORKSPACES_GROUP = 'Workspaces';
 /** The connect row's group: its title is hidden, so only the divider
     shows (Gr8r's menu separator), but it still names the group. */
 const CONNECT_GROUP = 'Connect';
 /** The connect row's option value; never handed to onSwitch (the row is
-    a link out, see PickerOption.href). */
+    a link out or an action in place, see PickerOption.href and
+    PickerOption.onSelect). */
 const CONNECT_VALUE = 'workspace-switcher:connect';
 
 const LABELS = {
@@ -39,18 +43,21 @@ function byName(a: ShellWorkspace, b: ShellWorkspace): number {
 }
 
 /**
- * The menu's options: one per workspace under "Workspaces" (a 20px tile
- * with its initials, the current one in the brand tile's colours; the
- * name; the hint), then the connect row under a bare divider.
+ * The menu's options: one per workspace under the group heading
+ * ("Workspaces" by default: a 20px tile with its initials, the current one
+ * in the brand tile's colours; the name; the hint), then the connect row
+ * under a bare divider, a link out (href) or an action in place
+ * (onSelect).
  */
 function workspaceOptions(switcher: ShellWorkspaceSwitcher): PickerOption[] {
+  const group = switcher.groupLabel ?? WORKSPACES_GROUP;
   const options: PickerOption[] = [...switcher.workspaces]
     .sort(byName)
     .map((workspace) => ({
       value: workspace.id,
       label: workspace.name,
       hint: workspace.hint,
-      group: WORKSPACES_GROUP,
+      group,
       mark: {
         kind: 'node',
         node: (
@@ -66,11 +73,14 @@ function workspaceOptions(switcher: ShellWorkspaceSwitcher): PickerOption[] {
         ),
       },
     }));
-  if (switcher.connect !== undefined) {
+  const connect = switcher.connect;
+  if (connect !== undefined) {
     options.push({
       value: CONNECT_VALUE,
-      label: switcher.connect.label,
-      href: switcher.connect.href,
+      label: connect.label,
+      ...(connect.href !== undefined
+        ? { href: connect.href }
+        : { onSelect: connect.onSelect }),
       group: CONNECT_GROUP,
       groupTitleHidden: true,
       mark: {
@@ -119,10 +129,14 @@ function currentName(
  * <name>" (in place of the picker's "Switching" note, which would squeeze
  * the names; the polite status still speaks "Switching Workspace"), and a
  * rejection prints "Not switched …" under the row. The current row does
- * nothing; the connect row is a full page load. On the collapsed rail
- * there is no room for the error line, so a failure also goes to a toast
- * when a ToastProvider is mounted (the line is then hidden there; without
- * a provider it stays for assistive tech and in the menu's foot).
+ * nothing; the connect row is a full page load or the host's action in
+ * place (run once the menu has closed). Opening and closing the menu
+ * reach the shell's own `onOpenChange` and then the host's
+ * `switcher.onOpenChange` (a host loading its list lazily). On the
+ * collapsed rail there is no room for the error line, so a failure also
+ * goes to a toast when a ToastProvider is mounted (the line is then hidden
+ * there; without a provider it stays for assistive tech and in the menu's
+ * foot).
  */
 export function WorkspaceSwitcher({
   switcher,
@@ -190,14 +204,17 @@ export function WorkspaceSwitcher({
   return (
     <PickerPopover
       className={cx(styles.switcher, toasted && styles.switcherToasted)}
-      label="Workspace"
+      label={switcher.menuLabel ?? MENU_LABEL}
       options={workspaceOptions(switcher)}
       value={current?.id ?? null}
       searchable={false}
       appearance="brand"
       triggerLabel={triggerLabel}
       labels={LABELS}
-      onOpenChange={onOpenChange}
+      onOpenChange={(open) => {
+        onOpenChange?.(open);
+        switcher.onOpenChange?.(open);
+      }}
       onChange={onChange}
       trigger={
         <>

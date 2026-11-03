@@ -144,6 +144,18 @@ export interface ShellWorkspace {
 }
 
 /**
+ * The switcher's last row, under a divider with a plus icon ("Connect
+ * another workspace", "Add project…"). With `href` it loads that URL as a
+ * full page navigation; with `onSelect` it acts in place (the host opens
+ * its own Dialog): the menu closes with focus back on the brand row, then
+ * onSelect runs once, so the dialog returns focus to the row. Neither
+ * form calls onSwitch or shows "Switching".
+ */
+export type ShellWorkspaceConnect =
+  | { label: string; href: string; onSelect?: undefined }
+  | { label: string; onSelect: () => void; href?: undefined };
+
+/**
  * The brand row as Gr8r's workspace switcher (AppShellProps
  * .workspaceSwitcher): the row opens a menu of the workspaces instead of
  * linking to brandHref.
@@ -163,12 +175,22 @@ export interface ShellWorkspaceSwitcher {
    */
   onSwitch: (id: string) => SaveResult;
   /** A last row under a divider ("Connect another workspace", with a plus
-      icon) that loads `href` as a full page navigation. */
-  connect?: { label: string; href: string };
+      icon): a full page load of `href`, or `onSelect` run in place. */
+  connect?: ShellWorkspaceConnect;
   /** The action's words: the end of the row's accessible name ("Milestone
       Planner Acme, switch workspace") and of its rail tooltip ("Acme ·
       Switch workspace"). Default "Switch workspace". */
   label?: string;
+  /** The open menu's name (its dialog and listbox; the polite status says
+      "Switching <menuLabel>"). Default "Workspace". */
+  menuLabel?: string;
+  /** The heading over the workspace rows. Default "Workspaces". */
+  groupLabel?: string;
+  /** Called with true when the menu opens and false when it closes, for a
+      host that loads `workspaces` lazily the first time it opens: until
+      then the list may hold only the current workspace, and the open menu
+      shows the new rows as soon as the prop grows. */
+  onOpenChange?: (open: boolean) => void;
 }
 
 export interface AppShellProps {
@@ -247,6 +269,13 @@ export interface SignedOutFrameProps {
   footerLinks?: readonly FooterLink[];
   /** The footer navigation's accessible name (default "About this site"). */
   footerLabel?: string;
+  /** Attributes spread onto the header row, the frame's window chrome
+      (as AppShellProps.chromeAttributes): a Tauri host passes
+      `{ 'data-tauri-drag-region': '' }` so dragging the row moves the
+      window. The row also reads `--shell-brand-inset` (default 0) as
+      extra left padding, so a window with an overlay title bar can set
+      the brand in from macOS's traffic lights. */
+  chromeAttributes?: Record<string, string>;
   mainId?: string;
   children?: ReactNode;
 }

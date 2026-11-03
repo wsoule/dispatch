@@ -1,12 +1,14 @@
 import type { ApiClient } from '@dispatch/client';
+import { cx } from '@dispatch/ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useTerminalOutput } from '../../hooks/useTerminalOutput';
 import { createInputQueue } from '../../lib/terminalInput';
 import { encodeKey } from '../../lib/terminalKeys';
+import { RawDetails } from '../gr8r/RawText';
 import { TerminalCanvas } from '../terminal/TerminalCanvas';
-import { DetailsDisclosure } from './DetailsDisclosure';
 import { errorText } from './errorText';
+import styles from './setup.module.css';
 
 interface CommandTerminalProps {
   client: ApiClient;
@@ -35,15 +37,18 @@ export function CommandTerminal({
     null
   );
 
+  // Set once the command is started. An effect runs again when a hidden Activity shows
+  // this terminal again (Settings closing over a setup gate) and twice under StrictMode,
+  // while refs and state survive both, so the command runs once per mount. The result is
+  // kept even if it lands while the terminal is hidden.
+  const started = useRef(false);
   useEffect(() => {
-    let cancelled = false;
+    if (started.current) return;
+    started.current = true;
     client
       .createTerminal(launch.current)
-      .then((t) => !cancelled && setTerminalId(t.id))
-      .catch((err: unknown) => !cancelled && setStartError(errorText(err)));
-    return () => {
-      cancelled = true;
-    };
+      .then((t) => setTerminalId(t.id))
+      .catch((err: unknown) => setStartError(errorText(err)));
   }, [client]);
 
   useEffect(() => {
@@ -53,7 +58,14 @@ export function CommandTerminal({
     }
   }, [info, onExit]);
 
-  useEffect(() => surfaceRef.current?.focus(), [terminalId]);
+  // Takes focus when it first shows, so the keys reach the command; not again when a
+  // hidden Activity shows it once more, where focus goes back to what had it.
+  const focused = useRef(false);
+  useEffect(() => {
+    if (focused.current) return;
+    focused.current = true;
+    surfaceRef.current?.focus();
+  }, []);
 
   const send = useMemo(
     () =>
@@ -77,11 +89,15 @@ export function CommandTerminal({
 
   if (startError !== null) {
     return (
-      <div className="flex flex-col gap-1">
-        <p className="text-sm text-(--state-error-fg)" role="alert">
+      <div className={styles.problem}>
+        <p
+          className={cx(styles.alert, 'toneText')}
+          data-tone="danger"
+          role="alert"
+        >
           Couldn&apos;t start that. Try again.
         </p>
-        <DetailsDisclosure text={startError} />
+        <RawDetails text={startError} />
       </div>
     );
   }
@@ -91,7 +107,7 @@ export function CommandTerminal({
       ref={surfaceRef}
       tabIndex={0}
       onKeyDown={onKeyDown}
-      className="border-border h-56 overflow-hidden rounded-md border outline-none focus:border-[var(--color-ring)]"
+      className={styles.terminal}
       aria-label={title}
     >
       <TerminalCanvas screen={screen} revision={revision} search="" follow />

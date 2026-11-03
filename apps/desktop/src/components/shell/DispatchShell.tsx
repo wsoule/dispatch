@@ -2,6 +2,7 @@ import {
   AppShell,
   type ShellSection,
   type ShellUser,
+  type ShellWorkspaceSwitcher,
   type UiLinkProps,
   UiLinkProvider,
   useModKeyLabel,
@@ -34,16 +35,13 @@ import { hrefFor, type ShellDestination } from '../../lib/shellRoutes';
 import { usePeople } from '../people/PeopleContext';
 import styles from './DispatchShell.module.css';
 import { ErrorBoundary } from './ErrorBoundary';
+import { GATE_TRAFFIC_LIGHT_INSET_PX } from './GateFrame';
 
 /** Where the collapsed rail is remembered; the `[` handler in App shares it. */
 export const SHELL_STORAGE_KEY = 'dispatch:shell-collapsed';
 
 // The id AppShell gives its <main>, which the module stylesheet sizes to the window.
 const MAIN_ID = 'dispatch-main';
-
-// Extra left padding on the brand row under macOS's overlay title bar: the old
-// top bar padded 84px instead of its usual 16px to clear the traffic lights.
-const TRAFFIC_LIGHT_INSET_PX = 68;
 
 /** What the window's native chrome asks of the shell. */
 interface WindowChrome {
@@ -76,12 +74,19 @@ export interface DispatchShellProps {
   onNavigate: (action: NavAction) => void;
   /** The topbar's search trigger: the command palette. */
   onSearch: () => void;
-  /** Controls right of the search trigger (the project menu, who is here). */
+  /** Controls right of the search trigger (who is here). */
   topbarActions?: ReactNode;
+  /** Makes the brand row the project switcher (projectWorkspaceSwitcher in
+   *  projectWorkspaces.ts): a menu of the projects plus "Add project…".
+   *  Without it the brand row links to the Overseer. */
+  workspaceSwitcher?: ShellWorkspaceSwitcher;
   /** An app-wide notice strip under the topbar (setup problems). */
   banner?: ReactNode;
-  /** A resolution, sign-in or get-started screen; it replaces both views.
-   * Settings still opens over it (the gate stays mounted, hidden). */
+  /** A screen that replaces both views (the resolution error, "Loading
+   * project…"). Settings still opens over it (the gate stays mounted,
+   * hidden). App's setup gates sit in GateFrame instead, outside the shell:
+   * over one, App mounts the shell for Settings alone and passes `false`
+   * here, a gate that draws nothing but keeps the views unmounted. */
   gate: ReactNode | null;
   overseer: ReactNode;
   tasks: ReactNode;
@@ -287,8 +292,9 @@ function useScrollKeptUnderSettings(
 }
 
 /**
- * The desktop's frame: @dispatch/ui's AppShell (sidebar with the destinations
- * and the Projects section, topbar with crumbs, search and the project menu)
+ * The desktop's frame: @dispatch/ui's AppShell (sidebar with the brand row's
+ * project switcher, the destinations and the Projects section; topbar with
+ * crumbs, search and who is here)
  * around the two views, both mounted so each keeps its place, with the peek
  * drawer and the guide card floating over them. While Settings is open it
  * takes the main column in their place, over a gate too. It is an overlay
@@ -314,6 +320,7 @@ export function DispatchShell({
   onNavigate,
   onSearch,
   topbarActions,
+  workspaceSwitcher,
   banner,
   gate,
   overseer,
@@ -360,7 +367,7 @@ export function DispatchShell({
   };
   const frameStyle = chrome.trafficLightInset
     ? ({
-        '--shell-brand-inset': `${TRAFFIC_LIGHT_INSET_PX}px`,
+        '--shell-brand-inset': `${GATE_TRAFFIC_LIGHT_INSET_PX}px`,
       } as CSSProperties)
     : undefined;
 
@@ -376,6 +383,7 @@ export function DispatchShell({
             appName="Dispatch"
             workspaceName={projectName ?? undefined}
             brandHref={hrefFor('overseer')}
+            workspaceSwitcher={workspaceSwitcher}
             nav={buildShellNav({
               destination,
               overseer: overseerBadge,

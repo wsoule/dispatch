@@ -13,6 +13,7 @@ import { useState } from 'react';
 
 import {
   AssigneePicker,
+  Dialog,
   type LabelChoice,
   LabelPicker,
   PickerMarkView,
@@ -983,6 +984,303 @@ describe('PickerPopover as a menu (searchable={false})', () => {
         value: original,
       });
     }
+  });
+});
+
+// onSelect is an action in place ("Add project…"): it closes the popover,
+// hands focus back to the trigger, then runs once; never a value.
+describe('PickerPopover in-place actions (PickerOption.onSelect)', () => {
+  /** Records where focus was each time the action ran. */
+  function actionRow(
+    focusAt: (Element | null)[],
+    extra: Partial<PickerOption> = {}
+  ): PickerOption {
+    return {
+      value: 'add',
+      label: 'Add project…',
+      group: 'Add',
+      groupTitleHidden: true,
+      onSelect: () => {
+        focusAt.push(document.activeElement);
+      },
+      ...extra,
+    };
+  }
+
+  function savingWords(): (string | null)[] {
+    return screen
+      .getAllByRole('status')
+      .map((region) => region.textContent)
+      .filter((text) => text?.includes('Saving') === true);
+  }
+
+  test('a click closes, returns focus to the trigger, then runs it once', () => {
+    const focusAt: (Element | null)[] = [];
+    const picks: (string | null)[] = [];
+    render(
+      <PickerPopover
+        label="Project"
+        searchable={false}
+        value="a"
+        options={[{ value: 'a', label: 'Atlas' }, actionRow(focusAt)]}
+        onChange={(value) => {
+          picks.push(value);
+        }}
+      />
+    );
+    const button = trigger(/^Project/);
+    fireEvent.click(button);
+    const row = screen.getByRole('option', { name: 'Add project…' });
+    expect(row.getAttribute('aria-selected')).toBe('false');
+    expect(row.querySelector('svg.lucide-check')).toBeNull();
+    fireEvent.click(row);
+    expect(focusAt).toEqual([button]);
+    expect(picks).toEqual([]);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(button);
+    expect(document.querySelector('[data-edit-pending]')).toBeNull();
+    expect(button.getAttribute('data-pending')).toBeNull();
+    expect(savingWords()).toEqual([]);
+  });
+
+  test('Enter in a search box runs it once, and the popover is gone by then', () => {
+    // Whether the popover was still in the document each time it ran.
+    const openWhenRun: boolean[] = [];
+    const picks: (string | null)[] = [];
+    const run = mock(() => {
+      openWhenRun.push(screen.queryByRole('dialog') !== null);
+    });
+    render(
+      <PickerPopover
+        label="Project"
+        value="a"
+        options={[
+          { value: 'a', label: 'Atlas' },
+          { value: 'add', label: 'Add project…', onSelect: run },
+        ]}
+        onChange={(value) => {
+          picks.push(value);
+        }}
+      />
+    );
+    fireEvent.click(trigger(/^Project/));
+    fireEvent.change(combobox(), { target: { value: 'add' } });
+    expect(activeOption()?.textContent).toBe('Add project…');
+    fireEvent.keyDown(combobox(), { key: 'Enter' });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(openWhenRun).toEqual([false]);
+    expect(picks).toEqual([]);
+    expect(document.activeElement).toBe(trigger(/^Project/));
+  });
+
+  test('Space in a menu runs it once', () => {
+    const run = mock(() => undefined);
+    render(
+      <PickerPopover
+        label="Project"
+        searchable={false}
+        value={null}
+        options={[
+          { value: 'a', label: 'Atlas' },
+          { value: 'add', label: 'Add project…', onSelect: run },
+        ]}
+        onChange={() => undefined}
+      />
+    );
+    fireEvent.click(trigger(/^Project/));
+    const list = screen.getByRole('listbox');
+    fireEvent.keyDown(list, { key: 'End' });
+    fireEvent.keyDown(list, { key: ' ' });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  test('never chosen, even when its value is the value', () => {
+    const focusAt: (Element | null)[] = [];
+    render(
+      <PickerPopover
+        label="Project"
+        searchable={false}
+        value="add"
+        options={[{ value: 'a', label: 'Atlas' }, actionRow(focusAt)]}
+        onChange={() => undefined}
+      />
+    );
+    fireEvent.click(trigger(/^Project/));
+    const row = screen.getByRole('option', { name: 'Add project…' });
+    expect(row.getAttribute('aria-selected')).toBe('false');
+    expect(row.querySelector('svg.lucide-check')).toBeNull();
+    // Not the automatic active row either: the list starts at the top.
+    const list = screen.getByRole('listbox');
+    expect(
+      document.getElementById(list.getAttribute('aria-activedescendant') ?? '')
+        ?.textContent
+    ).toBe('Atlas');
+  });
+
+  test('multiple and action modes run it without touching the value', async () => {
+    const multiFocus: (Element | null)[] = [];
+    const multiPicks: string[][] = [];
+    const { unmount } = render(
+      <PickerPopover
+        label="Labels"
+        multiple
+        value={['a']}
+        options={[{ value: 'a', label: 'Atlas' }, actionRow(multiFocus)]}
+        onChange={(values) => {
+          multiPicks.push(values);
+        }}
+      />
+    );
+    fireEvent.click(trigger(/^Labels/));
+    const multiRow = screen.getByRole('option', { name: 'Add project…' });
+    expect(multiRow.getAttribute('aria-selected')).toBe('false');
+    // No checkbox square to tick: an action is not a value.
+    expect(multiRow.querySelector('svg[viewBox="0 0 12 12"]')).toBeNull();
+    expect(
+      screen
+        .getByRole('option', { name: 'Atlas' })
+        .querySelector('svg[viewBox="0 0 12 12"]')
+    ).not.toBeNull();
+    fireEvent.click(multiRow);
+    expect(multiFocus).toEqual([trigger(/^Labels/)]);
+    expect(multiPicks).toEqual([]);
+    // Unlike a toggle, an action closes a multiple picker.
+    expect(screen.queryByRole('dialog')).toBeNull();
+    unmount();
+
+    const actionFocus: (Element | null)[] = [];
+    const actionPicks: (string | null)[] = [];
+    render(
+      <PickerPopover
+        label="Actions"
+        action
+        searchable={false}
+        value={null}
+        options={[
+          { value: 'open', label: 'Open' },
+          actionRow(actionFocus, { selected: true }),
+        ]}
+        onChange={(value) => {
+          actionPicks.push(value);
+        }}
+      />
+    );
+    fireEvent.click(trigger(/^Actions/));
+    const actionRowEl = screen.getByRole('option', { name: 'Add project…' });
+    // `selected` marks an action menu's current row; an in-place action
+    // is never one.
+    expect(actionRowEl.getAttribute('aria-selected')).toBe('false');
+    await act(async () => {
+      fireEvent.click(actionRowEl);
+      await Promise.resolve();
+    });
+    expect(actionFocus).toEqual([trigger(/^Actions/)]);
+    expect(actionPicks).toEqual([]);
+    expect(savingWords()).toEqual([]);
+  });
+
+  test('href wins when a row sets both', () => {
+    const run = mock(() => undefined);
+    const assign = mock((_href: string) => undefined);
+    const original = window.location.assign;
+    Object.defineProperty(window.location, 'assign', {
+      configurable: true,
+      value: assign,
+    });
+    try {
+      render(
+        <PickerPopover
+          label="Project"
+          searchable={false}
+          value={null}
+          options={[
+            {
+              value: 'add',
+              label: 'Add project…',
+              href: '/setup',
+              onSelect: run,
+            },
+          ]}
+          onChange={() => undefined}
+        />
+      );
+      fireEvent.click(trigger(/^Project/));
+      fireEvent.click(screen.getByRole('option', { name: 'Add project…' }));
+      expect(assign.mock.calls).toEqual([['/setup']]);
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(window.location, 'assign', {
+        configurable: true,
+        value: original,
+      });
+    }
+  });
+
+  test('returnFocus takes focus before the action runs', () => {
+    const focusAt: (Element | null)[] = [];
+    render(
+      <>
+        <button type="button" data-testid="title">
+          Title
+        </button>
+        <PickerPopover
+          label="Project"
+          searchable={false}
+          value={null}
+          returnFocus={() => screen.getByTestId('title')}
+          options={[actionRow(focusAt)]}
+          onChange={() => undefined}
+        />
+      </>
+    );
+    fireEvent.click(trigger(/^Project/));
+    fireEvent.click(screen.getByRole('option', { name: 'Add project…' }));
+    expect(focusAt).toEqual([screen.getByTestId('title')]);
+  });
+
+  test('a Dialog it opens takes the trigger as its opener and hands focus back', () => {
+    function Host() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <PickerPopover
+            label="Project"
+            searchable={false}
+            value="a"
+            options={[
+              { value: 'a', label: 'Atlas' },
+              {
+                value: 'add',
+                label: 'Add project…',
+                onSelect: () => setOpen(true),
+              },
+            ]}
+            onChange={() => undefined}
+          />
+          <Dialog
+            open={open}
+            onClose={() => setOpen(false)}
+            title="Add a project"
+          >
+            <input aria-label="Folder" />
+          </Dialog>
+        </>
+      );
+    }
+    render(<Host />);
+    const button = trigger(/^Project/);
+    fireEvent.click(button);
+    fireEvent.click(screen.getByRole('option', { name: 'Add project…' }));
+    const dialog = screen.getByRole('dialog', { name: 'Add a project' });
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    // Only the host's dialog: the picker's popover is gone.
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(document.activeElement ?? dialog, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(button);
   });
 });
 

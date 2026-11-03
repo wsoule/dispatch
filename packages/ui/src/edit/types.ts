@@ -73,9 +73,20 @@ export interface PickerOption {
   groupTitleHidden?: boolean;
   /** A row that leaves the page: picking it closes the popover and loads
       this URL as a full page navigation (window.location.assign) instead
-      of choosing it. It is never shown as chosen, never calls onChange
-      and shows no pending note. */
+      of choosing it. It is never shown as chosen (a multiple picker
+      draws it no checkbox), never calls onChange and shows no pending
+      note. Wins over `onSelect` when both are set. */
   href?: string;
+  /** A row that acts in place (a switcher's "Add project…", which opens
+      the host's Dialog): picking it (click, Enter, Space) closes the
+      popover and returns focus to the trigger (or `returnFocus`), then
+      calls this once, so a dialog it opens records the trigger as its
+      opener and hands focus back there. Like `href`, in every mode it is
+      never shown as chosen (no tick, no aria-selected, no checkbox),
+      never calls onChange, shows no pending note and announces no
+      "Saving"; a multiple picker closes for it. Ignored when `href` is
+      set. */
+  onSelect?: () => void;
   /** A step rather than a value (a filter menu's facet, "Back to
       filters"): picking it calls onChange with its value (single mode,
       without the save contract: never shown as chosen or pending, and

@@ -1,5 +1,5 @@
 import { Link, type ShellSection } from '@dispatch/ui';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 
@@ -7,6 +7,7 @@ import type { NavAction } from '../../lib/appNav';
 import { FirstTaskGuide } from '../guide/FirstTaskGuide';
 import { PeopleProvider } from '../people/PeopleContext';
 import { DispatchShell, type DispatchShellProps } from './DispatchShell';
+import { projectWorkspaceSwitcher } from './projectWorkspaces';
 
 const PROJECTS: ShellSection = {
   id: 'projects',
@@ -168,6 +169,63 @@ describe('DispatchShell', () => {
     fireEvent.click(screen.getByRole('link', { name: 'Dispatch storefront' }));
     expect(log.actions[8]).toEqual({ type: 'showOverseer' });
     expect(log.calls).toEqual([]);
+  });
+
+  // With a switcher the brand row is a menu of the projects, not a link to
+  // the Overseer (the sidebar's Overseer row still is).
+  test('with a switcher the brand row switches project and adds one', async () => {
+    const switched: string[] = [];
+    const added: string[] = [];
+    const opened: boolean[] = [];
+    const { element, log } = shell({
+      workspaceSwitcher: projectWorkspaceSwitcher({
+        active: { name: 'storefront', path: '/Users/ada/storefront' },
+        projects: [
+          { name: 'billing', path: '/Users/ada/code/billing' },
+          { name: 'storefront', path: '/Users/ada/storefront' },
+        ],
+        onSelectProject: (path) => switched.push(path),
+        onAddProject: () => added.push('add'),
+        onOpenChange: (open) => opened.push(open),
+      }),
+    });
+    render(element);
+    expect(
+      screen.queryByRole('link', { name: 'Dispatch storefront' })
+    ).toBeNull();
+    const brand = screen.getByRole('button', {
+      name: 'Dispatch storefront, switch project',
+    });
+    fireEvent.click(brand);
+    expect(opened).toEqual([true]);
+    const list = screen.getByRole('listbox', { name: 'Project' });
+    const rows = within(list)
+      .getAllByRole('option')
+      .map((option) => option.textContent);
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toContain('billing');
+    expect(rows[0]).toContain('~/code/billing');
+    expect(rows[1]).toContain('storefront');
+    expect(rows[1]).toContain('~/storefront');
+    expect(rows[2]).toContain('Add project…');
+    fireEvent.click(within(list).getByRole('option', { name: /billing/ }));
+    expect(switched).toEqual(['/Users/ada/code/billing']);
+    // The picker settles its save contract (onSwitch returned nothing).
+    await act(async () => {});
+    // Adding a project runs in place: the menu closes, then the host's
+    // dialog opens; nothing switches.
+    fireEvent.click(brand);
+    fireEvent.click(screen.getByRole('option', { name: 'Add project…' }));
+    expect(added).toEqual(['add']);
+    expect(switched).toEqual(['/Users/ada/code/billing']);
+    expect(screen.queryByRole('listbox', { name: 'Project' })).toBeNull();
+    expect(log.actions).toEqual([]);
+    // The Overseer is still a sidebar row.
+    expect(
+      within(primaryNav())
+        .getAllByRole('link')
+        .some((link) => link.getAttribute('href') === '#/overseer')
+    ).toBe(true);
   });
 
   test('a link with parameters dispatches every action its route holds', () => {

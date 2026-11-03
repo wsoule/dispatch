@@ -1,37 +1,58 @@
-/* Who else is here (PresenceStack.tsx): a row of 20px initials faces, side by side. */
+/* Who else is here (PresenceStack.tsx): a row of 20px avatars, side by side. */
 .stack {
   display: flex;
   align-items: center;
-  gap: 2px;
+  /* Wide enough that two busy rings (3px out each side) never touch. */
+  gap: var(--s-2);
   border-radius: var(--r-full);
 }
 
+/* One face: the avatar (and its screen-reader handle), or a button around
+   them that opens that person. */
 .face {
-  display: grid;
+  position: relative;
+  display: inline-grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
   padding: 0;
-  border: 1px solid var(--border-strong);
+  border: 0;
   border-radius: var(--r-full);
-  background: var(--surface-2);
-  font-size: 9px;
-  font-weight: var(--fw-medium);
-  color: var(--text-2);
-}
-
-/* A live agent: a ring in the info hue, so who is busy reads without the tooltip. */
-.face[data-busy] {
-  box-shadow: 0 0 0 1px var(--blue);
+  background: transparent;
+  color: inherit;
+  font: inherit;
 }
 
 button.face {
   cursor: pointer;
 }
 
+/* A face that opens its person answers the pointer: a --surface-3 halo where
+   a busy ring would sit (a busy ring stays as it is), so it reads as a
+   control beside a static face. */
 @media (hover: hover) {
-  button.face:hover {
-    background: var(--surface-3);
+  button.face:hover .ring:not([data-tone]) {
+    box-shadow: 0 0 0 3px var(--surface-3);
+  }
+}
+
+/* The avatar's wrapper, round, so a ring can sit around it. */
+.ring {
+  display: inline-grid;
+  border-radius: var(--r-full);
+}
+
+/* A live agent: a ring in the info hue (data-tone="info"), so who is busy
+   reads without the tooltip. The avatar draws its own 1.5px ring in the
+   surface colour, which covers the inner half of this one: what shows is a
+   1.5px info ring with a surface gap inside it. */
+.ring[data-tone] {
+  box-shadow: 0 0 0 3px var(--tone);
+}
+
+/* Forced colours drop box shadows: an outline keeps the busy ring's shape. */
+@media (forced-colors: active) {
+  .ring[data-tone] {
+    outline: 1.5px solid CanvasText;
+    outline-offset: 1.5px;
   }
 }
 

@@ -228,6 +228,7 @@ export type {
   ShellTab,
   ShellUser,
   ShellWorkspace,
+  ShellWorkspaceConnect,
   ShellWorkspaceSwitcher,
   ShortcutGroup,
   ShortcutRow,

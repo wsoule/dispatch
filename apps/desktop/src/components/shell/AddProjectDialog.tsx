@@ -3,10 +3,13 @@ import {
   Dialog,
   EmptyState,
   Notice,
+  Register,
+  RegisterCell,
+  RegisterRow,
+  SearchField,
   Spinner,
-  TextField,
 } from '@dispatch/ui';
-import { ChevronLeft, FolderOpen, GitBranch, Search } from 'lucide-react';
+import { ChevronLeft, FolderOpen, GitBranch } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import {
@@ -63,8 +66,18 @@ export function AddProjectDialog({
     if (mode === 'github') filterRef.current?.focus();
   }, [mode]);
 
+  // Asks for the repositories once each time the GitHub pane opens without a list. A
+  // failed load (gh missing or signed out) says so and waits for the person: Back, then
+  // From GitHub again, asks once more. Keyed on the loading flag instead, a failure (the
+  // list still null, loading back to false) asked again at once, over and over.
+  const reposAsked = useRef(false);
   useEffect(() => {
-    if (mode !== 'github' || repos !== null || reposLoading) return;
+    if (mode !== 'github') {
+      reposAsked.current = false;
+      return;
+    }
+    if (repos !== null || reposAsked.current) return;
+    reposAsked.current = true;
     setReposLoading(true);
     setError(null);
     listGithubRepos()
@@ -73,7 +86,7 @@ export function AddProjectDialog({
         setError(err instanceof Error ? err.message : String(err))
       )
       .finally(() => setReposLoading(false));
-  }, [mode, repos, reposLoading]);
+  }, [mode, repos]);
 
   // Registers `path` and switches to it; leaves the dialog open showing the error if that
   // fails so the user can retry or pick something else.
@@ -217,13 +230,14 @@ export function AddProjectDialog({
           </div>
         ) : (
           <div className={styles.github}>
-            <TextField
-              ref={filterRef}
+            {/* Escape in a field with text clears it; in an empty field it
+                reaches the dialog, which closes. */}
+            <SearchField
+              inputRef={filterRef}
               value={filter}
-              onChange={(e) => setFilter(e.target.value)}
+              onChange={setFilter}
+              label="Search repositories"
               placeholder="Search repositories…"
-              aria-label="Search repositories"
-              start={<Search size={14} strokeWidth={1.8} aria-hidden="true" />}
             />
 
             {reposLoading ? (
@@ -231,7 +245,7 @@ export function AddProjectDialog({
                 <Spinner label="" />
                 Loading repositories…
               </div>
-            ) : repos !== null && filteredRepos.length === 0 ? (
+            ) : repos === null ? null : filteredRepos.length === 0 ? (
               <EmptyState icon={null}>
                 {repos.length === 0
                   ? 'No repositories found.'
@@ -239,24 +253,40 @@ export function AddProjectDialog({
               </EmptyState>
             ) : (
               <div className={styles.repos}>
-                {filteredRepos.map((repo) => (
-                  <button
-                    key={repo.nameWithOwner}
-                    type="button"
-                    className={styles.repo}
-                    onClick={() => void cloneRepo(repo)}
-                    title={repo.description || repo.nameWithOwner}
-                  >
-                    <span className={styles.repoName}>
-                      {repo.nameWithOwner}
-                    </span>
-                    {repo.description !== '' && (
-                      <span className={styles.repoNote}>
-                        {repo.description}
-                      </span>
-                    )}
-                  </button>
-                ))}
+                <Register
+                  label="Repositories"
+                  columns="minmax(0, 1fr)"
+                  stackWithin={480}
+                  stackedColumns="minmax(0, 1fr)"
+                >
+                  {filteredRepos.map((repo) => (
+                    <RegisterRow
+                      key={repo.nameWithOwner}
+                      onActivate={() => void cloneRepo(repo)}
+                      // The description is part of the row's name (the
+                      // stretched button's words replace the cells') and
+                      // whole on hover, where one line cuts it.
+                      rowLabel={
+                        repo.description === ''
+                          ? `Clone ${repo.nameWithOwner}`
+                          : `Clone ${repo.nameWithOwner}, ${repo.description}`
+                      }
+                      title={repo.description || repo.nameWithOwner}
+                    >
+                      <RegisterCell
+                        variant="name"
+                        sub={
+                          repo.description === '' ? undefined : repo.description
+                        }
+                      >
+                        {/* owner/name is read by machines (gh), so mono. */}
+                        <span className={styles.repoName}>
+                          {repo.nameWithOwner}
+                        </span>
+                      </RegisterCell>
+                    </RegisterRow>
+                  ))}
+                </Register>
               </div>
             )}
           </div>

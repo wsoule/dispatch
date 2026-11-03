@@ -331,6 +331,12 @@ test('closing mid-task asks first; closing at Describe does not', () => {
   expect(a.dismiss).not.toHaveBeenCalled();
   const dialog = screen.getByRole('alertdialog');
   expect(dialog.textContent).toContain('Your task keeps going');
+  // The way back is the palette entry, the guide's only restart since the
+  // project menu went (its Help group is not in the brand-row switcher).
+  expect(dialog.textContent).toMatch(
+    /start it again from the command palette \((⌘K|Ctrl K)\): Restart the first-task guide\./
+  );
+  expect(dialog.textContent).not.toContain('project menu');
   fireEvent.click(
     within(dialog).getByRole('button', { name: 'Keep the guide' })
   );

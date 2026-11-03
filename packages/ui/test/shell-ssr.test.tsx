@@ -10,7 +10,9 @@ interface SsrResult {
   hasDocument: boolean;
   shell: string;
   switcher: string;
+  projectSwitcher: string;
   signedOut: string;
+  gate: string;
   overlays: string;
   modalDrawer: string;
   quickOpen: string;
@@ -68,6 +70,30 @@ describe('shell family server render', () => {
     expect(switcher).toContain('data-tip="Northwind · Switch workspace"');
     // Closed: no menu rows in the markup.
     expect(switcher).not.toContain('Connect another workspace');
+  });
+
+  test("a host's switcher renders with its own words and an in-place connect row", () => {
+    const { projectSwitcher } = serverRender();
+    expect(projectSwitcher).toContain(
+      'aria-label="Dispatch dispatch, switch project"'
+    );
+    expect(projectSwitcher).toContain('data-tip="dispatch · Switch project"');
+    expect(projectSwitcher).toContain('aria-expanded="false"');
+    // Closed: no menu rows, so the in-place row is not in the markup.
+    expect(projectSwitcher).not.toContain('Add project…');
+    expect(projectSwitcher.match(/data-tauri-drag-region=""/g)).toHaveLength(2);
+  });
+
+  test('a gate screen: one main, the skip link to it, a drag-region header', () => {
+    const { gate } = serverRender();
+    expect(gate.match(/<main /g)).toHaveLength(1);
+    expect(gate).toContain('<main id="gate-main" tabindex="-1"');
+    expect(gate).toContain('href="#gate-main"');
+    expect(gate).toMatch(/<header data-tauri-drag-region=""/);
+    expect(gate.match(/data-tauri-drag-region=""/g)).toHaveLength(1);
+    expect(gate).toContain('Set up Dispatch');
+    // The host's control sits in the header row.
+    expect(gate.indexOf('Sign out')).toBeLessThan(gate.indexOf('<main'));
   });
 
   test('the overlays render: dialog, confirmation, tooltip, spinner', () => {

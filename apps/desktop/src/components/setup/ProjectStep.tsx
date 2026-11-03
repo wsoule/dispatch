@@ -1,3 +1,4 @@
+import { Button } from '@dispatch/ui';
 import { useState } from 'react';
 
 import {
@@ -7,7 +8,6 @@ import {
 } from '../../lib/tauri';
 import { AddProjectDialog } from '../shell/AddProjectDialog';
 import { SetupStepRow } from './SetupStepRow';
-import { Button } from '@/ui/button';
 
 interface ProjectStepProps {
   /** Disabled until git is ready: preparing a folder needs git and its identity. */
@@ -123,12 +123,16 @@ export function ProjectStep({
         }
         action={
           <>
-            <Button onClick={() => void prepare()} disabled={busy}>
+            <Button
+              variant="primary"
+              onClick={() => void prepare()}
+              disabled={busy}
+            >
               {needsPrep === 'init'
                 ? 'Turn on version tracking'
                 : 'Save a first snapshot'}
             </Button>
-            <Button variant="outline" onClick={reset} disabled={busy}>
+            <Button variant="secondary" onClick={reset} disabled={busy}>
               Choose a different folder
             </Button>
           </>
@@ -151,11 +155,15 @@ export function ProjectStep({
         action={
           pending === null ? (
             <>
-              <Button onClick={() => void choose()} disabled={busy}>
+              <Button
+                variant="primary"
+                onClick={() => void choose()}
+                disabled={busy}
+              >
                 Choose a folder
               </Button>
               <Button
-                variant="outline"
+                variant="secondary"
                 onClick={() => setGithubOpen(true)}
                 disabled={busy}
               >
@@ -164,10 +172,14 @@ export function ProjectStep({
             </>
           ) : (
             <>
-              <Button onClick={() => void consider(pending)} disabled={busy}>
+              <Button
+                variant="primary"
+                onClick={() => void consider(pending)}
+                disabled={busy}
+              >
                 Set up this folder
               </Button>
-              <Button variant="outline" onClick={reset} disabled={busy}>
+              <Button variant="secondary" onClick={reset} disabled={busy}>
                 Choose a different folder
               </Button>
             </>

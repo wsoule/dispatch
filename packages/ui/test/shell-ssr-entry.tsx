@@ -109,6 +109,27 @@ const switcher = renderToString(
   </ToastProvider>
 );
 
+// A desktop host's switcher (Dispatch's projects): its own words and a
+// connect row that opens the host's dialog in place, a function the
+// server never calls.
+const projectSwitcher = renderToString(
+  <AppShell
+    appName="Dispatch"
+    brandHref="#/"
+    workspaceSwitcher={{
+      workspaces: [{ id: 'dispatch', name: 'dispatch', current: true }],
+      onSwitch: () => undefined,
+      connect: { label: 'Add project…', onSelect: () => undefined },
+      label: 'Switch project',
+      menuLabel: 'Project',
+      groupLabel: 'Projects',
+      onOpenChange: () => undefined,
+    }}
+    chromeAttributes={{ 'data-tauri-drag-region': '' }}
+    nav={[{ id: 'issues', label: 'Issues', href: '#/issues', icon: null }]}
+  />
+);
+
 const signedOut = renderToString(
   <SignedOutFrame
     appName="Milestone Planner"
@@ -121,6 +142,21 @@ const signedOut = renderToString(
     ]}
   >
     <p>Sign in</p>
+  </SignedOutFrame>
+);
+
+// A desktop host's gate screen: the header row is the window's drag
+// region.
+const gate = renderToString(
+  <SignedOutFrame
+    appName="Dispatch"
+    brandHref="#/"
+    label="Setup"
+    mainId="gate-main"
+    chromeAttributes={{ 'data-tauri-drag-region': '' }}
+    actions={<button type="button">Sign out</button>}
+  >
+    <h1>Set up Dispatch</h1>
   </SignedOutFrame>
 );
 
@@ -204,7 +240,9 @@ console.log(
     hasDocument: typeof document !== 'undefined',
     shell: render(),
     switcher,
+    projectSwitcher,
     signedOut,
+    gate,
     overlays,
     modalDrawer,
     quickOpen,

@@ -7,6 +7,7 @@ import {
 import type { DraftRecord } from '@dispatch/client';
 import {
   BlockBar,
+  Button,
   EmptyState,
   ShortcutSheet,
   Spinner,
@@ -70,8 +71,9 @@ import {
   DispatchShell,
   SHELL_STORAGE_KEY,
 } from './components/shell/DispatchShell';
+import { GateFrame } from './components/shell/GateFrame';
 import { PresenceStack } from './components/shell/PresenceStack';
-import { ProjectSwitcher } from './components/shell/ProjectSwitcher';
+import { projectWorkspaceSwitcher } from './components/shell/projectWorkspaces';
 import { SavedViewsProvider } from './components/shell/SavedViewsContext';
 import {
   type CreateTaskPreset,
@@ -392,9 +394,9 @@ function App() {
 
   const selectSwitchProject = useCallback((path: string) => {
     setOverrideRoot(path);
-    setSwitcherOpen(false);
-    // Stamp `lastOpenedAt` so this project becomes the registry's "most recent" — both for the
-    // switcher's ordering and for `current_project_root`'s reopen-last chain on next launch.
+    // Stamp `lastOpenedAt` so this project becomes the registry's "most recent", which
+    // `current_project_root`'s reopen-last chain follows on next launch (the switcher
+    // itself lists projects by name).
     // Fire-and-forget: a registry write failure must not block switching the window.
     void touchProjectOpened(path);
     // Drop the current project's nav context so the new project opens clean on
@@ -456,8 +458,8 @@ function App() {
     dispatchNav({ type: 'setProjectView', view });
   }, []);
 
-  // `page` lands Settings on one of its pages; `g s` and the switcher's gear leave it to
-  // the last page.
+  // `page` lands Settings on one of its pages; `g s` and the sidebar's Settings link
+  // leave it to the last page.
   const setGlobalView = useCallback(
     (view: GlobalView, options?: { page?: SettingsPage }) => {
       dispatchNav({ type: 'setGlobalView', view, page: options?.page });
@@ -1767,24 +1769,18 @@ function App() {
       />
     );
 
-  const projectSwitcher = (
-    <ProjectSwitcher
-      teamSession={teamSession}
-      projectName={activeProject?.name ?? null}
-      projectPath={activeProject?.path ?? null}
-      noProjectYet={noProjectYet}
-      open={switcherOpen}
-      onOpenChange={setSwitcherOpen}
-      switchProjects={switchProjects ?? []}
-      onSelectProject={selectSwitchProject}
-      onAddProject={() => {
-        setSwitcherOpen(false);
-        setAddProjectOpen(true);
-      }}
-      onOpenSettings={() => setGlobalView('settings')}
-      onRestartGuide={activeProject === null ? undefined : restartGuide}
-    />
-  );
+  // The brand row's project switcher. Opening it is what loads the other
+  // projects (the lazy 'switcher-projects' query above follows switcherOpen).
+  const workspaceSwitcher = projectWorkspaceSwitcher({
+    active:
+      activeProject === null
+        ? null
+        : { name: activeProject.name, path: activeProject.path },
+    projects: switchProjects ?? [],
+    onSelectProject: selectSwitchProject,
+    onAddProject: () => setAddProjectOpen(true),
+    onOpenChange: setSwitcherOpen,
+  });
 
   const peekTaskId =
     navState.peek?.kind === 'task' ? navState.peek.taskId : null;
@@ -2283,295 +2279,328 @@ function App() {
     });
   };
 
+  // A setup gate (first launch, a folder without .dispatch/, the agent check)
+  // takes the whole window in the signed-out frame instead of the app shell,
+  // so the screen has one <main>. The resolution error and "Loading project…"
+  // stay in the shell's gate slot.
+  const setupGate =
+    resolutionError === null &&
+    (noProjectYet || showGetStarted || agentSetupScreen !== null);
+  const settingsOpen = navState.settings !== null;
+
+  const shell = (
+    <DispatchShell
+      projectName={activeProject?.name ?? null}
+      view={navState.mainView}
+      destination={shellDestination}
+      taskTitle={aboutTask?.title ?? null}
+      overseerBadge={{ count: orb.count, tone: orb.tone, label: orbTitle }}
+      needsYou={needs.count}
+      threadsUnread={unreadToMe}
+      adminItems={admin}
+      projects={projectsSection}
+      tier={data.myTier}
+      teamSession={teamSession}
+      windowChrome={{ dragRegion: isTauri(), trafficLightInset }}
+      onNavigate={navigate}
+      onSearch={() => dispatchNav({ type: 'openPalette' })}
+      workspaceSwitcher={workspaceSwitcher}
+      topbarActions={
+        activeProject !== null && (
+          <PresenceStack
+            presence={data.presence}
+            onOpenPerson={(ref) =>
+              dispatchNav({ type: 'openAddress', address: ref })
+            }
+            taskTitle={(id) =>
+              data.tasksIncludingArchived.find((t) => t.meta.id === id)?.meta
+                .title
+            }
+          />
+        )
+      }
+      // Over a setup gate the shell shows only Settings: a gate it never
+      // draws keeps the two views from mounting under it.
+      gate={setupGate ? false : (gateScreen ?? agentSetupScreen)}
+      guide={guideCard}
+      // Only while a step wants a person: the shell's banner slot is a styled
+      // strip, and an empty SetupBanner inside it would still draw a band.
+      banner={
+        setupComplete && setupProblem(setupBannerReport) !== undefined ? (
+          <SetupBanner
+            report={setupBannerReport}
+            onOpen={() => dispatchNav({ type: 'openSettings', page: 'setup' })}
+          />
+        ) : undefined
+      }
+      overseer={
+        <TwoViewOverseer
+          data={data}
+          overseer={overseer}
+          projectPath={activeProject?.path ?? null}
+          asks={needs.count}
+          postsCount={posts.length + captures.length}
+          runs={data.runs}
+          merges={data.mergeQueue?.entries ?? []}
+          drafts={
+            <DraftsSection
+              drafts={data.drafts}
+              onOpen={(draftId) => dispatchNav({ type: 'openDraft', draftId })}
+              onDismiss={(id) => void data.handleDismissDraft(id)}
+            />
+          }
+          draftsCount={draftTrayViewModel(data.drafts).badgeCount}
+          notifications={
+            sidePanelNotifications && (
+              <NotificationsSection
+                entries={notificationInbox.entries}
+                unreadCount={unreadCount(notificationInbox)}
+                onMarkAllRead={markNotificationInboxRead}
+                onOpen={openNotification}
+                onDismiss={dismissNotification}
+                onClearAll={clearNotifications}
+                onHide={() => setSidePanelNotifications(false)}
+              />
+            )
+          }
+          outflow={{
+            sessions: data.liveMilestoneSessions,
+            milestoneTitle: (id) =>
+              data.milestones.find((e) => e.meta.id === id)?.meta.title ?? id,
+            mergeReady: mergeReadyCount,
+            onMergeAll: data.handleMergeAllReady,
+            spendToday: todaySpend,
+            ceilings: liveCeilings,
+          }}
+          focus={overseerFocus}
+          onFocus={setOverseerFocus}
+          renderFocus={(focus, onClose) => (
+            <OverseerFocusView
+              focus={focus}
+              data={data}
+              name={addressName}
+              conversationCount={(taskId) =>
+                speechByTask.get(taskId)?.count ?? 0
+              }
+              onOpenRef={openRef}
+              onOpenInTasks={(taskId) => {
+                onClose();
+                openTaskView(taskId, 'auto');
+              }}
+              onClose={onClose}
+            />
+          )}
+          needsBlock={
+            <NeedsYouBlock
+              data={data}
+              needs={needs}
+              decided={recentlyDecided}
+              // Beside the talk, a task opens in the middle instead of in Tasks.
+              onOpenRef={(action) =>
+                action.kind === 'task' || action.kind === 'run'
+                  ? setOverseerFocus({ kind: 'task', taskId: action.taskId })
+                  : openRef(action)
+              }
+              onOpenDecision={(item) => {
+                const target = decisionTarget(item);
+                if (target?.kind === 'task') {
+                  setOverseerFocus({ kind: 'task', taskId: target.taskId });
+                } else {
+                  onOpenDecision(item);
+                }
+              }}
+              flush
+            />
+          }
+          revoked={overseer.revoked}
+          onShowAsks={() => dispatchNav({ type: 'showTasks' })}
+          onOpenDoor={openDoor}
+          firstRun={
+            showFirstRun ? (
+              <FirstRunView
+                projectName={activeProject?.name ?? null}
+                planner={guideAgent === null || guideAgent.plans}
+                // The draft opens under Tasks: Two views has no drafts tray.
+                onStartDraft={async (prompt) => {
+                  // A new draft replaces the last one's failure.
+                  setFirstRunDraftId(null);
+                  const path = guidePath;
+                  const draft = await rawData.handleStartDraft(prompt);
+                  const latest = guideFor(path);
+                  if (latest === null) return draft;
+                  setFirstRunDraftId(draft.id);
+                  if (latest.active) latest.linkDraft(draft.id);
+                  dispatchNav({ type: 'openDraft', draftId: draft.id });
+                  return draft;
+                }}
+                onCreateTask={async ({ what, done }) => {
+                  const path = guidePath;
+                  const doc = await rawData.handleCreate(
+                    formTaskInput(
+                      what,
+                      done,
+                      data.config?.statuses[0] ?? 'backlog'
+                    )
+                  );
+                  if (doc === null) {
+                    throw new Error(
+                      'The project is still starting. Try again in a moment.'
+                    );
+                  }
+                  const latest = guideFor(path);
+                  if (latest === null) return;
+                  if (latest.active) latest.linkTask(doc.meta.id);
+                  openTaskView(doc.meta.id, 'spec');
+                }}
+                failure={
+                  failedFirstRun === undefined
+                    ? undefined
+                    : {
+                        error:
+                          failedFirstRun.error ?? 'Drafting the task failed.',
+                        providerId: providerById(failedFirstRun.plannerName)
+                          ?.id,
+                        onRetry: () => retryDraft(failedFirstRun),
+                      }
+                }
+                onBrowseBoard={() => dispatchNav({ type: 'showTasks' })}
+                onTalkToAgent={() =>
+                  setFirstRunSetAsideFor(activeProject?.path ?? null)
+                }
+              />
+            ) : undefined
+          }
+          onOpenConnectedAgents={() =>
+            dispatchNav({
+              type: 'openSettings',
+              page: 'connected-agents',
+            })
+          }
+          posts={
+            <>
+              <AwayDigest
+                lines={digest}
+                since={narrator.since}
+                onDismiss={narrator.dismiss}
+                onOpenDoor={openDoor}
+              />
+              <ForYouPosts
+                posts={posts}
+                label={addressName}
+                onOpen={openPost}
+                onReply={replyToPost}
+                onDismiss={(post) => dismissForYou([post])}
+                onClearAll={dismissForYou}
+                holding={overseerTurnLive(overseer)}
+              />
+              <CapturedNotes
+                items={captures}
+                onMakeTask={rawData.handleConvertInbox}
+                onDismiss={rawData.handleDismissInbox}
+              />
+            </>
+          }
+        />
+      }
+      tasks={
+        <IssuesView
+          data={data}
+          needs={needs}
+          decided={recentlyDecided}
+          counts={statusCounts}
+          page={tasksPage}
+          mode={navState.tasksMode}
+          onModeChange={(mode) => dispatchNav({ type: 'setTasksMode', mode })}
+          preset={navState.tasksPreset}
+          onPreset={(preset) => dispatchNav({ type: 'setTasksPreset', preset })}
+          presetContext={presetContext}
+          onSelectTask={selectBoardTask}
+          onOpenTask={(taskId) => openTaskView(taskId)}
+          peekTaskId={peekTaskId}
+          onNewTask={() => openCreateTask()}
+          onOpenRef={openRef}
+          onOpenDecision={onOpenDecision}
+          onClosePage={closeTwoViewsPage}
+          speechByTask={speechByTask}
+          onOpenPr={(number) => dispatchNav({ type: 'openPr', number })}
+          onOpenDoc={(docId) => openDoc(docId, null)}
+          onOpenAllDocs={() =>
+            dispatchNav({ type: 'setProjectView', view: 'docs' })
+          }
+          renderPage={renderTwoViewsPage}
+          composer={
+            <TasksComposer
+              overseer={overseer}
+              about={aboutTask}
+              onOpenOverseer={() => dispatchNav({ type: 'showOverseer' })}
+              disabled={revokedLocksComposer(overseer)}
+              project={activeProject?.path ?? ''}
+            />
+          }
+        />
+      }
+      settings={
+        navState.settings === null ? null : (
+          <SettingsView
+            activeProject={activeProject}
+            data={settingsData}
+            initialPage={navState.settings}
+            onSelectPage={(page) => dispatchNav({ type: 'openSettings', page })}
+            onOpenTask={(taskId) => openTaskView(taskId, 'auto')}
+            hostedPages={hostedSettingsPages}
+            pageExtras={{
+              autonomy:
+                data.client === null ? null : (
+                  <OverseerGrantsGroup
+                    client={data.client}
+                    port={data.port}
+                    conversationId={overseer.conversationId}
+                  />
+                ),
+              memory:
+                data.client === null ? null : (
+                  <MemoryRecent client={data.client} port={data.port} />
+                ),
+            }}
+          />
+        )
+      }
+      settingsPage={navState.settings}
+      peek={peekView}
+    />
+  );
+
+  // Two fixed slots, so neither remounts when the other comes or goes. Settings
+  // opened over a setup gate (the palette, G S, the gate's own Settings button)
+  // is an overlay place there too: the shell mounts in the second slot for
+  // Settings alone while the gate stays mounted, hidden, in the first (typed
+  // values, the chosen agent and a running install or sign-in kept), and
+  // closing Settings shows the gate again with focus back where it was.
   const twoViewsFrame = (
     <>
-      <DispatchShell
-        projectName={activeProject?.name ?? null}
-        view={navState.mainView}
-        destination={shellDestination}
-        taskTitle={aboutTask?.title ?? null}
-        overseerBadge={{ count: orb.count, tone: orb.tone, label: orbTitle }}
-        needsYou={needs.count}
-        threadsUnread={unreadToMe}
-        adminItems={admin}
-        projects={projectsSection}
-        tier={data.myTier}
-        teamSession={teamSession}
-        windowChrome={{ dragRegion: isTauri(), trafficLightInset }}
-        onNavigate={navigate}
-        onSearch={() => dispatchNav({ type: 'openPalette' })}
-        topbarActions={
-          <>
-            {projectSwitcher}
-            {activeProject !== null && (
-              <PresenceStack
-                presence={data.presence}
-                onOpenPerson={(ref) =>
-                  dispatchNav({ type: 'openAddress', address: ref })
-                }
-                taskTitle={(id) =>
-                  data.tasksIncludingArchived.find((t) => t.meta.id === id)
-                    ?.meta.title
-                }
-              />
-            )}
-          </>
-        }
-        gate={gateScreen ?? agentSetupScreen}
-        guide={guideCard}
-        // Only while a step wants a person: the shell's banner slot is a styled
-        // strip, and an empty SetupBanner inside it would still draw a band.
-        banner={
-          setupComplete && setupProblem(setupBannerReport) !== undefined ? (
-            <SetupBanner
-              report={setupBannerReport}
-              onOpen={() =>
-                dispatchNav({ type: 'openSettings', page: 'setup' })
-              }
-            />
-          ) : undefined
-        }
-        overseer={
-          <TwoViewOverseer
-            data={data}
-            overseer={overseer}
-            projectPath={activeProject?.path ?? null}
-            asks={needs.count}
-            postsCount={posts.length + captures.length}
-            runs={data.runs}
-            merges={data.mergeQueue?.entries ?? []}
-            drafts={
-              <DraftsSection
-                drafts={data.drafts}
-                onOpen={(draftId) =>
-                  dispatchNav({ type: 'openDraft', draftId })
-                }
-                onDismiss={(id) => void data.handleDismissDraft(id)}
-              />
-            }
-            draftsCount={draftTrayViewModel(data.drafts).badgeCount}
-            notifications={
-              sidePanelNotifications && (
-                <NotificationsSection
-                  entries={notificationInbox.entries}
-                  unreadCount={unreadCount(notificationInbox)}
-                  onMarkAllRead={markNotificationInboxRead}
-                  onOpen={openNotification}
-                  onDismiss={dismissNotification}
-                  onClearAll={clearNotifications}
-                  onHide={() => setSidePanelNotifications(false)}
-                />
-              )
-            }
-            outflow={{
-              sessions: data.liveMilestoneSessions,
-              milestoneTitle: (id) =>
-                data.milestones.find((e) => e.meta.id === id)?.meta.title ?? id,
-              mergeReady: mergeReadyCount,
-              onMergeAll: data.handleMergeAllReady,
-              spendToday: todaySpend,
-              ceilings: liveCeilings,
-            }}
-            focus={overseerFocus}
-            onFocus={setOverseerFocus}
-            renderFocus={(focus, onClose) => (
-              <OverseerFocusView
-                focus={focus}
-                data={data}
-                name={addressName}
-                conversationCount={(taskId) =>
-                  speechByTask.get(taskId)?.count ?? 0
-                }
-                onOpenRef={openRef}
-                onOpenInTasks={(taskId) => {
-                  onClose();
-                  openTaskView(taskId, 'auto');
-                }}
-                onClose={onClose}
-              />
-            )}
-            needsBlock={
-              <NeedsYouBlock
-                data={data}
-                needs={needs}
-                decided={recentlyDecided}
-                // Beside the talk, a task opens in the middle instead of in Tasks.
-                onOpenRef={(action) =>
-                  action.kind === 'task' || action.kind === 'run'
-                    ? setOverseerFocus({ kind: 'task', taskId: action.taskId })
-                    : openRef(action)
-                }
-                onOpenDecision={(item) => {
-                  const target = decisionTarget(item);
-                  if (target?.kind === 'task') {
-                    setOverseerFocus({ kind: 'task', taskId: target.taskId });
-                  } else {
-                    onOpenDecision(item);
-                  }
-                }}
-                flush
-              />
-            }
-            revoked={overseer.revoked}
-            onShowAsks={() => dispatchNav({ type: 'showTasks' })}
-            onOpenDoor={openDoor}
-            firstRun={
-              showFirstRun ? (
-                <FirstRunView
-                  projectName={activeProject?.name ?? null}
-                  planner={guideAgent === null || guideAgent.plans}
-                  // The draft opens under Tasks: Two views has no drafts tray.
-                  onStartDraft={async (prompt) => {
-                    // A new draft replaces the last one's failure.
-                    setFirstRunDraftId(null);
-                    const path = guidePath;
-                    const draft = await rawData.handleStartDraft(prompt);
-                    const latest = guideFor(path);
-                    if (latest === null) return draft;
-                    setFirstRunDraftId(draft.id);
-                    if (latest.active) latest.linkDraft(draft.id);
-                    dispatchNav({ type: 'openDraft', draftId: draft.id });
-                    return draft;
-                  }}
-                  onCreateTask={async ({ what, done }) => {
-                    const path = guidePath;
-                    const doc = await rawData.handleCreate(
-                      formTaskInput(
-                        what,
-                        done,
-                        data.config?.statuses[0] ?? 'backlog'
-                      )
-                    );
-                    if (doc === null) {
-                      throw new Error(
-                        'The project is still starting. Try again in a moment.'
-                      );
-                    }
-                    const latest = guideFor(path);
-                    if (latest === null) return;
-                    if (latest.active) latest.linkTask(doc.meta.id);
-                    openTaskView(doc.meta.id, 'spec');
-                  }}
-                  failure={
-                    failedFirstRun === undefined
-                      ? undefined
-                      : {
-                          error:
-                            failedFirstRun.error ?? 'Drafting the task failed.',
-                          providerId: providerById(failedFirstRun.plannerName)
-                            ?.id,
-                          onRetry: () => retryDraft(failedFirstRun),
-                        }
-                  }
-                  onBrowseBoard={() => dispatchNav({ type: 'showTasks' })}
-                  onTalkToAgent={() =>
-                    setFirstRunSetAsideFor(activeProject?.path ?? null)
-                  }
-                />
-              ) : undefined
-            }
-            onOpenConnectedAgents={() =>
-              dispatchNav({
-                type: 'openSettings',
-                page: 'connected-agents',
-              })
-            }
-            posts={
-              <>
-                <AwayDigest
-                  lines={digest}
-                  since={narrator.since}
-                  onDismiss={narrator.dismiss}
-                  onOpenDoor={openDoor}
-                />
-                <ForYouPosts
-                  posts={posts}
-                  label={addressName}
-                  onOpen={openPost}
-                  onReply={replyToPost}
-                  onDismiss={(post) => dismissForYou([post])}
-                  onClearAll={dismissForYou}
-                  holding={overseerTurnLive(overseer)}
-                />
-                <CapturedNotes
-                  items={captures}
-                  onMakeTask={rawData.handleConvertInbox}
-                  onDismiss={rawData.handleDismissInbox}
-                />
-              </>
-            }
-          />
-        }
-        tasks={
-          <IssuesView
-            data={data}
-            needs={needs}
-            decided={recentlyDecided}
-            counts={statusCounts}
-            page={tasksPage}
-            mode={navState.tasksMode}
-            onModeChange={(mode) => dispatchNav({ type: 'setTasksMode', mode })}
-            preset={navState.tasksPreset}
-            onPreset={(preset) =>
-              dispatchNav({ type: 'setTasksPreset', preset })
-            }
-            presetContext={presetContext}
-            onSelectTask={selectBoardTask}
-            onOpenTask={(taskId) => openTaskView(taskId)}
-            peekTaskId={peekTaskId}
-            onNewTask={() => openCreateTask()}
-            onOpenRef={openRef}
-            onOpenDecision={onOpenDecision}
-            onClosePage={closeTwoViewsPage}
-            speechByTask={speechByTask}
-            onOpenPr={(number) => dispatchNav({ type: 'openPr', number })}
-            onOpenDoc={(docId) => openDoc(docId, null)}
-            onOpenAllDocs={() =>
-              dispatchNav({ type: 'setProjectView', view: 'docs' })
-            }
-            renderPage={renderTwoViewsPage}
-            composer={
-              <TasksComposer
-                overseer={overseer}
-                about={aboutTask}
-                onOpenOverseer={() => dispatchNav({ type: 'showOverseer' })}
-                disabled={revokedLocksComposer(overseer)}
-                project={activeProject?.path ?? ''}
-              />
-            }
-          />
-        }
-        settings={
-          navState.settings === null ? null : (
-            <SettingsView
-              activeProject={activeProject}
-              data={settingsData}
-              initialPage={navState.settings}
-              onSelectPage={(page) =>
-                dispatchNav({ type: 'openSettings', page })
-              }
-              onOpenTask={(taskId) => openTaskView(taskId, 'auto')}
-              hostedPages={hostedSettingsPages}
-              pageExtras={{
-                autonomy:
-                  data.client === null ? null : (
-                    <OverseerGrantsGroup
-                      client={data.client}
-                      port={data.port}
-                      conversationId={overseer.conversationId}
-                    />
-                  ),
-                memory:
-                  data.client === null ? null : (
-                    <MemoryRecent client={data.client} port={data.port} />
-                  ),
-              }}
-            />
-          )
-        }
-        settingsPage={navState.settings}
-        peek={peekView}
-      />
+      {setupGate && (
+        <GateFrame
+          hidden={settingsOpen}
+          windowChrome={{ dragRegion: isTauri(), trafficLightInset }}
+          errorLabel="the setup"
+          actions={
+            // The agent check runs in a project, whose Settings can be opened
+            // over the gate; first launch has no project yet.
+            activeProject !== null && (
+              <Button
+                variant="quiet"
+                size="sm"
+                onClick={() => dispatchNav({ type: 'openSettings' })}
+              >
+                Settings
+              </Button>
+            )
+          }
+        >
+          {gateScreen ?? agentSetupScreen}
+        </GateFrame>
+      )}
+      {(!setupGate || settingsOpen) && shell}
     </>
   );
 

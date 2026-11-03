@@ -1,11 +1,10 @@
+import { Button, cx, Field, TextField } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 
 import { gitSetupStatus, installGit, setGitIdentity } from '../../lib/tauri';
+import styles from './setup.module.css';
 import { SetupStepRow } from './SetupStepRow';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
-import { Label } from '@/ui/label';
 
 /** Git installed and named. Re-checks when the window regains focus (Apple's installer runs outside the app). */
 export function GitStep({ onReady }: { onReady: (ready: boolean) => void }) {
@@ -47,7 +46,9 @@ export function GitStep({ onReady }: { onReady: (ready: boolean) => void }) {
         }
         action={
           data.installHint === null ? (
-            <Button onClick={() => void install()}>Install Git</Button>
+            <Button variant="primary" onClick={() => void install()}>
+              Install Git
+            </Button>
           ) : undefined
         }
         {...(error === null ? {} : { detail: error })}
@@ -72,25 +73,32 @@ export function GitStep({ onReady }: { onReady: (ready: boolean) => void }) {
         message="Git labels every saved change with a name and email. These stay on your computer."
         {...(error === null ? {} : { detail: error })}
       >
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="flex flex-col gap-1">
-            <Label htmlFor="git-name">Your name</Label>
-            <Input
-              id="git-name"
+        <div className={styles.identity}>
+          <Field
+            label="Your name"
+            id="git-name"
+            className={styles.identityField}
+          >
+            <TextField
+              autoComplete="name"
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
-          </div>
-          <div className="flex flex-col gap-1">
-            <Label htmlFor="git-email">Your email</Label>
-            <Input
-              id="git-email"
+          </Field>
+          <Field
+            label="Your email"
+            id="git-email"
+            className={styles.identityField}
+          >
+            <TextField
               type="email"
+              autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
-          </div>
+          </Field>
           <Button
+            variant="primary"
             onClick={() => void save()}
             disabled={name.trim() === '' || !email.includes('@')}
           >
@@ -98,7 +106,11 @@ export function GitStep({ onReady }: { onReady: (ready: boolean) => void }) {
           </Button>
         </div>
         {error !== null && (
-          <p className="text-sm text-(--state-error-fg)" role="alert">
+          <p
+            className={cx(styles.alert, 'toneText')}
+            data-tone="danger"
+            role="alert"
+          >
             Couldn't save that. Check your name and email and try again.
           </p>
         )}

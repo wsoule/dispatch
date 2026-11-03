@@ -23,22 +23,15 @@ const srcDir = path.join(import.meta.dir, '..');
     .tsx extension is one file and must exist; any other entry is a directory, scanned
     recursively for those extensions, and an absent one scans as empty (`shell` does not exist
     yet; it stays listed so the first shell file is covered the day it lands). Files that sit
-    in directories the legacy views share (components/shell holds the Tailwind-styled palette
-    and dialogs too, lib/ the reducers) are listed one by one. Every Phase 7 batch appends the
+    in directories the legacy views share (lib/ the reducers, views/ the pages) are listed
+    one by one; components/shell is scanned whole since B14 moved its last legacy file. Every Phase 7 batch appends the
     files it converts; B16 replaces the list with a scan of all of src/. */
 const GR8R_SCOPE: readonly string[] = [
   'shell',
   'adapters',
   'components/graph/GraphTooLarge.tsx',
   'components/graph/GraphTooLarge.module.css',
-  'components/shell/CommandPalette.tsx',
-  'components/shell/CommandPalette.test.tsx',
-  'components/shell/DispatchShell.tsx',
-  'components/shell/DispatchShell.module.css',
-  'components/shell/Toasts.tsx',
-  'components/shell/Toasts.test.tsx',
-  'components/shell/toastContract.ts',
-  'components/shell/toastContract.test.ts',
+  'components/shell',
   'components/tasks/detail',
   'components/tasks/page',
   'components/timeline/TimelineBanners.tsx',
@@ -81,35 +74,13 @@ const GR8R_SCOPE: readonly string[] = [
   'views/DraftView.tsx',
   'views/DraftView.module.css',
   'views/DraftView.test.tsx',
-  'components/shell/PageHead.tsx',
-  'components/shell/PageHead.module.css',
-  'components/shell/PageHead.test.tsx',
   'components/tasks/TasksPageHeader.tsx',
   'components/tasks/TasksPageHeader.module.css',
   'components/tasks/TasksPageHeader.test.tsx',
   'components/gr8r',
   'App.module.css',
-  'components/shell/AddProjectDialog.tsx',
-  'components/shell/AddProjectDialog.module.css',
-  'components/shell/CardErrorBoundary.tsx',
-  'components/shell/CardErrorBoundary.module.css',
-  'components/shell/CardErrorBoundary.test.tsx',
-  'components/shell/DaemonUnavailable.tsx',
-  'components/shell/DaemonUnavailable.module.css',
-  'components/shell/DaemonUnavailable.test.tsx',
-  'components/shell/ErrorBoundary.tsx',
-  'components/shell/ErrorBoundary.module.css',
-  'components/shell/ErrorBoundary.test.tsx',
   'hooks/useTextSelection.ts',
   'hooks/useTextSelection.test.ts',
-  'components/shell/PresenceStack.tsx',
-  'components/shell/PresenceStack.module.css',
-  'components/shell/PresenceStack.test.tsx',
-  'components/shell/ProjectSwitcher.tsx',
-  'components/shell/ProjectSwitcher.module.css',
-  'components/shell/ProjectSwitcher.test.tsx',
-  'components/shell/TeamLocalGate.tsx',
-  'components/shell/TeamLocalGate.module.css',
   'components/gates',
   'components/plans',
   'components/runs',
@@ -129,7 +100,6 @@ const GR8R_SCOPE: readonly string[] = [
   'lib/milestoneSession.ts',
   'lib/milestoneSession.test.ts',
   'components/settings',
-  'components/shell/DispatchShell.test.tsx',
   'views/SettingsView.tsx',
   'views/SettingsView.test.tsx',
   'lib/appNav.ts',
@@ -264,6 +234,13 @@ const GR8R_SCOPE: readonly string[] = [
   'hooks/useFirstTaskGuide.test.tsx',
   'hooks/useGlobalKeyboard.ts',
   'hooks/useGlobalKeyboard.test.ts',
+  'components/setup',
+  'views/SetupView.tsx',
+  'views/SetupView.module.css',
+  'views/SetupView.test.tsx',
+  'views/SignInView.tsx',
+  'views/SignInView.module.css',
+  'views/SignInView.test.tsx',
 ];
 
 /** Test files whose hex literals are Linear-supplied data, not colours of their own: a
