@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, mock, test } from 'bun:test';
 
 import type { ChatTarget } from './SnippetComposer';
@@ -43,7 +43,7 @@ describe('SnippetComposer', () => {
     expect(onRemove).toHaveBeenCalledWith(1);
   });
 
-  it('sends the body, the attachments and the chosen target', () => {
+  it('sends the body, the attachments and the chosen target', async () => {
     const onSend = mock(async () => {});
     render(
       <SnippetComposer
@@ -56,8 +56,14 @@ describe('SnippetComposer', () => {
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'why?' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    // The send settles inside act: once it lands the body clears and Send
+    // comes back, which are React updates of their own.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
     expect(onSend).toHaveBeenCalledWith('why?', [SNIPPET], 'run-agent');
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox').value).toBe('');
   });
 
   it('withholds send on an empty body, so an accidental click cannot post nothing', () => {

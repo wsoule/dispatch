@@ -1,6 +1,7 @@
 import type { ApiClient, BoardSyncStatus, SyncStatus } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -221,17 +222,34 @@ const searchData = dataWith({
   client: { fetchLedger: () => Promise.resolve([]) } as unknown as ApiClient,
 });
 
+// Lets the reads a page starts on mount land inside act: the Autonomy page's
+// receipts (PolicySection's `fetchLedger`) resolve a tick after it renders, on
+// its page or in search results (which render every page), and a test that
+// ends before then sees React warn about an update outside act. Search also
+// mounts the license and team groups, whose react-query reads settle over a
+// few timer turns (the query, then its batched notify; two suffice today), so
+// this waits several.
+const SETTLE_TURNS = 5;
+async function settleReads() {
+  await act(async () => {
+    for (let turn = 0; turn < SETTLE_TURNS; turn += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  });
+}
+
 function search(value: string) {
   fireEvent.change(screen.getByLabelText('Search settings'), {
     target: { value },
   });
 }
 
-test('Settings search for dark finds the Theme control', () => {
+test('Settings search for dark finds the Theme control', async () => {
   render(<SettingsView activeProject={project} data={searchData} />, {
     wrapper: withQueryClient(),
   });
   search('dark');
+  await settleReads();
   // Diff display's own group is "Diff appearance", so the two never share a
   // heading; the Theme control is the one under General.
   const theme = screen.getByRole('radiogroup', { name: 'Theme' });
@@ -265,11 +283,12 @@ test('search shows matching settings from every page, editable in place', async 
 });
 
 // A page or group that matches by name shows everything in it.
-test('a search that names a group shows the whole group', () => {
+test('a search that names a group shows the whole group', async () => {
   render(<SettingsView activeProject={project} data={searchData} />, {
     wrapper: withQueryClient(),
   });
   search('limits');
+  await settleReads();
   for (const label of [
     'Runs at once',
     'Runs at once per milestone',
@@ -632,6 +651,7 @@ describe('below the decide tier, config is read-only', () => {
   for (const spec of CONFIG_PAGES) {
     test(`${spec.page}: every config control is locked, with the reason`, async () => {
       renderAt(tierData({ myTier: 'request' }), spec.page);
+      await settleReads();
       // Board sync's status line arrives from a query.
       if (spec.page === 'sync') await screen.findByText('Not sharing');
       expect(screen.getByRole('note').textContent).toBe(NEEDS_DECIDE);
@@ -959,6 +979,7 @@ describe('at the operator tier', () => {
   for (const spec of CONFIG_PAGES) {
     test(`${spec.page}: nothing is locked`, async () => {
       renderAt(tierData({ myTier: 'operator' }), spec.page);
+      await settleReads();
       if (spec.page === 'sync') await screen.findByText('Not sharing');
       expect(screen.queryByRole('note')).toBeNull();
       expect(screen.queryAllByLabelText(NEEDS_DECIDE)).toHaveLength(0);
@@ -1185,7 +1206,7 @@ describe('Board sync by storage backend', () => {
     expect(screen.queryByText("Sharing isn't available")).toBeNull();
   });
 
-  test('search finds the commit switch by its config key on a file board', () => {
+  test('search finds the commit switch by its config key on a file board', async () => {
     render(
       <SettingsView
         activeProject={project}
@@ -1197,6 +1218,7 @@ describe('Board sync by storage backend', () => {
       { wrapper: withQueryClient() }
     );
     search('auto-commit');
+    await settleReads();
     const toggle = screen.getByRole('switch', {
       name: 'Commit task files to the main branch',
     });
@@ -1206,7 +1228,7 @@ describe('Board sync by storage backend', () => {
     ).toBeNull();
   });
 
-  test('on a database board there is no commit switch to find', () => {
+  test('on a database board there is no commit switch to find', async () => {
     render(
       <SettingsView
         activeProject={project}
@@ -1215,6 +1237,7 @@ describe('Board sync by storage backend', () => {
       { wrapper: withQueryClient() }
     );
     search('auto-commit');
+    await settleReads();
     expect(
       screen.queryByRole('switch', { name: /Commit task files/ })
     ).toBeNull();

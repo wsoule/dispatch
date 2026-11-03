@@ -103,6 +103,15 @@ async function settle(work: () => void) {
   });
 }
 
+// The fake host's reads that settle at once (the comments, a conversation) land in state a
+// few microtasks after a mount, and each re-renders the page (a fresh comment list moves
+// its clock, `useTaskDetail`). Waiting out a macrotask inside an async act lets all of them,
+// and the renders they cause, finish inside act, so none lands outside it (React's "not
+// wrapped in act" warning) while a test reads or acts on the page.
+async function settleLoads(): Promise<void> {
+  await act(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
+}
+
 async function openMoreActions() {
   await settle(() => {
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
@@ -297,6 +306,7 @@ describe('the mode follows the task', () => {
         client,
       })
     );
+    await settleLoads();
     expect(modeOf()).toBe('review');
     await waitFor(() => expect(asked).toEqual(['fix-loop t-1']));
     // Settled: no verify read follows.
@@ -315,6 +325,7 @@ describe('the mode follows the task', () => {
         client,
       })
     );
+    await settleLoads();
     await waitFor(() =>
       expect([...asked].sort()).toEqual(['fix-loop t-1', 'verification t-1'])
     );
@@ -597,6 +608,7 @@ describe('a narrow header', () => {
     const observers = fakeResizeObservers();
     try {
       mountWithToggles([]);
+      await settleLoads();
       observers.resizeTo(1200);
       for (const name of [...ICON_TOGGLES, 'Unfavorite']) {
         expect(screen.getByRole('button', { name })).toBeTruthy();
@@ -699,6 +711,7 @@ describe('dispatching', () => {
   test('the card sits in the rail’s Work section and dispatches without leaving the page', async () => {
     const log = newLog();
     mount(fakeHost(log, { tasks: [task('t-1', { writes: ['src/**'] })] }));
+    await settleLoads();
     const work = screen.getByRole('region', { name: 'Work' });
     fireEvent.click(within(work).getByRole('button', { name: /^Dispatch/ }));
     await waitFor(() =>
@@ -710,6 +723,7 @@ describe('dispatching', () => {
   test('embedded, a dispatch stays in place', async () => {
     const log = newLog();
     mount(fakeHost(log, { tasks: [task('t-1')] }), { embedded: true });
+    await settleLoads();
     press('d');
     await waitFor(() => expect(log.dispatches).toHaveLength(1));
     expect(log.dispatches[0]?.stayInPlace).toBe(true);
@@ -718,6 +732,7 @@ describe('dispatching', () => {
   test('d dispatches a ready task from anywhere on the page, never ahead of blockers', async () => {
     const log = newLog();
     const view = mount(fakeHost(log, { tasks: [task('t-1')] }));
+    await settleLoads();
     press('d');
     await waitFor(() => expect(log.dispatches).toHaveLength(1));
     view.unmount();
@@ -728,6 +743,7 @@ describe('dispatching', () => {
         tasks: [task('t-1', { blockedBy: ['t-2'] }), task('t-2')],
       })
     );
+    await settleLoads();
     expect(screen.getByRole('button', { name: /^Dispatch/ }).textContent).toBe(
       'Dispatch anyway'
     );
@@ -951,9 +967,7 @@ describe('TaskPageView outside agents', () => {
 
   test('a task no outside agent has talked to shows no section', async () => {
     mountWithConversation([a2aMessage({ from: 'human:wyat' })]);
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await settleLoads();
     expect(document.querySelector('[data-slot=outside-agents]')).toBeNull();
   });
 
@@ -962,9 +976,7 @@ describe('TaskPageView outside agents', () => {
       [a2aMessage({ kind: 'question', to: ['a2a:acme-billing'] })],
       { canMessage: false }
     );
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await settleLoads();
     expect(asked).toEqual([]);
     expect(document.querySelector('[data-slot=outside-agents]')).toBeNull();
   });
