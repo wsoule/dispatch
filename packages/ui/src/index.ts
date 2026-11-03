@@ -185,7 +185,7 @@ export {
   useOptionalCommandPalette,
 } from './shell/command-palette';
 export { type FuzzyMatch, fuzzyMatch, highlightRuns } from './shell/fuzzy';
-export { useModKeyLabel } from './shell/dom';
+export { isApplePlatform, useModKeyLabel } from './shell/dom';
 export { Kbd, KbdKeys } from './shell/kbd';
 export { isSignOutForm } from './shell/types';
 export { default as PropertyList } from './shell/property-list';

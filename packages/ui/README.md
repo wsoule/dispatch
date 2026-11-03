@@ -1963,7 +1963,11 @@ wraps, so a menu's note or a reason can be a whole sentence. A
 the row and is cut with an ellipsis past that, the label giving way first; its
 `title` shows it whole on hover, and the option's name holds all of it.
 `useModKeyLabel()` is "⌘" on Apple platforms and "Ctrl" elsewhere (the server
-renders "Ctrl"), for a host's own shortcut rows.
+renders "Ctrl"), for a host's own shortcut rows. `isApplePlatform()` is the
+platform test behind it (`navigator.userAgentData.platform`, else
+`navigator.platform`; false with no `navigator`), for a host that binds its own
+keys: read it in the key handler, so the modifier the host answers to is the one
+the labels show.
 
 A `PickerOption.keepOpen` option is a step, not a value (a filter menu's facet,
 "Back to filters"): picking it calls `onChange` with its value in single mode,

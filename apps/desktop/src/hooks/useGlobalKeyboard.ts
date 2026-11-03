@@ -1,3 +1,4 @@
+import { isApplePlatform } from '@dispatch/ui';
 import { useEffect, useRef } from 'react';
 
 import type { ChordPrefix, GlobalKeyCommand } from '../lib/keyboard';
@@ -67,19 +68,6 @@ export function isAnyModalOpen(): boolean {
   return Array.from(document.querySelectorAll(MODAL_SURFACES)).some(isShown);
 }
 
-/** True on macOS and the other Apple platforms, where Command is the app's modifier and
- * Control keeps its Cocoa text meanings (Ctrl+P is "previous line"). Reads the same platform
- * signal as `@dispatch/ui`'s `useModKeyLabel` (`userAgentData.platform`, falling back to
- * `navigator.platform`), so the key the app answers to is the one its labels show. Read on
- * every keydown, which is cheap and needs no state. */
-export function isApplePlatform(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  const platform =
-    (navigator as Navigator & { userAgentData?: { platform?: string } })
-      .userAgentData?.platform ?? navigator.platform;
-  return /mac|iphone|ipad|ipod/i.test(platform);
-}
-
 /** How long an armed chord prefix (`g`) waits for its second key. */
 const CHORD_PREFIX_TIMEOUT_MS = 600;
 
@@ -87,7 +75,8 @@ interface UseGlobalKeyboardOptions {
   onCommand: (command: GlobalKeyCommand) => void;
   /** Overrides the 600ms chord window — tests only. */
   prefixTimeoutMs?: number;
-  /** Overrides the `isApplePlatform()` check — tests only. */
+  /** Overrides `@dispatch/ui`'s `isApplePlatform()` (read on every keydown, so the key the
+   * app answers to is the one its `useModKeyLabel` labels show) — tests only. */
   applePlatform?: boolean;
 }
 

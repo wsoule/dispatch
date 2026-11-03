@@ -174,11 +174,22 @@ function noSubscription(): () => void {
   return () => undefined;
 }
 
-function platformModLabel(): string {
+/** True on macOS and the other Apple platforms (iPhone, iPad, iPod), where
+    Command is an app's modifier and Control keeps its Cocoa text meanings
+    (Ctrl+P is "previous line"). Reads `navigator.userAgentData.platform`,
+    falling back to `navigator.platform`; false with no `navigator` (a server
+    render). It is the one platform test behind `useModKeyLabel`, so a host
+    that binds keys with it answers to the modifier the labels show. */
+export function isApplePlatform(): boolean {
+  if (typeof navigator === 'undefined') return false;
   const platform =
     (navigator as Navigator & { userAgentData?: { platform?: string } })
       .userAgentData?.platform ?? navigator.platform;
-  return /mac|iphone|ipad|ipod/i.test(platform) ? '⌘' : 'Ctrl';
+  return /mac|iphone|ipad|ipod/i.test(platform);
+}
+
+function platformModLabel(): string {
+  return isApplePlatform() ? '⌘' : 'Ctrl';
 }
 
 /** "⌘" on Apple platforms, "Ctrl" elsewhere. The server (and hydration)

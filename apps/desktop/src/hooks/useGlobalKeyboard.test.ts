@@ -5,7 +5,6 @@ import { Activity, type ComponentProps, createElement } from 'react';
 import type { GlobalKeyCommand } from '../lib/keyboard';
 import {
   isAnyModalOpen,
-  isApplePlatform,
   isShown,
   isTypingTarget,
   useGlobalKeyboard,
@@ -348,7 +347,10 @@ describe('isTypingTarget', () => {
   });
 });
 
-describe('isApplePlatform', () => {
+// The platform test itself is `@dispatch/ui`'s `isApplePlatform` (tested there); this checks
+// the hook reads it when no test override is given, so the key the app answers to follows the
+// platform the labels do.
+describe('the platform check', () => {
   const original = Object.getOwnPropertyDescriptor(navigator, 'platform');
   afterEach(() => {
     if (original) Object.defineProperty(navigator, 'platform', original);
@@ -363,12 +365,23 @@ describe('isApplePlatform', () => {
   }
 
   test.each([
-    ['MacIntel', true],
-    ['iPad', true],
-    ['Win32', false],
-    ['Linux x86_64', false],
-  ] as const)('%p is Apple: %p', (platform, expected) => {
+    ['MacIntel', []],
+    ['Win32', ['quick-open']],
+  ] as const)('on %p Ctrl+P resolves to %p', (platform, expected) => {
     stubPlatform(platform);
-    expect(isApplePlatform()).toBe(expected);
+    const commands: GlobalKeyCommand[] = [];
+    const { unmount } = renderHook(() =>
+      useGlobalKeyboard({ onCommand: (c) => commands.push(c) })
+    );
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'p',
+        ctrlKey: true,
+        cancelable: true,
+        bubbles: true,
+      })
+    );
+    expect(commands).toEqual([...expected]);
+    unmount();
   });
 });
