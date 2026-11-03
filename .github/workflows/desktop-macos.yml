@@ -1,0 +1,154 @@
+name: Desktop e2e (macOS)
+
+# The desktop Playwright suite (apps/desktop/e2e) on a Mac. Its screenshot
+# baselines are macOS (`-darwin`) PNGs, so ci.yml's Linux job cannot run it
+# (moon's desktop:e2e and desktop:e2e-update are runInCI: skip), and the
+# project's agents have no Mac. macOS minutes are a cost the owner opts into,
+# so it runs only by hand (workflow_dispatch), and on a push to a working
+# branch that changes this file, as its own self-test. Never on a pull
+# request, a push to main (the merge that adds or edits it), a tag (a release's
+# v* tags: GitHub skips path filters for tags, and defining only a branch
+# filter keeps tag pushes out), or Dependabot's weekly bump of the actions
+# pinned here (its dependabot/** branches).
+#
+# Each run:
+#   1. writes the -darwin baselines (desktop:e2e-update) when it is a push or
+#      update_snapshots is true, then
+#   2. runs the Chromium suite against the baselines (desktop:e2e), then
+#   3. runs the WebKit pass (DISPATCH_E2E_WEBKIT=1, see playwright.config.ts):
+#      the functional specs plus e2e/webkit-views.spec.ts in Playwright's
+#      WebKit, the engine of Tauri's WKWebView. It compares no pixels; its
+#      shots are for a person to look at.
+# The snapshots, test results and HTML reports are uploaded whatever happens.
+# Fetch them with `gh run download <run-id>` and review every PNG before
+# committing it (apps/desktop/README.md, "End-to-end tests on macOS").
+
+on:
+  workflow_dispatch:
+    inputs:
+      update_snapshots:
+        description:
+          'Rewrite the -darwin screenshot baselines before the e2e run'
+        type: boolean
+        default: false
+  push:
+    branches-ignore:
+      - main
+      - 'dependabot/**'
+    paths:
+      - '.github/workflows/desktop-macos.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+# NO_COLOR keeps raw logs readable (see ci.yml); AGENT=1 is the repo's
+# agent-friendly test output.
+env:
+  NO_COLOR: 1
+  AGENT: 1
+
+jobs:
+  e2e:
+    name: Desktop e2e (macOS, Chromium and WebKit)
+    # Pinned rather than macos-latest: the -darwin baselines are font and
+    # antialiasing output of one macOS release, and a silent image bump would
+    # turn every shot red at once. Move it on purpose, with fresh baselines.
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up moon and caches
+        uses: ./.github/actions/setup
+
+      # The e2e daemon runs packages/server from source under bun, but loads
+      # its workspace dependencies (core, protocol, mcp, memory, federation,
+      # a2a) through their dist/ exports, and the demo fixture builder imports
+      # core and protocol the same way. desktop:e2e's own deps build only what
+      # the app imports.
+      - name: Build the daemon's workspace packages
+        run: moon run server:build-deps
+
+      # Playwright's browsers live outside node_modules. Keyed on the lockfile,
+      # which pins @playwright/test (and so the browser revisions it expects).
+      - name: Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/Library/Caches/ms-playwright
+          key:
+            ${{ runner.os }}-${{ runner.arch }}-playwright-${{
+            hashFiles('pnpm-lock.yaml') }}
+
+      # `pnpm exec` runs the playwright CLI the lockfile installed, so the
+      # browsers always match the repo's pinned Playwright version.
+      - name: Install Playwright browsers
+        working-directory: apps/desktop
+        run: pnpm exec playwright install chromium webkit
+
+      # Every pass starts from a freshly built storefront fixture
+      # (.agents/ignore/storefront and storefront-home, the paths
+      # e2e/paths.ts names): the functional specs save edits and add runs to
+      # it, and a second pass must not see the first one's leftovers.
+      - name: Build the storefront fixture
+        run: moon run demo:demo -- reset --no-push
+
+      - name: Write the -darwin baselines
+        if: github.event_name == 'push' || inputs.update_snapshots
+        env:
+          DISPATCH_E2E_REPORT_DIR: playwright-report/update
+        run: moonx desktop:e2e-update --ignore-ci-checks
+
+      - name: Rebuild the storefront fixture for the Chromium run
+        if: ${{ !cancelled() }}
+        run: moon run demo:demo -- reset --no-push
+
+      - name: Run the e2e suite (Chromium)
+        if: ${{ !cancelled() }}
+        env:
+          DISPATCH_E2E_REPORT_DIR: playwright-report/chromium
+        run: moonx desktop:e2e --ignore-ci-checks
+
+      - name: Rebuild the storefront fixture for the WebKit pass
+        if: ${{ !cancelled() }}
+        run: moon run demo:demo -- reset --no-push
+
+      - name: Run the WebKit pass
+        if: ${{ !cancelled() }}
+        env:
+          DISPATCH_E2E_WEBKIT: 1
+          DISPATCH_E2E_REPORT_DIR: playwright-report/webkit
+        run: moonx desktop:e2e --ignore-ci-checks
+
+      - name: Upload the screenshot baselines
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-e2e-snapshots
+          path: apps/desktop/e2e/views.spec.ts-snapshots
+          retention-days: 5
+
+      # test-results holds the Chromium failures (actual, expected and diff
+      # PNGs, traces) and, under webkit/, the WebKit pass's shots of Runs,
+      # Live, the board and Usage, one folder per test and theme.
+      - name: Upload the test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-e2e-test-results
+          path: apps/desktop/test-results
+          if-no-files-found: ignore
+          retention-days: 5
+
+      - name: Upload the HTML reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-e2e-reports
+          path: apps/desktop/playwright-report
+          if-no-files-found: ignore
+          retention-days: 5

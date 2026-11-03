@@ -38,13 +38,52 @@ moon tasks, `apps/desktop/moon.yml`):
   `webkitFloor.test.ts` reads `dist/`.
 - `moonx desktop:typecheck` — `tsc -b --noEmit`.
 - `moonx desktop:e2e --ignore-ci-checks` — the Playwright suite against the
-  built app. Its screenshots are macOS (`-darwin`) baselines, so CI skips it;
-  `moonx desktop:e2e-update --ignore-ci-checks` rewrites them on a Mac.
+  built app. Its screenshots are macOS (`-darwin`) baselines, so the Linux CI
+  job skips it; `moonx desktop:e2e-update --ignore-ci-checks` rewrites them on a
+  Mac. See [End-to-end tests on macOS](#end-to-end-tests-on-macos).
 - `cd apps/desktop/src-tauri && cargo test` — Rust unit tests (parsers, cost
   pricing, SQLite queries, tail/watcher logic). Not a moon task; CI runs it,
   with `cargo fmt --check` and `cargo clippy`, in its own Rust job.
 - `cd apps/desktop/src-tauri && cargo build` — compile the Tauri binary without
   launching a window.
+
+## End-to-end tests on macOS
+
+The suite runs against the storefront fixture in `.agents/ignore/storefront` and
+`.agents/ignore/storefront-home` (`e2e/paths.ts`). Build it, or rebuild it after
+a run has changed it, with `moonx demo:demo -- reset --no-push`.
+
+Without a Mac, run it in CI: `.github/workflows/desktop-macos.yml` runs on
+`macos-15` by hand, and on a push to a working branch that changes the workflow
+file. Since macOS minutes cost money, it never runs on a pull request, on a push
+to main, on a tag or on Dependabot's branches. To refresh the baselines:
+
+```bash
+gh workflow run desktop-macos.yml -f update_snapshots=true
+gh run list --workflow desktop-macos.yml   # the new run's id, once it shows
+gh run watch <run-id>
+gh run download <run-id> -n desktop-e2e-snapshots -D apps/desktop/e2e/views.spec.ts-snapshots
+```
+
+Open every PNG and compare it with the app before committing it: the run writes
+whatever the app draws, so a broken view becomes a passing baseline. Without
+`update_snapshots`, the run compares against the committed baselines, and
+`desktop-e2e-test-results` holds the expected, actual and diff images of any
+shot that failed.
+
+The same job then runs a WebKit pass, since Tauri draws the app with WKWebView
+on macOS. `DISPATCH_E2E_WEBKIT=1` switches `playwright.config.ts` to
+Playwright's WebKit for both theme projects, leaves out `views.spec.ts` (its
+baselines are Chromium's) and adds `e2e/webkit-views.spec.ts`, which opens Runs
+with a live outcome, Live, the board and Usage's session detail with its diff
+and saves full-page shots to `test-results/webkit/`. Usage reads the native
+side, so that test stands in for it with a fake Tauri bridge. The pass compares
+no pixels: its shots, in the `desktop-e2e-test-results` artifact, are for a
+person to review. `DISPATCH_E2E_REPORT_DIR=<dir>` adds an HTML report in that
+folder; the workflow keeps one per pass in `desktop-e2e-reports`. On a Mac,
+`pnpm exec playwright install webkit` in `apps/desktop` once, then
+`DISPATCH_E2E_WEBKIT=1 moonx desktop:e2e --ignore-ci-checks` runs the pass
+locally.
 
 ## Theme
 
