@@ -56,10 +56,10 @@ import {
   resolveLiveKey,
   settleLiveCursor,
 } from '../components/live/liveKeys';
+import { LivePageHead } from '../components/live/LivePageHead';
 import { LiveReady } from '../components/live/LiveReady';
 import { usePeople } from '../components/people/PeopleContext';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
-import { PageHead } from '../components/shell/PageHead';
 import { DispatchDialog } from '../components/tasks/DispatchDialog';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
@@ -116,7 +116,6 @@ interface FanoutDialogState {
 
 export interface LiveViewProps {
   data: DispatchProjectData;
-  projectName: string | null;
   /** Dispatches without leaving the view, rejecting on failure so `d` can roll back. */
   dispatchTask: (taskId: string) => Promise<void>;
   /** A dispatch or fan-out verb the daemon refused — App toasts it. */
@@ -125,7 +124,8 @@ export interface LiveViewProps {
   onOpenTask: (taskId: string, tab?: TaskTab, runId?: string) => void;
   /** The quick-look slide-over (a card click, Enter, Space). */
   onPeekTask: (taskId: string) => void;
-  /** Two views: the page leads with the back chip to the Tasks list. */
+  /** Hosted by App, the page leads with the Runs back chip, which calls this
+   * to return to the Runs page (Live reads as Runs › Live). */
   onBack?: () => void;
 }
 
@@ -140,11 +140,11 @@ export interface LiveViewProps {
  *
  * Keyboard: j/k walk every node in reading order, J/K jump a band, h/l cross columns,
  * Enter and Space quick-look the task in the shell's slide-over, `o` opens its page, `d`
- * dispatches (never a teammate's); Escape is the shell's (it closes the drawer).
+ * dispatches (never a teammate's); Escape is the shell's (it closes the drawer, then
+ * goes back one place with the Runs page open).
  */
 export function LiveView({
   data,
-  projectName,
   dispatchTask,
   onDispatchFailed,
   onOpenTask,
@@ -726,12 +726,7 @@ export function LiveView({
   return (
     <div data-slot="live-view" className={styles.view}>
       <div className={styles.head}>
-        <PageHead
-          title="Live"
-          titleLevel={1}
-          onBack={onBack}
-          crumbs={projectName === null ? undefined : [projectName, 'Live']}
-        />
+        <LivePageHead onBack={onBack} />
       </div>
       <LiveHeader
         totals={totals}
@@ -819,15 +814,9 @@ export function LiveView({
             dialog.milestoneId,
             (id) => children.get(id) ?? []
           ).filter((t) => !containerIds.has(t.meta.id))}
-          // A teammate's task never starts in a fan-out, so the dialog never says it will.
-          readyIds={
-            new Set(
-              [...data.readyIds].filter((id) => {
-                const task = taskById.get(id);
-                return task !== undefined && holderOf(task) === null;
-              })
-            )
-          }
+          readyIds={data.readyIds}
+          // A teammate's task never starts in a fan-out: the dialog marks it Teammate.
+          holderOf={holderOf}
           runningNow={data.liveRunStateByTaskId.size}
           liveClaims={liveClaims}
           defaultConcurrency={

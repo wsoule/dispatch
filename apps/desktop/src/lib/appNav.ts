@@ -15,10 +15,12 @@ import type { TasksPreset } from './tasksPresets';
 // writes a state as a hash href and reads one back as actions, so every place
 // here is also a URL.
 //
-// The model is the Two views one: the main pane is the Overseer or Tasks, and
-// Tasks shows its list or one page (a task, a doc, a PR, a draft, a room, a
-// file, or a hosted view: Files, Terminals, Threads, Timeline, Graph, Projects,
-// Live). A peek is a drawer over either view and never a place; Settings is
+// The main pane is the Overseer or Tasks, and Tasks shows its list or one
+// page (a task, a doc, a PR, a draft, a room, a file, or a hosted view: Files,
+// Terminals, Threads, Timeline, Graph, Projects, Live). Live is the one page
+// that belongs to Settings' Runs page rather than to the list: closing it, or
+// Escape on it, goes back one place and opens Runs over it (`leavePage`).
+// A peek is a drawer over either view and never a place; Settings is
 // an overlay place: it takes the main column while it is open, and Escape or
 // any navigation leaves it for the view underneath, which never stopped being
 // the recorded place (history never holds Settings). The legacy project/global
@@ -39,7 +41,8 @@ export type ProjectView =
    * Tasks, reached from the Projects section's "All". */
   | 'projects'
   /** Everything in motion at once: a Flight Plan band per container with work
-   * moving; a page under Tasks, reached from the palette and the Runs page. */
+   * moving; a page under Runs (Runs › Live), reached from the Runs page's Live
+   * button and the palette, and left back to the Runs page. */
   | 'live'
   /** retired — normalized to 'inbox' */
   | 'runs'
@@ -191,10 +194,12 @@ export type MainView = 'overseer' | 'tasks';
  * (`HostedView` 'graph'), not a layout of the list. */
 export type TasksMode = 'list' | 'board';
 
-/** Project views shown as a page under Tasks, led by the Tasks back chip. Timeline,
- * Graph and Threads have sidebar rows of their own; Projects (the register)
- * opens from the Projects section's "All", Live from the palette and the Runs
- * page. */
+/** Project views shown as a page in the Tasks view's place. Timeline, Graph
+ * and Threads have sidebar rows of their own, and Timeline and Graph draw no
+ * back chip; Files, Terminals, Projects (the register, from the Projects
+ * section's "All") and Threads lead with the Tasks back chip; Live (from the
+ * Runs page and the palette) leads with a Runs back chip, since it reads as
+ * Runs › Live and closing it returns to the Runs page. */
 export type HostedView = Extract<
   ProjectView,
   'files' | 'terminals' | 'threads' | 'timeline' | 'graph' | 'projects' | 'live'
@@ -685,6 +690,28 @@ function step(state: NavState, delta: -1 | 1): NavState {
   };
 }
 
+// Whether the Live page shows. It sits under Runs (Runs › Live), not under
+// the Tasks list, so leaving it returns to the Runs page (`leavePage`).
+export function onLivePage(state: NavState): boolean {
+  const page = state.tasksPage;
+  return (
+    state.mainView === 'tasks' && page.kind === 'view' && page.view === 'live'
+  );
+}
+
+// Leaves the page under Tasks (the back chip's `closePage`, or Escape) for its
+// parent. Every page but Live returns to the Tasks list. Live returns to the
+// Runs page it reads as a child of: one place back in history, with Settings
+// open on Runs over it, which is where its Live button was pressed. With no
+// place behind it (a reload on #/live) Runs opens over the Tasks list instead,
+// never over Live itself, so a second Escape cannot bounce back to Live.
+function leavePage(state: NavState): NavState {
+  if (!onLivePage(state)) return toTasks(state, LIST);
+  const stepped = step(state, -1);
+  const under = stepped === state ? toTasks(state, LIST) : stepped;
+  return { ...under, settings: 'runs' };
+}
+
 // Back or forward from Settings. Settings is an overlay place that hides any
 // peek beneath it, so it is what either key leaves: one press closes both,
 // stepping through history when there is an entry that way, and closing them
@@ -798,7 +825,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
       // A page you arrive at from a row leaves the way you came in, rather
       // than stranding you with only a Back button.
       if (state.mainView === 'tasks' && state.tasksPage.kind !== 'list') {
-        return toTasks(state, LIST);
+        return leavePage(state);
       }
       return state;
     case 'showOverseer':
@@ -823,7 +850,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
     case 'closeSettings':
       return state.settings === null ? state : { ...state, settings: null };
     case 'closePage':
-      return toTasks(state, LIST);
+      return leavePage(state);
     case 'openAddress':
       return openAddress(state, action.address);
     case 'openNewTask':

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
+import { buildCrumbs } from '../adapters/shell';
 import {
   initialNavState,
   type NavAction,
@@ -9,6 +10,7 @@ import {
 import { parseHref } from './routes';
 import {
   currentShellDestination,
+  currentShellPageTitle,
   hrefFor,
   MOD_KEY,
   PROJECTS_HREF,
@@ -197,12 +199,69 @@ describe('currentShellDestination', () => {
     );
   });
 
-  test('the projects tree and the live page have no row: Issues stays current', () => {
-    for (const view of ['projects', 'live'] as const) {
-      const page = after([{ type: 'setProjectView', view }]);
-      expect(page.tasksPage).toEqual({ kind: 'view', view });
-      expect(currentShellDestination(page)).toBe('issues');
-    }
+  test('the projects tree has no row: Issues stays current', () => {
+    const page = after([{ type: 'setProjectView', view: 'projects' }]);
+    expect(page.tasksPage).toEqual({ kind: 'view', view: 'projects' });
+    expect(currentShellDestination(page)).toBe('issues');
+  });
+
+  test('the live page reads as Runs › Live: Runs stays current on it and after leaving it', () => {
+    // Opened from the Runs page's Live button: any navigation closes Settings.
+    const runs = after([
+      { type: 'showTasks' },
+      { type: 'openSettings', page: 'runs' },
+    ]);
+    expect(currentShellDestination(runs)).toBe('runs');
+    const live = after([{ type: 'setProjectView', view: 'live' }], runs);
+    expect(live.settings).toBeNull();
+    expect(live.tasksPage).toEqual({ kind: 'view', view: 'live' });
+    expect(currentShellDestination(live)).toBe('runs');
+    // A node quick-looked over the bands keeps the row.
+    expect(
+      currentShellDestination(
+        after([{ type: 'openPeek', taskId: 't-1' }], live)
+      )
+    ).toBe('runs');
+    // Its back chip and Escape both return to the Runs page.
+    expect(currentShellDestination(after([{ type: 'closePage' }], live))).toBe(
+      'runs'
+    );
+    expect(currentShellDestination(after([{ type: 'escape' }], live))).toBe(
+      'runs'
+    );
+    // A task opened from Live (`o`) is under Issues, like any task page.
+    expect(
+      currentShellDestination(
+        after([{ type: 'openTask', taskId: 't-1' }], live)
+      )
+    ).toBe('issues');
+  });
+
+  test('the topbar names the Live page after Runs, and a task page after its destination', () => {
+    const runs = after([
+      { type: 'showTasks' },
+      { type: 'openSettings', page: 'runs' },
+    ]);
+    const live = after([{ type: 'setProjectView', view: 'live' }], runs);
+    // project / Runs (a link back to the Runs page) / Live (the current page).
+    expect(currentShellPageTitle(live, null)).toBe('Live');
+    expect(
+      buildCrumbs({
+        projectName: 'storefront',
+        destination: currentShellDestination(live),
+        taskTitle: currentShellPageTitle(live, null),
+        settingsPage: live.settings,
+      })
+    ).toEqual([
+      { label: 'storefront', href: '#/overseer' },
+      { label: 'Runs', href: hrefFor('runs') },
+      { label: 'Live' },
+    ]);
+    // The Runs page itself ends at Runs (Settings' trail), and a task page ends at its title.
+    expect(currentShellPageTitle(runs, 'Ship it')).toBeNull();
+    const task = after([{ type: 'openTask', taskId: 't-1' }], live);
+    expect(currentShellPageTitle(task, 'Ship it')).toBe('Ship it');
+    expect(currentShellPageTitle(after([]), null)).toBeNull();
   });
 
   test('the docs and threads pages are their own rows', () => {

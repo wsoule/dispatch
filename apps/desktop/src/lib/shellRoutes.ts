@@ -16,6 +16,7 @@ import {
   type HostedView,
   type NavAction,
   type NavState,
+  onLivePage,
 } from './appNav';
 
 // The shell's top-level destinations: what the sidebar lists, the hash href
@@ -152,25 +153,48 @@ export function shellShortcut(
 /**
  * Which destination the sidebar marks current. Settings is an overlay place
  * in the main column (the views stay mounted, hidden, beneath it), so while
- * it is open it (or Runs, its page with a row of its own) is the place; under
- * Tasks the Docs, Threads, Timeline and Graph pages are their
- * own rows, the Needs you preset is its row, and everything else (the list, a
- * task page, Files, Terminals, Projects, Live) is Issues.
+ * it is open it (or Runs, its page with a row of its own) is the place. The
+ * Live page reads as Runs › Live (it opens from the Runs page and closes back
+ * to it), so it marks Runs too. Under Tasks the Docs, Threads, Timeline and
+ * Graph pages are their own rows, the Needs you preset is its row, and
+ * everything else (the list, a task page, Files, Terminals, Projects) is
+ * Issues.
  */
 export function currentShellDestination(state: NavState): ShellDestination {
   if (state.settings !== null) {
     return state.settings === 'runs' ? 'runs' : 'settings';
   }
   if (state.mainView === 'overseer') return 'overseer';
+  if (onLivePage(state)) return 'runs';
   const page = state.tasksPage;
   if (page.kind === 'docs') return 'docs';
   if (page.kind === 'view' && hasOwnRow(page.view)) return page.view;
   return state.tasksPreset === 'needs-you' ? 'needs-you' : 'issues';
 }
 
+/**
+ * The topbar's last crumb under the current destination: the open task's
+ * title on a task page, and "Live" on the Live page, so the trail reads
+ * project / Runs / Live with Runs a link back to the Runs page and Live the
+ * current page (the topbar marks its last crumb current). Null when the
+ * destination itself is the page.
+ */
+export function currentShellPageTitle(
+  state: NavState,
+  taskTitle: string | null
+): string | null {
+  if (state.settings !== null) return null;
+  if (onLivePage(state)) return LIVE_PAGE_TITLE;
+  return taskTitle;
+}
+
+/** The Live page's name: its h1 and its crumb under Runs. */
+export const LIVE_PAGE_TITLE = 'Live';
+
 /** Whether a hosted page is one of the sidebar's rows (Threads, Timeline,
- * Graph), rather than a page reached another way (Files, Terminals, Projects,
- * Live), which keeps the Issues row current. */
+ * Graph), rather than a page reached another way (Files, Terminals, Projects),
+ * which keeps the Issues row current. Live, the other hosted page without a
+ * row, marks Runs before this is asked. */
 function hasOwnRow(
   view: HostedView
 ): view is Extract<HostedView, ShellDestination> {

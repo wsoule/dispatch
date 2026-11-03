@@ -151,7 +151,6 @@ function mount(
   const view = (d: DispatchProjectData) => (
     <LiveView
       data={d}
-      projectName="demo"
       dispatchTask={dispatchTask}
       onDispatchFailed={() => {}}
       onOpenTask={(id, tab) =>
@@ -292,26 +291,37 @@ describe('LiveView', () => {
     expect(node('l-1')?.getAttribute('data-state')).toBe('running');
   });
 
-  test('hosted under Tasks, the header leads with the back chip to the Tasks list, bands intact', () => {
+  test('hosted by App, the head reads Runs › Live: the Runs back chip, then the h1 alone, bands intact', () => {
     const backs: string[] = [];
     mount(dataWith(), undefined, () => backs.push('back'));
-    expect(document.querySelector('[data-slot=page-header]')).toBeTruthy();
+    const head = document.querySelector('[data-slot=page-header]');
+    expect(head).toBeTruthy();
     expect(
       screen.getByRole('heading', { level: 1, name: 'Live' })
     ).toBeTruthy();
-    // The trail is the project, then this page: Live is the current page.
-    const trail = screen.getByRole('navigation', { name: 'Breadcrumb' });
-    expect(trail.textContent).toBe('demo›Live');
-    expect(trail.querySelector('[aria-current="page"]')?.textContent).toBe(
-      'Live'
-    );
-    fireEvent.click(screen.getByTestId('tasks-back'));
+    // No in-page trail: the topbar's reads project / Runs / Live.
+    expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).toBeNull();
+    expect(head?.querySelector('[aria-current]')).toBeNull();
+    // The back chip names its parent, Runs, and leads the head before the h1.
+    const back = screen.getByRole('button', { name: 'Back to runs' });
+    expect(back).toBe(screen.getByTestId('tasks-back'));
+    expect(back.textContent).toBe('Runs');
+    expect(
+      back.compareDocumentPosition(
+        screen.getByRole('heading', { level: 1, name: 'Live' })
+      ) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Back to tasks' })).toBeNull();
+    fireEvent.click(back);
     expect(backs).toEqual(['back']);
     expect(bands()).toEqual(['m-1', '__loose', 'm-2', 'm-3']);
     cleanup();
-    // On its own (no host) the header has no back chip.
+    // On its own (no host) the head has no back chip, only the heading.
     mount(dataWith());
     expect(screen.queryByTestId('tasks-back')).toBeNull();
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Live' })
+    ).toBeTruthy();
   });
 
   test('the header adds every band up', () => {

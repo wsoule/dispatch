@@ -57,7 +57,8 @@ export interface DispatchShellProps {
   projectName: string | null;
   view: MainView;
   destination: ShellDestination;
-  /** The title of the task open under Issues, the last crumb. */
+  /** The last crumb, the page open under the destination: the open task's title
+   * under Issues, or "Live" under Runs (`currentShellPageTitle`). */
   taskTitle: string | null;
   overseerBadge: OverseerBadge;
   needsYou: number;
@@ -298,14 +299,14 @@ function useScrollKeptUnderSettings(
  * the person, the light/dark toggle (the library ThemeToggle, stored under
  * THEME_STORAGE_KEY, which the pre-paint script in vite.config.ts reads back)
  * and a team-local sign-out; topbar with crumbs, search and who is here)
- * around the two views, both mounted so each keeps its place, with the peek
- * drawer and the guide card floating over them. While Settings is open it
- * takes the main column in their place, over a gate too. It is an overlay
- * place: the views, the gate and the peek stay mounted, hidden (their state,
- * focus and scroll come back with them), and Escape or any navigation
- * returns to them. Navigation stays in App's nav reducer: the
- * sidebar reads it for the current row, and every link's href is a route
- * whose actions a plain click dispatches.
+ * around the Overseer and Tasks views, both mounted so each keeps its
+ * place, with the peek drawer and the guide card floating over them. While
+ * Settings is open it takes the main column in their place, over a gate
+ * too. It is an overlay place: the views, the gate and the peek stay
+ * mounted, hidden (their state, focus and scroll come back with them), and
+ * Escape or any navigation returns to them. Navigation stays in App's nav
+ * reducer: the sidebar reads it for the current row, and every link's href
+ * is a route whose actions a plain click dispatches.
  */
 export function DispatchShell({
   projectName,

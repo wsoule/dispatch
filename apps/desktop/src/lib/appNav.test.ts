@@ -12,6 +12,7 @@ import {
   type NavDestination,
   navReducer,
   type NavState,
+  onLivePage,
   type ProjectView,
   projectViewDestination,
   samePlace,
@@ -773,6 +774,93 @@ describe('history', () => {
     expect(state.tasksPage).toEqual({ kind: 'list' });
   });
 
+  describe('the Live page sits under Runs', () => {
+    // Where its Live button is pressed: the Runs page over the Tasks list.
+    const runs = run([
+      { type: 'showTasks' },
+      { type: 'openSettings', page: 'runs' },
+    ]);
+    const live = navReducer(runs, { type: 'setProjectView', view: 'live' });
+
+    test('opening it from Runs closes Settings and records Live as the place', () => {
+      expect(onLivePage(live)).toBe(true);
+      expect(live.settings).toBeNull();
+      expect(live.history.at(-1)).toEqual({
+        mainView: 'tasks',
+        tasksPage: { kind: 'view', view: 'live' },
+      });
+    });
+
+    test.each([['closePage'], ['escape']] as const)(
+      '%s goes back one place and opens Runs over it, exactly where Live was opened',
+      (type) => {
+        const left = navReducer(live, { type });
+        expect(onLivePage(left)).toBe(false);
+        expect(left.settings).toBe('runs');
+        expect(left.mainView).toBe(runs.mainView);
+        expect(left.tasksPage).toEqual(runs.tasksPage);
+        expect(left.history).toEqual(live.history);
+        expect(left.historyIndex).toBe(live.historyIndex - 1);
+        // A second Escape closes Runs for the list, never bouncing back to Live.
+        const closed = navReducer(left, { type: 'escape' });
+        expect(closed.settings).toBeNull();
+        expect(closed.tasksPage).toEqual({ kind: 'list' });
+      }
+    );
+
+    test('opened from the Overseer by the palette, leaving it opens Runs over the Overseer', () => {
+      const fromOverseer = run([{ type: 'setProjectView', view: 'live' }]);
+      const left = navReducer(fromOverseer, { type: 'escape' });
+      expect(left.mainView).toBe('overseer');
+      expect(left.settings).toBe('runs');
+    });
+
+    test('with no place behind it (a reload on #/live), Runs opens over the Tasks list', () => {
+      const reloaded = navReducer(
+        {
+          ...initialNavState,
+          mainView: 'tasks',
+          tasksPage: { kind: 'view', view: 'live' },
+          history: [
+            { mainView: 'tasks', tasksPage: { kind: 'view', view: 'live' } },
+          ],
+        },
+        { type: 'closePage' }
+      );
+      expect(reloaded.settings).toBe('runs');
+      expect(reloaded.mainView).toBe('tasks');
+      expect(reloaded.tasksPage).toEqual({ kind: 'list' });
+      // Closing Runs then shows the list, not Live again.
+      expect(navReducer(reloaded, { type: 'escape' }).tasksPage).toEqual({
+        kind: 'list',
+      });
+    });
+
+    test('a peek over Live closes first; the page is left on the next Escape', () => {
+      const peeked = navReducer(live, { type: 'openPeek', taskId: 't-1' });
+      const once = navReducer(peeked, { type: 'escape' });
+      expect(once.peek).toBeNull();
+      expect(onLivePage(once)).toBe(true);
+      expect(navReducer(once, { type: 'escape' }).settings).toBe('runs');
+    });
+
+    test('every other page still closes to the Tasks list', () => {
+      for (const view of [
+        'files',
+        'terminals',
+        'projects',
+        'threads',
+      ] as const) {
+        const left = run([
+          { type: 'setProjectView', view },
+          { type: 'closePage' },
+        ]);
+        expect(left.tasksPage).toEqual({ kind: 'list' });
+        expect(left.settings).toBeNull();
+      }
+    });
+  });
+
   test('the board layout is remembered across pages and project switches', () => {
     const state = run([
       { type: 'setTasksMode', mode: 'board' },
@@ -939,7 +1027,7 @@ describe('keyAction', () => {
     }
   });
 
-  test('⌘1 and ⌘2 are the two views; ⌘3–⌘9 walk the presets after All', () => {
+  test('⌘1 and ⌘2 open the Overseer and Tasks; ⌘3–⌘9 walk the presets after All', () => {
     expect(keyAction('goto-1')).toEqual({ type: 'showOverseer' });
     expect(keyAction('goto-2')).toEqual({ type: 'showTasks' });
     const presets = (['3', '4', '5', '6', '7', '8', '9'] as const).map((n) => {

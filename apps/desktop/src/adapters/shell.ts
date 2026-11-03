@@ -262,7 +262,8 @@ export interface CrumbsInput {
   /** The active project, the first crumb; null while none has resolved. */
   projectName: string | null;
   destination: ShellDestination;
-  /** The task open under Issues, the last crumb. */
+  /** The page open under the destination, the last crumb: the open task's
+   * title under Issues, or "Live" under Runs (`currentShellPageTitle`). */
   taskTitle?: string | null;
   /** The Settings page showing in the main column (`NavState.settings`), or
    * null while Settings is closed. */

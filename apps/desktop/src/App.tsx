@@ -48,6 +48,7 @@ import type {
   SendChoice,
   SendToAgentOptions,
 } from './components/guide/SendToAgent';
+import { RunsBackButton } from './components/live/LivePageHead';
 import { MemoryRecent } from './components/memory/MemoryRecent';
 import {
   DraftsSection,
@@ -189,7 +190,10 @@ import {
   setupReportKey,
   writeSetupComplete,
 } from './lib/setupState';
-import { currentShellDestination } from './lib/shellRoutes';
+import {
+  currentShellDestination,
+  currentShellPageTitle,
+} from './lib/shellRoutes';
 import { buildShortcutGroups } from './lib/shortcutGroups';
 import { useStatusModelOf } from './lib/statusModel';
 import { computeBlockedIds } from './lib/taskGraph';
@@ -1801,7 +1805,12 @@ function App() {
       return (
         <div className={styles.hostedPage}>
           <div className={styles.hostedHead}>
-            <PageHead onBack={closeSidePage} />
+            {/* Live closes back to Runs, so its chip says so. */}
+            {view === 'live' ? (
+              <RunsBackButton onBack={closeSidePage} />
+            ) : (
+              <PageHead onBack={closeSidePage} />
+            )}
           </div>
           <DaemonUnavailable
             starting={data.portLoading}
@@ -1887,12 +1896,12 @@ function App() {
         // cells are real hrefs the shell's link provider resolves.
         return <ProjectsView data={data} onBack={closeSidePage} />;
       case 'live':
-        // Every container with work moving, once the Issues graph's Live
-        // layout: dispatches in place, a node's page on `o`, its quick look
-        // on Enter and Space.
+        // Every container with work moving: dispatches in place, a node's
+        // page on `o`, its quick look on Enter and Space. It reads as
+        // Runs › Live, so its back chip (`closePage`) returns to the Runs
+        // page, as Escape does (lib/appNav.ts `leavePage`).
         return (
           <LiveView
-            projectName={activeProject?.name ?? null}
             data={data}
             dispatchTask={cockpitDispatch}
             onDispatchFailed={onCockpitDispatchFailed}
@@ -2083,7 +2092,8 @@ function App() {
           client={data.client}
           onRetry={data.retryEnsureDispatchd}
           onJumpToRun={jumpToRun}
-          // The Live page under Tasks; any navigation closes Settings.
+          // The Live page (Runs › Live), shown in the Tasks view's place;
+          // any navigation closes Settings, and leaving Live reopens Runs.
           onOpenLive={() =>
             dispatchNav({ type: 'setProjectView', view: 'live' })
           }
@@ -2300,7 +2310,7 @@ function App() {
       projectName={activeProject?.name ?? null}
       view={navState.mainView}
       destination={shellDestination}
-      taskTitle={aboutTask?.title ?? null}
+      taskTitle={currentShellPageTitle(navState, aboutTask?.title ?? null)}
       overseerBadge={{ count: orb.count, tone: orb.tone, label: orbTitle }}
       needsYou={needs.count}
       threadsUnread={unreadToMe}
