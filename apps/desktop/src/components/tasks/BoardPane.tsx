@@ -30,6 +30,7 @@ import { sortTasks } from '../../lib/listGrouping';
 import type { WorkMilestoneOptions } from '../../lib/milestoneSession';
 import { useStatusModelOf } from '../../lib/statusModel';
 import type { TasksDisplayPrefs } from '../../lib/tasksPrefs';
+import { viewerHolderOf } from '../flightplan/flightPlan';
 import styles from './BoardPane.module.css';
 import { DispatchDialog } from './DispatchDialog';
 import { TaskBoard } from './TaskBoard';
@@ -117,6 +118,24 @@ export function BoardPane({
   useEffect(() => {
     writeCollapsed(HIDDEN_COLUMNS_STORAGE_KEY, 'session', hiddenColumns);
   }, [hiddenColumns]);
+
+  // A card's status menu offers every status (cardStatuses below), hidden columns
+  // included. Moving a card into a column hidden this session shows that column again,
+  // so the card stays on the board where the reader can see and reach it, instead of
+  // vanishing with focus dropped to the page. (A drag can only land on a shown column.)
+  const moveTaskStatus = data.moveTaskStatus;
+  const moveStatus = useCallback(
+    (taskId: string, status: string) => {
+      setHiddenColumns((prev) => {
+        if (!prev.has(status)) return prev;
+        const next = new Set(prev);
+        next.delete(status);
+        return next;
+      });
+      return moveTaskStatus(taskId, status);
+    },
+    [moveTaskStatus]
+  );
 
   const laneBy = display.subGrouping;
   const model = useStatusModelOf(data.config);
@@ -341,6 +360,7 @@ export function BoardPane({
           archivedTaskIds={archivedTaskIds}
           statusModel={model}
           statuses={visibleStatuses}
+          cardStatuses={data.config?.statuses}
           display={display}
           readyIds={data.readyIds}
           blockedIds={data.blockedIds}
@@ -364,7 +384,7 @@ export function BoardPane({
           }
           onStopMilestone={data.handleStopMilestone}
           onLandMilestone={data.handleLandMilestone}
-          onMoveStatus={data.moveTaskStatus}
+          onMoveStatus={moveStatus}
           onEditTask={data.handleUpdate}
           focusedTaskId={focusedTaskId}
           onCardFocus={setFocusedTaskId}
@@ -377,6 +397,8 @@ export function BoardPane({
             (t) => t.meta.parent === dispatchMilestone.milestoneId
           )}
           readyIds={data.readyIds}
+          // A teammate's task never starts in a fan-out: the dialog marks it Teammate.
+          holderOf={viewerHolderOf(data.me, data.localHuman)}
           runningNow={data.liveRunStateByTaskId.size}
           liveClaims={liveClaimsFrom(data.runs)}
           defaultConcurrency={

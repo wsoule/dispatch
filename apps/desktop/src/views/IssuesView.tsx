@@ -248,6 +248,22 @@ export function IssuesView({
   // The model as a saved view stores it: the layout is the toggle's.
   const display = useMemo(() => ({ ...prefs, layout: mode }), [prefs, mode]);
   const full = page.kind !== 'list';
+  // The task whose full page was open last. When Back or Escape returns to the list, its
+  // row takes the focus, not the list's first row (it is not marked open: nothing is); a
+  // quick look opened from the list afterwards takes over (and forgets it). Kept as state adjusted
+  // during render (React's "storing information from previous renders"), so the list
+  // mounts with it in the same commit the page closes.
+  const pageTaskId = page.kind === 'task' ? page.taskId : null;
+  const [returnTaskId, setReturnTaskId] = useState<string | null>(null);
+  if (pageTaskId !== null && pageTaskId !== returnTaskId) {
+    setReturnTaskId(pageTaskId);
+  } else if (
+    pageTaskId === null &&
+    peekTaskId !== null &&
+    returnTaskId !== null
+  ) {
+    setReturnTaskId(null);
+  }
 
   // Applies the active saved view when a pick changes it — from the toolbar's menu or
   // the palette's Open view, which may land before this mounts. The session marker keeps
@@ -561,6 +577,7 @@ export function IssuesView({
                   bucketOf={presetContext.bucketOf}
                   speechByTask={speechByTask}
                   activeTaskId={peekTaskId ?? undefined}
+                  returnTaskId={returnTaskId ?? undefined}
                   onSelectTask={(taskId) => onSelectTask(taskId)}
                   onOpenTask={onOpenTask}
                   onRequestFilter={requestFilter}

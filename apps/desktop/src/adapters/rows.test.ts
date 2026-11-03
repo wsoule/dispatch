@@ -230,7 +230,7 @@ describe('toTaskRow: identity, state and priority', () => {
       return [out.state, out.stateKind, out.done];
     };
     expect(states('draft')).toEqual(['Draft', 'backlog', false]);
-    expect(states('in-progress')).toEqual(['In Progress', 'started', false]);
+    expect(states('in-progress')).toEqual(['In progress', 'started', false]);
     expect(states('review')).toEqual(['Review', 'started', false]);
     expect(states('landed')).toEqual(['Landed', 'completed', true]);
     expect(states('dropped')).toEqual(['Dropped', 'canceled', true]);
@@ -1246,7 +1246,7 @@ describe('filterChips', () => {
         facet: 'status',
         op: 'is',
         field: 'Status',
-        summary: 'In Progress, Review',
+        summary: 'In progress, Review',
         removeLabel: 'Remove status filter',
       },
       {

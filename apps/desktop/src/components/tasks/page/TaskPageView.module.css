@@ -94,18 +94,6 @@
 }
 
 /* The mini Flight Plan over the sub-issues: a quiet button that opens the plan. */
-.miniPlan {
-  display: block;
-  width: 100%;
-  padding: 4px;
-  border-radius: var(--r-sm);
-  text-align: left;
-}
-
-.miniPlan:hover {
-  background: var(--surface-2);
-}
-
 /* The "Add detail" pass's error; its colour is the danger tone's ink (toneText). */
 .enrichError {
   margin: 0;

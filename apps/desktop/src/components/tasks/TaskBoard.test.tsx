@@ -693,12 +693,12 @@ test('a collapsed column folds to a strip that expands on click', () => {
   const strip = columnHeaders()[1];
   expect(strip.dataset['collapsed']).toBe('true');
   // The strip still names its status and count, the name and count as text.
-  expect(strip.textContent).toContain('In Progress');
+  expect(strip.textContent).toContain('In progress');
   // A collapsed column mounts no card list of its own.
   const lane = document.querySelector('[data-lane-key="e-1"]');
   expect(lane?.querySelectorAll('[data-slot=board-column]')).toHaveLength(2);
   fireEvent.click(
-    screen.getByRole('button', { name: 'Expand In Progress column' })
+    screen.getByRole('button', { name: 'Expand In progress column' })
   );
   expect(toggled).toEqual(['in-progress']);
 });
@@ -1248,4 +1248,49 @@ test('moving the cursor redraws only the two cards it moves between', () => {
 
   rerender(board('t-2'));
   expect([...renders.keys()].sort()).toEqual(['t-1', 't-2']);
+});
+
+test("a card's status menu offers every status, hidden columns included", async () => {
+  const moved: [string, string][] = [];
+  render(
+    <Harness
+      display={display('none')}
+      tasks={[task('t-1', 'Card one', 'todo')]}
+      milestones={[]}
+      statuses={['todo']}
+      cardStatuses={['todo', 'review', 'landing', 'done']}
+      onMoveStatus={(id, status) => {
+        moved.push([id, status]);
+        return Promise.resolve();
+      }}
+    />
+  );
+  // Only the Todo column is on screen; Review, Landing and Done are hidden (empty).
+  expect(columnHeaders()).toHaveLength(1);
+  await settle(() => {
+    fireEvent.click(screen.getByRole('button', { name: 'Change status' }));
+  });
+  expect(
+    screen.getAllByRole('option').map((o) => o.textContent?.trim())
+  ).toEqual(['Todo', 'Review', 'Landing', 'Done']);
+  await settle(() => {
+    fireEvent.click(screen.getByRole('option', { name: 'Review' }));
+  });
+  expect(moved).toEqual([['t-1', 'review']]);
+});
+
+test('without cardStatuses the status menu offers the shown columns', async () => {
+  render(
+    <Harness
+      display={display('none')}
+      tasks={[task('t-1', 'Card one', 'todo')]}
+      milestones={[]}
+    />
+  );
+  await settle(() => {
+    fireEvent.click(screen.getByRole('button', { name: 'Change status' }));
+  });
+  expect(
+    screen.getAllByRole('option').map((o) => o.textContent?.trim())
+  ).toEqual(['Todo', 'In progress', 'Done']);
 });

@@ -19,6 +19,7 @@ import {
   Register,
   RegisterCell,
   RegisterRow,
+  SaveErrorLine,
   StatePicker,
   StatusMark,
   Switch,
@@ -131,6 +132,8 @@ export interface TaskDetailViewProps extends Pick<
   description: TaskDescriptionData;
   relations: TaskRelations;
   sectionMeta: TaskDetailSectionMeta | undefined;
+  /** Lines under the section headings: a refused "+ Add blocker"'s error. */
+  sectionNotes: TaskDetailSectionMeta | undefined;
   comments: TaskCommentsData;
   activity: TaskActivityItem[] | undefined;
   activityLimit: number;
@@ -254,6 +257,7 @@ function propertyFor(
           <DateField
             label={fact.label}
             value={fact.raw}
+            emptyLabel={fact.id === 'start' ? 'No start date' : 'No due date'}
             onChange={(next) =>
               saveFact(fact.id === 'start' ? 'start' : 'due', next)
             }
@@ -599,6 +603,13 @@ export function useTaskDetailProps(
   const toasts = useToasts();
   const planning = usePlanningContext();
   const [commentBox, setCommentBox] = useState<CommentBox>(null);
+  // A refused "+ Add blocker" (a cycle, a failed save), for the task it was refused
+  // on: printed on its own line under the Blocked by heading, since the picker sits
+  // in the heading and its own error would wrap beside the title there.
+  const [blockerError, setBlockerError] = useState<{
+    taskId: string;
+    message: string;
+  } | null>(null);
   const dispatch = options.dispatch ?? state.dispatch;
   const dispatching = options.dispatching ?? state.dispatching;
   const openRun =
@@ -714,11 +725,27 @@ export function useTaskDetailProps(
               Promise.resolve(state.searchRelations(query, linkedIds))
             }
             exclude={linkedIds}
-            onSelect={(task) => state.addBlocker(task.id)}
+            // Resolves either way, so the picker prints no error of its own in the
+            // heading: a refusal goes to the note under it (sectionNotes).
+            onSelect={(task) =>
+              state.addBlocker(task.id).then(
+                () => setBlockerError(null),
+                (err: unknown) =>
+                  setBlockerError({ taskId, message: describeError(err) })
+              )
+            }
           />
         ),
       }
     : undefined;
+  const sectionNotes: TaskDetailSectionMeta | undefined =
+    canEdit && blockerError !== null && blockerError.taskId === taskId
+      ? {
+          blockedBy: (
+            <SaveErrorLine label="Not saved" message={blockerError.message} />
+          ),
+        }
+      : undefined;
 
   const body = state.description;
   const description: TaskDescriptionData =
@@ -942,6 +969,7 @@ export function useTaskDetailProps(
     description,
     relations,
     sectionMeta,
+    sectionNotes,
     comments,
     activity: state.activity ?? undefined,
     activityLimit: ACTIVITY_LIMIT,

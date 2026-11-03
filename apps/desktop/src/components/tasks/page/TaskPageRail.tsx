@@ -303,15 +303,16 @@ export function TaskPageRail({
           title="Sub-issues"
           lead={
             plan !== null && (
-              <button
-                type="button"
-                className={styles.miniPlan}
+              <Button
+                variant="quiet"
+                block
+                align="start"
                 title="Open the plan"
                 aria-label="Open the plan"
                 onClick={() => page.selectMode('plan')}
               >
                 <FlightPlanMini plan={plan} />
-              </button>
+              </Button>
             )
           }
           parent={item}

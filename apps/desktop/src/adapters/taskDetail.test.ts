@@ -943,7 +943,7 @@ describe('picker choices', () => {
   test('stateChoices appends an unknown current status, never a known one twice', () => {
     expect(stateChoices(MODEL, 'qa-review').at(-1)).toEqual({
       id: 'qa-review',
-      name: 'Qa Review',
+      name: 'Qa review',
       kind: 'backlog',
     });
     expect(stateChoices(MODEL, 'working')).toHaveLength(7);

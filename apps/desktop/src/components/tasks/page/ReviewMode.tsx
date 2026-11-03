@@ -64,7 +64,11 @@ import { FindingsPanel } from '../detail/FindingsPanel';
 import { FixLoopSection } from '../detail/FixLoopSection';
 import { VerificationSection } from '../detail/VerificationSection';
 import { OutcomeCard } from './OutcomeCard';
-import type { TaskPageModel } from './pageModel';
+import {
+  fixLoopTaskId,
+  type TaskPageModel,
+  verificationTaskId,
+} from './pageModel';
 import styles from './ReviewMode.module.css';
 import { RunStrip } from './RunStrip';
 
@@ -308,9 +312,13 @@ export function ReviewMode({ page }: { page: TaskPageModel }) {
     project.port,
     item.meta.id
   );
-  const { fixLoop } = useFixLoop(project.client, project.port, item.meta.id);
+  const { fixLoop } = useFixLoop(
+    project.client,
+    project.port,
+    fixLoopTaskId(page)
+  );
   const { result: verification, error: verificationError } =
-    useTaskVerification(project.client, project.port, item.meta.id);
+    useTaskVerification(project.client, project.port, verificationTaskId(page));
   const startFixLoop = useStartFixLoop(project.client, project.port);
   const stopFixLoop = useStopFixLoop(project.client, project.port);
   const adjudicate = useAdjudicateFinding(project.client, project.port);

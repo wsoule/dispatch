@@ -28,11 +28,13 @@ import {
   rowIdsInOrder,
   toTaskSections,
 } from '../adapters/rows';
+import { viewerHolderOf } from '../components/flightplan/flightPlan';
 import { usePeople } from '../components/people/PeopleContext';
 import { useDeepLinkActions } from '../components/shell/DeepLinkContext';
 import { useShellActions } from '../components/shell/ShellActionsContext';
 import { DispatchDialog } from '../components/tasks/DispatchDialog';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { useEventCallback } from '../hooks/useEventCallback';
 import { liveClaimsFrom } from '../lib/dispatchPreview';
 import { fanoutVerbs } from '../lib/fanoutVerbs';
 import { filterBySearch } from '../lib/issueSearch';
@@ -65,7 +67,6 @@ import {
   rowTitleElement,
   stateChoices,
   useControlStore,
-  useEventCallback,
 } from './IssuesViewMenus';
 
 // The Issues list proper: @dispatch/ui's TaskGroupTable over the grouped
@@ -77,6 +78,10 @@ import {
 // hub for its menus) and the fan-out verbs on container headers.
 
 const NO_SELECTION: ReadonlySet<string> = new Set();
+
+/** How many frames the list's mount focus waits for a windowed active row to
+ * mount before it focuses the first row instead. */
+const ACTIVE_ROW_WAIT_FRAMES = 8;
 
 /** From this many selected rows a bulk change asks first. */
 const BULK_CONFIRM_AT = 20;
@@ -159,6 +164,10 @@ export interface IssuesTableProps {
   speechByTask?: ReadonlyMap<string, { count: number; mention: boolean }>;
   /** The task in the quick-look drawer (the accent row). */
   activeTaskId?: string;
+  /** The task whose full page just closed: when the list mounts, its row takes
+   * the focus (Back lands where it left). Read at mount only, and never marked
+   * open: nothing is open once the page has closed. */
+  returnTaskId?: string;
   /** A click on a row: the quick-look drawer (Space goes through the shell's
    * peek verb, the same drawer). */
   onSelectTask: (taskId: string) => void;
@@ -192,6 +201,7 @@ export function IssuesTable({
   bucketOf,
   speechByTask,
   activeTaskId,
+  returnTaskId,
   onSelectTask,
   onOpenTask,
   onRequestFilter,
@@ -430,15 +440,62 @@ export function IssuesTable({
     if (next !== undefined) rowTitleElement(next)?.focus();
   }, [sections]);
 
-  // The list takes focus on mount, so the keys work without a click first.
+  // The list takes focus on mount, so the keys work without a click first: the
+  // row of the task in the drawer, else of the task whose page just closed (so
+  // Back from a page lands where it left), else the first row. In a windowed list
+  // that row may sit outside the mounted window: `revealTaskId` hands it to the
+  // table as its active row for the few frames until it is focused, because the
+  // table scrolls its active row into view; once focused (or given up on) the mark
+  // goes, since nothing is open. The focus waits up to ACTIVE_ROW_WAIT_FRAMES for
+  // the row before settling for the first row. Nothing moves if focus is already
+  // elsewhere. Read once, at mount: a later drawer or page change moves focus by
+  // its own path.
+  const mountTargetId = useRef(activeTaskId ?? returnTaskId);
+  const [revealTaskId, setRevealTaskId] = useState(
+    activeTaskId === undefined ? returnTaskId : undefined
+  );
+  const mountRevealing = useRef(revealTaskId !== undefined);
   useLayoutEffect(() => {
-    const active = document.activeElement;
-    if (active !== null && active !== document.body) return;
-    scrollRef.current
-      ?.querySelector<HTMLElement>(
-        '[data-nav-item="row"] [data-nav-target] > a, [data-nav-item="row"] [data-nav-target] > button'
-      )
-      ?.focus();
+    const target = mountTargetId.current;
+    const revealing = mountRevealing.current;
+    const endReveal = () => {
+      if (revealing) setRevealTaskId(undefined);
+    };
+    const unfocused = () => {
+      const active = document.activeElement;
+      return active === null || active === document.body;
+    };
+    const focusFirstRow = () =>
+      scrollRef.current
+        ?.querySelector<HTMLElement>(
+          '[data-nav-item="row"] [data-nav-target] > a, [data-nav-item="row"] [data-nav-target] > button'
+        )
+        ?.focus();
+    if (!unfocused() || target === undefined) {
+      if (unfocused()) focusFirstRow();
+      endReveal();
+      return;
+    }
+    let frame = 0;
+    let handle: number | null = null;
+    const focusActiveRow = () => {
+      handle = null;
+      if (unfocused()) {
+        const row = rowTitleElement(target);
+        if (row === null && frame < ACTIVE_ROW_WAIT_FRAMES) {
+          frame += 1;
+          handle = requestAnimationFrame(focusActiveRow);
+          return;
+        }
+        if (row !== null) row.focus();
+        else focusFirstRow();
+      }
+      endReveal();
+    };
+    focusActiveRow();
+    return () => {
+      if (handle !== null) cancelAnimationFrame(handle);
+    };
   }, []);
 
   // ---- the pickers' choices -----------------------------------------------
@@ -865,7 +922,7 @@ export function IssuesTable({
         defaultCollapsed={defaultCollapsed}
         emptyMessage={emptyMessage}
         onOpenRow={(row) => onSelectTask(row.id)}
-        activeRowId={activeTaskId}
+        activeRowId={activeTaskId ?? revealTaskId}
         onRowKeyDown={onRowKeyDown}
         selection={
           editable
@@ -910,6 +967,13 @@ export function IssuesTable({
           title={dialogTitle}
           tasks={dialogTasks}
           readyIds={data.readyIds}
+          // A milestone's fan-out never starts a teammate's task: the dialog marks it
+          // Teammate. A hand dispatch of a selection starts whatever is ready.
+          holderOf={
+            dialog.kind === 'milestone'
+              ? viewerHolderOf(data.me, data.localHuman)
+              : undefined
+          }
           runningNow={data.liveRunStateByTaskId.size}
           liveClaims={liveClaimsFrom(data.runs)}
           defaultConcurrency={

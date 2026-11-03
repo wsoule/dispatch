@@ -246,6 +246,19 @@ describe('TaskDrawer', () => {
     });
   });
 
+  test('an empty due date says No due date, not the browser mask', () => {
+    const log = newLog();
+    mount(
+      hostWith(log, {
+        tasks: [task('t-1', { dueDate: null }), ...TASKS.slice(1)],
+      })
+    );
+    const field = screen.getByLabelText<HTMLInputElement>('Due date');
+    expect(field.value).toBe('');
+    const note = screen.getByText('No due date');
+    expect(field.getAttribute('aria-describedby')).toBe(note.id);
+  });
+
   test('a blocker that would close a cycle is refused with the reason, and nothing is written', async () => {
     const log = newLog();
     mount(hostWith(log));
@@ -266,6 +279,16 @@ describe('TaskDrawer', () => {
       ).toBeTruthy();
     });
     expect(log.updates).toEqual([]);
+    // The refusal is a full-width line under the Blocked by heading, not a line
+    // wrapping beside the title inside the heading's picker.
+    const alert = screen
+      .getByText('That would make a dependency cycle.')
+      .closest('[role=alert]');
+    expect(alert?.closest('[data-slot=section-note]')).not.toBeNull();
+    expect(alert?.closest('[data-picker]')).toBeNull();
+    expect(alert?.textContent).toBe(
+      'Not savedThat would make a dependency cycle.'
+    );
   });
 
   test('removing a blocker rewrites blockedBy', async () => {

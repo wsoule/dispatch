@@ -21,14 +21,7 @@ import {
   type TaskRowData,
 } from '@dispatch/ui';
 import { Bot, Ellipsis, Zap } from 'lucide-react';
-import {
-  type ReactNode,
-  useCallback,
-  useLayoutEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react';
+import { type ReactNode, useState, useSyncExternalStore } from 'react';
 
 import {
   AGENTS_GROUP,
@@ -141,21 +134,6 @@ function useOpenControl(
     },
     () => null
   );
-}
-
-/**
- * A function that keeps one identity for the life of the component and always
- * runs the latest render's `fn`: for the callbacks the table's rows call on an
- * event (a menu choice, a drop), so that passing them never redraws a row.
- */
-export function useEventCallback<A extends unknown[], R>(
-  fn: (...args: A) => R
-): (...args: A) => R {
-  const ref = useRef(fn);
-  useLayoutEffect(() => {
-    ref.current = fn;
-  });
-  return useCallback((...args: A) => ref.current(...args), []);
 }
 
 /** A row's title (its link, or its button without an href): where a row key

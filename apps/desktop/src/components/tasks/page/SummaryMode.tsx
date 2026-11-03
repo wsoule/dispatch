@@ -44,7 +44,7 @@ import { VerificationSection } from '../detail/VerificationSection';
 import { StatusIcon } from '../StatusIcon';
 import { ActivityTimeline } from './ActivityTimeline';
 import { OutcomeCard } from './OutcomeCard';
-import type { TaskPageModel } from './pageModel';
+import { type TaskPageModel, verificationTaskId } from './pageModel';
 import { FilesTouched } from './RunStrip';
 import styles from './SummaryMode.module.css';
 import { formatElapsed } from '@/hooks/useElapsed';
@@ -167,7 +167,7 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
   const canceled = isCanceledStatus(meta.status, page.statusModel);
   const done = isDoneStatus(meta.status, page.statusModel);
   const { result: verification, error: verificationError } =
-    useTaskVerification(project.client, project.port, meta.id);
+    useTaskVerification(project.client, project.port, verificationTaskId(page));
   const { entries: milestoneLedger } = useMilestoneLedger(
     project.client,
     project.port,

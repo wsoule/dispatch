@@ -299,36 +299,47 @@ interface MountOptions {
 function mount(options: MountOptions = {}) {
   const log = newLog();
   const data = dataWith(log, options.data);
-  let view: ReactNode = (
-    <Harness
-      data={data}
-      log={log}
-      initialMode={options.initialMode}
-      page={options.page}
-      peekTaskId={options.peekTaskId}
-    />
-  );
-  if (options.deepLink !== undefined && options.deepLink !== null) {
-    view = <DeepLinkProvider value={options.deepLink}>{view}</DeepLinkProvider>;
-  }
-  if (options.people !== undefined) {
-    view = (
-      <PeopleProvider people={options.people} me={ME}>
-        {view}
-      </PeopleProvider>
+  const queryClient = new QueryClient();
+  const shell = shellWith(log);
+  // The whole tree for one page and drawer, so `navigate` can re-render the same
+  // view (same state, same data) on another page, as App does on Back.
+  const tree = (page: TasksPage | undefined, peekTaskId?: string | null) => {
+    let view: ReactNode = (
+      <Harness
+        data={data}
+        log={log}
+        initialMode={options.initialMode}
+        page={page}
+        peekTaskId={peekTaskId}
+      />
     );
-  }
-  const result = render(
-    <QueryClientProvider client={new QueryClient()}>
-      <ShellActionsProvider value={shellWith(log)}>
-        <SavedViewsHost>
-          <Capture />
+    if (options.deepLink !== undefined && options.deepLink !== null) {
+      view = (
+        <DeepLinkProvider value={options.deepLink}>{view}</DeepLinkProvider>
+      );
+    }
+    if (options.people !== undefined) {
+      view = (
+        <PeopleProvider people={options.people} me={ME}>
           {view}
-        </SavedViewsHost>
-      </ShellActionsProvider>
-    </QueryClientProvider>
-  );
-  return { ...result, log, data };
+        </PeopleProvider>
+      );
+    }
+    return (
+      <QueryClientProvider client={queryClient}>
+        <ShellActionsProvider value={shell}>
+          <SavedViewsHost>
+            <Capture />
+            {view}
+          </SavedViewsHost>
+        </ShellActionsProvider>
+      </QueryClientProvider>
+    );
+  };
+  const result = render(tree(options.page, options.peekTaskId));
+  const navigate = (page: TasksPage, peekTaskId: string | null = null) =>
+    result.rerender(tree(page, peekTaskId));
+  return { ...result, log, data, navigate };
 }
 
 /** The group headers' names, in order. */
@@ -737,7 +748,7 @@ test('a bulk status change moves every selected task and clears the selection', 
     fireEvent.click(screen.getByRole('button', { name: 'Status' }));
   });
   await settle(() => {
-    fireEvent.click(optionNamed('In Progress'));
+    fireEvent.click(optionNamed('In progress'));
   });
   await waitFor(() => expect(log.moved.length).toBe(2));
   expect(log.moved).toEqual([
@@ -854,6 +865,52 @@ test('the layout control offers List and Board, and Board draws the columns', ()
   ).toBeGreaterThan(0);
 });
 
+// The status menu offers hidden columns too; moving a card into one shows it again, so
+// the card does not vanish from the board.
+test('a card moved from its menu into a hidden column shows that column again', async () => {
+  const { log } = mount({ initialMode: 'board' });
+  // The board's menus open a task later than the list's popovers.
+  const settleTask = (work: () => void) =>
+    act(async () => {
+      work();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  await settleTask(() => {
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Done column options' })
+    );
+  });
+  await settleTask(() => {
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Hide column' }));
+  });
+  expect(
+    screen.queryByRole('button', { name: 'Done column options' })
+  ).toBeNull();
+  const card = () => {
+    const found = screen
+      .getByText('Card one')
+      .closest<HTMLElement>('[data-row-id]');
+    if (found === null) throw new Error('no card for Card one');
+    return found;
+  };
+  // A pointer press focuses the trigger before its click (the card takes the board's
+  // cursor then), as a browser does.
+  const trigger = within(card()).getByRole('button', { name: 'Change status' });
+  await settleTask(() => trigger.focus());
+  await settleTask(() => {
+    fireEvent.click(trigger);
+  });
+  await settleTask(() => {
+    fireEvent.click(screen.getByRole('option', { name: 'Done' }));
+  });
+  expect(log.moved).toEqual([['t-1', 'done']]);
+  // The Done column is back, so the moved card has a column to show in.
+  expect(
+    screen.getByRole('button', { name: 'Done column options' })
+  ).not.toBeNull();
+  expect(card().isConnected).toBe(true);
+});
+
 test('group by person regroups the list by assignee and back', () => {
   mount();
   fireEvent.click(screen.getByRole('button', { name: 'Group by person' }));
@@ -952,4 +1009,38 @@ test('a task page replaces the list', () => {
     page: { kind: 'task', taskId: 't-3', tab: 'auto', runId: null },
   });
   expect(screen.queryByTestId('issues-table')).toBeNull();
+});
+
+test('Back from a task page focuses the row it was opened from, not marked open', () => {
+  const { navigate } = mount();
+  expect(document.activeElement).toBe(rowLink('Card one'));
+  navigate({ kind: 'task', taskId: 't-3', tab: 'auto', runId: null });
+  expect(screen.queryByTestId('issues-table')).toBeNull();
+  navigate(LIST);
+  expect(document.activeElement).toBe(rowLink('Loose card'));
+  // Nothing is open once the page has closed, so no row is current.
+  expect(rowOf('Loose card').getAttribute('aria-current')).toBeNull();
+  expect(document.querySelector('[aria-current="true"]')).toBeNull();
+});
+
+test('a quick look after Back takes over the active row, and its close forgets the page', () => {
+  const { navigate } = mount();
+  navigate({ kind: 'task', taskId: 't-3', tab: 'auto', runId: null });
+  navigate(LIST);
+  navigate(LIST, 't-2');
+  expect(rowOf('Card two').getAttribute('aria-current')).toBe('true');
+  expect(rowOf('Loose card').getAttribute('aria-current')).toBeNull();
+  navigate(LIST);
+  expect(rowOf('Loose card').getAttribute('aria-current')).toBeNull();
+});
+
+test('Back from the page of a task the list no longer shows focuses the first row', async () => {
+  const { navigate } = mount();
+  navigate({ kind: 'task', taskId: 't-gone', tab: 'auto', runId: null });
+  navigate(LIST);
+  // The mount focus waits a few frames for a row that may still mount, then
+  // settles for the first one.
+  expect(document.activeElement).toBe(document.body);
+  await act(() => new Promise((resolve) => setTimeout(resolve, 300)));
+  expect(document.activeElement).toBe(rowLink('Card one'));
 });

@@ -90,6 +90,10 @@ interface TaskBoardProps {
   /** The status columns to render, in config order — already narrowed by the Display
    * popover's `Show empty groups` and any session-hidden columns (see `visibleBoardColumns`). */
   statuses: string[];
+  /** Every status a card's status menu offers: the project's whole configured list, so a
+   * card can move to a status whose column is hidden (empty with `Show empty groups` off,
+   * or hidden this session). Defaults to `statuses`. */
+  cardStatuses?: string[];
   readyIds: Set<string>;
   blockedIds: Set<string>;
   /** Live (non-terminal) run state per task id. */
@@ -590,6 +594,7 @@ function ColumnHeader({
 export function TaskBoard({
   tasks,
   statuses,
+  cardStatuses = statuses,
   readyIds,
   blockedIds,
   liveRunStateByTaskId,
@@ -1015,7 +1020,7 @@ export function TaskBoard({
               : (milestoneById.get(doc.meta.parent)?.meta.title ??
                 doc.meta.parent)
           }
-          statuses={statuses}
+          statuses={cardStatuses}
           properties={display.properties}
           labelCatalogue={labelCatalogue}
           onStatusChange={moveCardStatus}
@@ -1042,7 +1047,7 @@ export function TaskBoard({
       latestRunByTaskId,
       readinessById,
       milestoneById,
-      statuses,
+      cardStatuses,
       display.properties,
       labelCatalogue,
       moveCardStatus,
@@ -1120,7 +1125,7 @@ export function TaskBoard({
               liveRunState={liveRunStateByTaskId.get(activeDoc.meta.id)}
               run={latestRunByTaskId.get(activeDoc.meta.id)}
               readiness={readinessById?.get(activeDoc.meta.id)}
-              statuses={statuses}
+              statuses={cardStatuses}
               properties={display.properties}
               onStatusChange={noop}
               onEditTask={noop}

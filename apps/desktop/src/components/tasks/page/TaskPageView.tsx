@@ -530,6 +530,7 @@ function TaskPageLoaded({
           description={spec ? detail.description : undefined}
           relations={spec ? detail.relations : undefined}
           sectionMeta={spec ? detail.sectionMeta : undefined}
+          sectionNotes={spec ? detail.sectionNotes : undefined}
           comments={spec ? detail.comments : undefined}
           activity={spec ? detail.activity : undefined}
           activityLimit={detail.activityLimit}

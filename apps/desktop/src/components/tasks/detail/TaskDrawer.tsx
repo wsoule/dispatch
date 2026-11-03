@@ -217,6 +217,7 @@ function TaskDrawerLoaded({
       description={detail.description}
       relations={detail.relations}
       sectionMeta={detail.sectionMeta}
+      sectionNotes={detail.sectionNotes}
       comments={detail.comments}
       activity={detail.activity}
       activityLimit={detail.activityLimit}

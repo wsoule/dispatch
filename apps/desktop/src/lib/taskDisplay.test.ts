@@ -40,17 +40,17 @@ describe('parseTaskSections / sectionOrDash', () => {
 });
 
 describe('statusLabel', () => {
-  test('title-cases the canonical statuses', () => {
+  test('capitalizes the canonical statuses', () => {
     expect(statusLabel('working')).toBe('Working');
     expect(statusLabel('review')).toBe('Review');
   });
 
-  test('title-cases a single-word status', () => {
+  test('capitalizes a single-word status', () => {
     expect(statusLabel('draft')).toBe('Draft');
   });
 
-  test('leaves a custom multi-hyphen status readable', () => {
-    expect(statusLabel('waiting-on-design')).toBe('Waiting On Design');
+  test('leaves a custom multi-hyphen status readable, in sentence case', () => {
+    expect(statusLabel('waiting-on-design')).toBe('Waiting on design');
   });
 
   test('drops empty segments rather than emitting stray spaces', () => {

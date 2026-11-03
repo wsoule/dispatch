@@ -274,6 +274,50 @@ describe('the mode follows the task', () => {
     expect(await screen.findByRole('listbox')).toBeTruthy();
   });
 
+  test('review and summary skip the verify and fix-loop reads a task cannot have yet', async () => {
+    const asked: string[] = [];
+    const client = {
+      fetchTaskVerification: (id: string) => {
+        asked.push(`verification ${id}`);
+        return Promise.resolve(null);
+      },
+      fetchFixLoop: (id: string) => {
+        asked.push(`fix-loop ${id}`);
+        return Promise.resolve(null);
+      },
+    } as unknown as Partial<ApiClient>;
+    // A finished execute run and no verify run: the fix loop may exist, a verify
+    // result cannot.
+    const view = mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1', { status: 'review' })],
+        runs: [run({ state: 'finished' })],
+        client,
+      })
+    );
+    expect(modeOf()).toBe('review');
+    await waitFor(() => expect(asked).toEqual(['fix-loop t-1']));
+    // Settled: no verify read follows.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(asked).toEqual(['fix-loop t-1']);
+    view.unmount();
+    // Once a verify run has ended, its result is read too.
+    asked.length = 0;
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1', { status: 'review' })],
+        runs: [
+          run({ state: 'finished' }),
+          run({ id: 'r-v', kind: 'verify', state: 'finished' }),
+        ],
+        client,
+      })
+    );
+    await waitFor(() =>
+      expect([...asked].sort()).toEqual(['fix-loop t-1', 'verification t-1'])
+    );
+  });
+
   test('landed work opens on its summary', () => {
     mount(
       fakeHost(newLog(), {
