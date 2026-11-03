@@ -69,6 +69,38 @@ describe('Button', () => {
     expect(css).toMatch(/\.block \{[^}]*width: 100%;/);
   });
 
+  // A quiet block button over a summary line (the task page's mini Flight
+  // Plan, which opens the plan): the content starts at the start edge
+  // instead of the centre; centre stays the default.
+  test('align="start" lays the content from the start edge', () => {
+    const { getByRole } = render(
+      <>
+        <Button variant="quiet" block align="start" aria-label="Open the plan">
+          <span>Wave 2 of 3</span>
+        </Button>
+        <Button>Save</Button>
+      </>
+    );
+    const start = getByRole('button', { name: 'Open the plan' });
+    expect(start.getAttribute('type')).toBe('button');
+    expect(start.getAttribute('data-variant')).toBe('quiet');
+    expect(start.textContent).toBe('Wave 2 of 3');
+    expect(start.getAttribute('data-align')).toBe('start');
+    expect(
+      getByRole('button', { name: 'Save' }).getAttribute('data-align')
+    ).toBeNull();
+    // CSS modules are empty objects under Bun, so the layout is pinned in
+    // the sheet: start moves the content, the base rule still centres it.
+    const css = readFileSync(
+      path.join(import.meta.dir, '..', 'src', 'tasks', 'button.module.css'),
+      'utf8'
+    ).replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(css).toMatch(
+      /\.start \{\s*justify-content: flex-start;\s*text-align: start;\s*\}/
+    );
+    expect(css).toMatch(/\.button \{[^}]*justify-content: center;/);
+  });
+
   test('with href renders through the host link', () => {
     const { getByRole } = render(
       <UiLinkProvider link={HostLink}>
@@ -558,7 +590,7 @@ describe('ChipButton', () => {
       '.button:focus-visible { outline: 2px solid var(--focus-ring);'
     );
     expect(css).toContain(
-      ".button[aria-pressed='true'] { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent-ink); }"
+      ".button[aria-pressed='true'] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); }"
     );
     const hover = css.slice(css.indexOf('@media (hover: hover)'));
     expect(hover).toContain('background: var(--surface-3);');

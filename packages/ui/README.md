@@ -613,10 +613,18 @@ chevron (`currentColor`) and the face's button edge.
 secondary (the default), quiet (the toolbar ghost) or danger (a destructive
 write); `size` sm 26px, md 30px or lg 36px; `block` stretches it; `icon` and
 `iconAfter` are 14px lucide icons; no children makes it a square icon button,
-which needs an `aria-label`. With `href` it renders through the host's link. A
-toggle passes `aria-pressed`: pressed, it takes the pressed fill
-(`--surface-3`), and in forced colours the system Highlight, since the fill
-would turn into Canvas there and read as unpressed.
+which needs an `aria-label`. `align="start"` lays the content from the start
+edge instead of the centre, for a quiet `block` button whose content is a
+summary line rather than a label (the task page's mini Flight Plan, which opens
+the plan); the root then carries `data-align="start"`. With `href` it renders
+through the host's link. A toggle passes `aria-pressed`: pressed, it takes the
+accent's selection tint (`--accent-soft`) in a full `--accent` edge with
+`--accent-ink` text, as a pressed `ChipButton` does; the edge holds 3:1 against
+`--bg`, `--bg-side`, `--surface`, `--surface-2` and `--sunken` in both themes,
+so the state reads without a check mark there (WCAG 1.4.11). On `--surface-3` it
+falls short, so keep toggles off that ground. In forced colours it takes the
+system Highlight, since the tint would turn into Canvas there and read as
+unpressed.
 
 It passes through what a host's own button needed: `ref` (the element, for a
 Popover's or Tooltip's anchor and focus return), `id`, `tabIndex`, `form`,
@@ -669,7 +677,8 @@ surface darker (a tinted chip shows its tinted edge instead, so its text stays
 on its tint; the inverse slab keeps its fill), the 2px `--focus-ring` outline,
 and a ButtonText edge in forced colours. `selected` makes the button a toggle
 (`aria-pressed`, `true` or `false`; omit it for a plain action), drawn in the
-accent's selection tint (`--accent-soft` in an `--accent-line` edge,
+accent's selection tint (`--accent-soft` in a full `--accent` edge, which holds
+3:1 on `--bg`, `--bg-side`, `--surface`, `--surface-2` and `--sunken`, and
 `--accent-ink` text); a link never carries it. `disabled` disables the button,
 or turns a link into its text marked `aria-disabled="true"` (a link cannot be
 disabled). It carries `data-chip-button` and the host's `data-*` hooks.
@@ -790,7 +799,10 @@ stacked card layout, on a line of its own under the cells before it, and holds
 its value in a block (an answer-in-place card inside a Needs you row). Any row
 takes `title`, a hover hint over the whole `<li>` for a qualifier not worth a
 column ("this machine only"); it is pointer-only, so say the same fact in words
-somewhere a keyboard reaches.
+somewhere a keyboard reaches. An `align="end"` cell fits its content but never
+grows past its column (or, stacked, its half of the card): a long value wraps,
+and a host value that is one line by design (a slug with `white-space: nowrap`)
+clips with its own `overflow: hidden; text-overflow: ellipsis`.
 
 `stackWithin` (the register's own width, a container query) takes 480, 600, 700,
 900 or 1000. Pick the smallest step the columns' minimum widths fit in (the
@@ -1916,6 +1928,10 @@ Picking, the arrow keys, `activation`, `variant` and `orientation` are
 unchanged, and no option gains a tab stop of its own. `size` is `md` (default)
 or `sm`, a compact row for a one-row footer: the 24px row stays (the target
 size) with `--fs-sm` words and tighter gaps; the radiogroup carries `data-size`.
+
+A `TextArea` grows with its content (`autoGrow`, on by default) and then shows
+no resize grip, whichever order a build joins the global `.textarea` rule and
+its module in; with `autoGrow={false}` it keeps the field's vertical grip.
 
 `Menu` is an action menu. `label` names the `role="menu"`; `items` are action
 rows (`shortcut`, `destructive`, `disabled`), radio rows (`kind: 'radio'`,

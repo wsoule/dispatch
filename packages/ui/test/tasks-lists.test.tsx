@@ -13,6 +13,7 @@ import {
   type UiLinkProps,
   UiLinkProvider,
 } from '../src/index';
+import { cssRule, readCss } from './contrast-helpers';
 
 afterEach(cleanup);
 
@@ -311,6 +312,40 @@ describe('Register', () => {
       ).toBeTruthy();
       cleanup();
     }
+  });
+
+  // A long doc slug in an end cell ran about 4px past a stacked card's
+  // edge at 390px: an end cell is only as wide as its content (it is not
+  // stretched), so a nowrap value set its width past the grid area. The
+  // cell and its value are capped at the area's width, so the host's
+  // ellipsis clips and a long word wraps, in the table and stacked.
+  test('an end cell and its value stay within their grid area', () => {
+    const view = render(
+      <Register label="Docs" columns="1fr 160px" stackWithin={600}>
+        <RegisterRow>
+          <RegisterCell variant="name">Plan</RegisterCell>
+          <RegisterCell align="end" label="Slug" data-testid="slug-cell">
+            <span>a-very-long-document-slug-that-runs-on-and-on</span>
+          </RegisterCell>
+        </RegisterRow>
+      </Register>
+    );
+    // The label and the value are the cell's own children, which the
+    // `.end > *` cap reaches.
+    const cell = view.getByTestId('slug-cell');
+    expect(cell.children).toHaveLength(2);
+    const file = 'tasks/register.module.css';
+    expect(cssRule(file, '.end')).toContain('max-width: 100%;');
+    expect(cssRule(file, '.end > *')).toBe('max-width: 100%;');
+    expect(cssRule(file, '.cellValue')).toContain('overflow-wrap: break-word;');
+    // Stacking moves the end cell to the start of its track but keeps it
+    // fitted to its content, so the cap must hold there too: no stacked
+    // `.end` rule sets a width of its own.
+    const stacked = [
+      ...readCss(file).matchAll(/\.(?:stack|within)\d+ \.end \{([^}]*)\}/g),
+    ].map((match) => match[1] ?? '');
+    expect(stacked).toHaveLength(7);
+    expect(stacked.filter((body) => body.includes('width'))).toEqual([]);
   });
 
   test('callback rows are buttons; selected rows are marked current', () => {

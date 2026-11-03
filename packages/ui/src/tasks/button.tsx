@@ -17,7 +17,9 @@ function isLink(props: ButtonProps): props is ButtonAsLinkProps {
    the purple fill (one per view), secondary the white bordered default,
    quiet the ghost for toolbars, danger a red fill for a destructive or
    irreversible write. sm / md / lg are 26 / 30 / 36px; block stretches it
-   across its container. Hover fills are gated off touch. With href it
+   across its container, and align="start" lays its content from the start
+   edge (a quiet block button over a summary line; the root then carries
+   data-align="start"). Hover fills are gated off touch. With href it
    renders through the host's <Link>, so it can sit in any router. busy
    (a save or send in flight) disables it with aria-busy and swaps its
    text for busyLabel; it never shows a spinner. A host's data-* hooks
@@ -27,6 +29,7 @@ export function Button(props: ButtonProps) {
     variant = 'secondary',
     size = 'md',
     block = false,
+    align = 'center',
     icon,
     iconAfter,
     className,
@@ -41,6 +44,7 @@ export function Button(props: ButtonProps) {
     styles[variant],
     styles[size],
     block ? styles.block : undefined,
+    align === 'start' ? styles.start : undefined,
     hasText ? undefined : styles.iconOnly,
     className
   );
@@ -67,6 +71,7 @@ export function Button(props: ButtonProps) {
         {...hostData}
         href={props.href}
         className={classes}
+        data-align={align === 'start' ? 'start' : undefined}
         aria-label={props['aria-label']}
         aria-describedby={props['aria-describedby']}
         title={props.title}
@@ -114,6 +119,7 @@ export function Button(props: ButtonProps) {
       aria-busy={busy ? 'true' : undefined}
       title={props.title}
       data-variant={variant}
+      data-align={align === 'start' ? 'start' : undefined}
     >
       {body}
     </button>

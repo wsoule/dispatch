@@ -127,6 +127,54 @@ describe('TextArea', () => {
     expect(seen[0]).toBe(screen.getByRole('textbox', { name: 'Log' }));
   });
 
+  // The built CSS joins the global primitives and the TextArea module in
+  // an order nobody controls; with one class on each side the later sheet
+  // won, and the global `resize: vertical` gave an auto-grow box a grip.
+  // Both sheets go into the page in each order (the module's class names
+  // as written: hashing keeps their specificity), and the auto-grow box
+  // must show no grip either way while a plain field keeps its own.
+  test('an auto-grow box shows no resize grip whichever sheet comes last', () => {
+    const sheets = {
+      primitives: readFileSync(
+        path.join(import.meta.dir, '..', 'src', 'styles', 'primitives.css'),
+        'utf8'
+      ),
+      module: readFileSync(
+        path.join(
+          import.meta.dir,
+          '..',
+          'src',
+          'controls',
+          'text-area.module.css'
+        ),
+        'utf8'
+      ),
+    };
+    const grow = document.createElement('textarea');
+    grow.className = 'textarea grow';
+    const plain = document.createElement('textarea');
+    plain.className = 'textarea';
+    document.body.append(grow, plain);
+    const style = document.createElement('style');
+    document.head.append(style);
+    try {
+      for (const order of [
+        [sheets.module, sheets.primitives],
+        [sheets.primitives, sheets.module],
+      ]) {
+        style.textContent = order.join('\n');
+        expect({
+          grow: getComputedStyle(grow).resize,
+          plain: getComputedStyle(plain).resize,
+        }).toEqual({ grow: 'none', plain: 'vertical' });
+      }
+    } finally {
+      style.remove();
+      grow.remove();
+      plain.remove();
+    }
+  });
+
   test('autoGrow off leaves the height to CSS', () => {
     render(<TextArea aria-label="Log" autoGrow={false} />);
     const area = screen.getByRole('textbox', { name: 'Log' });

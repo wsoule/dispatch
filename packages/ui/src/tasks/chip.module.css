@@ -183,7 +183,9 @@
    fill has room. Hover steps the fill one surface darker (a tinted chip
    shows its tinted edge instead, keeping its text on its tint at 4.5:1;
    the inverse slab keeps its fill);
-   selected (aria-pressed) is the accent's selection tint in its edge.
+   selected (aria-pressed) is the accent's selection tint in a full accent
+   edge (3:1 on --bg, --bg-side, --surface, --surface-2 and --sunken; the
+   softer --accent-line was about 1.7:1, too faint to tell the state by).
    Focus is the 2px --focus-ring outline, 2px out. */
 .button {
   font-family: inherit;
@@ -202,7 +204,7 @@
 }
 
 .button[aria-pressed='true'] {
-  border-color: var(--accent-line);
+  border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent-ink);
 }

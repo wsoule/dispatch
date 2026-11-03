@@ -33,6 +33,10 @@ interface ButtonCommonProps extends DataAttributes {
   size?: ButtonSize;
   /** Stretch across the container (a sign-in card's button). */
   block?: boolean;
+  /** Where the content sits along the button: center (the default) or
+   * start, for a block button whose content is a summary read left to
+   * right (a quiet block button holding a task's mini Flight Plan). */
+  align?: 'center' | 'start';
   /** Leading icon, e.g. a 14px lucide icon (strokeWidth 1.8). */
   icon?: ReactNode;
   /** Trailing icon. */

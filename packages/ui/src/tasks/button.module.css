@@ -48,6 +48,14 @@
   width: 100%;
 }
 
+/* align="start": the content from the start edge, for a quiet block
+   button whose content is a summary line (a task's mini Flight Plan),
+   not a centred label. */
+.start {
+  justify-content: flex-start;
+  text-align: start;
+}
+
 .iconOnly.md {
   width: var(--h-md);
   padding: 0;
@@ -115,11 +123,16 @@
   transform: scale(0.97);
 }
 
-/* Toggled on (a toolbar toggle): the pressed fill, not a flood. */
+/* Toggled on (a toolbar toggle): the accent's selection tint in a full
+   accent edge, with accent text, as a pressed ChipButton and a selected
+   segment draw it. The edge is the state's indicator (WCAG 1.4.11): 3:1
+   or better against --bg, --bg-side, --surface, --surface-2 and --sunken,
+   light and dark (not --surface-3), where the old --surface-3 fill in a
+   --border-strong edge differed from an unpressed button by about 1.2:1. */
 .button[aria-pressed='true'] {
-  border-color: var(--border-strong);
-  background: var(--surface-3);
-  color: var(--text);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
   box-shadow: none;
 }
 

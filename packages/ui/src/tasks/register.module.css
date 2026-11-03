@@ -113,10 +113,21 @@
   min-width: 0;
 }
 
+/* An end cell is only as wide as its content (justify-self, not stretch),
+   so a long unbreakable value (a doc slug, a run id) would set its width
+   past the grid area: past the card edge when the rows stack, over the
+   column before it in the table. max-width keeps the cell, and the value
+   inside it, within the area, so a nowrap value with an ellipsis clips and
+   a long word wraps (.cellValue's overflow-wrap). */
 .end {
+  max-width: 100%;
   align-items: flex-end;
   justify-self: end;
   text-align: right;
+}
+
+.end > * {
+  max-width: 100%;
 }
 
 /* A cell that takes the whole row (span="row"), in the table and in every
@@ -136,6 +147,7 @@
 
 .cellValue {
   min-width: 0;
+  overflow-wrap: break-word;
   font-size: var(--fs);
   font-weight: var(--fw-regular);
   line-height: var(--lh);

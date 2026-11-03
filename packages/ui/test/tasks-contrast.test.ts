@@ -302,6 +302,66 @@ describe('the list controls keep 3:1 edges', () => {
   }
 });
 
+// A pressed toggle (Button with aria-pressed, a selected ChipButton) must
+// be told apart from an unpressed one by more than a faint fill (WCAG
+// 1.4.11): its edge is the full accent, 3:1 against every surface a
+// toolbar or a card puts it on and against its own tint, and its accent
+// text holds 4.5:1 on that tint. The forced-colours Highlight stays.
+describe('a pressed toggle shows its state at 3:1', () => {
+  const pressed = [
+    ['Button', 'tasks/button.module.css'],
+    ['ChipButton', 'tasks/chip.module.css'],
+  ] as const;
+
+  test('the state is the accent tint in a full accent edge, with accent text', () => {
+    for (const [name, file] of pressed) {
+      const rule = cssRule(file, ".button[aria-pressed='true']");
+      expect({ name, rule }).toEqual({
+        name,
+        rule: expect.stringContaining('border-color: var(--accent);'),
+      });
+      expect(rule).toContain('background: var(--accent-soft);');
+      expect(rule).toContain('color: var(--accent-ink);');
+      // Forced colours: the Highlight edge, since the tint becomes Canvas.
+      const sheet = readCss(file).replace(/\s+/g, ' ');
+      const forced = sheet.slice(
+        sheet.indexOf('@media (forced-colors: active)')
+      );
+      expect(forced).toMatch(
+        /\.button\[aria-pressed='true'\] \{[^}]*border-color: Highlight;/
+      );
+    }
+  });
+
+  for (const [theme, t] of THEMES) {
+    test(`${theme}: the edge on each surface and on its tint, the text on the tint`, () => {
+      const accent = hex(t, '--accent');
+      const ink = hex(t, '--accent-ink');
+      const share = tintShare(t, '--accent-soft');
+      const failing: string[] = [];
+      for (const ground of [
+        '--bg',
+        '--bg-side',
+        '--surface',
+        '--surface-2',
+        '--sunken',
+      ]) {
+        const base = hex(t, ground);
+        const tint = over(accent, base, share);
+        const edge = contrast(accent, base);
+        if (edge < 3) failing.push(`edge on ${ground}: ${edge}`);
+        const inner = contrast(accent, tint);
+        if (inner < 3)
+          failing.push(`edge on its tint over ${ground}: ${inner}`);
+        const text = contrast(ink, tint);
+        if (text < 4.5)
+          failing.push(`text on its tint over ${ground}: ${text}`);
+      }
+      expect(failing).toEqual([]);
+    });
+  }
+});
+
 /** The lists lane's stylesheets (paths under src). */
 const LANE_FILES = [
   'tasks/task-group-table.module.css',
