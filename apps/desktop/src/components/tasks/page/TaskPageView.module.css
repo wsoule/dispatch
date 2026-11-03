@@ -106,9 +106,9 @@
   background: var(--surface-2);
 }
 
+/* The "Add detail" pass's error; its colour is the danger tone's ink (toneText). */
 .enrichError {
   margin: 0;
-  color: var(--red);
   font-size: var(--fs-xs);
 }
 
@@ -158,10 +158,6 @@
 .agentSummary {
   font-size: var(--fs-xs);
   color: var(--text-3);
-}
-
-.agentSummary[data-waiting='true'] {
-  color: var(--amber);
 }
 
 .agentWhen {

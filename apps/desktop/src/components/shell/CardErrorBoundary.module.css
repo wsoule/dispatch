@@ -1,5 +1,6 @@
 /* One list item that failed to draw (CardErrorBoundary.tsx): a quiet row with its raw content
-   folded under it. */
+   folded under it. The warning triangle takes the danger tone (data-tone on the icon), so a
+   failed step reads like every other failure; the sentence says it, not the colour alone. */
 .card {
   display: flex;
   flex-direction: column;
@@ -19,7 +20,7 @@
 
 .icon {
   flex: none;
-  color: var(--red);
+  color: var(--tone);
 }
 
 .sentence {

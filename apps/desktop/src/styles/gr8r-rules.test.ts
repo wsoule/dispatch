@@ -24,8 +24,13 @@ const srcDir = path.join(import.meta.dir, '..');
     recursively for those extensions, and an absent one scans as empty (`shell` does not exist
     yet; it stays listed so the first shell file is covered the day it lands). Files that sit
     in directories the legacy views share (lib/ the reducers, views/ the pages) are listed
-    one by one; components/shell is scanned whole since B14 moved its last legacy file. Every Phase 7 batch appends the
-    files it converts; B16 replaces the list with a scan of all of src/. */
+    one by one; components/shell is scanned whole since B14 moved its last legacy file. Every
+    Phase 7 batch appended the files it converted. Since B15 (App.tsx) every file the legacy
+    stack touched is covered except main.tsx (B16 rewrites it) and the Tailwind, preflight and
+    bridge sheets (B16 deletes them; legacy-bridge.css is scanned meanwhile as one of SHEETS).
+    B16 then replaces the list with a scan of all of src/, exempting the xterm hexes in
+    lib/terminalPalette.ts and the hex fixtures in lib/terminalPalette.test.ts and
+    lib/terminalScreen.test.ts. */
 const GR8R_SCOPE: readonly string[] = [
   'shell',
   'adapters',
@@ -241,6 +246,8 @@ const GR8R_SCOPE: readonly string[] = [
   'views/SignInView.tsx',
   'views/SignInView.module.css',
   'views/SignInView.test.tsx',
+  'App.tsx',
+  'components/people',
 ];
 
 /** Test files whose hex literals are Linear-supplied data, not colours of their own: a

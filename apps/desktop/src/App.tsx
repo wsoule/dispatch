@@ -72,6 +72,7 @@ import {
   SHELL_STORAGE_KEY,
 } from './components/shell/DispatchShell';
 import { GateFrame } from './components/shell/GateFrame';
+import { PageHead } from './components/shell/PageHead';
 import { PresenceStack } from './components/shell/PresenceStack';
 import { projectWorkspaceSwitcher } from './components/shell/projectWorkspaces';
 import { SavedViewsProvider } from './components/shell/SavedViewsContext';
@@ -96,7 +97,6 @@ import {
   type ComposerMode,
   TaskComposerSlideOver,
 } from './components/tasks/TaskComposerSlideOver';
-import { TasksBackButton } from './components/tasks/TasksPageHeader';
 import { useAdminItems } from './hooks/useAdminItems';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
 import { useDeepLinkRouter } from './hooks/useDeepLinkRouter';
@@ -496,15 +496,15 @@ function App() {
     setShowCreate(true);
   }, []);
 
-  // Moves nav state to the newly (re-)dispatched run. The task view is the only run surface
-  // now, and a run that has just been created is live, so it opens on Run.
-  // Two views' page right now; read by callbacks made before it is computed below.
+  // The Tasks side page right now; read by callbacks made before it is computed below.
   const taskPageRef = useRef<{ on: boolean; taskId: string | null }>({
     on: false,
     taskId: null,
   });
+  // Moves nav state to the newly (re-)dispatched run. The task view is the only run surface
+  // now, and a run that has just been created is live, so it opens on Run.
   const onRunDispatched = useCallback((runId: string, taskId: string) => {
-    // A run started from a task already open (split or full) stays on that page.
+    // A run started from the task page already open stays on that page.
     const page = taskPageRef.current;
     if (page.on && page.taskId === taskId) {
       dispatchNav({ type: 'setTaskTab', tab: 'run' });
@@ -1448,7 +1448,7 @@ function App() {
   const [firstRunSetAsideFor, setFirstRunSetAsideFor] = useState<string | null>(
     null
   );
-  const twoViewsFirstRun =
+  const emptyProjectFirstRun =
     activeProject !== null &&
     firstRunSetAsideFor !== activeProject.path &&
     data.tasksReady &&
@@ -1457,11 +1457,13 @@ function App() {
   // Resolution, first-project and get-started screens take precedence over any view.
   const gateScreen: ReactNode =
     resolutionError !== null ? (
-      <div className={styles.centred}>
+      <div className={styles.centred} role="alert">
         <EmptyState
           icon={
             <TriangleAlert
-              className={styles.alert}
+              className={styles.alertIcon}
+              data-tone="danger"
+              aria-hidden="true"
               size={20}
               strokeWidth={1.8}
             />
@@ -1482,7 +1484,9 @@ function App() {
         }}
       />
     ) : stillResolving ? (
-      <div className={styles.centred}>
+      // The region announces the sentence; the Spinner (label="") stays hidden from assistive
+      // tech so it is read once.
+      <div className={styles.centred} role="status">
         <EmptyState icon={<Spinner size="lg" label="" />}>
           Loading project…
         </EmptyState>
@@ -1710,7 +1714,7 @@ function App() {
   });
   // The first-run box also shows while the guide waits at Describe it (after a Restart).
   const showFirstRun =
-    twoViewsFirstRun ||
+    emptyProjectFirstRun ||
     (guide.view?.stage === 'describe' &&
       activeProject !== null &&
       firstRunSetAsideFor !== activeProject.path);
@@ -1785,16 +1789,16 @@ function App() {
   const peekTaskId =
     navState.peek?.kind === 'task' ? navState.peek.taskId : null;
 
-  const closeTwoViewsPage = () => dispatchNav({ type: 'closePage' });
+  const closeSidePage = () => dispatchNav({ type: 'closePage' });
 
   // A project view shown as a page under Tasks, its own header leading back.
   const renderHostedView = (page: HostedPage): ReactNode => {
     const { view } = page;
     if (data.portLoading || data.portError || data.client === null) {
       return (
-        <div className="flex h-full min-h-0 flex-col">
-          <div className="px-4 pt-2">
-            <TasksBackButton onBack={closeTwoViewsPage} />
+        <div className={styles.hostedPage}>
+          <div className={styles.hostedHead}>
+            <PageHead onBack={closeSidePage} />
           </div>
           <DaemonUnavailable
             starting={data.portLoading}
@@ -1806,9 +1810,9 @@ function App() {
     }
     if (hideHostViews && HOST_VIEWS.has(view)) {
       return (
-        <div className="flex h-full min-h-0 flex-col">
-          <div className="px-4 pt-2">
-            <TasksBackButton onBack={closeTwoViewsPage} />
+        <div className={styles.hostedPage}>
+          <div className={styles.hostedHead}>
+            <PageHead onBack={closeSidePage} />
           </div>
           <div className={styles.centred}>
             <EmptyState label="Only the operator can open this">
@@ -1823,13 +1827,13 @@ function App() {
         return (
           <FilesView
             data={data}
-            onBack={closeTwoViewsPage}
+            onBack={closeSidePage}
             quickOpen={navState.quickOpen}
             onQuickOpenChange={onQuickOpenChange}
           />
         );
       case 'terminals':
-        return <TerminalsView data={data} onBack={closeTwoViewsPage} />;
+        return <TerminalsView data={data} onBack={closeSidePage} />;
       case 'threads':
         return (
           <ThreadsView
@@ -1844,7 +1848,7 @@ function App() {
               submit: overseer.reply,
               open: openOverseer,
             }}
-            onBack={closeTwoViewsPage}
+            onBack={closeSidePage}
           />
         );
       case 'timeline':
@@ -1878,7 +1882,7 @@ function App() {
         // The projects register: every open project with its status, next
         // milestone, lead and allocation, grouped by initiative. Its rows and
         // cells are real hrefs the shell's link provider resolves.
-        return <ProjectsView data={data} onBack={closeTwoViewsPage} />;
+        return <ProjectsView data={data} onBack={closeSidePage} />;
       case 'live':
         // Every container with work moving, once the Issues graph's Live
         // layout: dispatches in place, a node's page on `o`, its quick look
@@ -1891,7 +1895,7 @@ function App() {
             onDispatchFailed={onCockpitDispatchFailed}
             onOpenTask={openTaskView}
             onPeekTask={peekTask}
-            onBack={closeTwoViewsPage}
+            onBack={closeSidePage}
           />
         );
     }
@@ -1899,7 +1903,7 @@ function App() {
 
   // What Tasks shows instead of its list. A task here is always the full page;
   // the quick look is the drawer in the peek slot below.
-  const renderTwoViewsPage = (page: TasksSidePage): ReactNode => {
+  const renderSidePage = (page: TasksSidePage): ReactNode => {
     switch (page.kind) {
       case 'task':
         return data.config === null ? null : (
@@ -1910,7 +1914,7 @@ function App() {
             onModeChange={(tab) => dispatchNav({ type: 'setTaskTab', tab })}
             runId={page.runId}
             onSelectRun={(runId) => dispatchNav({ type: 'openRun', runId })}
-            onBack={closeTwoViewsPage}
+            onBack={closeSidePage}
             conversationCount={speechByTask.get(page.taskId)?.count ?? 0}
           />
         );
@@ -1924,7 +1928,7 @@ function App() {
             onSelectDoc={(docId) => openDoc(docId, null)}
             onOpenRef={openRef}
             tasksPage={{
-              onBack: closeTwoViewsPage,
+              onBack: closeSidePage,
               onOpenAllDocs: () =>
                 dispatchNav({ type: 'setProjectView', view: 'docs' }),
             }}
@@ -1949,7 +1953,7 @@ function App() {
             key={page.number}
             data={data}
             prNumber={page.number}
-            onBack={closeTwoViewsPage}
+            onBack={closeSidePage}
             tasksPage
           />
         );
@@ -1979,7 +1983,7 @@ function App() {
               return doc;
             }}
             draft={draft}
-            onDone={closeTwoViewsPage}
+            onDone={closeSidePage}
             onRetry={() => retryDraft(draft)}
             send={
               guide.active && guide.draftId === draft.id
@@ -1999,7 +2003,7 @@ function App() {
             data={data}
             room={page.room}
             onOpenRef={openRef}
-            onBack={closeTwoViewsPage}
+            onBack={closeSidePage}
           />
         );
       case 'view':
@@ -2010,7 +2014,7 @@ function App() {
             key={page.path}
             data={data}
             initialPath={page.path}
-            onBack={closeTwoViewsPage}
+            onBack={closeSidePage}
             quickOpen={navState.quickOpen}
             onQuickOpenChange={onQuickOpenChange}
           />
@@ -2044,7 +2048,7 @@ function App() {
         }
       : null;
 
-  // Sessions and All agents as Settings pages in Two views.
+  // Usage and Runs as hosted Settings pages (SessionsHubView, AllAgentsView).
   const hostedSettingsPages: HostedSettingsPage[] = [
     {
       id: 'usage',
@@ -2320,7 +2324,7 @@ function App() {
         )
       }
       // Over a setup gate the shell shows only Settings: a gate it never
-      // draws keeps the two views from mounting under it.
+      // draws keeps Overseer and Tasks from mounting under it.
       gate={setupGate ? false : (gateScreen ?? agentSetupScreen)}
       guide={guideCard}
       // Only while a step wants a person: the shell's banner slot is a styled
@@ -2420,7 +2424,7 @@ function App() {
               <FirstRunView
                 projectName={activeProject?.name ?? null}
                 planner={guideAgent === null || guideAgent.plans}
-                // The draft opens under Tasks: Two views has no drafts tray.
+                // The draft opens under Tasks: Overseer has no drafts tray.
                 onStartDraft={async (prompt) => {
                   // A new draft replaces the last one's failure.
                   setFirstRunDraftId(null);
@@ -2520,14 +2524,14 @@ function App() {
           onNewTask={() => openCreateTask()}
           onOpenRef={openRef}
           onOpenDecision={onOpenDecision}
-          onClosePage={closeTwoViewsPage}
+          onClosePage={closeSidePage}
           speechByTask={speechByTask}
           onOpenPr={(number) => dispatchNav({ type: 'openPr', number })}
           onOpenDoc={(docId) => openDoc(docId, null)}
           onOpenAllDocs={() =>
             dispatchNav({ type: 'setProjectView', view: 'docs' })
           }
-          renderPage={renderTwoViewsPage}
+          renderPage={renderSidePage}
           composer={
             <TasksComposer
               overseer={overseer}
@@ -2576,7 +2580,7 @@ function App() {
   // Settings alone while the gate stays mounted, hidden, in the first (typed
   // values, the chosen agent and a running install or sign-in kept), and
   // closing Settings shows the gate again with focus back where it was.
-  const twoViewsFrame = (
+  const appFrame = (
     <>
       {setupGate && (
         <GateFrame
@@ -2614,8 +2618,8 @@ function App() {
               flightPlan={flightPlanHost}
               planning={planning}
             >
-              <div className="bg-frame relative flex h-screen flex-col overflow-hidden">
-                {twoViewsFrame}
+              <div className={styles.frame}>
+                {appFrame}
 
                 <TaskComposerSlideOver
                   open={composerMode !== null}

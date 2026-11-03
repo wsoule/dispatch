@@ -81,6 +81,7 @@ function CardErrorRow({ raw }: { raw: string }) {
       <div className={styles.row}>
         <TriangleAlert
           className={styles.icon}
+          data-tone="danger"
           size={14}
           strokeWidth={1.8}
           aria-hidden="true"

@@ -1,4 +1,9 @@
-import type { ApiClient, ConversationQuery, Message } from '@dispatch/client';
+import type {
+  ApiClient,
+  ConversationQuery,
+  Message,
+  PlanRecord,
+} from '@dispatch/client';
 import {
   act,
   cleanup,
@@ -712,15 +717,23 @@ describe('TaskPageView outside agents', () => {
       }),
     ]);
     expect(await screen.findByText('Outside agents')).toBeDefined();
-    const summaries = Array.from(
-      document.querySelectorAll('[data-slot=outside-agent-summary]'),
-      (el) => el.textContent
+    const summaryEls = Array.from(
+      document.querySelectorAll('[data-slot=outside-agent-summary]')
     );
     // The agent waiting on you comes first.
-    expect(summaries).toEqual([
+    expect(summaryEls.map((el) => el.textContent)).toEqual([
       'Waiting on you · 1 question',
       'Waiting on them · 1 question',
     ]);
+    // Waiting on you is missing input: the warning tone's text, not a raw hue. data-waiting
+    // stays as the state hook (the tone is only its colour).
+    const [waiting, notWaiting] = summaryEls;
+    expect(waiting?.getAttribute('data-waiting')).toBe('true');
+    expect(waiting?.getAttribute('data-tone')).toBe('warning');
+    expect(waiting?.classList.contains('toneText')).toBe(true);
+    expect(notWaiting?.hasAttribute('data-waiting')).toBe(false);
+    expect(notWaiting?.hasAttribute('data-tone')).toBe(false);
+    expect(notWaiting?.classList.contains('toneText')).toBe(false);
     expect(asked[0]).toMatchObject({ about: 'task:t-1' });
   });
 
@@ -742,5 +755,31 @@ describe('TaskPageView outside agents', () => {
     });
     expect(asked).toEqual([]);
     expect(document.querySelector('[data-slot=outside-agents]')).toBeNull();
+  });
+});
+
+describe('TaskPageView enrich error', () => {
+  test('a failed "Add detail" pass reads in the danger tone, not a raw hue', () => {
+    const failed: PlanRecord = {
+      id: 'pl-1',
+      prompt: 'add detail',
+      plannerName: 'claude',
+      role: 'enrich',
+      state: 'failed',
+      error: 'the planner timed out',
+      messages: [],
+      questions: [],
+      createdAt: '2026-10-29T10:00:00.000Z',
+      updatedAt: '2026-10-29T10:00:00.000Z',
+    };
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1')],
+        project: { enrichTaskId: 't-1', enrichPlanRecord: failed },
+      })
+    );
+    const error = screen.getByText('the planner timed out');
+    expect(error.getAttribute('data-tone')).toBe('danger');
+    expect(error.classList.contains('toneText')).toBe(true);
   });
 });

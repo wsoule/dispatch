@@ -1,4 +1,4 @@
-import { Button, InitialsAvatar, TaskDetailSection } from '@dispatch/ui';
+import { Button, cx, InitialsAvatar, TaskDetailSection } from '@dispatch/ui';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowUpRight } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -73,28 +73,34 @@ function OutsideAgentsSection({ page }: { page: TaskPageModel }) {
   return (
     <TaskDetailSection title="Outside agents" count={parties.length}>
       <ul data-slot="outside-agents" className={styles.agents}>
-        {parties.map((party) => (
-          <li
-            key={party.address}
-            title={party.address}
-            className={styles.agent}
-          >
-            <InitialsAvatar name={party.label} />
-            <span className={styles.agentText}>
-              <span className={styles.agentName}>{party.label}</span>
-              <span
-                data-slot="outside-agent-summary"
-                data-waiting={party.waitingOnYou > 0 ? 'true' : undefined}
-                className={styles.agentSummary}
-              >
-                {partySummary(party)}
+        {parties.map((party) => {
+          // An agent waiting on you reads in the warning tone (amber: input missing).
+          // data-waiting is the state hook tests read; data-tone only colours it.
+          const waiting = party.waitingOnYou > 0;
+          return (
+            <li
+              key={party.address}
+              title={party.address}
+              className={styles.agent}
+            >
+              <InitialsAvatar name={party.label} />
+              <span className={styles.agentText}>
+                <span className={styles.agentName}>{party.label}</span>
+                <span
+                  data-slot="outside-agent-summary"
+                  data-waiting={waiting ? 'true' : undefined}
+                  data-tone={waiting ? 'warning' : undefined}
+                  className={cx(styles.agentSummary, waiting && 'toneText')}
+                >
+                  {partySummary(party)}
+                </span>
               </span>
-            </span>
-            <span className={styles.agentWhen}>
-              {formatRelativeTimeFromIso(party.lastAt)}
-            </span>
-          </li>
-        ))}
+              <span className={styles.agentWhen}>
+                {formatRelativeTimeFromIso(party.lastAt)}
+              </span>
+            </li>
+          );
+        })}
       </ul>
     </TaskDetailSection>
   );
@@ -250,7 +256,12 @@ export function TaskPageRail({
               />
             )}
             {enrich.error !== null && (
-              <p className={styles.enrichError}>{enrich.error}</p>
+              <p
+                className={cx(styles.enrichError, 'toneText')}
+                data-tone="danger"
+              >
+                {enrich.error}
+              </p>
             )}
             {enrich.draft !== null && (
               <EnrichReview
