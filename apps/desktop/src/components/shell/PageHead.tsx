@@ -12,8 +12,12 @@ export type PageHeadProps = {
   /** The heading's level: 1 for a page (default), 2 for a page hosted
    * inside another page that owns the h1. */
   titleLevel?: 1 | 2;
-  /** Leads the head with the back chip to the Tasks list. */
+  /** Leads the head with the back chip to the Tasks list; shorthand for
+   * `back={{ onBack }}`. Ignored when `back` is given. */
   onBack?: () => void;
+  /** Leads the head with a back chip to the page's parent; its label, name
+   * and test id default to the Tasks chip (see PageHeadBack). */
+  back?: PageHeadBack;
   /** Breadcrumb segments, joined by ›; the last one is the current page. */
   crumbs?: readonly ReactNode[];
   /** A quiet sentence beside the heading ("Nothing is written until…"). */
@@ -24,26 +28,55 @@ export type PageHeadProps = {
   actions?: ReactNode;
 } & DataAttributes;
 
-/** The chip a page under Tasks leads with: a quiet "Tasks" button with a
- * back chevron that returns to the Tasks list. */
-export function TasksBackButton({ onBack }: { onBack: () => void }) {
+/** The back chip a page leads with. Every field but `onBack` defaults to
+ * the Tasks chip: label "Tasks", accessible name "Back to tasks", test id
+ * `tasks-back`. A page under another parent names that parent instead
+ * (Live, under Runs, passes RUNS_BACK). */
+export type PageHeadBack = {
+  /** What the chip shows: the parent page's name ("Tasks", "Runs"). */
+  label?: string;
+  /** The chip's accessible name ("Back to tasks"). */
+  name?: string;
+  /** Returns to the parent page. */
+  onBack: () => void;
+  /** The chip's data-testid; every hosted page keeps `tasks-back`. */
+  testId?: string;
+};
+
+/** The back chip of a page under Runs (Live): it reads Runs › Live. */
+export const RUNS_BACK = { label: 'Runs', name: 'Back to runs' } as const;
+
+/** A page's back chip: a quiet button with a back chevron that returns to
+ * the parent page, by default the Tasks list. */
+export function BackChip({
+  label = 'Tasks',
+  name = 'Back to tasks',
+  onBack,
+  testId = 'tasks-back',
+}: PageHeadBack) {
   return (
     <Button
       variant="quiet"
       size="sm"
-      data-testid="tasks-back"
-      aria-label="Back to tasks"
+      data-testid={testId}
+      aria-label={name}
       icon={<ChevronLeft size={14} strokeWidth={1.8} aria-hidden />}
       onClick={onBack}
     >
-      Tasks
+      {label}
     </Button>
   );
 }
 
+/** The chip a page under Tasks leads with: a quiet "Tasks" button with a
+ * back chevron that returns to the Tasks list. */
+export function TasksBackButton({ onBack }: { onBack: () => void }) {
+  return <BackChip onBack={onBack} />;
+}
+
 /**
  * The head of a main-column page (the Projects page's head made shared): the
- * optional back chip, the breadcrumb trail, the heading, a quiet meta
+ * optional back chip (`back`, or `onBack` for the Tasks chip), the breadcrumb trail, the heading, a quiet meta
  * sentence, the receipts line and the actions pushed right. It places
  * nothing around itself; the host pads it. `data-slot="page-header"` on the
  * root and `data-slot="page-header-crumb"` on the trail are the hooks the
@@ -53,6 +86,7 @@ export function PageHead({
   title,
   titleLevel = 1,
   onBack,
+  back,
   crumbs,
   meta,
   receipts,
@@ -60,9 +94,10 @@ export function PageHead({
   ...data
 }: PageHeadProps) {
   const Heading = titleLevel === 2 ? 'h2' : 'h1';
+  const chip = back ?? (onBack === undefined ? undefined : { onBack });
   return (
     <header {...data} data-slot="page-header" className={styles.head}>
-      {onBack === undefined ? null : <TasksBackButton onBack={onBack} />}
+      {chip === undefined ? null : <BackChip {...chip} />}
       {crumbs !== undefined && crumbs.length > 0 ? (
         <Crumbs segments={crumbs} />
       ) : null}

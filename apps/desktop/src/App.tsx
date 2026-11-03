@@ -48,7 +48,6 @@ import type {
   SendChoice,
   SendToAgentOptions,
 } from './components/guide/SendToAgent';
-import { RunsBackButton } from './components/live/LivePageHead';
 import { MemoryRecent } from './components/memory/MemoryRecent';
 import {
   DraftsSection,
@@ -73,7 +72,7 @@ import {
   SHELL_STORAGE_KEY,
 } from './components/shell/DispatchShell';
 import { GateFrame } from './components/shell/GateFrame';
-import { PageHead } from './components/shell/PageHead';
+import { PageHead, RUNS_BACK } from './components/shell/PageHead';
 import { PresenceStack } from './components/shell/PresenceStack';
 import { projectWorkspaceSwitcher } from './components/shell/projectWorkspaces';
 import { SavedViewsProvider } from './components/shell/SavedViewsContext';
@@ -1806,11 +1805,13 @@ function App() {
         <div className={styles.hostedPage}>
           <div className={styles.hostedHead}>
             {/* Live closes back to Runs, so its chip says so. */}
-            {view === 'live' ? (
-              <RunsBackButton onBack={closeSidePage} />
-            ) : (
-              <PageHead onBack={closeSidePage} />
-            )}
+            <PageHead
+              back={
+                view === 'live'
+                  ? { ...RUNS_BACK, onBack: closeSidePage }
+                  : { onBack: closeSidePage }
+              }
+            />
           </div>
           <DaemonUnavailable
             starting={data.portLoading}

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
 
-import { PageHead, TasksBackButton } from './PageHead';
+import { BackChip, PageHead, RUNS_BACK, TasksBackButton } from './PageHead';
 
 test('a full head: back chip, crumb trail, heading, meta, receipts and actions', () => {
   const onBack = mock(() => {});
@@ -67,6 +67,60 @@ test('TasksBackButton says Tasks and is named Back to tasks', () => {
   expect(back.getAttribute('data-testid')).toBe('tasks-back');
   expect(back.textContent).toBe('Tasks');
   // The chevron is decorative.
+  expect(back.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+  fireEvent.click(back);
+  expect(onBack).toHaveBeenCalledTimes(1);
+});
+
+test('the back prop names another parent: Runs, named Back to runs, test id kept', () => {
+  const onBack = mock(() => {});
+  render(<PageHead title="Live" back={{ ...RUNS_BACK, onBack }} />);
+  const back = screen.getByRole('button', { name: 'Back to runs' });
+  expect(back.getAttribute('data-testid')).toBe('tasks-back');
+  expect(back.textContent).toBe('Runs');
+  expect(screen.queryByRole('button', { name: 'Back to tasks' })).toBeNull();
+  // The chip leads the head, before the heading.
+  expect(
+    back.compareDocumentPosition(
+      screen.getByRole('heading', { level: 1, name: 'Live' })
+    ) & Node.DOCUMENT_POSITION_FOLLOWING
+  ).toBeTruthy();
+  fireEvent.click(back);
+  expect(onBack).toHaveBeenCalledTimes(1);
+});
+
+test('back defaults to the Tasks chip, and wins over onBack when both are given', () => {
+  const fromBack = mock(() => {});
+  const fromOnBack = mock(() => {});
+  render(
+    <PageHead
+      back={{ onBack: fromBack, testId: 'docs-back' }}
+      onBack={fromOnBack}
+    />
+  );
+  // One chip only: the back prop's, with the Tasks label and name.
+  expect(screen.getAllByRole('button')).toHaveLength(1);
+  const back = screen.getByRole('button', { name: 'Back to tasks' });
+  expect(back.getAttribute('data-testid')).toBe('docs-back');
+  expect(back.textContent).toBe('Tasks');
+  fireEvent.click(back);
+  expect(fromBack).toHaveBeenCalledTimes(1);
+  expect(fromOnBack).not.toHaveBeenCalled();
+});
+
+test('BackChip draws every field it is given, with a decorative chevron', () => {
+  const onBack = mock(() => {});
+  render(
+    <BackChip
+      label="Docs"
+      name="Back to docs"
+      testId="docs-back"
+      onBack={onBack}
+    />
+  );
+  const back = screen.getByRole('button', { name: 'Back to docs' });
+  expect(back.getAttribute('data-testid')).toBe('docs-back');
+  expect(back.textContent).toBe('Docs');
   expect(back.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
   fireEvent.click(back);
   expect(onBack).toHaveBeenCalledTimes(1);

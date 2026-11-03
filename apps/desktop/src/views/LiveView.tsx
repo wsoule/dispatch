@@ -56,10 +56,10 @@ import {
   resolveLiveKey,
   settleLiveCursor,
 } from '../components/live/liveKeys';
-import { LivePageHead } from '../components/live/LivePageHead';
 import { LiveReady } from '../components/live/LiveReady';
 import { usePeople } from '../components/people/PeopleContext';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
+import { PageHead, RUNS_BACK } from '../components/shell/PageHead';
 import { DispatchDialog } from '../components/tasks/DispatchDialog';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
@@ -72,6 +72,7 @@ import { liveCeilingsOf, spendToday } from '../lib/liveSpend';
 import type { WorkMilestoneOptions } from '../lib/milestoneSession';
 import { pendingStarts } from '../lib/optimisticDispatch';
 import { tasksWithFinishedRun } from '../lib/runState';
+import { LIVE_PAGE_TITLE } from '../lib/shellRoutes';
 import { assigneeRef } from '../lib/taskDisplay';
 import styles from './LiveView.module.css';
 
@@ -726,7 +727,13 @@ export function LiveView({
   return (
     <div data-slot="live-view" className={styles.view}>
       <div className={styles.head}>
-        <LivePageHead onBack={onBack} />
+        {/* Runs › Live: the Runs back chip (when hosted) and the h1. No
+            in-page trail: the topbar's already reads project / Runs / Live
+            (currentShellPageTitle). */}
+        <PageHead
+          title={LIVE_PAGE_TITLE}
+          back={onBack === undefined ? undefined : { ...RUNS_BACK, onBack }}
+        />
       </div>
       <LiveHeader
         totals={totals}
