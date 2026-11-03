@@ -258,11 +258,12 @@ export function IssuesView({
   // The model as a saved view stores it: the layout is the toggle's.
   const display = useMemo(() => ({ ...prefs, layout: mode }), [prefs, mode]);
   const full = page.kind !== 'list';
-  // The task whose full page was open last. When Back or Escape returns to the list, its
-  // row takes the focus, not the list's first row (it is not marked open: nothing is); a
-  // quick look opened from the list afterwards takes over (and forgets it). Kept as state adjusted
-  // during render (React's "storing information from previous renders"), so the list
-  // mounts with it in the same commit the page closes.
+  // The task whose full page was open last. When Back or Escape returns to the list or
+  // the board, its row or card takes the focus, not the list's first row (it is not marked
+  // open: nothing is); a quick look opened from the list afterwards takes over (and
+  // forgets it). Kept as state adjusted during render (React's "storing information from
+  // previous renders"), so the list or board mounts with it in the same commit the page
+  // closes.
   const pageTaskId = page.kind === 'task' ? page.taskId : null;
   const [returnTaskId, setReturnTaskId] = useState<string | null>(null);
   if (pageTaskId !== null && pageTaskId !== returnTaskId) {
@@ -630,6 +631,7 @@ export function IssuesView({
                   data={data}
                   display={display}
                   taskFilter={taskFilter}
+                  returnTaskId={returnTaskId ?? undefined}
                   onSelectTask={(taskId) => onSelectTask(taskId)}
                   onRequestFilter={requestFilter}
                   onRequestDisplay={requestDisplay}

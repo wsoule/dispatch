@@ -1141,6 +1141,34 @@ test('a quick look after Back takes over the active row, and its close forgets t
   expect(rowOf('Loose card').getAttribute('aria-current')).toBeNull();
 });
 
+/** A board card's open button: the card's focus target and the board cursor's. */
+function cardOpener(taskId: string): HTMLElement {
+  const opener = document.querySelector<HTMLElement>(
+    `li[data-row-id="${taskId}"] [data-task-card-open]`
+  );
+  if (opener === null) throw new Error(`no card for ${taskId}`);
+  return opener;
+}
+
+test('Back from a task page opened from the board focuses the card it was opened from', () => {
+  const { navigate } = mount({ initialMode: 'board' });
+  // The board takes no focus of its own at mount.
+  expect(document.activeElement).toBe(document.body);
+  navigate({ kind: 'task', taskId: 't-3', tab: 'auto', runId: null });
+  expect(screen.queryByTestId('board-pane')).toBeNull();
+  navigate(LIST);
+  expect(screen.getByTestId('board-pane')).not.toBeNull();
+  expect(document.activeElement).toBe(cardOpener('t-3'));
+  // The card holds the board's cursor too, so j moves on from it.
+  const card = cardOpener('t-3').closest('[data-focused]');
+  expect(card?.getAttribute('data-focused')).toBe('true');
+  // A page of a task the board does not show moves nothing.
+  navigate({ kind: 'task', taskId: 't-gone', tab: 'auto', runId: null });
+  navigate(LIST);
+  expect(document.activeElement).toBe(document.body);
+  expect(document.querySelector('[data-focused="true"]')).toBeNull();
+});
+
 test('Back from the page of a task the list no longer shows focuses the first row', async () => {
   const { navigate } = mount();
   navigate({ kind: 'task', taskId: 't-gone', tab: 'auto', runId: null });

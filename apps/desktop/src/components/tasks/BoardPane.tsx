@@ -67,6 +67,10 @@ interface BoardPaneProps {
   /** The page's filter as one predicate; omitted passes everything. */
   taskFilter?: (doc: TaskListItem) => boolean;
   onSelectTask: (taskId: string) => void;
+  /** The task whose full page just closed: when the board mounts, its card
+   * takes the cursor and the focus (Back lands where it left), as the list's
+   * row does. Read at mount only. */
+  returnTaskId?: string;
   /** `f` on the board: the page header opens its filter menu. */
   onRequestFilter?: () => void;
   /** `⇧V` on the board: the page header opens its Display popover. */
@@ -85,6 +89,7 @@ export function BoardPane({
   display,
   taskFilter,
   onSelectTask,
+  returnTaskId,
   onRequestFilter,
   onRequestDisplay,
 }: BoardPaneProps) {
@@ -235,6 +240,20 @@ export function BoardPane({
       ),
     [lanes, collapsedLaneKeys, laneBy]
   );
+
+  // Back from a task page lands on the card it was opened from: at mount, the
+  // cursor goes to that card when the board shows it, and the card's tile takes
+  // DOM focus from its `focused` prop (TaskBoard first mounts it if its column
+  // window does not hold it). Nothing moves when focus already sits elsewhere
+  // or the card is filtered away, as with the list's row. Read once, at mount.
+  const mountReturn = useRef({ taskId: returnTaskId, orderedTaskIds });
+  useLayoutEffect(() => {
+    const { taskId, orderedTaskIds: onScreen } = mountReturn.current;
+    if (taskId === undefined || !onScreen.includes(taskId)) return;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body) return;
+    setFocusedTaskId(taskId);
+  }, []);
 
   // A card's Dispatch and `d`: in place and optimistic, like the Cockpit's — the card moves
   // to the dispatched column at once.
