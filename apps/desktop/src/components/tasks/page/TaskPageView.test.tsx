@@ -16,9 +16,11 @@ import {
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import type { ReactNode } from 'react';
 
+import type { SavedViewsApi } from '../../../hooks/useSavedViews';
 import type { TaskTab } from '../../../lib/appNav';
 import { readCriteriaChecks } from '../../../lib/reviewCriteria';
 import { linearWorkflowConfig } from '../../settings/fixtures.test-helper';
+import { SavedViewsProvider } from '../../shell/SavedViewsContext';
 import type { ShellActions } from '../../shell/ShellActionsContext';
 import {
   fakeHost,
@@ -524,6 +526,172 @@ describe('header actions', () => {
   test('no star without a saved-views provider', () => {
     mount(fakeHost(newLog(), { tasks: [task('t-1')] }));
     expect(screen.queryByRole('button', { name: /Favorite/ })).toBeNull();
+  });
+});
+
+// A `ResizeObserver` stand-in that records each observer's callback, so a test can
+// replay the page's measurement at a width of its choosing without a layout engine.
+function fakeResizeObservers() {
+  const Original = globalThis.ResizeObserver;
+  const callbacks: ResizeObserverCallback[] = [];
+  class FakeResizeObserver {
+    constructor(callback: ResizeObserverCallback) {
+      callbacks.push(callback);
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  globalThis.ResizeObserver =
+    FakeResizeObserver as unknown as typeof ResizeObserver;
+  return {
+    // Gives the page's frame this width and fires every observer, as a resize would.
+    resizeTo(width: number) {
+      const root = document.querySelector('[data-slot=task-page]');
+      if (root === null) throw new Error('no task page');
+      Object.defineProperty(root, 'clientWidth', {
+        configurable: true,
+        get: () => width,
+      });
+      act(() => {
+        for (const callback of callbacks) callback([], {} as ResizeObserver);
+      });
+    },
+    restore() {
+      globalThis.ResizeObserver = Original;
+    },
+  };
+}
+
+describe('a narrow header', () => {
+  const ICON_TOGGLES = [
+    "The run's files",
+    "A terminal in the run's worktree",
+    "Preview the run's app",
+  ];
+
+  // A finished run with every side view the host can offer, and a starred task.
+  function mountWithToggles(toggled: unknown[]) {
+    const host: TaskPageHost = {
+      ...fakeHost(newLog(), {
+        tasks: [task('t-1')],
+        runs: [run({ state: 'finished' })],
+      }),
+      filesView: () => <p>the files</p>,
+      terminalView: () => <p>the terminal</p>,
+    };
+    const savedViews = {
+      isFavorite: () => true,
+      toggleFavorite: (ref: unknown) => toggled.push(ref),
+    } as unknown as SavedViewsApi;
+    return render(
+      <PageProviders host={host}>
+        <SavedViewsProvider value={savedViews}>
+          <TaskPageView taskId="t-1" />
+        </SavedViewsProvider>
+      </PageProviders>
+    );
+  }
+
+  test('wide, the toggles are buttons and More actions holds the task’s own actions', async () => {
+    const observers = fakeResizeObservers();
+    try {
+      mountWithToggles([]);
+      observers.resizeTo(1200);
+      for (const name of [...ICON_TOGGLES, 'Unfavorite']) {
+        expect(screen.getByRole('button', { name })).toBeTruthy();
+      }
+      await openMoreActions();
+      const names = screen.getAllByRole('option').map((o) => o.textContent);
+      for (const name of [...ICON_TOGGLES, 'Favorite']) {
+        expect(names).not.toContain(name);
+      }
+    } finally {
+      observers.restore();
+    }
+  });
+
+  test('under 480px the toggles move into More actions, named for their state, and come back when it widens', async () => {
+    const observers = fakeResizeObservers();
+    const toggled: unknown[] = [];
+    try {
+      mountWithToggles(toggled);
+      // The Overseer's focus column: about 330px.
+      observers.resizeTo(330);
+      for (const name of [...ICON_TOGGLES, 'Unfavorite']) {
+        expect(screen.queryByRole('button', { name })).toBeNull();
+      }
+      // More actions itself stays a button: it is where the toggles went.
+      expect(screen.getByRole('button', { name: 'More actions' })).toBeTruthy();
+
+      await openMoreActions();
+      // Starred: the row says what it does, as the wide button does.
+      for (const name of [...ICON_TOGGLES, 'Unfavorite']) {
+        expect(optionNamed(name)).toBeTruthy();
+      }
+      // No toggle is drawn ticked (the keyboard would start on it).
+      for (const option of screen.getAllByRole('option')) {
+        expect(option.getAttribute('aria-selected')).not.toBe('true');
+      }
+      await settle(() => fireEvent.click(optionNamed("The run's files")));
+      expect(modeOf()).toBe('files');
+      await openMoreActions();
+      expect(optionNamed("Hide the run's files")).toBeTruthy();
+      await settle(() => fireEvent.click(optionNamed('Unfavorite')));
+      expect(toggled).toEqual([{ kind: 'task', id: 't-1' }]);
+
+      // A frame not laid out (a hidden Activity) keeps the narrow header.
+      observers.resizeTo(0);
+      expect(screen.queryByRole('button', { name: 'Unfavorite' })).toBeNull();
+
+      observers.resizeTo(1200);
+      for (const name of [...ICON_TOGGLES, 'Unfavorite']) {
+        expect(screen.getByRole('button', { name })).toBeTruthy();
+      }
+      expect(
+        screen
+          .getByRole('button', { name: "The run's files" })
+          .getAttribute('aria-pressed')
+      ).toBe('true');
+    } finally {
+      observers.restore();
+    }
+  });
+
+  test('narrow and starred, More actions opened from the keyboard starts on its first row', async () => {
+    const observers = fakeResizeObservers();
+    const toggled: unknown[] = [];
+    try {
+      mountWithToggles(toggled);
+      observers.resizeTo(330);
+      const trigger = screen.getByRole('button', { name: 'More actions' });
+      act(() => trigger.focus());
+      await settle(() => fireEvent.keyDown(trigger, { key: 'ArrowDown' }));
+      const menu = await screen.findByRole('listbox');
+      const active = menu.getAttribute('aria-activedescendant');
+      expect(active).not.toBeNull();
+      expect(document.getElementById(active ?? '')?.textContent).toBe(
+        'Copy id'
+      );
+      // Enter on it copies the id; the task stays starred.
+      await settle(() => fireEvent.keyDown(menu, { key: 'Enter' }));
+      expect(toggled).toEqual([]);
+    } finally {
+      observers.restore();
+    }
+  });
+
+  test('the threshold is the header’s width: the frame less the pane’s 32px gutters', () => {
+    const observers = fakeResizeObservers();
+    try {
+      mountWithToggles([]);
+      observers.resizeTo(512);
+      expect(screen.getByRole('button', { name: 'Unfavorite' })).toBeTruthy();
+      observers.resizeTo(511);
+      expect(screen.queryByRole('button', { name: 'Unfavorite' })).toBeNull();
+    } finally {
+      observers.restore();
+    }
   });
 });
 

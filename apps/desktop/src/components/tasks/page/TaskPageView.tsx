@@ -6,6 +6,7 @@ import {
   EmptyState,
   type NavTabItem,
   NavTabs,
+  type PickerOption,
   PickerPopover,
   SkeletonText,
   TaskDetail,
@@ -27,7 +28,15 @@ import {
   Waypoints,
   X,
 } from 'lucide-react';
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { useTeamOn } from '../../../hooks/useTeamOn';
 import type { TaskTab } from '../../../lib/appNav';
@@ -91,6 +100,38 @@ const PICKER_FOR_KEY: Partial<Record<ListKeyCommand, DetailPicker>> = {
   'list-set-labels': 'labels',
   'list-set-milestone': 'parent',
 };
+
+// Below this header width the header's icon toggles (Files, Terminal, Preview, Favorite)
+// move into More actions, so the actions keep to one row: in the Overseer's focus column
+// (about 330px) the full set wrapped onto several lines.
+const NARROW_HEADER_BELOW = 480;
+// `.pane`'s side padding (TaskPageView.module.css): the header card spans the frame less this.
+const PANE_GUTTERS = 32;
+
+/** Whether the page's header card is narrower than `NARROW_HEADER_BELOW`. Measured on the
+ * page's frame (`.root`), which sits outside the scrolling pane, so its width never depends
+ * on what the header holds or on a scrollbar showing: moving the toggles cannot flip the
+ * flag back (no loop of measuring and laying out again). Measured before the first paint,
+ * so a narrow column never flashes the wide header, then kept current by a
+ * `ResizeObserver`. A frame with no width (not laid out yet, or inside a hidden Activity)
+ * keeps the last answer, wide to start with. */
+function useNarrowHeader(rootRef: RefObject<HTMLDivElement | null>): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (root === null) return undefined;
+    const measure = () => {
+      const width = root.clientWidth;
+      if (width > 0) setNarrow(width - PANE_GUTTERS < NARROW_HEADER_BELOW);
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [rootRef]);
+  return narrow;
+}
 
 export interface TaskPageViewProps {
   taskId: string;
@@ -302,6 +343,58 @@ function TaskPageLoaded({
     selectView(view === next ? autoMode : next);
   const favoriteRef = { kind: 'task' as const, id: taskId };
   const favorite = savedViews?.isFavorite(favoriteRef) ?? false;
+  // A narrow header (the Overseer's focus column) lists the icon toggles in More actions
+  // instead. Their state is in the label, as on the wide buttons ("Unfavorite" while
+  // starred, "Hide …" while a side view is open), never a tick: an action menu starts the
+  // keyboard on its ticked row, so a ticked toggle would put Enter on "Unfavorite" and
+  // take the star off. Picked rows come back through the menu's onChange, keyed by value
+  // in `movedRuns`.
+  const narrowHeader = useNarrowHeader(rootRef);
+  const movedActions: PickerOption[] = [];
+  const movedRuns = new Map<string, () => void>();
+  if (narrowHeader) {
+    const toggleOption = (
+      next: PageView,
+      show: string,
+      hide: string
+    ): PickerOption => {
+      movedRuns.set(`show-${next}`, () => toggle(next));
+      return {
+        value: `show-${next}`,
+        label: view === next ? hide : show,
+        group: 'This page',
+        groupTitleHidden: true,
+      };
+    };
+    if (sideViews.files) {
+      movedActions.push(
+        toggleOption('files', "The run's files", "Hide the run's files")
+      );
+    }
+    if (sideViews.terminal) {
+      movedActions.push(
+        toggleOption(
+          'terminal',
+          "A terminal in the run's worktree",
+          'Hide the terminal'
+        )
+      );
+    }
+    if (sideViews.preview) {
+      movedActions.push(
+        toggleOption('preview', "Preview the run's app", 'Hide the preview')
+      );
+    }
+    if (savedViews !== null) {
+      movedRuns.set('favorite', () => savedViews.toggleFavorite(favoriteRef));
+      movedActions.push({
+        value: 'favorite',
+        label: favorite ? 'Unfavorite' : 'Favorite',
+        group: 'This page',
+        groupTitleHidden: true,
+      });
+    }
+  }
   const headerActions = (
     <>
       <AlsoViewing
@@ -323,7 +416,7 @@ function TaskPageLoaded({
           )}
         </Button>
       )}
-      {sideViews.files && (
+      {!narrowHeader && sideViews.files && (
         <Button
           variant="quiet"
           size="sm"
@@ -334,7 +427,7 @@ function TaskPageLoaded({
           onClick={() => toggle('files')}
         />
       )}
-      {sideViews.terminal && (
+      {!narrowHeader && sideViews.terminal && (
         <Button
           variant="quiet"
           size="sm"
@@ -345,7 +438,7 @@ function TaskPageLoaded({
           onClick={() => toggle('terminal')}
         />
       )}
-      {sideViews.preview && (
+      {!narrowHeader && sideViews.preview && (
         <Button
           variant="quiet"
           size="sm"
@@ -356,7 +449,7 @@ function TaskPageLoaded({
           onClick={() => toggle('preview')}
         />
       )}
-      {savedViews !== null && (
+      {!narrowHeader && savedViews !== null && (
         <Button
           variant="quiet"
           size="sm"
@@ -374,11 +467,18 @@ function TaskPageLoaded({
         appearance="quiet"
         align="end"
         value={null}
-        options={detail.menu}
+        options={
+          movedActions.length === 0
+            ? detail.menu
+            : [...detail.menu, ...movedActions]
+        }
         trigger={<Ellipsis {...ICON} />}
         triggerLabel="More actions"
         onChange={(value) => {
-          if (value !== null) detail.onMenu(value);
+          if (value === null) return;
+          const moved = movedRuns.get(value);
+          if (moved === undefined) detail.onMenu(value);
+          else moved();
         }}
       />
       {embedded && onExpand !== undefined && (
