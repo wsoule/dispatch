@@ -34,6 +34,7 @@ export function buildShortcutGroups(mod: string): ShortcutGroup[] {
       title: 'Shell',
       rows: [
         { label: 'Command menu', keys: [mod, 'K'] },
+        { label: 'Go to file', keys: [mod, 'P'] },
         { label: 'New task', keys: ['C'] },
         { label: 'Drop a thought', keys: [mod, 'D'] },
         { label: 'Keyboard shortcuts', keys: ['?'] },

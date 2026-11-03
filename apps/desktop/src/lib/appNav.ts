@@ -7,12 +7,13 @@ import type { TasksPreset } from './tasksPresets';
 
 // The whole app's navigation, modeled as one pure reducer so routing decisions
 // (what the sidebar highlights, what the main pane renders, whether the peek
-// drawer, Settings, the composer, the palette or the shortcuts sheet is open)
-// are unit-testable without mounting React. App.tsx is the only place that
-// owns a `useReducer(navReducer, initialNavState)`; every view and shell
-// component below it receives plain props derived from this state plus
-// dispatch callbacks. `lib/routes.ts` writes a state as a hash href and reads
-// one back as actions, so every place here is also a URL.
+// drawer, Settings, the composer, the palette, the shortcuts sheet or the
+// Files quick open is open) are unit-testable without mounting React.
+// App.tsx is the only place that owns a `useReducer(navReducer,
+// initialNavState)`; every view and shell component below it receives plain
+// props derived from this state plus dispatch callbacks. `lib/routes.ts`
+// writes a state as a hash href and reads one back as actions, so every place
+// here is also a URL.
 //
 // The model is the Two views one: the main pane is the Overseer or Tasks, and
 // Tasks shows its list or one page (a task, a doc, a PR, a draft, a room, a
@@ -277,6 +278,13 @@ export interface NavState extends Place {
   paletteOpen: boolean;
   /** Whether the keyboard-shortcuts reference (`?`) is open. */
   shortcutsOpen: boolean;
+  /** Whether quick open (Go to file, ⌘P) is open over a Files page: the
+   * project's (or its page on one file) or a task page's run Files tab, which
+   * searches that run's worktree. Only ever true on one of those: any
+   * navigation and every other surface that opens (the palette, the shortcuts
+   * sheet, Settings, the composer, a peek) clears it, so it never shows with
+   * the app palette and never pops back up stale the next time Files opens. */
+  quickOpen: boolean;
   /**
    * Where you have been, newest last, and how far back you have stepped.
    *
@@ -325,12 +333,17 @@ export type NavAction =
   /** The `?` shortcuts reference — a dialog, so it stacks over whatever is open. */
   | { type: 'openShortcuts' }
   | { type: 'closeShortcuts' }
+  /** Go to file (⌘P): the Files page, staying on it (on its open file, or on
+   * a task page's run Files tab) when one already shows, with the quick open
+   * over it. */
+  | { type: 'openQuickOpen' }
+  | { type: 'closeQuickOpen' }
   | { type: 'back' }
   | { type: 'forward' }
-  /** Context-sensitive close: the dialogs (shortcuts, palette, composer) win
-   * over Settings, Settings over the peek, the peek over a page under Tasks,
-   * and each one open swallows the Escape rather than also clearing the next
-   * layer. */
+  /** Context-sensitive close: the dialogs (shortcuts, palette, quick open,
+   * composer) win over Settings, Settings over the peek, the peek over a page
+   * under Tasks, and each one open swallows the Escape rather than also
+   * clearing the next layer. */
   | { type: 'escape' }
   | { type: 'showOverseer' }
   /** Tasks on its list, narrowed to `preset`; without one, back to where Tasks
@@ -379,6 +392,7 @@ export const initialNavState: NavState = {
   composerOpen: false,
   paletteOpen: false,
   shortcutsOpen: false,
+  quickOpen: false,
   history: [{ mainView: 'overseer', tasksPage: LIST }],
   historyIndex: 0,
 };
@@ -500,6 +514,11 @@ export function keyAction(
       return { type: 'openGraph', scope: DEFAULT_GRAPH_SCOPE, nodeId: null };
     case 'goto-settings':
       return { type: 'openSettings' };
+    case 'quick-open':
+      return { type: 'openQuickOpen' };
+    // ⌘P over a modal: claimed (no print dialog), nothing opens.
+    case 'quick-open-blocked':
+      return 'swallow';
     // ⌘3–⌘9 walk the status presets, in chip order.
     case 'goto-3':
     case 'goto-4':
@@ -538,12 +557,12 @@ export function samePlace(a: Place, b: Place): boolean {
   );
 }
 
-// Moves to a place, records it, and closes Settings: any navigation leaves
-// Settings. Re-selecting the place you are already on is not a new
-// destination; navigating somewhere new after going back discards what you
-// had gone back from (the browser rule).
+// Moves to a place, records it, and closes Settings and the quick open: any
+// navigation leaves both. Re-selecting the place you are already on is not a
+// new destination; navigating somewhere new after going back discards what
+// you had gone back from (the browser rule).
 function go(state: NavState, place: Place): NavState {
-  const moved = { ...state, ...place, settings: null };
+  const moved = { ...state, ...place, settings: null, quickOpen: false };
   const kept = state.history.slice(0, state.historyIndex + 1);
   const last = kept[kept.length - 1];
   if (last !== undefined && samePlace(last, place)) return moved;
@@ -572,7 +591,7 @@ function applyDestination(
         merge: null,
       });
     case 'settings':
-      return { ...state, settings: destination.page };
+      return { ...state, settings: destination.page, quickOpen: false };
     case 'page':
       return toTasks(state, destination.page);
     case 'none':
@@ -582,14 +601,15 @@ function applyDestination(
 
 // Patches the open task page in place (a tab flip, a run pick): not a
 // destination, so history keeps the page as it was opened. Off the page it
-// does nothing.
+// does nothing. It closes the quick open a run Files tab may have open: the
+// tab it searched, or the run, is no longer the one showing.
 function withTaskPage(
   state: NavState,
   patch: Partial<Extract<TasksPage, { kind: 'task' }>>
 ): NavState {
   const page = state.tasksPage;
   if (page.kind !== 'task') return state;
-  return { ...state, tasksPage: { ...page, ...patch } };
+  return { ...state, tasksPage: { ...page, ...patch }, quickOpen: false };
 }
 
 // Opens the quick-look drawer over the view underneath. The shell draws no
@@ -597,7 +617,31 @@ function withTaskPage(
 // that leaves Settings: the drawer shows at once instead of waiting, unseen,
 // behind the Settings page.
 function withPeek(state: NavState, peek: Peek): NavState {
-  return { ...state, peek, settings: null };
+  return { ...state, peek, settings: null, quickOpen: false };
+}
+
+// Whether a Files page shows: the project's hosted view, the page opened on
+// one file (a file link), or a task page's run Files tab (that run's
+// worktree). Go to file stays on any of them rather than re-opening the
+// project's Files and losing the open file, or leaving the run for the
+// project checkout.
+function onFilesPage(state: NavState): boolean {
+  if (state.mainView !== 'tasks') return false;
+  const page = state.tasksPage;
+  return (
+    page.kind === 'file' ||
+    (page.kind === 'view' && page.view === 'files') ||
+    (page.kind === 'task' && page.tab === 'files')
+  );
+}
+
+// Go to file: the Files page (left as it is when one already shows) with its
+// quick open over it, and the app palette closed so the two never stack.
+function openQuickOpen(state: NavState): NavState {
+  const onFiles = onFilesPage(state)
+    ? { ...state, settings: null }
+    : applyDestination(state, projectViewDestination('files'));
+  return { ...onFiles, quickOpen: true, paletteOpen: false };
 }
 
 // Where an address leads: people, outside agents and tasks peek (a task by
@@ -637,6 +681,7 @@ function step(state: NavState, delta: -1 | 1): NavState {
     settings: null,
     paletteOpen: false,
     shortcutsOpen: false,
+    quickOpen: false,
   };
 }
 
@@ -651,10 +696,10 @@ function leaveSettings(state: NavState, delta: -1 | 1): NavState {
 
 /**
  * Whether Escape has nothing of the app's own to close in this state (no
- * shortcut sheet, palette, composer, Settings or peek, and no task page to
- * leave): then the view's own nearest layer takes it instead, such as the
- * Overseer's focus (the task or talk a side column opened in its middle),
- * which lives in App's state, not here.
+ * shortcut sheet, palette, quick open, composer, Settings or peek, and no
+ * task page to leave): then the view's own nearest layer takes it instead,
+ * such as the Overseer's focus (the task or talk a side column opened in its
+ * middle), which lives in App's state, not here.
  */
 export function escapeLeavesNav(state: NavState): boolean {
   return navReducer(state, { type: 'escape' }) === state;
@@ -746,6 +791,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
     case 'escape':
       if (state.shortcutsOpen) return { ...state, shortcutsOpen: false };
       if (state.paletteOpen) return { ...state, paletteOpen: false };
+      if (state.quickOpen) return { ...state, quickOpen: false };
       if (state.composerOpen) return { ...state, composerOpen: false };
       if (state.settings !== null) return { ...state, settings: null };
       if (state.peek !== null) return { ...state, peek: null };
@@ -773,7 +819,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
     case 'setTasksMode':
       return { ...state, tasksMode: action.mode };
     case 'openSettings':
-      return { ...state, settings: action.page ?? 'general' };
+      return { ...state, settings: action.page ?? 'general', quickOpen: false };
     case 'closeSettings':
       return state.settings === null ? state : { ...state, settings: null };
     case 'closePage':
@@ -783,21 +829,31 @@ export function navReducer(state: NavState, action: NavAction): NavState {
     case 'openNewTask':
       // A dialog over whatever shows, so it never records a place: closing it
       // leaves you exactly where you were.
-      return state.composerOpen ? state : { ...state, composerOpen: true };
+      return state.composerOpen
+        ? state
+        : { ...state, composerOpen: true, quickOpen: false };
     case 'closeNewTask':
       return state.composerOpen ? { ...state, composerOpen: false } : state;
     case 'openPalette':
-      return { ...state, paletteOpen: true };
+      return { ...state, paletteOpen: true, quickOpen: false };
     case 'closePalette':
       return { ...state, paletteOpen: false };
     case 'togglePalette':
-      return { ...state, paletteOpen: !state.paletteOpen };
+      // ⌘K fires over the open quick open (a modifier chord, resolved before
+      // the modal check), so opening the palette closes it here.
+      return state.paletteOpen
+        ? { ...state, paletteOpen: false }
+        : { ...state, paletteOpen: true, quickOpen: false };
     case 'openShortcuts':
       // The reference is help, not a destination — it opens over the palette rather than
       // replacing it, and history never records it.
-      return { ...state, shortcutsOpen: true };
+      return { ...state, shortcutsOpen: true, quickOpen: false };
     case 'closeShortcuts':
       return { ...state, shortcutsOpen: false };
+    case 'openQuickOpen':
+      return openQuickOpen(state);
+    case 'closeQuickOpen':
+      return state.quickOpen ? { ...state, quickOpen: false } : state;
     default: {
       const unhandled: never = action;
       return unhandled;

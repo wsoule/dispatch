@@ -1021,6 +1021,15 @@ function App() {
     [modLabel]
   );
 
+  // Quick open over the project Files page and over a task page's run Files
+  // tab lives in the nav state, so ⌘P (the `quick-open` command, through
+  // `keyAction`) opens it from any destination and Escape peels it like the
+  // other overlays. Only the run Files embedded in the Overseer's column keeps
+  // its own local quick-open state.
+  const onQuickOpenChange = useCallback((open: boolean) => {
+    dispatchNav({ type: open ? 'openQuickOpen' : 'closeQuickOpen' });
+  }, []);
+
   useGlobalKeyboard({
     // `modalOpen` is computed inside the hook itself, via a live DOM check for
     // any open `aria-modal` dialog. SessionDetailModal (@dispatch/ui's modal
@@ -1028,7 +1037,7 @@ function App() {
     // library, so while either is open inside Settings › Usage the global
     // commands stay suppressed, the same as TaskComposerSlideOver does.
     onCommand: (command) => {
-      // The `goto-*` keys resolve through `keyAction`.
+      // The `goto-*` keys and `quick-open` (⌘P) resolve through `keyAction`.
       const action = keyAction(command);
       if (action !== null) {
         if (action !== 'swallow') dispatchNav(action);
@@ -1113,7 +1122,20 @@ function App() {
           // The repo-wide Files and Terminals live on each run's page.
           showLessons: true,
           planOpensPages: true,
-          filesView: (runId: string) => <FilesView data={data} runId={runId} />,
+          // The Tasks page's run Files tab is a Files page to the nav state, so
+          // ⌘P opens quick open over the run's worktree in place; embedded in
+          // the Overseer's column, the tab keeps quick open to itself.
+          filesView: (runId: string, embedded: boolean) =>
+            embedded ? (
+              <FilesView data={data} runId={runId} />
+            ) : (
+              <FilesView
+                data={data}
+                runId={runId}
+                quickOpen={navState.quickOpen}
+                onQuickOpenChange={onQuickOpenChange}
+              />
+            ),
           terminalView: (runId: string) => (
             <TerminalsView data={data} runId={runId} />
           ),
@@ -1802,7 +1824,14 @@ function App() {
     }
     switch (page.view) {
       case 'files':
-        return <FilesView data={data} onBack={closeTwoViewsPage} />;
+        return (
+          <FilesView
+            data={data}
+            onBack={closeTwoViewsPage}
+            quickOpen={navState.quickOpen}
+            onQuickOpenChange={onQuickOpenChange}
+          />
+        );
       case 'terminals':
         return <TerminalsView data={data} onBack={closeTwoViewsPage} />;
       case 'threads':
@@ -1986,6 +2015,8 @@ function App() {
             data={data}
             initialPath={page.path}
             onBack={closeTwoViewsPage}
+            quickOpen={navState.quickOpen}
+            onQuickOpenChange={onQuickOpenChange}
           />
         );
     }

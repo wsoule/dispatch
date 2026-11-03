@@ -65,11 +65,7 @@ function present(node: ReactNode): boolean {
  * host's shortcuts never see the key; a picker, popover or tooltip inside
  * takes Escape and outside presses first and never closes it.
  * `dismissible={false}` (while busy) ignores Escape, the scrim and the
- * close button. `titleHidden` keeps the title and description for
- * assistive tech only and draws no header row (a search-first dialog such
- * as quick open: Escape and the scrim close it); `placement="top"` hangs
- * the card from the upper part of the window, so a list that grows under
- * a field grows downward (phones keep the bottom sheet).
+ * close button.
  */
 export function Dialog(props: DialogProps): ReactNode {
   const {
@@ -87,8 +83,6 @@ export function Dialog(props: DialogProps): ReactNode {
     closeLabel = 'Close',
     contentKey,
     role = 'dialog',
-    titleHidden = false,
-    placement = 'center',
     children,
   } = props;
   const baseId = useId();
@@ -187,7 +181,6 @@ export function Dialog(props: DialogProps): ReactNode {
       className={styles.layer}
       popover="manual"
       data-dialog-layer=""
-      data-placement={placement}
     >
       {/* A press on the scrim must not move focus out of the dialog; the
           layer stack closes it from there (dismissOnOutsideClick). */}
@@ -208,15 +201,15 @@ export function Dialog(props: DialogProps): ReactNode {
         data-size={size}
         onKeyDown={onKeyDown}
       >
-        <div ref={headerRef} className={titleHidden ? 'srOnly' : styles.header}>
+        <div ref={headerRef} className={styles.header}>
           <div className={styles.titleRow}>
-            {present(titleAction) && !titleHidden ? (
+            {present(titleAction) ? (
               <div className={styles.titleAction}>{titleAction}</div>
             ) : null}
             <h2 id={titleId} className={styles.title}>
               {title}
             </h2>
-            {role === 'dialog' && !titleHidden ? (
+            {role === 'dialog' ? (
               <button
                 type="button"
                 className={styles.close}

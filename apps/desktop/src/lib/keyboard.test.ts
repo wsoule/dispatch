@@ -471,3 +471,58 @@ describe('Two views shortcuts', () => {
     expect(resolveGlobalKeyCommand(key('o'), armed)).toBe('goto-overseer');
   });
 });
+
+describe('Go to file (⌘P)', () => {
+  test('Meta+P and Ctrl+P resolve to quick-open, with Shift (P) too', () => {
+    expect(
+      resolveGlobalKeyCommand(key('p', { metaKey: true }), baseGlobalCtx)
+    ).toBe('quick-open');
+    expect(
+      resolveGlobalKeyCommand(key('p', { ctrlKey: true }), baseGlobalCtx)
+    ).toBe('quick-open');
+    expect(
+      resolveGlobalKeyCommand(key('P', { metaKey: true }), baseGlobalCtx)
+    ).toBe('quick-open');
+  });
+
+  // Still resolved over a modal, so the hook claims the key and the
+  // browser's print dialog never opens in its place; App does nothing with it.
+  test('over a modal (the open quick open included) it is blocked, not dropped', () => {
+    for (const mods of [{ metaKey: true }, { ctrlKey: true }]) {
+      expect(
+        resolveGlobalKeyCommand(key('p', mods), {
+          ...baseGlobalCtx,
+          modalOpen: true,
+        })
+      ).toBe('quick-open-blocked');
+    }
+  });
+
+  test('fires while typing, like ⌘K: the Files editor is a text field', () => {
+    expect(
+      resolveGlobalKeyCommand(key('p', { metaKey: true }), {
+        ...baseGlobalCtx,
+        isTyping: true,
+      })
+    ).toBe('quick-open');
+  });
+
+  // A recorded deviation from the plan's "suppressed while typing" (B13): any
+  // modifier, as ⌘K, so Ctrl+P in a text field (on macOS, Cocoa's "previous
+  // line") is Go to file too.
+  test('Ctrl+P fires while typing as well, with or without Shift', () => {
+    for (const k of ['p', 'P']) {
+      expect(
+        resolveGlobalKeyCommand(key(k, { ctrlKey: true }), {
+          ...baseGlobalCtx,
+          isTyping: true,
+        })
+      ).toBe('quick-open');
+    }
+  });
+
+  test('a bare "p" is nothing at the global layer', () => {
+    expect(resolveGlobalKeyCommand(key('p'), baseGlobalCtx)).toBeNull();
+    expect(resolveGlobalKeyCommand(key('P'), baseGlobalCtx)).toBeNull();
+  });
+});

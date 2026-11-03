@@ -898,8 +898,13 @@ describe('keyAction', () => {
       { type: 'openGraph', scope: { level: 'milestone' }, nodeId: null },
     ],
     ['goto-settings', { type: 'openSettings' }],
+    ['quick-open', { type: 'openQuickOpen' }],
   ] as const)('%p', (command, action) => {
     expect(keyAction(command)).toEqual(action);
+  });
+
+  test('⌘P over a modal is swallowed: claimed, nothing dispatched', () => {
+    expect(keyAction('quick-open-blocked')).toBe('swallow');
   });
 
   test('every g chord lands somewhere of its own', () => {
@@ -981,5 +986,170 @@ describe('escapeLeavesNav', () => {
     expect(
       escapeLeavesNav(navReducer(initialNavState, { type: 'togglePalette' }))
     ).toBe(false);
+  });
+});
+
+// Go to file (⌘P): the Files page with its quick open, which the reducer keeps
+// from ever showing with the app palette or reappearing stale.
+describe('the Files quick open', () => {
+  const FILES = { kind: 'view', view: 'files' } as const;
+
+  test('is closed at first and after a project switch', () => {
+    expect(initialNavState.quickOpen).toBe(false);
+    const switched = run([
+      { type: 'openQuickOpen' },
+      { type: 'selectProject', projectId: 'p-2' },
+    ]);
+    expect(switched.quickOpen).toBe(false);
+  });
+
+  test('from Issues it lands on the Files page, open, with the palette closed', () => {
+    const state = run([
+      { type: 'showTasks' },
+      { type: 'openPalette' },
+      { type: 'openQuickOpen' },
+    ]);
+    expect(state.mainView).toBe('tasks');
+    expect(state.tasksPage).toEqual(FILES);
+    expect(state.quickOpen).toBe(true);
+    expect(state.paletteOpen).toBe(false);
+  });
+
+  test('from the Overseer it lands on the Files page too', () => {
+    const state = run([{ type: 'openQuickOpen' }]);
+    expect(state.mainView).toBe('tasks');
+    expect(state.tasksPage).toEqual(FILES);
+    expect(state.quickOpen).toBe(true);
+  });
+
+  test('on the Files page it stays put, adding no history entry', () => {
+    const files = run([{ type: 'setProjectView', view: 'files' }]);
+    const state = navReducer(files, { type: 'openQuickOpen' });
+    expect(state.tasksPage).toEqual(FILES);
+    expect(state.history).toBe(files.history);
+    expect(state.quickOpen).toBe(true);
+  });
+
+  test('on a file page it keeps the open path', () => {
+    const file = run([{ type: 'openFile', path: 'src/a.ts' }]);
+    const state = navReducer(file, { type: 'openQuickOpen' });
+    expect(state.tasksPage).toEqual({ kind: 'file', path: 'src/a.ts' });
+    expect(state.quickOpen).toBe(true);
+  });
+
+  // A task page's Files tab browses that run's worktree: Go to file searches
+  // it in place rather than leaving for the project checkout (which would
+  // also unmount the run's editor and drop a pending autosave).
+  describe('on a task page', () => {
+    const RUN_FILES = {
+      kind: 'task',
+      taskId: 't-1',
+      tab: 'files',
+      runId: 'r-1',
+    } as const;
+
+    test('the run Files tab stays put, adding no history entry', () => {
+      const tab = run([
+        { type: 'openTask', taskId: 't-1', tab: 'files', runId: 'r-1' },
+      ]);
+      const state = navReducer(tab, { type: 'openQuickOpen' });
+      expect(state.mainView).toBe('tasks');
+      expect(state.tasksPage).toEqual(RUN_FILES);
+      expect(state.history).toBe(tab.history);
+      expect(state.quickOpen).toBe(true);
+    });
+
+    test('togglePalette closes it there, and leaving the tab clears it', () => {
+      const open = run([
+        { type: 'openTask', taskId: 't-1', tab: 'files', runId: 'r-1' },
+        { type: 'openQuickOpen' },
+      ]);
+      const toggled = navReducer(open, { type: 'togglePalette' });
+      expect(toggled.paletteOpen).toBe(true);
+      expect(toggled.quickOpen).toBe(false);
+      const left = navReducer(open, { type: 'setTaskTab', tab: 'run' });
+      expect(left.quickOpen).toBe(false);
+      const escaped = navReducer(open, { type: 'escape' });
+      expect(escaped.quickOpen).toBe(false);
+      expect(escaped.tasksPage).toEqual(RUN_FILES);
+    });
+
+    test('any other tab goes to the project Files page', () => {
+      const state = run([
+        { type: 'openTask', taskId: 't-1', tab: 'run', runId: 'r-1' },
+        { type: 'openQuickOpen' },
+      ]);
+      expect(state.tasksPage).toEqual(FILES);
+      expect(state.quickOpen).toBe(true);
+    });
+  });
+
+  test('over Settings on the Files page it closes Settings', () => {
+    const state = run([
+      { type: 'setProjectView', view: 'files' },
+      { type: 'openSettings' },
+      { type: 'openQuickOpen' },
+    ]);
+    expect(state.settings).toBeNull();
+    expect(state.quickOpen).toBe(true);
+  });
+
+  test('closeQuickOpen closes it, and is a no-op when closed', () => {
+    const open = run([{ type: 'openQuickOpen' }]);
+    expect(navReducer(open, { type: 'closeQuickOpen' }).quickOpen).toBe(false);
+    expect(navReducer(initialNavState, { type: 'closeQuickOpen' })).toBe(
+      initialNavState
+    );
+  });
+
+  test('togglePalette opens the palette and closes the quick open; toggling it shut leaves it closed', () => {
+    const toggled = run([{ type: 'openQuickOpen' }, { type: 'togglePalette' }]);
+    expect(toggled.paletteOpen).toBe(true);
+    expect(toggled.quickOpen).toBe(false);
+    const shut = navReducer(toggled, { type: 'togglePalette' });
+    expect(shut.paletteOpen).toBe(false);
+    expect(shut.quickOpen).toBe(false);
+  });
+
+  test.each([
+    ['openPalette', { type: 'openPalette' }],
+    ['openShortcuts', { type: 'openShortcuts' }],
+    ['openSettings', { type: 'openSettings' }],
+    ['setGlobalView settings', { type: 'setGlobalView', view: 'settings' }],
+    ['openNewTask', { type: 'openNewTask' }],
+    ['openPeek', { type: 'openPeek', taskId: 't-1' }],
+    ['openThread', { type: 'openThread', messageId: 'm-1' }],
+  ] as const)('%s closes it', (_name, action) => {
+    const open = run([{ type: 'openQuickOpen' }]);
+    expect(navReducer(open, action).quickOpen).toBe(false);
+  });
+
+  test('navigating away clears it, so Files never reopens with it stale', () => {
+    const away = run([{ type: 'openQuickOpen' }, { type: 'showOverseer' }]);
+    expect(away.quickOpen).toBe(false);
+    const back = navReducer(away, { type: 'setProjectView', view: 'files' });
+    expect(back.tasksPage).toEqual(FILES);
+    expect(back.quickOpen).toBe(false);
+  });
+
+  test('back and forward clear it', () => {
+    const open = run([
+      { type: 'showTasks' },
+      { type: 'openQuickOpen' },
+      { type: 'showOverseer' },
+      { type: 'back' },
+    ]);
+    expect(open.tasksPage).toEqual(FILES);
+    expect(open.quickOpen).toBe(false);
+    const reopened = navReducer(open, { type: 'openQuickOpen' });
+    expect(navReducer(reopened, { type: 'back' }).quickOpen).toBe(false);
+  });
+
+  test('escape closes it before the page beneath', () => {
+    const open = run([{ type: 'openQuickOpen' }]);
+    const escaped = navReducer(open, { type: 'escape' });
+    expect(escaped.quickOpen).toBe(false);
+    expect(escaped.tasksPage).toEqual(FILES);
+    expect(escapeLeavesNav(open)).toBe(false);
   });
 });

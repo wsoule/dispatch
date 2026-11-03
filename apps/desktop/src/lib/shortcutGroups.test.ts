@@ -6,6 +6,7 @@ import {
   type GlobalKeyCommand,
   type ListKeyCommand,
   resolveChordKey,
+  resolveGlobalKeyCommand,
   resolveListKeyCommand,
 } from './keyboard';
 import { buildShortcutGroups, GOTO_CHORDS } from './shortcutGroups';
@@ -157,5 +158,31 @@ describe('the Task keys mirror lib/keyboard.ts', () => {
     }
     expect(known.size).toBeGreaterThan(0);
     expect([...known].sort()).toEqual([...listed].sort());
+  });
+});
+
+describe('the Shell rows mirror lib/keyboard.ts', () => {
+  test('Go to file follows the command menu and resolves to quick-open', () => {
+    const shell = buildShortcutGroups('Ctrl').find((g) => g.title === 'Shell');
+    const labels = shell?.rows.map((row) => row.label) ?? [];
+    expect(labels.indexOf('Go to file')).toBe(
+      labels.indexOf('Command menu') + 1
+    );
+    const row = shell?.rows.find((r) => r.label === 'Go to file');
+    expect(row?.keys).toEqual(['Ctrl', 'P']);
+    const letter = (row?.keys[1] ?? '').toLowerCase();
+    for (const mods of [
+      { metaKey: true, ctrlKey: false },
+      { metaKey: false, ctrlKey: true },
+    ]) {
+      const command = resolveGlobalKeyCommand(
+        { key: letter, ...mods },
+        { isTyping: false, modalOpen: false, pendingPrefix: null }
+      );
+      expect(command).toBe('quick-open');
+      if (command !== null) {
+        expect(keyAction(command)).toEqual({ type: 'openQuickOpen' });
+      }
+    }
   });
 });

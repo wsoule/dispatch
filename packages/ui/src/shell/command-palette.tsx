@@ -87,8 +87,8 @@ function defaultNavigate(href: string): void {
 
 interface RankedItem {
   item: PaletteItem;
-  labelHits: number[];
-  hintHits: number[];
+  labelHits: readonly number[];
+  hintHits: readonly number[];
   score: number;
   /** Position in the flattened option list (drives aria-activedescendant). */
   index: number;
@@ -101,7 +101,7 @@ interface RankedSection {
   hidden: number;
 }
 
-/** A match with nothing to highlight: an item listed as given. */
+/** An item listed with no query, as given: nothing to highlight. */
 const AS_GIVEN = { score: 0, labelHits: [], hintHits: [] };
 
 /** The default rows per section before "keep typing". */
@@ -124,9 +124,10 @@ function sectionCap(name: string, maxPerSection: PaletteSectionCap): number {
 /**
  * Groups items into ordered sections. With a query, only fuzzy matches stay
  * and each section is ranked best-first (ties keep their given order); an
- * item the host marked `matched` is kept as given, nothing highlighted, after the
- * ranked ones. Sections follow `order`, then first appearance. One pass over
- * the items.
+ * item the host marked `matched` is kept as given, after the ranked ones,
+ * highlighted only at the label indices of its own `highlight` (with or
+ * without a query). Sections follow `order`, then first appearance. One pass
+ * over the items.
  */
 function rankSections(
   items: readonly PaletteItem[],
@@ -137,10 +138,14 @@ function rankSections(
   const bySection = new Map<string, RankedItem[]>();
   const searching = query.trim() !== '';
   for (const item of items) {
+    // A host match keeps the host's own hits; an item listed with no query
+    // has nothing to highlight.
     const match =
-      searching && item.matched !== true
-        ? fuzzyMatch(query, item.label, item.hint)
-        : AS_GIVEN;
+      item.matched === true
+        ? { score: 0, labelHits: item.highlight ?? [], hintHits: [] }
+        : searching
+          ? fuzzyMatch(query, item.label, item.hint)
+          : AS_GIVEN;
     if (match === null) continue;
     let list = bySection.get(item.section);
     if (list === undefined) {
@@ -173,6 +178,17 @@ function mergeItems(
   if (extra.length === 0) return [...base];
   const seen = new Set(base.map((i) => i.id));
   return [...base, ...extra.filter((i) => !seen.has(i.id))];
+}
+
+/**
+ * A dialog name as the tail of a sentence, for the Esc button's name
+ * ("Command palette" → "Esc, close command palette"): the first letter is
+ * lowered unless the name opens on an acronym ("PR search").
+ */
+function inSentence(name: string): string {
+  const second = name.charAt(1);
+  if (second !== second.toLowerCase()) return name;
+  return name.charAt(0).toLowerCase() + name.slice(1);
 }
 
 function Highlight({
@@ -215,6 +231,8 @@ export function CommandPalette({
   onSubmitFreeText,
   freeTextLabel = 'Use text',
   onQueryChange,
+  label = 'Command palette',
+  inputLabel = 'Search commands, pages and issues',
 }: CommandPaletteProps): ReactNode {
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -222,6 +240,21 @@ export function CommandPalette({
   const listId = `${baseId}-list`;
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
+  // A host that searches itself (onQueryChange) answers each new query with
+  // new items, and until they land the list is the previous query's. The
+  // first items after a query change put the active row back on the first
+  // result, so an arrow pressed on the stale list never makes Enter open the
+  // Nth new hit. Items that change for any other reason (a host's live data,
+  // a second batch of hits for the same text) keep the row where it is.
+  const [awaitingItems, setAwaitingItems] = useState(false);
+  const [seenItems, setSeenItems] = useState(items);
+  if (items !== seenItems) {
+    setSeenItems(items);
+    if (awaitingItems) {
+      setAwaitingItems(false);
+      setActive(0);
+    }
+  }
 
   useDialogFocus(panelRef, true, inputRef);
   // On a phone the panel fills the screen, so the page behind must not
@@ -353,7 +386,7 @@ export function CommandPalette({
         ref={panelRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Command palette"
+        aria-label={label}
         className={styles.panel}
         onKeyDown={(event) => {
           if (event.isDefaultPrevented()) return;
@@ -383,7 +416,7 @@ export function CommandPalette({
             aria-activedescendant={
               activeIndex >= 0 ? optionId(activeIndex) : undefined
             }
-            aria-label="Search commands, pages and issues"
+            aria-label={inputLabel}
             autoComplete="off"
             spellCheck={false}
             className={styles.input}
@@ -392,7 +425,10 @@ export function CommandPalette({
             onChange={(event) => {
               setQuery(event.target.value);
               setActive(0);
-              onQueryChange?.(event.target.value);
+              if (onQueryChange !== undefined) {
+                setAwaitingItems(true);
+                onQueryChange(event.target.value);
+              }
             }}
             onKeyDown={onInputKeyDown}
           />
@@ -400,7 +436,7 @@ export function CommandPalette({
             type="button"
             className={styles.escButton}
             // The visible "Esc" leads the name (WCAG 2.5.3, label in name).
-            aria-label="Esc, close command palette"
+            aria-label={`Esc, close ${inSentence(label)}`}
             onClick={onClose}
           >
             <Kbd>Esc</Kbd>
@@ -477,7 +513,10 @@ export function CommandPalette({
                             renderIcon(item.icon)
                           )}
                         </span>
-                        <span className={styles.optionLabel}>
+                        <span
+                          className={styles.optionLabel}
+                          data-mono={item.mono === true ? '' : undefined}
+                        >
                           <Highlight
                             text={item.label}
                             hits={ranked.labelHits}
@@ -571,11 +610,13 @@ export function CommandPalette({
             >
               <Kbd>Tab</Kbd> {freeTextLabel}
             </button>
-          ) : (
+          ) : sections.length > 1 ? (
+            // Tab walks between sections, so the hint shows only when there
+            // is more than one to walk (a file finder lists one).
             <span className={styles.footerHint}>
               <Kbd>Tab</Kbd> Sections
             </span>
-          )}
+          ) : null}
           {onShowShortcuts !== undefined ? (
             <button
               type="button"

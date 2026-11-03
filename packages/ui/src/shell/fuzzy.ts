@@ -159,7 +159,15 @@ export function fuzzyMatch(
   return result;
 }
 
-/** Splits `text` into plain and matched runs for rendering a highlight. */
+/**
+ * Splits `text` into plain and matched runs for rendering a highlight;
+ * adjacent characters with the same flag share one run. `hits` are UTF-16
+ * code-unit indices (what `fuzzyMatch` and a host matcher built on
+ * `indexOf` return), but the walk goes by code point: a surrogate pair is
+ * one character, marked whole when either of its units is a hit, so a host
+ * index on one half never splits the pair across a `<mark>` and a `<span>`
+ * (which draws two replacement glyphs).
+ */
 export function highlightRuns(
   text: string,
   hits: readonly number[]
@@ -167,11 +175,15 @@ export function highlightRuns(
   if (hits.length === 0) return [{ text, hit: false }];
   const marked = new Set(hits);
   const runs: { text: string; hit: boolean }[] = [];
-  for (let i = 0; i < text.length; i++) {
-    const hit = marked.has(i);
+  for (let i = 0; i < text.length; ) {
+    const code = text.codePointAt(i);
+    if (code === undefined) break;
+    const char = String.fromCodePoint(code);
+    const hit = marked.has(i) || (char.length === 2 && marked.has(i + 1));
     const last = runs[runs.length - 1];
-    if (last !== undefined && last.hit === hit) last.text += text[i];
-    else runs.push({ text: text[i], hit });
+    if (last !== undefined && last.hit === hit) last.text += char;
+    else runs.push({ text: char, hit });
+    i += char.length;
   }
   return runs;
 }

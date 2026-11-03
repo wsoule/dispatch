@@ -6,6 +6,8 @@ import {
   screen,
 } from '@testing-library/react';
 import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { useState } from 'react';
 
 import {
@@ -13,7 +15,7 @@ import {
   CommandPaletteProvider,
   useCommandPalette,
 } from '../src/shell/command-palette';
-import { fuzzyMatch } from '../src/shell/fuzzy';
+import { fuzzyMatch, highlightRuns } from '../src/shell/fuzzy';
 import SlideOver from '../src/shell/slide-over';
 import type { PaletteItem } from '../src/shell/types';
 
@@ -127,6 +129,53 @@ describe('fuzzyMatch', () => {
     expect(prefix).not.toBeNull();
     expect(scattered).not.toBeNull();
     expect(prefix?.score ?? 0).toBeGreaterThan(scattered?.score ?? 0);
+  });
+});
+
+describe('highlightRuns', () => {
+  test('marks a surrogate pair whole from either of its UTF-16 halves', () => {
+    const expected = [
+      { text: 'a', hit: false },
+      { text: '👍', hit: true },
+      { text: 'b', hit: false },
+    ];
+    // 👍 is two code units (indices 1 and 2): the high half, then the low.
+    expect(highlightRuns('a👍b', [1])).toEqual(expected);
+    expect(highlightRuns('a👍b', [2])).toEqual(expected);
+    expect(highlightRuns('a👍b', [1, 2])).toEqual(expected);
+  });
+
+  test('merges adjacent hits into one run', () => {
+    expect(highlightRuns('src/app.ts', [4, 5, 6])).toEqual([
+      { text: 'src/', hit: false },
+      { text: 'app', hit: true },
+      { text: '.ts', hit: false },
+    ]);
+    expect(highlightRuns('a👍b', [0, 1])).toEqual([
+      { text: 'a👍', hit: true },
+      { text: 'b', hit: false },
+    ]);
+  });
+
+  test('the runs rejoin to the input text', () => {
+    const cases: [string, number[]][] = [
+      ['abc', []],
+      ['abc', [0, 2]],
+      ['abc', [7, -1]],
+      ['a👍b', [2]],
+      ['👍👍', [1, 2]],
+      ['docs/🚀 launch/notes.md', [5, 6, 8, 15]],
+      // A lone surrogate stays one unit of its own.
+      ['a\ud83db', [1]],
+      ['', [0]],
+    ];
+    for (const [text, hits] of cases) {
+      expect(
+        highlightRuns(text, hits)
+          .map((run) => run.text)
+          .join('')
+      ).toBe(text);
+    }
   });
 });
 
@@ -656,6 +705,311 @@ describe('CommandPalette (controlled): a host search beside the fuzzy match', ()
     expect(onRun).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'doc-1' })
     );
+  });
+
+  test("a matched item's highlight marks exactly those label indices, with or without a query", () => {
+    const items: PaletteItem[] = [
+      {
+        id: 'abc',
+        label: 'abc',
+        section: 'Files',
+        matched: true,
+        highlight: [0, 2],
+      },
+      { id: 'plain', label: 'abd', section: 'Files', matched: true },
+    ];
+    render(
+      <CommandPalette
+        items={items}
+        onClose={() => undefined}
+        onRun={() => undefined}
+      />
+    );
+    function labelNodes(): string[] {
+      const [option] = screen.getAllByRole('option');
+      const label = option.querySelector('mark')?.parentElement;
+      return Array.from(label?.childNodes ?? []).map(
+        (node) => `${node.nodeName}:${node.textContent ?? ''}`
+      );
+    }
+    // <mark>a</mark>b<mark>c</mark>, the plain letter in its own span.
+    expect(labelNodes()).toEqual(['MARK:a', 'SPAN:b', 'MARK:c']);
+    // A query the palette itself would not match leaves the host's hits.
+    fireEvent.change(input(), { target: { value: 'zzz' } });
+    const options = screen.getAllByRole('option');
+    expect(options.map((o) => o.textContent)).toEqual(['abc', 'abd']);
+    expect(labelNodes()).toEqual(['MARK:a', 'SPAN:b', 'MARK:c']);
+    // A matched item without a highlight still draws no mark.
+    expect(options[1].querySelector('mark')).toBeNull();
+  });
+
+  test('a highlight on a surrogate half marks the whole character', () => {
+    render(
+      <CommandPalette
+        items={[
+          {
+            id: 'emoji',
+            label: 'a👍b',
+            section: 'Files',
+            matched: true,
+            highlight: [2],
+          },
+        ]}
+        onClose={() => undefined}
+        onRun={() => undefined}
+      />
+    );
+    const marks = screen.getByRole('option').querySelectorAll('mark');
+    expect(Array.from(marks).map((m) => m.textContent)).toEqual(['👍']);
+  });
+
+  test("an unmatched item's highlight is ignored: the palette's own fuzzy hits show", () => {
+    render(
+      <CommandPalette
+        items={[
+          {
+            id: 'atlas',
+            label: 'Atlas migration',
+            section: 'Jump to',
+            highlight: [10, 11, 12],
+          },
+        ]}
+        onClose={() => undefined}
+        onRun={() => undefined}
+      />
+    );
+    // No query: listed as given, nothing marked.
+    expect(screen.getByRole('option').querySelector('mark')).toBeNull();
+    fireEvent.change(input(), { target: { value: 'atl' } });
+    const marks = screen.getByRole('option').querySelectorAll('mark');
+    expect(Array.from(marks).map((m) => m.textContent)).toEqual(['Atl']);
+  });
+
+  test("matched rows with a highlight keep the host's order after the ranked rows", () => {
+    const items: PaletteItem[] = [
+      {
+        id: 'deep',
+        label: 'src/lib/app.ts',
+        section: 'Files',
+        matched: true,
+        highlight: [8, 9, 10],
+      },
+      {
+        id: 'root',
+        label: 'app.ts',
+        section: 'Files',
+        matched: true,
+        highlight: [0, 1, 2],
+      },
+      { id: 'apply', label: 'Apply patch', section: 'Files' },
+    ];
+    render(
+      <CommandPalette
+        items={items}
+        onClose={() => undefined}
+        onRun={() => undefined}
+      />
+    );
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'src/lib/app.ts',
+      'app.ts',
+      'Apply patch',
+    ]);
+    fireEvent.change(input(), { target: { value: 'app' } });
+    const options = screen.getAllByRole('option');
+    // The palette's own match ranks first; the host's rows follow in the
+    // host's order, though "app.ts" would score higher.
+    expect(options.map((o) => o.textContent)).toEqual([
+      'Apply patch',
+      'src/lib/app.ts',
+      'app.ts',
+    ]);
+    expect(
+      options.map((o) =>
+        Array.from(o.querySelectorAll('mark'))
+          .map((m) => m.textContent)
+          .join('|')
+      )
+    ).toEqual(['App', 'app', 'app']);
+  });
+
+  test('label and inputLabel name the dialog and the combobox; the Esc button follows label', () => {
+    const view = render(
+      <CommandPalette
+        items={[]}
+        onClose={() => undefined}
+        onRun={() => undefined}
+      />
+    );
+    expect(
+      screen.getByRole('dialog', { name: 'Command palette' })
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('combobox', {
+        name: 'Search commands, pages and issues',
+      })
+    ).toBeTruthy();
+    view.unmount();
+    render(
+      <CommandPalette
+        items={[]}
+        onClose={() => undefined}
+        onRun={() => undefined}
+        label="Go to file"
+        inputLabel="Search files by name"
+      />
+    );
+    expect(screen.getByRole('dialog', { name: 'Go to file' })).toBeTruthy();
+    expect(
+      screen.getByRole('combobox', { name: 'Search files by name' })
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'Esc, close go to file' })
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole('button', { name: 'Esc, close command palette' })
+    ).toBeNull();
+    expect(
+      screen.queryByRole('dialog', { name: 'Command palette' })
+    ).toBeNull();
+  });
+
+  test('the Esc button keeps the default name, and an acronym as written', () => {
+    const view = render(
+      <CommandPalette
+        items={[]}
+        onClose={() => undefined}
+        onRun={() => undefined}
+      />
+    );
+    expect(
+      screen.getByRole('button', { name: 'Esc, close command palette' })
+    ).toBeTruthy();
+    view.unmount();
+    render(
+      <CommandPalette
+        items={[]}
+        onClose={() => undefined}
+        onRun={() => undefined}
+        label="PR search"
+      />
+    );
+    expect(
+      screen.getByRole('button', { name: 'Esc, close PR search' })
+    ).toBeTruthy();
+  });
+
+  test('a mono item draws its label in the mono voice; others keep the sans', () => {
+    render(
+      <CommandPalette
+        items={[
+          {
+            id: 'src/app.ts',
+            label: 'src/app.ts',
+            section: 'Files',
+            matched: true,
+            mono: true,
+          },
+          { id: 'theme', label: 'Switch theme', section: 'Files' },
+        ]}
+        onClose={() => undefined}
+        onRun={() => undefined}
+      />
+    );
+    const labels = screen
+      .getAllByRole('option')
+      .map((o) => o.querySelector('[data-mono]')?.textContent ?? null);
+    expect(labels).toEqual(['src/app.ts', null]);
+    // CSS modules load as empty maps under Bun, so the rule is read off the
+    // sheet: the hook draws Geist Mono.
+    const sheet = readFileSync(
+      join(import.meta.dir, '../src/shell/command-palette.module.css'),
+      'utf8'
+    );
+    const start = sheet.indexOf('.optionLabel[data-mono] {');
+    expect(start).toBeGreaterThan(-1);
+    expect(sheet.slice(start, sheet.indexOf('}', start))).toContain(
+      'font-family: var(--font-mono)'
+    );
+  });
+
+  test('the Tab Sections hint shows only with two or more sections to walk', () => {
+    const view = render(
+      <CommandPalette
+        items={[
+          { id: 'a', label: 'src/a.ts', section: 'Files', matched: true },
+          { id: 'b', label: 'src/b.ts', section: 'Files', matched: true },
+        ]}
+        onClose={() => undefined}
+        onRun={() => undefined}
+      />
+    );
+    expect(screen.queryByText('Sections')).toBeNull();
+    view.unmount();
+    render(
+      <CommandPalette
+        items={HOST_ITEMS}
+        onClose={() => undefined}
+        onRun={() => undefined}
+      />
+    );
+    expect(screen.getByText('Sections')).toBeTruthy();
+  });
+
+  // A host that searches itself answers each query with new items. An arrow
+  // pressed on the previous query's list during the wait must not carry over:
+  // Enter on the new list picks its best match.
+  test('the first items after a query change reset the active row', () => {
+    const onRun = mock((_item: PaletteItem) => undefined);
+    const files = (paths: string[]): PaletteItem[] =>
+      paths.map((path) => ({
+        id: path,
+        label: path,
+        section: 'Files',
+        matched: true,
+      }));
+    const host = (items: PaletteItem[]) => (
+      <CommandPalette
+        items={items}
+        onClose={() => undefined}
+        onRun={onRun}
+        onQueryChange={() => undefined}
+      />
+    );
+    const view = render(host(files(['a.ts', 'b.ts', 'c.ts'])));
+    fireEvent.change(input(), { target: { value: 'r' } });
+    // Still the stale list: the person arrows to its third row.
+    fireEvent.keyDown(input(), { key: 'ArrowDown' });
+    fireEvent.keyDown(input(), { key: 'ArrowDown' });
+    expect(selectedLabel()).toBe('c.ts');
+    // The results for "r" land.
+    view.rerender(host(files(['readme.md', 'src/r.ts', 'run.sh'])));
+    expect(selectedLabel()).toBe('readme.md');
+    fireEvent.keyDown(input(), { key: 'Enter' });
+    expect(onRun.mock.calls[0]?.[0].id).toBe('readme.md');
+  });
+
+  test('items that change with no new query keep the active row', () => {
+    const items = (extra: string[]): PaletteItem[] =>
+      ['a.ts', 'b.ts', 'c.ts', ...extra].map((path) => ({
+        id: path,
+        label: path,
+        section: 'Files',
+        matched: true,
+      }));
+    const host = (list: PaletteItem[]) => (
+      <CommandPalette
+        items={list}
+        onClose={() => undefined}
+        onRun={() => undefined}
+        onQueryChange={() => undefined}
+      />
+    );
+    const view = render(host(items([])));
+    fireEvent.keyDown(input(), { key: 'ArrowDown' });
+    expect(selectedLabel()).toBe('b.ts');
+    view.rerender(host(items(['d.ts'])));
+    expect(selectedLabel()).toBe('b.ts');
   });
 
   test('without a query, items keep their given order within a section', () => {

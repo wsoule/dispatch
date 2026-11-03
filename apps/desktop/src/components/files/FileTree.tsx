@@ -1,11 +1,14 @@
 import type { ApiClient, WorkspaceEntry } from '@dispatch/client';
+import { cx } from '@dispatch/ui';
 import {
   ChevronDown,
   ChevronRight,
   File as FileIcon,
   Folder,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { type CSSProperties, useCallback, useEffect, useState } from 'react';
+
+import styles from './FileTree.module.css';
 
 /**
  * A lazily expanded directory tree.
@@ -26,6 +29,9 @@ interface FileTreeProps {
 // which is what distinguishes a directory nobody has opened from an empty one.
 type Loaded = Record<string, WorkspaceEntry[]>;
 
+// One row: a directory toggles open (and says so through aria-expanded); a
+// file selects (the open one carries aria-current). The indent is `--depth`,
+// read by FileTree.module.css, so nesting needs no per-depth class.
 function TreeRow({
   entry,
   depth,
@@ -42,30 +48,24 @@ function TreeRow({
   onSelect: () => void;
 }) {
   const isDir = entry.kind === 'directory';
+  const Chevron = expanded ? ChevronDown : ChevronRight;
+  const Glyph = isDir ? Folder : FileIcon;
   return (
     <button
       type="button"
+      className={styles.row}
+      style={{ '--depth': depth } as CSSProperties}
+      aria-expanded={isDir ? expanded : undefined}
+      aria-current={!isDir && selected ? 'true' : undefined}
       onClick={isDir ? onToggle : onSelect}
-      className={`flex w-full items-center gap-1 px-1 py-[2px] text-left text-xs hover:bg-[var(--color-muted)] ${
-        selected ? 'bg-[var(--color-accent)]' : ''
-      }`}
-      style={{ paddingLeft: `${depth * 12 + 4}px` }}
     >
-      {isDir ? (
-        expanded ? (
-          <ChevronDown className="size-3 shrink-0 opacity-70" />
-        ) : (
-          <ChevronRight className="size-3 shrink-0 opacity-70" />
-        )
-      ) : (
-        <span className="w-3 shrink-0" />
-      )}
-      {isDir ? (
-        <Folder className="size-3 shrink-0 opacity-70" />
-      ) : (
-        <FileIcon className="size-3 shrink-0 opacity-70" />
-      )}
-      <span className="truncate">{entry.name}</span>
+      <span className={styles.icon}>
+        {isDir ? <Chevron size={14} strokeWidth={1.8} aria-hidden /> : null}
+      </span>
+      <span className={styles.icon}>
+        <Glyph size={14} strokeWidth={1.8} aria-hidden />
+      </span>
+      <span className={styles.name}>{entry.name}</span>
     </button>
   );
 }
@@ -132,9 +132,9 @@ export function FileTree({
   push('', 0);
 
   return (
-    <div className="h-full overflow-auto">
+    <div className={styles.tree}>
       {error !== null && (
-        <p className="px-2 py-1 text-xs text-[var(--color-destructive)]">
+        <p className={cx('toneText', styles.error)} data-tone="danger">
           {error}
         </p>
       )}

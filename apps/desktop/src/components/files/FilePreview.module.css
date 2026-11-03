@@ -1,0 +1,63 @@
+/* The preview pane (FilePreview.tsx): rendered text on the page, media
+   centred on a sunken stage, a PDF filling the pane, and a quiet sentence
+   with a Download link for anything that cannot be shown. */
+
+.text {
+  height: 100%;
+  padding: var(--s-4);
+  overflow: auto;
+}
+
+/* Images, video and audio, centred so a screenshot and an icon are both
+   legible without the pane scrolling in two axes. */
+.stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: var(--s-4);
+  overflow: auto;
+  background: var(--sunken);
+}
+
+.media {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.plain {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  height: 100%;
+  padding: var(--s-4);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+
+.plain p {
+  margin: 0;
+}
+
+.download {
+  border-radius: var(--r-xs);
+  color: var(--accent-ink);
+  font-weight: var(--fw-medium);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.download:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}

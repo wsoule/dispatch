@@ -93,8 +93,11 @@ export interface TaskPageHost {
   openDoc?: (docId: string, anchor: string | null) => void;
   /** The task's message threads, which the Thread toggle shows; absent hides it. */
   threadView?: (taskId: string) => ReactNode;
-  /** A run's worktree as files and as a shell; without them the page has no such tabs. */
-  filesView?: (runId: string) => ReactNode;
+  /** A run's worktree as files and as a shell; without them the page has no such tabs.
+   * `embedded` is the page's own flag: true inside another view (the Overseer's
+   * column), where the run's Files keeps its quick open to itself rather than in
+   * the app's navigation, which only knows the Tasks page's tab. */
+  filesView?: (runId: string, embedded: boolean) => ReactNode;
   /** Summary lists the memory this task's runs wrote (Two views). */
   showLessons?: boolean;
   /** A milestone's plan opens a task as its own page, not a pane beside the plan (Two views). */

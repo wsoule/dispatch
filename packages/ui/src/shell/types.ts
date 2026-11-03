@@ -278,11 +278,24 @@ export interface PaletteItem {
   /**
    * The host already matched this item against the typed text (a search it
    * ran itself, such as a daemon's doc hits for the query): the row is
-   * listed in its section whatever the query, neither fuzzy-filtered nor
-   * highlighted. Items ranked by the palette keep their order ahead of it
-   * within a section.
+   * listed in its section whatever the query, not fuzzy-filtered;
+   * highlighted only by `highlight`. Items ranked by the palette keep their
+   * order ahead of it within a section.
    */
   matched?: true;
+  /**
+   * UTF-16 indices into `label` that the host matched itself (a daemon's
+   * fuzzy `positions`), drawn with the palette's match emphasis. Applies
+   * only to an item with `matched: true`: on an unmatched item the
+   * palette's own fuzzy hits win and this is ignored. An index on either
+   * half of a surrogate pair marks the whole character.
+   */
+  highlight?: readonly number[];
+  /**
+   * The label is a machine-read string (a file path, an id), drawn in Geist
+   * Mono rather than the palette's sans, still truncated with an ellipsis.
+   */
+  mono?: true;
 }
 
 /** A row of the "?" shortcuts sheet. */
@@ -540,9 +553,23 @@ export interface CommandPaletteProps {
    * Called with the input's text on every change (untrimmed), so a host can
    * run a search of its own and feed the hits back as `matched` items. The
    * query starts empty on every mount: closing the palette (unmounting it)
-   * resets it.
+   * resets it. With it, the first `items` after the query changes (the
+   * host's answer to the new text) put the active row back on the first
+   * result; items that change for any other reason keep it.
    */
   onQueryChange?: (query: string) => void;
+  /**
+   * The dialog's accessible name (default "Command palette"), for a host
+   * that mounts the palette as something narrower, such as a file finder
+   * ("Go to file"). The Esc button is named after it ("Esc, close go to
+   * file").
+   */
+  label?: string;
+  /**
+   * The combobox's accessible name (default "Search commands, pages and
+   * issues"); a file finder names what it searches ("Go to file").
+   */
+  inputLabel?: string;
 }
 
 export interface ShortcutSheetProps {
@@ -651,14 +678,6 @@ export interface DialogProps extends DataAttributes {
   contentKey?: string;
   /** alertdialog for a confirmation (ConfirmDialog): no close button. */
   role?: 'dialog' | 'alertdialog';
-  /** Keeps the title (and description) for assistive tech only: no
-      header row, no close button and no `titleAction`; Escape and the
-      scrim still close it. For a search-first dialog (quick open). */
-  titleHidden?: boolean;
-  /** center (default), or top: the card hangs from the upper part of the
-      window, so a result list under a field grows downward. Phones keep
-      the bottom sheet. */
-  placement?: 'center' | 'top';
   children: ReactNode;
 }
 

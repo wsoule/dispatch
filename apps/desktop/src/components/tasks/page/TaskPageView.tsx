@@ -475,7 +475,7 @@ function TaskPageLoaded({
       body =
         page.selectedRun === undefined
           ? null
-          : host.filesView?.(page.selectedRun.id);
+          : host.filesView?.(page.selectedRun.id, embedded);
       break;
     case 'terminal':
       body =

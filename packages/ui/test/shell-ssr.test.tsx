@@ -13,6 +13,7 @@ interface SsrResult {
   signedOut: string;
   overlays: string;
   modalDrawer: string;
+  quickOpen: string;
 }
 
 function serverRender(): SsrResult {
@@ -101,5 +102,29 @@ describe('shell family server render', () => {
     // The default drawer stays non-modal on the server (media queries
     // answer false there).
     expect(shell).not.toContain('data-modal="true"');
+  });
+
+  test('the palette renders open with its own names and the host highlight', () => {
+    const { quickOpen } = serverRender();
+    expect(quickOpen).toContain('role="dialog"');
+    expect(quickOpen).toContain('aria-modal="true"');
+    expect(quickOpen).toContain('aria-label="Go to file"');
+    expect(quickOpen).not.toContain('aria-label="Command palette"');
+    expect(quickOpen).not.toContain('Search commands, pages and issues');
+    expect(quickOpen.match(/aria-label="Go to file"/g)).toHaveLength(2);
+    expect(quickOpen).toContain('role="combobox"');
+    // The Esc button is named after the dialog; one section, so no Tab hint.
+    expect(quickOpen).toContain('aria-label="Esc, close go to file"');
+    expect(quickOpen).not.toContain('Sections');
+    // The path label carries the mono hook.
+    expect(quickOpen.match(/data-mono=""/g)).toHaveLength(1);
+    // Indices 0 and 4 of "src/app.ts": "s" and "a" marked, the rest plain.
+    const marks = [...quickOpen.matchAll(/<mark[^>]*>([^<]*)<\/mark>/g)].map(
+      (m) => m[1]
+    );
+    expect(marks).toEqual(['s', 'a']);
+    expect(quickOpen).toMatch(
+      /<mark[^>]*>s<\/mark><span>rc\/<\/span><mark[^>]*>a<\/mark><span>pp\.ts<\/span>/
+    );
   });
 });

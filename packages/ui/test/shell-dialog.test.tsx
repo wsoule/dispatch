@@ -391,71 +391,7 @@ describe('Dialog behaviour', () => {
   });
 });
 
-describe('Dialog: hidden title, top placement, a key taken inside', () => {
-  test('titleHidden: named and described for assistive tech, no header row or close button', () => {
-    function Search() {
-      const ref = useRef<HTMLInputElement>(null);
-      const [open, setOpen] = useState(true);
-      return (
-        <Dialog
-          open={open}
-          onClose={() => setOpen(false)}
-          title="Quick open"
-          description="Type a few letters of a path."
-          titleHidden
-          titleAction={<button type="button">Back</button>}
-          initialFocusRef={ref}
-        >
-          <input aria-label="Ignored" />
-          <input ref={ref} aria-label="Go to file" />
-        </Dialog>
-      );
-    }
-    render(<Search />);
-    const dialog = screen.getByRole('dialog', {
-      name: 'Quick open',
-      description: 'Type a few letters of a path.',
-    });
-    const heading = within(dialog).getByRole('heading', { name: 'Quick open' });
-    expect(heading.closest('.srOnly')).not.toBeNull();
-    expect(within(dialog).queryByRole('button', { name: 'Close' })).toBeNull();
-    expect(within(dialog).queryByRole('button', { name: 'Back' })).toBeNull();
-    expect(document.activeElement).toBe(
-      screen.getByRole('textbox', { name: 'Go to file' })
-    );
-    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Go to file' }), {
-      key: 'Escape',
-    });
-    expect(screen.queryByRole('dialog')).toBeNull();
-  });
-
-  test('titleHidden: a press on the scrim still closes it', () => {
-    render(
-      <Opener titleHidden>
-        <input aria-label="Title" />
-      </Opener>
-    );
-    const dialog = openDialog();
-    const scrim = dialog.parentElement?.querySelector(
-      ':scope > [aria-hidden="true"]'
-    );
-    if (!(scrim instanceof HTMLElement)) throw new Error('no scrim');
-    fireEvent.pointerDown(scrim);
-    expect(screen.queryByRole('dialog')).toBeNull();
-  });
-
-  test('placement marks the layer: center by default, top on request', () => {
-    const view = render(<Opener>Plain</Opener>);
-    expect(openDialog().parentElement?.getAttribute('data-placement')).toBe(
-      'center'
-    );
-    view.unmount();
-    render(<Opener placement="top">Plain</Opener>);
-    expect(openDialog().parentElement?.getAttribute('data-placement')).toBe(
-      'top'
-    );
-  });
-
+describe('Dialog: a key taken inside', () => {
   test('an Escape something inside already took does not close it', () => {
     const onClose = mock(() => undefined);
     render(
@@ -777,14 +713,5 @@ describe('dialog.module.css', () => {
     expect(css).toMatch(/^\.lg \{\s*width: min\(880px, 100%\);/m);
     expect(css).not.toMatch(/outline:\s*none/);
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b/i);
-  });
-
-  test('placement="top" hangs the card high on wide screens only', () => {
-    const wide =
-      /@media \(width > 640px\) \{([\s\S]*?)\n\}/.exec(css)?.[1] ?? '';
-    expect(wide).toMatch(
-      /\.layer\[data-placement='top'\] \{[^}]*align-items: flex-start;/
-    );
-    expect(wide).toContain('padding-top: 12vh;');
   });
 });

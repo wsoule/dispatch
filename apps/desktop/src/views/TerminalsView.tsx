@@ -1,9 +1,10 @@
 import type { TerminalInfo } from '@dispatch/client';
-import { TerminalSquare } from 'lucide-react';
+import { Button, Notice } from '@dispatch/ui';
+import { Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
-import { TasksBackButton } from '../components/tasks/TasksPageHeader';
+import { PageHead } from '../components/shell/PageHead';
 import { TerminalSplitView } from '../components/terminal/TerminalSplitView';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { TerminalSubscribe } from '../hooks/useTerminalOutput';
@@ -17,7 +18,7 @@ import {
   setRatio,
   splitPane,
 } from '../lib/terminalSplits';
-import { Button } from '@/ui/button';
+import styles from './TerminalsView.module.css';
 
 /**
  * The terminal surface: shells on the repo or on a run's worktree, split any
@@ -34,6 +35,11 @@ let paneCounter = 0;
 function nextId(prefix: string): string {
   paneCounter += 1;
   return `${prefix}-${paneCounter}`;
+}
+
+// "1 session", "2 sessions": the receipts line counts in the singular for one.
+function count(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? '' : 's'}`;
 }
 
 interface TerminalsViewProps {
@@ -127,12 +133,9 @@ export function TerminalsView({
   const removeSession = useCallback(
     async (terminalId: string) => {
       if (client === null) return;
-      try {
-        await client.removeTerminal(terminalId);
-      } catch {
-        // Already gone — the refresh below reconciles either way.
-      }
-      // Detach every pane showing it, or they would sit on a 404.
+      // Detach every pane showing it first, or they would sit on a 404: the
+      // removal ends the shell, and the exit event it pushes would make a pane
+      // still attached read the output of a session that no longer exists.
       setLayout((prev) =>
         listPanes(prev).reduce<LayoutNode>(
           (tree, pane) =>
@@ -142,6 +145,11 @@ export function TerminalsView({
           prev
         )
       );
+      try {
+        await client.removeTerminal(terminalId);
+      } catch {
+        // Already gone — the refresh below reconciles either way.
+      }
       void refreshSessions();
     },
     [client, refreshSessions]
@@ -186,35 +194,35 @@ export function TerminalsView({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2 p-3">
-      <header className="flex items-center gap-2">
-        {onBack && <TasksBackButton onBack={onBack} />}
-        <TerminalSquare className="size-4" />
-        <h1 className="text-sm font-medium">Terminals</h1>
-        <span className="text-xs text-[var(--color-muted-foreground)]">
-          {terminals.length} session{terminals.length === 1 ? '' : 's'} ·{' '}
-          {paneCount} pane
-          {paneCount === 1 ? '' : 's'}
-        </span>
-        <div className="flex-1" />
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() =>
-            void openSession(focusedPaneId ?? listPanes(layout)[0]?.id ?? '')
-          }
-        >
-          New session
-        </Button>
-      </header>
+    <div className={styles.view}>
+      {/* An h2 when App hosts this inside a task page (runId set), whose
+          heading is the page's h1. */}
+      <PageHead
+        title="Terminals"
+        titleLevel={runId === null ? 1 : 2}
+        onBack={onBack}
+        receipts={`${count(terminals.length, 'session')} · ${count(paneCount, 'pane')}`}
+        actions={
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={<Plus size={14} strokeWidth={1.8} aria-hidden />}
+            onClick={() =>
+              void openSession(focusedPaneId ?? listPanes(layout)[0]?.id ?? '')
+            }
+          >
+            New session
+          </Button>
+        }
+      />
 
       {error !== null && (
-        <p className="rounded border border-[var(--color-destructive)] px-2 py-1 text-xs text-[var(--color-destructive)]">
+        <Notice tone="danger" role="alert">
           {error}
-        </p>
+        </Notice>
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className={styles.layout}>
         <TerminalSplitView
           node={layout}
           client={client}

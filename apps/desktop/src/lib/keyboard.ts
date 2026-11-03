@@ -57,6 +57,11 @@ export type GlobalKeyCommand =
   | 'new-task'
   /** Open the keyboard-shortcuts reference (`?`). */
   | 'open-shortcuts'
+  /** Go to file (⌘P): the Files page with its quick open showing. */
+  | 'quick-open'
+  /** ⌘P while a modal is open: nothing opens, but the key is still the app's,
+   * so the browser's print dialog never does either. */
+  | 'quick-open-blocked'
   /** The `g` chords: `g h` Home, `g s` Settings, `g i` Inbox, `g m` Threads (messages),
    * `g t` Tasks, `g l` Timeline (`t` is taken), `g g` Graph, `g r` Projects (the
    * roadmap), `g f` Live (work in flight), `g c` Control room, `g a` Overseer (Linear's
@@ -139,6 +144,15 @@ export function resolveGlobalKeyCommand(
   if (combo && input.key === ']') return 'nav-forward';
   // ⌘, is Settings everywhere on macOS; a modifier chord, so it works while typing.
   if (combo && input.key === ',') return 'goto-settings';
+  // ⌘P is Go to file. A modifier chord like ⌘K, so it fires while typing (the
+  // Files editor's own textarea is a typing target, and ⌘P from it is the way
+  // to the next file), but never over a modal: the open quick open is itself
+  // one, and a second layer over any dialog helps nobody. Over a modal it is
+  // still resolved (to a command that does nothing), so the keystroke is
+  // claimed and the browser's print dialog does not open in its place.
+  if (combo && input.key.toLowerCase() === 'p') {
+    return ctx.modalOpen ? 'quick-open-blocked' : 'quick-open';
+  }
 
   // cmd+1..9 jumps to a rail entry. These work while typing on purpose: they
   // carry a modifier, so they cannot be confused with entering text, and being

@@ -212,6 +212,13 @@
   white-space: nowrap;
 }
 
+/* A machine-read label (a file path, an id; PaletteItem `mono`): the mono
+   voice, a step smaller so it sits on the sans rows' line. */
+.optionLabel[data-mono] {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+
 /* The hint gives way first: it starts from no width and only takes the
    room the label leaves, so on a phone "Schema cutover" stays whole and its
    project hint ellipsizes. (A large shrink factor still took a fraction of
@@ -235,6 +242,15 @@
   background: transparent;
   color: var(--accent-ink);
   font-weight: var(--fw-semibold);
+}
+
+/* Forced colours drop the accent ink, and the weight alone is a faint
+   cue: underline the matched letters too. */
+@media (forced-colors: active) {
+  .hit {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
 }
 
 .more {

@@ -3,6 +3,7 @@ import { renderToString } from 'react-dom/server';
 import {
   AlertStrip,
   AppShell,
+  CommandPalette,
   CommandPaletteProvider,
   ConfirmDialog,
   Dialog,
@@ -175,6 +176,28 @@ const modalDrawer = renderToString(
   </SlideOver>
 );
 
+// The palette mounted open as a file finder: its own names, and a host
+// match drawn at the host's indices on a mono path. Focus, the scroll lock and the phone
+// query wait for the client.
+const quickOpen = renderToString(
+  <CommandPalette
+    items={[
+      {
+        id: 'src/app.ts',
+        label: 'src/app.ts',
+        section: 'Files',
+        matched: true,
+        highlight: [0, 4],
+        mono: true,
+      },
+    ]}
+    onClose={() => undefined}
+    onRun={() => undefined}
+    label="Go to file"
+    inputLabel="Go to file"
+  />
+);
+
 console.log(
   JSON.stringify({
     hasWindow: typeof window !== 'undefined',
@@ -184,5 +207,6 @@ console.log(
     signedOut,
     overlays,
     modalDrawer,
+    quickOpen,
   })
 );

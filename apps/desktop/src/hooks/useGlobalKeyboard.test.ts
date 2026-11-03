@@ -180,6 +180,29 @@ describe('useGlobalKeyboard', () => {
     expect(commands).toEqual(['new-task']);
   });
 
+  // ⌘P over a modal (the quick open itself, the palette, any Dialog) does
+  // nothing, but the key is still claimed: a browser would open its print
+  // dialog in its place.
+  test('⌘P over an aria-modal surface is claimed without opening anything', () => {
+    const { commands } = mount();
+    const el = mountOpenDialog();
+    const press = () => {
+      const event = new KeyboardEvent('keydown', {
+        key: 'p',
+        metaKey: true,
+        cancelable: true,
+        bubbles: true,
+      });
+      window.dispatchEvent(event);
+      return event;
+    };
+    expect(press().defaultPrevented).toBe(true);
+    expect(commands).toEqual(['quick-open-blocked']);
+    el.remove();
+    expect(press().defaultPrevented).toBe(true);
+    expect(commands).toEqual(['quick-open-blocked', 'quick-open']);
+  });
+
   // Settings hides the views under <Activity mode="hidden">, which keeps a dialog
   // open in one in the DOM (aria-modal and all) behind display: none.
   test('a modal surface inside a hidden Activity does not count as open', () => {

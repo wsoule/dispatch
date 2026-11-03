@@ -398,57 +398,57 @@ exported from the package root (`TaskDetailProps`, `TimelineChartProps`,
 `UiLinkProviderProps`, `PickerMarkViewProps`, …). Required props are listed; see
 the types for the rest.
 
-| family   | component                                                                                                                         | required props                                                      |
-| -------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| basics   | `StatusMark`                                                                                                                      | `status`, `label`                                                   |
-|          | `BlockBar` (a section heading row; `index` is ignored)                                                                            | `title`                                                             |
-|          | `Tabs` (prefixed ids; `label` names the tablist; empty renders nothing; `value` and `onChange` control it; host panel below)      | `items: TabItem[]` (`id`, `label`, optional `content`)              |
-|          | `ThemeToggle`                                                                                                                     | `storageKey`                                                        |
-|          | `InitialsAvatar` (round, a pastel hue from the name; blank = nobody), `avatarHue(name)`                                           | `name`                                                              |
-| tasks    | `Button` (primary, secondary, quiet, danger; `size` sm / md / lg; `block`)                                                        | none (`href` renders a link)                                        |
-|          | `Checkbox` (`indeterminate` for a partly selected group), `Switch` (`hideLabel`), `SegmentedControl`, `Chip`                      | see `tasks/types.ts`                                                |
-|          | `ChipButton` (a chip that is a button, a toggle with `selected`, or a link with `href`; below)                                    | `children`                                                          |
-|          | `SearchField` (a search box with a clear button; Escape clears; below)                                                            | `value`, `onChange`, `label`                                        |
-|          | `CopyValue` (a value in a code well with a Copy button; below)                                                                    | `value`, `label`                                                    |
-|          | `CodeBlock` (code in a Geist Mono well: filename, language label, actions, Copy, wrap, `maxHeight`, host `tokens`; below)         | `code`                                                              |
-|          | `TaskGroupTable` (grouped issue list; selection, drag and slots below)                                                            | `sections`                                                          |
-|          | `ViewToolbar` (list toolbar: an optional search, the host's Filter / Sort / Group, end actions), `ToolbarBadge`                   | `controls` (`search` optional)                                      |
-|          | `FilterChips` ("Project is …" chips joined by "and", + Filter, Clear all)                                                         | `chips`                                                             |
-|          | `BulkBar` (the floating bar of a selection; confirm strip, busy, note), `useBulkBarHeight()` (its height while up)                | `count`, `onClear`, `children`                                      |
-|          | `DeadlineList`, `StatsStrip` (`data-*` on the list and each cell; a cell's `title` hint), `ProgressRule` (`valueText`, `data-*`)  | `groups`; `cells`; `done`/`total`                                   |
-|          | `Register`, `RegisterRow` (`pressed` on a button row), `RegisterCell` (`span="row"` takes the whole row)                          | `columns`, `label`, `children`                                      |
-|          | `Notice` (`role` status, alert or note), `EmptyState` (a centred icon, optional `label` title, the sentence, an action)           | see `tasks/types.ts`                                                |
-|          | `NavTabs` (`items`, or `groups` for a grouped vertical sub-nav; below), `Checklist` (the rubric; `onToggle` for Checkbox rows)    | `label` and `items` or `groups`; `items` (`onToggle` optional)      |
-|          | `Disclosure` (a fold: a trigger and the panel it shows or hides; below)                                                           | `children`                                                          |
-|          | `SectionHeader` (a heading row over a band of rows: fold chevron, tone, count, actions, "+"; Lists below)                         | `name`                                                              |
-|          | `ProgressPie` (Linear's ring and pie, done of total; Status vocabulary above)                                                     | `done`, `total`, `label`                                            |
-|          | `ListItem` (a row of a host's own list: leading, title and crumb, meta, trailing, date; below)                                    | `title`                                                             |
-|          | `Panel` (a bordered box with a 40px heading row), `PanelRow` (its rows; `onActivate`, `urgent`; below)                            | `children`                                                          |
-| shell    | `AppShell` (sidebar, topbar, phone tab bar; `workspaceSwitcher` makes the brand row a workspace menu, below)                      | `appName`, `brandHref`, `nav`                                       |
-|          | `CommandPaletteProvider` + `CommandPalette`                                                                                       | none; pass `navigate` (the default is `window.location.assign`)     |
-|          | `ToastProvider` + `useToast()` (`useOptionalToast()`: null without a provider)                                                    | none                                                                |
-|          | `SlideOver` (`contentKey`: a swap in place moves focus; `modal`, `size`, `footer` for a form surface)                             | `open`, `onClose`, `title`                                          |
-|          | `Dialog` (a centred modal: sm / md / lg; `titleHidden`, `placement`), `ConfirmDialog` (an alertdialog before a destructive write) | `open`, `onClose`, `title`; `confirmLabel`, `onConfirm`, `onCancel` |
-|          | `useModalSurface` (a host's own panel over a scrim, out of the top layer; below)                                                  | `open`, `onClose`, `panelRef`                                       |
-|          | `Tooltip` (hover and keyboard focus, no provider), `Spinner` (in-flight agent or network work only)                               | `content`, `children`; none                                         |
-|          | `SignedOutFrame`, `PropertyList`, `AlertStrip`                                                                                    | see `shell/types.ts`                                                |
-|          | `Skeleton*`, `Kbd`, `KbdKeys`                                                                                                     | see `shell/types.ts`                                                |
-| timeline | `TimelineChart` (Gantt)                                                                                                           | `today`, `windowStart`, `windowEnd`, `zoom`, `groups`, `onOpenBar`  |
-| graph    | `DependencyGraph`                                                                                                                 | `nodes`, `edges`, `ariaSummary`, `emptyMessage`                     |
-|          | `GraphLegend`, `MermaidSource`                                                                                                    | see `graph/types.ts`                                                |
-| task     | `TaskDetail` (`layout="drawer"` or `"page"`)                                                                                      | `taskKey`, `title`, `status`, `properties`                          |
-|          | `TaskSlideOver` (TaskDetail in a SlideOver)                                                                                       | the above plus `open`, `onClose`                                    |
-|          | `TaskDescription`, `TaskRelationList`, `TaskCommentList`, `TaskActivityList`, `TaskCrumbs`                                        | see `task/types.ts`                                                 |
-| edit     | `StatePicker`, `AssigneePicker`, `PriorityPicker`, `LabelPicker`, `ProjectPicker`, `MilestonePicker`, `EstimatePicker`            | the choices (`states`, `people`, …), `value`, `onChange`            |
-|          | `PickerPopover` (the generic picker)                                                                                              | see `edit/types.ts`                                                 |
-|          | `Popover` (a non-modal panel for a host's own controls)                                                                           | `open`, `onOpenChange`, `label`, `children`                         |
-|          | `TaskRelationPicker`                                                                                                              | `label`, `search`, `onSelect`                                       |
-|          | `InlineTextField`, `TextAreaEditor`                                                                                               | `label`, `onSave` (and `value` for the field)                       |
-|          | `DateField`                                                                                                                       | `label`, `value`, `onChange`                                        |
-| controls | `TextField` (field or inline; `start` / `end` adornments), `TextArea` (grows with its content)                                    | none (native attributes pass through)                               |
-|          | `Field` (label, `hint`, `error`; the control inside takes its id and description)                                                 | `label`, `children`                                                 |
-|          | `Select` (a field-look `PickerPopover` without search), `RadioGroup` (native radios; `cards`, `badge`, `aside`, `children`)       | `value`, `options`, `onChange` (and `label` for Select)             |
-|          | `Menu` (actions, radio rows, groups, separators, submenus; it and each open submenu are layers of the overlay stack)              | `label`, `trigger` (spread its props onto a `Button`), `items`      |
+| family   | component                                                                                                                        | required props                                                      |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| basics   | `StatusMark`                                                                                                                     | `status`, `label`                                                   |
+|          | `BlockBar` (a section heading row; `index` is ignored)                                                                           | `title`                                                             |
+|          | `Tabs` (prefixed ids; `label` names the tablist; empty renders nothing; `value` and `onChange` control it; host panel below)     | `items: TabItem[]` (`id`, `label`, optional `content`)              |
+|          | `ThemeToggle`                                                                                                                    | `storageKey`                                                        |
+|          | `InitialsAvatar` (round, a pastel hue from the name; blank = nobody), `avatarHue(name)`                                          | `name`                                                              |
+| tasks    | `Button` (primary, secondary, quiet, danger; `size` sm / md / lg; `block`)                                                       | none (`href` renders a link)                                        |
+|          | `Checkbox` (`indeterminate` for a partly selected group), `Switch` (`hideLabel`), `SegmentedControl`, `Chip`                     | see `tasks/types.ts`                                                |
+|          | `ChipButton` (a chip that is a button, a toggle with `selected`, or a link with `href`; below)                                   | `children`                                                          |
+|          | `SearchField` (a search box with a clear button; Escape clears; below)                                                           | `value`, `onChange`, `label`                                        |
+|          | `CopyValue` (a value in a code well with a Copy button; below)                                                                   | `value`, `label`                                                    |
+|          | `CodeBlock` (code in a Geist Mono well: filename, language label, actions, Copy, wrap, `maxHeight`, host `tokens`; below)        | `code`                                                              |
+|          | `TaskGroupTable` (grouped issue list; selection, drag and slots below)                                                           | `sections`                                                          |
+|          | `ViewToolbar` (list toolbar: an optional search, the host's Filter / Sort / Group, end actions), `ToolbarBadge`                  | `controls` (`search` optional)                                      |
+|          | `FilterChips` ("Project is …" chips joined by "and", + Filter, Clear all)                                                        | `chips`                                                             |
+|          | `BulkBar` (the floating bar of a selection; confirm strip, busy, note), `useBulkBarHeight()` (its height while up)               | `count`, `onClear`, `children`                                      |
+|          | `DeadlineList`, `StatsStrip` (`data-*` on the list and each cell; a cell's `title` hint), `ProgressRule` (`valueText`, `data-*`) | `groups`; `cells`; `done`/`total`                                   |
+|          | `Register`, `RegisterRow` (`pressed` on a button row), `RegisterCell` (`span="row"` takes the whole row)                         | `columns`, `label`, `children`                                      |
+|          | `Notice` (`role` status, alert or note), `EmptyState` (a centred icon, optional `label` title, the sentence, an action)          | see `tasks/types.ts`                                                |
+|          | `NavTabs` (`items`, or `groups` for a grouped vertical sub-nav; below), `Checklist` (the rubric; `onToggle` for Checkbox rows)   | `label` and `items` or `groups`; `items` (`onToggle` optional)      |
+|          | `Disclosure` (a fold: a trigger and the panel it shows or hides; below)                                                          | `children`                                                          |
+|          | `SectionHeader` (a heading row over a band of rows: fold chevron, tone, count, actions, "+"; Lists below)                        | `name`                                                              |
+|          | `ProgressPie` (Linear's ring and pie, done of total; Status vocabulary above)                                                    | `done`, `total`, `label`                                            |
+|          | `ListItem` (a row of a host's own list: leading, title and crumb, meta, trailing, date; below)                                   | `title`                                                             |
+|          | `Panel` (a bordered box with a 40px heading row), `PanelRow` (its rows; `onActivate`, `urgent`; below)                           | `children`                                                          |
+| shell    | `AppShell` (sidebar, topbar, phone tab bar; `workspaceSwitcher` makes the brand row a workspace menu, below)                     | `appName`, `brandHref`, `nav`                                       |
+|          | `CommandPaletteProvider` + `CommandPalette`                                                                                      | none; pass `navigate` (the default is `window.location.assign`)     |
+|          | `ToastProvider` + `useToast()` (`useOptionalToast()`: null without a provider)                                                   | none                                                                |
+|          | `SlideOver` (`contentKey`: a swap in place moves focus; `modal`, `size`, `footer` for a form surface)                            | `open`, `onClose`, `title`                                          |
+|          | `Dialog` (a centred modal: sm / md / lg), `ConfirmDialog` (an alertdialog before a destructive write)                            | `open`, `onClose`, `title`; `confirmLabel`, `onConfirm`, `onCancel` |
+|          | `useModalSurface` (a host's own panel over a scrim, out of the top layer; below)                                                 | `open`, `onClose`, `panelRef`                                       |
+|          | `Tooltip` (hover and keyboard focus, no provider), `Spinner` (in-flight agent or network work only)                              | `content`, `children`; none                                         |
+|          | `SignedOutFrame`, `PropertyList`, `AlertStrip`                                                                                   | see `shell/types.ts`                                                |
+|          | `Skeleton*`, `Kbd`, `KbdKeys`                                                                                                    | see `shell/types.ts`                                                |
+| timeline | `TimelineChart` (Gantt)                                                                                                          | `today`, `windowStart`, `windowEnd`, `zoom`, `groups`, `onOpenBar`  |
+| graph    | `DependencyGraph`                                                                                                                | `nodes`, `edges`, `ariaSummary`, `emptyMessage`                     |
+|          | `GraphLegend`, `MermaidSource`                                                                                                   | see `graph/types.ts`                                                |
+| task     | `TaskDetail` (`layout="drawer"` or `"page"`)                                                                                     | `taskKey`, `title`, `status`, `properties`                          |
+|          | `TaskSlideOver` (TaskDetail in a SlideOver)                                                                                      | the above plus `open`, `onClose`                                    |
+|          | `TaskDescription`, `TaskRelationList`, `TaskCommentList`, `TaskActivityList`, `TaskCrumbs`                                       | see `task/types.ts`                                                 |
+| edit     | `StatePicker`, `AssigneePicker`, `PriorityPicker`, `LabelPicker`, `ProjectPicker`, `MilestonePicker`, `EstimatePicker`           | the choices (`states`, `people`, …), `value`, `onChange`            |
+|          | `PickerPopover` (the generic picker)                                                                                             | see `edit/types.ts`                                                 |
+|          | `Popover` (a non-modal panel for a host's own controls)                                                                          | `open`, `onOpenChange`, `label`, `children`                         |
+|          | `TaskRelationPicker`                                                                                                             | `label`, `search`, `onSelect`                                       |
+|          | `InlineTextField`, `TextAreaEditor`                                                                                              | `label`, `onSave` (and `value` for the field)                       |
+|          | `DateField`                                                                                                                      | `label`, `value`, `onChange`                                        |
+| controls | `TextField` (field or inline; `start` / `end` adornments), `TextArea` (grows with its content)                                   | none (native attributes pass through)                               |
+|          | `Field` (label, `hint`, `error`; the control inside takes its id and description)                                                | `label`, `children`                                                 |
+|          | `Select` (a field-look `PickerPopover` without search), `RadioGroup` (native radios; `cards`, `badge`, `aside`, `children`)      | `value`, `options`, `onChange` (and `label` for Select)             |
+|          | `Menu` (actions, radio rows, groups, separators, submenus; it and each open submenu are layers of the overlay stack)             | `label`, `trigger` (spread its props onto a `Button`), `items`      |
 
 Pure helpers are exported too: the timeline's date scale (`createScale`,
 `xForDate`, …), the graph layout (`layoutGraph`, `upstreamChain`, …), the
@@ -1442,6 +1442,32 @@ or middle click still opens the link.
   second line under "No matches for …" saying what to try instead ("Try another
   task id, or press Tab to ask your agent"); it never shows while the query is
   empty.
+- `PaletteItem` `matched: true` lists a row the host matched itself (its own
+  search, fed back through `onQueryChange`): it stays in its section whatever
+  the query, after the palette's ranked rows and in the host's order, and is
+  never fuzzy-filtered. `highlight` (amended 2026-11-03, B13, L33) draws the
+  host's hits on such a row: UTF-16 indices into `label` (a daemon's fuzzy
+  `positions`), in the palette's usual match emphasis, with or without a query.
+  It applies to `matched` items only; on any other item the palette's own fuzzy
+  hits win and `highlight` is ignored. `highlightRuns` walks by code point, so
+  an index on either half of a surrogate pair marks the whole character and
+  never splits it. Under forced colours every match is underlined as well, since
+  the accent ink is dropped.
+- `CommandPalette` `label` (the dialog's name, default "Command palette") and
+  `inputLabel` (the combobox's, default "Search commands, pages and issues")
+  name a palette mounted as something narrower, such as a file finder ("Go to
+  file"); the Esc button is named after `label` ("Esc, close go to file").
+  Amended 2026-11-03 (B13): both are additions to the frozen palette API,
+  because a quick open announced as "Search commands, pages and issues" fails
+  name accuracy. The provider's palette is the app palette and takes neither.
+- `PaletteItem` `mono: true` draws a machine-read label (a file path, an id) in
+  Geist Mono, still truncated with an ellipsis (amended 2026-11-03, B13, an
+  addition to the frozen palette API for the file finder's paths, Q5).
+- With `onQueryChange`, the first `items` after the query changes (the host's
+  results for the new text) put the active row back on the first result, so an
+  arrow pressed on the previous query's list never makes Enter open the Nth new
+  hit; items that change for any other reason keep the active row. The footer's
+  "Tab Sections" hint shows only while there are two or more sections to walk.
 - `AssigneePicker` people (`PersonChoice`) may carry a `group` (a heading, e.g.
   "Agents"; ungrouped people list first) and a `mark` of their own (a
   `PickerMark`, e.g. `{ kind: 'node', node }` for an agent's glyph) in place of
@@ -1481,21 +1507,16 @@ or middle click still opens the link.
   before the title), `actions` and `footerLeading` in the footer,
   `initialFocusRef`, `dismissible`, `dismissOnOutsideClick` (default true),
   `closeLabel`, `contentKey` (a new step while open: focus moves to its first
-  field), `role`, `titleHidden` (the title and description stay for assistive
-  tech only: no header row, no close button, no `titleAction`; Escape and the
-  scrim still close it, for a search-first dialog such as quick open) and
-  `placement` (`center`, the default, or `top`: on screens wider than 640px the
-  card hangs 12vh from the top so a list under a field grows downward). It is
-  `role="dialog"` with `aria-modal="true"`, named by the title and described by
-  the description, over the `--overlay` scrim. Focus goes to the first enabled
-  control outside the header row (the Back action and the close button are
-  skipped; a disabled field or a `tabIndex={-1}` button too), else the panel,
-  and an explicit `initialFocusRef` wins; it returns to the opener on close. Tab
-  cycles inside; the page does not scroll. Escape closes it with
-  `preventDefault()` and `stopPropagation()`, so a `SlideOver` beneath stays
-  open and the host's shortcuts stay quiet; `dismissible={false}` (while busy)
-  ignores Escape, the scrim and the close button (disabled). Anything with
-  pickers and a long body is a modal SlideOver instead.
+  field) and `role`. It is `role="dialog"` with `aria-modal="true"`, named by
+  the title and described by the description, over the `--overlay` scrim. Focus
+  goes to the first enabled control outside the header row (the Back action and
+  the close button are skipped; a disabled field or a `tabIndex={-1}` button
+  too), else the panel, and an explicit `initialFocusRef` wins; it returns to
+  the opener on close. Tab cycles inside; the page does not scroll. Escape
+  closes it with `preventDefault()` and `stopPropagation()`, so a `SlideOver`
+  beneath stays open and the host's shortcuts stay quiet; `dismissible={false}`
+  (while busy) ignores Escape, the scrim and the close button (disabled).
+  Anything with pickers and a long body is a modal SlideOver instead.
 - `ConfirmDialog` asks before a destructive or irreversible write: `title` (the
   question), the consequence as `children`, `confirmLabel`, `cancelLabel`,
   `tone` (`danger` draws the red danger Button), `busy`, `onConfirm` and
