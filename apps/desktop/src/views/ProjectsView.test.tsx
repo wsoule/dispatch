@@ -446,6 +446,12 @@ describe('ProjectsView', () => {
   });
 
   test('300 projects render in under a second', () => {
+    // A small mount first, so the clock measures drawing 300 rows rather than
+    // the first render's module and JIT warm-up (most of a cold mount, and
+    // the part a busy CI runner stretches: 1,064 and 1,375 ms there against
+    // about 260 ms warm here).
+    mount({ tasks: many(3) });
+    cleanup();
     const started = performance.now();
     mount({ tasks: many(300) });
     const elapsed = performance.now() - started;
