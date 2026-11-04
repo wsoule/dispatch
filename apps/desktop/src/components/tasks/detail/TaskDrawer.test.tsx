@@ -84,6 +84,15 @@ function hostWith(
   });
 }
 
+// Fires an edit and lets its write settle: the host's answer re-renders the
+// drawer (its "now" for relative dates included) a microtask later, inside act.
+async function settled(fire: () => void): Promise<void> {
+  await act(async () => {
+    fire();
+    await Promise.resolve();
+  });
+}
+
 function mount(host: TaskPageHost | null, onClose: () => void = () => {}) {
   return render(
     <PageProviders host={host}>
@@ -180,7 +189,7 @@ describe('TaskDrawer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Title of t-1' }));
     const field = screen.getByRole('textbox', { name: 'Title' });
     fireEvent.change(field, { target: { value: 'Renamed' } });
-    fireEvent.keyDown(field, { key: 'Enter' });
+    await settled(() => fireEvent.keyDown(field, { key: 'Enter' }));
     await waitFor(() => {
       expect(log.updates).toEqual([{ id: 't-1', patch: { title: 'Renamed' } }]);
     });
@@ -238,7 +247,7 @@ describe('TaskDrawer', () => {
     mount(hostWith(log));
     const field = screen.getByLabelText('Due date');
     fireEvent.change(field, { target: { value: '2026-11-02' } });
-    fireEvent.keyDown(field, { key: 'Enter' });
+    await settled(() => fireEvent.keyDown(field, { key: 'Enter' }));
     await waitFor(() => {
       expect(log.updates).toEqual([
         { id: 't-1', patch: { dueDate: '2026-11-02' } },
@@ -294,7 +303,9 @@ describe('TaskDrawer', () => {
   test('removing a blocker rewrites blockedBy', async () => {
     const log = newLog();
     mount(hostWith(log));
-    fireEvent.click(screen.getByRole('button', { name: 'Remove t-2' }));
+    await settled(() =>
+      fireEvent.click(screen.getByRole('button', { name: 'Remove t-2' }))
+    );
     await waitFor(() => {
       expect(log.updates).toEqual([{ id: 't-1', patch: { blockedBy: [] } }]);
     });
@@ -303,9 +314,14 @@ describe('TaskDrawer', () => {
   test('the composer adds a comment through the comments api', async () => {
     const log = newLog();
     mount(hostWith(log));
+    // The comments load on the query cache's next tick, which re-renders the
+    // drawer (and its effects): let that land inside act.
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
     const box = await screen.findByRole('textbox', { name: 'New comment' });
     fireEvent.change(box, { target: { value: 'Hello there' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    await settled(() =>
+      fireEvent.click(screen.getByRole('button', { name: 'Comment' }))
+    );
     await waitFor(() => {
       expect(log.comments).toEqual(['Hello there']);
     });

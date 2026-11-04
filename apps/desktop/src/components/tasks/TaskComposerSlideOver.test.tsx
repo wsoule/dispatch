@@ -363,10 +363,14 @@ test('a kind preset starts the Kind picker there and creates that kind', async (
   expect(created[0]).toMatchObject({ title: 'Payments', kind: 'project' });
 });
 
-test('switching to a broader kind drops a parent that cannot hold it', () => {
+test('switching to a broader kind drops a parent that cannot hold it', async () => {
   mount({ preset: { milestone: 'e-1' } });
   fireEvent.click(trigger('Kind: Task'));
-  fireEvent.click(screen.getByRole('option', { name: /Project/ }));
+  // The pick saves, and the picker settles a microtask later: inside act.
+  await act(async () => {
+    fireEvent.click(screen.getByRole('option', { name: /Project/ }));
+    await Promise.resolve();
+  });
   expect(trigger('Kind: Project')).toBeTruthy();
   expect(trigger('Parent: No parent')).toBeTruthy();
 });

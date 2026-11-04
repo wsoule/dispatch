@@ -279,7 +279,10 @@ describe('AgentRosterSection', () => {
     const approve = within(await row(PENDING)).getByRole('button', {
       name: `Approve ${PENDING}`,
     });
-    approve.focus();
+    // Focus shows the button's tooltip, a state update: inside act.
+    act(() => {
+      approve.focus();
+    });
     fireEvent.click(approve);
     await waitFor(async () =>
       expect(within(await row(PENDING)).queryByText('Approved')).not.toBeNull()
@@ -297,7 +300,10 @@ describe('AgentRosterSection', () => {
     const revoke = within(await row(APPROVED)).getByRole('button', {
       name: `Revoke ${APPROVED}`,
     });
-    revoke.focus();
+    // Focus shows the button's tooltip, a state update: inside act.
+    act(() => {
+      revoke.focus();
+    });
     fireEvent.click(revoke);
     fireEvent.click(
       within(await screen.findByRole('alertdialog')).getByRole('button', {

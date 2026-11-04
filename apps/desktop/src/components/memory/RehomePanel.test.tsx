@@ -1,6 +1,12 @@
 import type { ApiClient } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
 
 import { RehomePanel } from './RehomePanel';
@@ -22,7 +28,8 @@ function mount(others: { key: string; count: number }[]) {
 
 test('renders nothing while no entry is narrowed to another checkout', async () => {
   mount([]);
-  await Bun.sleep(20);
+  // Gives the key read time to land (inside act: it re-renders the panel).
+  await act(() => Bun.sleep(20));
   expect(screen.queryByRole('button', { name: /Move them/ })).toBeNull();
 });
 

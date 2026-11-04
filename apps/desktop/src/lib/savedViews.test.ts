@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 
 import {
   addSavedView,
@@ -154,13 +154,22 @@ describe('loadSavedViews / saveSavedViews', () => {
     });
   });
 
-  test('a throwing setItem is swallowed', () => {
+  test('a throwing setItem is swallowed, with a warning', () => {
     const storage = {
       setItem: () => {
         throw new Error('quota');
       },
     };
-    expect(() => saveSavedViews('/a', [view('v-1')], storage)).not.toThrow();
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(() => saveSavedViews('/a', [view('v-1')], storage)).not.toThrow();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain(
+        'failed to persist saved views'
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

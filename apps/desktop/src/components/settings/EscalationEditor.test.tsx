@@ -71,11 +71,11 @@ test('a row select carries its round in its accessible name', () => {
 
 // Changing a row's strategy select must patch only that row, in place,
 // without renumbering (renumbering is reserved for add/remove).
-test('changing a strategy select patches only that row', () => {
+test('changing a strategy select patches only that row', async () => {
   let next: EscalationStep[] = [];
   render(<EscalationEditor steps={steps} onChange={(s) => (next = s)} />);
   fireEvent.click(selectTrigger('Round 1 strategy'));
-  chooseOption('Fresh agent');
+  await chooseOption('Fresh agent');
   expect(next).toEqual([
     { round: 1, strategy: 'fresh', modelTier: 'standard' },
     { round: 2, strategy: 'fresh', modelTier: 'high' },

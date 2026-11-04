@@ -44,7 +44,12 @@ void mock.module('@/components/runs/PierreWorkerPool', () => ({
 
 const { TaskPageView } = await import('./TaskPageView');
 
-afterEach(cleanup);
+// A ticked criterion is kept per run in localStorage (lib/reviewCriteria.ts),
+// so a test that ticks one would otherwise hand it to the next test's run.
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 const BODY = `## Description
 

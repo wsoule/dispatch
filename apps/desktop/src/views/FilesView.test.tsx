@@ -268,4 +268,6 @@ test('closing quick open with focus nowhere lands it on Go to file, or the edito
   await settle();
   second.rerender(host(false, 'src/a.ts'));
   expect(document.activeElement).toBe(editor);
+  // Closing quick open brings the tree back, which loads its root again.
+  await settle();
 });

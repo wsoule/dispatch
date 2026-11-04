@@ -1,7 +1,13 @@
 import { ApiError } from '@dispatch/client';
 import type { ReviewComment } from '@dispatch/client';
 import { EditProvider } from '@pierre/diffs/react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { describe, expect, it } from 'bun:test';
 
 import {
@@ -320,7 +326,7 @@ describe('ReviewThread — the existing thread behaviour', () => {
     expect(resolved).toBe(true);
   });
 
-  it('still sends a reply on Enter', () => {
+  it('still sends a reply on Enter', async () => {
     let replyBody: string | undefined;
     render(
       <ReviewThread
@@ -337,10 +343,20 @@ describe('ReviewThread — the existing thread behaviour', () => {
       'Reply. The agent reads this when you send the work back.'
     );
     fireEvent.change(input, { target: { value: 'looks right to me' } });
-    fireEvent.keyDown(input, { key: 'Enter' });
+    // The reply settles a microtask after the key: inside act.
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+      await Promise.resolve();
+    });
     expect(replyBody).toBe('looks right to me');
   });
 });
+
+// A save that never settles, for the tests that read only what was submitted.
+// Settling it would clear the composer's `busy` after the test's last act, and
+// waiting for that inside act would let Pierre's suggestion editor finish its
+// first paint, whose text measurement needs a canvas happy-dom does not have.
+const unsettled = () => new Promise<ReviewComment>(() => {});
 
 // `ReviewComposer` nests a real Pierre `CodeView` for the suggestion editor, so every render
 // test wraps it in `EditProvider` the same way `PierreReviewDiff` does in production.
@@ -383,7 +399,7 @@ describe('ReviewComposer — the suggestion editor', () => {
       fileContents: 'a\nb\nc\n',
       onSubmit: (body, suggestion) => {
         submitted = { body, suggestion };
-        return Promise.resolve(comment());
+        return unsettled();
       },
     });
     fireEvent.change(
@@ -517,7 +533,7 @@ describe('ReviewComposer — the anchor it records', () => {
       fileContents: 'const a = 0;\nconst b = 1;\nconst c = 2;\n',
       onSubmit: (_body, _suggestion, anchorText) => {
         submitted = anchorText;
-        return Promise.resolve(comment());
+        return unsettled();
       },
     });
     fireEvent.change(
@@ -538,7 +554,7 @@ describe('ReviewComposer — the anchor it records', () => {
       fileContents: 'const a = 0;\nconst b = 1;\nconst c = 2;\n',
       onSubmit: (_body, _suggestion, anchorText) => {
         submitted = anchorText;
-        return Promise.resolve(comment());
+        return unsettled();
       },
     });
     fireEvent.change(
@@ -557,7 +573,7 @@ describe('ReviewComposer — the anchor it records', () => {
       fileContents: null,
       onSubmit: (_body, _suggestion, anchorText) => {
         submitted = anchorText;
-        return Promise.resolve(comment());
+        return unsettled();
       },
     });
     fireEvent.change(
@@ -643,7 +659,10 @@ describe('ReviewComposer — a draft kept outside it', () => {
     expect(draft.get().busy).toBe(true);
     await waitFor(() => expect(draft.get().busy).toBe(false));
     expect(draft.get().error).toBe('network down');
-    draft.reset();
+    // The mounted composer listens to the store: inside act.
+    act(() => {
+      draft.reset();
+    });
     expect(draft.get()).toEqual({
       body: '',
       suggestion: null,

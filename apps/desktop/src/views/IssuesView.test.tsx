@@ -826,7 +826,11 @@ async function bulkDispatch(ids: string[]) {
     fireEvent.click(optionNamed(`Dispatch ${ids.length} ready…`));
   });
   const dialog = within(screen.getByRole('dialog', { name: /Send agents/ }));
-  fireEvent.click(dialog.getByRole('button', { name: /^Send \d+ agents?$/ }));
+  // Each dispatch is awaited in turn and the dialog closes after the last:
+  // inside act, so those updates land before the test reads the log.
+  await settle(() => {
+    fireEvent.click(dialog.getByRole('button', { name: /^Send \d+ agents?$/ }));
+  });
 }
 
 // The bulk bar loops handleDispatch; marking the batch keeps the app from

@@ -174,10 +174,13 @@ export function selectTrigger(
   });
 }
 
-/** Picks an option in the open Select (or picker) list. */
-export function chooseOption(name: string | RegExp): void {
-  act(() => {
+/** Picks an option in the open Select (or picker) list. The pick saves, and
+ *  the save settles a microtask later (the picker leaves its pending state),
+ *  so the act waits for it. */
+export async function chooseOption(name: string | RegExp): Promise<void> {
+  await act(async () => {
     fireEvent.click(screen.getByRole('option', { name }));
+    await Promise.resolve();
   });
 }
 

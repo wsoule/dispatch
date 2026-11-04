@@ -80,7 +80,7 @@ test('gate rows show the effective mode consultPolicy derives from the rung', ()
   expect(screen.getAllByText('Waits for you')).toHaveLength(3);
 });
 
-test('a pinned gate reads as pinned and a pin change saves key-by-key', () => {
+test('a pinned gate reads as pinned and a pin change saves key-by-key', async () => {
   const saves: unknown[] = [];
   render(
     <PolicySection
@@ -91,10 +91,10 @@ test('a pinned gate reads as pinned and a pin change saves key-by-key', () => {
   );
   expect(screen.getByText('Automatic, pinned')).toBeDefined();
   fireEvent.click(selectTrigger('Merging override'));
-  chooseOption('Follow level');
+  await chooseOption('Follow level');
   expect(saves).toEqual([{ policy: { gates: { merge: null } } }]);
   fireEvent.click(selectTrigger('Extra files override'));
-  chooseOption('Always wait');
+  await chooseOption('Always wait');
   expect(saves).toHaveLength(2);
   expect(saves[1]).toEqual({ policy: { gates: { scope: 'block' } } });
 });

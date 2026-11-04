@@ -338,7 +338,7 @@ test('moving to every network interface proposes the team-local cert', async () 
   await screen.findByText(/Off/);
   expect(valueOf('TLS certificate')).toBe('');
   fireEvent.click(selectTrigger('Host'));
-  chooseOption('Every network interface');
+  await chooseOption('Every network interface');
   expect(valueOf('TLS certificate')).toBe('/team/cert.pem');
   expect(valueOf('TLS key')).toBe('/team/key.pem');
 });

@@ -1,7 +1,15 @@
 import type { FileDiffMetadata } from '@pierre/diffs';
 import type { CodeViewHandle } from '@pierre/diffs/react';
 import { render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, mock } from 'bun:test';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ReactNode } from 'react';
@@ -265,6 +273,25 @@ describe('DiffSurface — what reaches CodeView', () => {
 });
 
 describe('DiffSurface — per-file crash isolation', () => {
+  // React reports every error a boundary catches through console.error. The
+  // throws below are the point of these tests, so their reports are kept off
+  // the run's output, and each test checks that what was reported is the
+  // slot's own error and nothing else.
+  let reported: ReturnType<typeof spyOn<Console, 'error'>>;
+  beforeEach(() => {
+    reported = spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    const errors = reported.mock.calls
+      .flat()
+      .filter((arg): arg is Error => arg instanceof Error);
+    reported.mockRestore();
+    expect(errors.length).toBeGreaterThan(0);
+    for (const error of errors) {
+      expect(error.message).toBe('this file’s slot is broken');
+    }
+  });
+
   // The one-`CodeView` consolidation replaced `RunDiffView`/`GitDiffPane`'s per-file boundaries
   // with a single one for the whole pane, and Pierre only catches on the file *load* path — so a
   // throw while rendering one file's slots blanked every file. Each file's slots get their own

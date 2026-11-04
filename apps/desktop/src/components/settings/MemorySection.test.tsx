@@ -384,7 +384,7 @@ describe('MemorySection', () => {
     await screen.findByText('15 entries · 2 open proposals · full-text search');
     fireEvent.click(selectTrigger('Claude’s memory in runs'));
     // The default is Export; picking the value already shown saves nothing.
-    chooseOption('Off');
+    await chooseOption('Off');
     const tokens = screen.getByLabelText('Index budget');
     expect((tokens as HTMLInputElement).value).toBe('1000');
     fireEvent.change(tokens, { target: { value: '1500' } });

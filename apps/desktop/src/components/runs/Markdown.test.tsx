@@ -1,9 +1,22 @@
 import { untrustedFenced } from '@dispatch-foo/core/browser';
-import { fireEvent, render, screen } from '@testing-library/react';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 import { useEffect } from 'react';
 
 import { Markdown } from './Markdown';
+
+// A settled fence highlights itself asynchronously. Once Shiki has that
+// language loaded (another test drew one first) the colours land a few
+// microtasks after a synchronous test returns, which is before the shared
+// setup's afterEach unmounts it: an update outside act. The fence tests below
+// read only what draws at once, so each unmounts before it returns, and the
+// late highlight finds nothing mounted to update.
 
 describe('Markdown', () => {
   // A chat re-renders on every streamed delta: a settled message must not
@@ -32,6 +45,7 @@ describe('Markdown', () => {
     const after = mounted();
     expect(after.link === before.link).toBe(true);
     expect(after.block === before.block).toBe(true);
+    cleanup();
   });
 
   test('a linked remote image is plain text, never a link inside a link', () => {
@@ -78,6 +92,7 @@ describe('Markdown', () => {
         .querySelector('[data-slot="code-block"]')
         ?.getAttribute('data-language')
     ).toBe('ts');
+    cleanup();
   });
 
   test('a fence wraps its lines on demand, and the toggle says so', () => {
@@ -92,12 +107,14 @@ describe('Markdown', () => {
     const on = screen.getByRole('button', { name: 'Stop wrapping' });
     expect(on.getAttribute('aria-pressed')).toBe('true');
     expect(block?.getAttribute('data-wrap')).toBe('true');
+    cleanup();
   });
 
   test('a fence carries a Copy code button', () => {
     render(<Markdown content={'```ts\nconst x = 1;\n```'} />);
     const copy = screen.getByRole('button', { name: 'Copy code' });
     expect(copy.closest('[data-slot="code-block"]')).not.toBeNull();
+    cleanup();
   });
 
   // The label names the language the fence says: a JavaScript fence is not
@@ -118,6 +135,7 @@ describe('Markdown', () => {
     const header = block?.textContent?.replace('const x = 1;', '') ?? '';
     expect(header).toContain(label);
     if (label !== 'TypeScript') expect(header).not.toContain('TypeScript');
+    cleanup();
   });
 
   test('a fence with an unmapped language tag shows the tag as written', () => {
@@ -125,6 +143,7 @@ describe('Markdown', () => {
       <Markdown content={'```bash\nbun test\n```'} />
     );
     expect(container.textContent).toContain('bash');
+    cleanup();
   });
 
   test('a multi-line fenced block keeps every line', () => {
@@ -135,6 +154,7 @@ describe('Markdown', () => {
     expect(container.textContent).toContain('function add(a, b) {');
     expect(container.textContent).toContain('return a + b;');
     expect(container.textContent).not.toContain('[object Object]');
+    cleanup();
   });
 
   test('a fence without a language tag still renders as a code block', () => {
@@ -194,9 +214,10 @@ describe('Markdown', () => {
     );
     expect(container.querySelector('img')).toBeNull();
     expect(container.textContent).toContain('![b](https://evil/b.gif)');
+    cleanup();
   });
 
-  test('$$…$$ is math, a single dollar stays prose', () => {
+  test('$$…$$ is math, a single dollar stays prose', async () => {
     const { container } = render(
       <Markdown
         content={'costs $5 to $10, and $$a^2$$ inline\n\n$$\nx = 1\n$$'}
@@ -210,6 +231,12 @@ describe('Markdown', () => {
     expect(container.textContent).toContain('costs $5 to $10');
     // Math is not a fence: no code block, no inline code.
     expect(container.querySelector('[data-slot="code-block"]')).toBeNull();
+    // KaTeX loads lazily, then both formulas are typeset.
+    await waitFor(() => {
+      expect(
+        container.querySelectorAll('[data-slot="markdown-math"] .katex')
+      ).toHaveLength(2);
+    });
   });
 
   test('a mermaid fence shows its source while the reply streams', () => {
@@ -240,6 +267,7 @@ describe('Markdown', () => {
     expect(container.textContent).toContain('A --> B');
     expect(screen.getByRole('button', { name: 'Show diagram' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Wrap lines' })).toBeTruthy();
+    cleanup();
   });
 
   test('a wide table sits in its own scroll box', () => {

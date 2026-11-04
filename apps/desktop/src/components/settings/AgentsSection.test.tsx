@@ -149,24 +149,24 @@ test('a model role select carries its accessible name', () => {
   expect(selectTrigger('Coding runs effort')).toBeTruthy();
 });
 
-test('choosing an effort level saves it for that role', () => {
+test('choosing an effort level saves it for that role', async () => {
   const r = recorder();
   renderAgents({ onSave: r.onSave });
   fireEvent.click(selectTrigger('Coding runs effort'));
-  chooseOption('Max');
+  await chooseOption('Max');
   expect(r.saved).toEqual([{ effort: { execute: 'max' } }]);
 });
 
 // Default is not an effort level: choosing it clears the key so the model
 // decides, rather than saving the word "default".
-test('choosing Default effort clears the role', () => {
+test('choosing Default effort clears the role', async () => {
   const r = recorder();
   renderAgents({
     config: { ...config, effort: { execute: 'high' } },
     onSave: r.onSave,
   });
   fireEvent.click(selectTrigger('Coding runs effort'));
-  chooseOption('Default');
+  await chooseOption('Default');
   expect(r.saved).toEqual([{ effort: { execute: null } }]);
 });
 

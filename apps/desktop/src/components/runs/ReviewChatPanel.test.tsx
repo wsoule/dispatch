@@ -99,6 +99,9 @@ async function settle(): Promise<void> {
     // Several hops, not one: a send is a chain (POST → cache write → state), and each `await`
     // here drains exactly one microtask of it.
     for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    // The query cache tells its views about a settled read on a timer tick,
+    // so the read the panel made on mount lands here too, not after the test.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
   });
 }
 

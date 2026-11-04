@@ -2,6 +2,7 @@ import { ApiError } from '@dispatch/client';
 import type { TeamKeys, TeamStatus } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -77,6 +78,15 @@ const founded: TeamKeys = {
 /** The team status the page reads first: sync on, this machine in the team. */
 const SYNC_ON: Pick<TeamStatus, 'state'> = { state: 'member' };
 
+// Clicks a roster action and lets it settle: the change, the team re-read it
+// asks for, and the group leaving its busy state all land inside the act.
+async function settled(button: HTMLElement): Promise<void> {
+  await act(async () => {
+    fireEvent.click(button);
+    await Promise.resolve();
+  });
+}
+
 function mount(
   keys: TeamKeys | (() => Promise<TeamKeys>),
   tier: 'request' | 'decide' | 'operator' = 'operator',
@@ -145,7 +155,7 @@ test('shows both fingerprints when two foundings compete, and trusts the one pic
       { replica: 'bob-0000000b', fingerprint: 'BBBB-BBBB-BBBB-BBBB-BBBB-BBBB' },
     ],
   });
-  fireEvent.click(
+  await settled(
     await screen.findByRole('button', {
       name: 'Trust BBBB-BBBB-BBBB-BBBB-BBBB-BBBB',
     })
@@ -175,7 +185,7 @@ test('admits a waiting machine only after its fingerprint is typed to match', as
     target: { value: 'cccc-cccc-cccc-cccc-cccc-cccc' },
   });
   expect(admit.hasAttribute('disabled')).toBe(false);
-  fireEvent.click(admit);
+  await settled(admit);
   expect(client.admitReplica).toHaveBeenCalledWith('cy-0000000c', {
     fingerprint: 'CCCC-CCCC-CCCC-CCCC-CCCC-CCCC',
   });
@@ -216,9 +226,7 @@ test('shows the branch size and each pruning blocker, with Revoke it? for the op
     )
   ).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Revoke bob?' }));
-  fireEvent.click(
-    await screen.findByRole('button', { name: 'Confirm revoke' })
-  );
+  await settled(await screen.findByRole('button', { name: 'Confirm revoke' }));
   expect(client.revokeReplica).toHaveBeenCalledWith(
     'bob-0000000b',
     'blocked pruning'

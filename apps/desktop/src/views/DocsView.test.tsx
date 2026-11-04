@@ -2,6 +2,7 @@ import type { ApiClient, DocRead, DocSummary } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -953,8 +954,10 @@ test('creates a team doc by default, and a personal one with the toggle', async 
   });
   fireEvent.click(screen.getByRole('button', { name: 'Create' }));
   await waitFor(() => expect(made).toHaveLength(1));
-  // The new doc opens in place of the list; the crumb walks back to it.
-  fireEvent.click(await screen.findByRole('button', { name: 'All docs' }));
+  // The new doc opens in place of the list, read and ready to edit; the
+  // crumb walks back to it.
+  await screen.findByLabelText(/^Editing /);
+  fireEvent.click(screen.getByRole('button', { name: 'All docs' }));
   fireEvent.click(await screen.findByRole('button', { name: 'New doc' }));
   fireEvent.change(await screen.findByLabelText('Title'), {
     target: { value: 'My notes' },
@@ -963,13 +966,16 @@ test('creates a team doc by default, and a personal one with the toggle', async 
   fireEvent.click(
     within(screen.getByRole('dialog')).getByRole('radio', { name: 'Personal' })
   );
-  fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-  await waitFor(() =>
-    expect(made).toEqual([
-      { title: 'Team notes', body: '# Team notes\n', scope: 'team' },
-      { title: 'My notes', body: '# My notes\n', scope: 'personal' },
-    ])
-  );
+  // The create settles a microtask after the click and opens the new doc:
+  // inside act, so the test does not end on a waitFor with the open in flight.
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+    await Promise.resolve();
+  });
+  expect(made).toEqual([
+    { title: 'Team notes', body: '# Team notes\n', scope: 'team' },
+    { title: 'My notes', body: '# My notes\n', scope: 'personal' },
+  ]);
 });
 
 test('offers Promote to team on a personal doc only, and sends it', async () => {
@@ -989,10 +995,16 @@ test('offers Promote to team on a personal doc only, and sends it', async () => 
     doc: { ...summary, scope: 'personal' } as unknown as DocSummary,
   });
   await openDoc('Auth refactor');
-  fireEvent.click(
-    await screen.findByRole('button', { name: 'Promote to team' })
-  );
-  await waitFor(() => expect(promoted).toEqual(['doc-1']));
+  const promote = await screen.findByRole('button', {
+    name: 'Promote to team',
+  });
+  // The promote settles a microtask after the click and opens the team copy:
+  // inside act, so the test does not end on a waitFor with the open in flight.
+  await act(async () => {
+    fireEvent.click(promote);
+    await Promise.resolve();
+  });
+  expect(promoted).toEqual(['doc-1']);
 });
 
 test('shows no Promote on a team doc', async () => {

@@ -1,5 +1,12 @@
 import type { NormalizedEntry, RunMeta } from '@dispatch/client';
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -226,31 +233,35 @@ test('hides Continue on a run that finished normally', () => {
 
 // The point of one-click Continue: no typing required for a run that was
 // interrupted rather than wrong.
-test('Continue resumes with the canned prompt when nothing was typed', () => {
+test('Continue resumes with the canned prompt when nothing was typed', async () => {
   const sent: string[] = [];
   renderLog(meta({ state: 'failed', sessionId: 'sess-1' }), (text) => {
     sent.push(text);
     return Promise.resolve();
   });
 
-  act(() => {
+  // The send settles a microtask after the click (it clears the draft and
+  // `sending`), so the act waits for it.
+  await act(async () => {
     fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    await Promise.resolve();
   });
   expect(sent).toEqual([CONTINUE_PROMPT]);
 });
 
-test('Continue sends the draft instead when the human typed one', () => {
+test('Continue sends the draft instead when the human typed one', async () => {
   const sent: string[] = [];
   renderLog(meta({ state: 'failed', sessionId: 'sess-1' }), (text) => {
     sent.push(text);
     return Promise.resolve();
   });
 
-  act(() => {
+  await act(async () => {
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'finish the failing test' },
     });
     fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    await Promise.resolve();
   });
   expect(sent).toEqual(['finish the failing test']);
 });
@@ -916,6 +927,10 @@ test("a live CLI agent's output is drawn block by block", () => {
     />
   );
   expect(drawn()).toHaveLength(1);
+  // The settled code block highlights itself a few microtasks after this
+  // returns once Shiki is warm, before the shared setup unmounts it: unmount
+  // first, so that late update finds nothing mounted.
+  cleanup();
 });
 
 // Work an orphaned agent landed after the failure is a pointer to the branch,
