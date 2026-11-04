@@ -104,9 +104,16 @@ change of `html[data-theme]`, so the footer toggle, Settings, the palette and
 another window all reach it. That sets the window background where the page has
 not painted, the area a resize exposes and native menus. It needs the
 `core:window:allow-set-theme` capability in `src-tauri/capabilities/`; a browser
-never calls it. The first frames of a launch, before the page's script runs,
-still follow the OS: the choice lives in the webview's `localStorage`, which the
-native side cannot read before it opens the window.
+never calls it.
+
+The first frames of a launch come before the page's script, and the native side
+cannot read the webview's `localStorage`, so the choice is also kept natively:
+each choice the window is sent also goes to the `remember_window_theme` command
+(`src-tauri/src/window_theme.rs`), which writes `light` or `dark` to
+`window-theme` in the app config dir and removes it for System. tauri.conf.json
+marks the window `create: false`, and setup builds it from that entry with the
+remembered theme, so it opens in the chosen appearance. `localStorage` stays the
+page's record of the choice; the native copy only removes the launch flash.
 
 ## Toolchain notes
 

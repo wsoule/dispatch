@@ -34,16 +34,49 @@ void mock.module('@tauri-apps/api/window', () => ({
 const { followThemeInNativeWindow, nativeThemeFor } =
   await import('./nativeTheme');
 
+// The app's own commands go through Tauri's `invoke`, which calls
+// `window.__TAURI_INTERNALS__.invoke`: defining it plays the backend's
+// remember_window_theme without mock.module (which bun hoists across every
+// file in the run). Each remembered choice is recorded; `failRemember` makes
+// the next write reject, as a full disk would. Removed after each test, so
+// isTauri() is false again for every other file.
+type TauriWindow = Window & {
+  __TAURI_INTERNALS__?: {
+    invoke: (cmd: string, args: unknown) => Promise<unknown>;
+  };
+};
+const remembered: unknown[] = [];
+let failRemember = false;
+
 const root = document.documentElement;
 let stop: () => void = () => undefined;
+
+beforeEach(() => {
+  (window as TauriWindow).__TAURI_INTERNALS__ = {
+    invoke: (cmd: string, args: unknown) => {
+      if (cmd !== 'remember_window_theme') {
+        return Promise.reject(new Error(`unexpected command ${cmd}`));
+      }
+      remembered.push((args as { choice: unknown }).choice);
+      if (failRemember) {
+        failRemember = false;
+        return Promise.reject(new Error('disk full'));
+      }
+      return Promise.resolve(null);
+    },
+  };
+});
 
 afterEach(() => {
   stop();
   stop = () => undefined;
   sent.length = 0;
+  remembered.length = 0;
   failNext = false;
+  failRemember = false;
   holdCalls = false;
   delete root.dataset.theme;
+  delete (window as TauriWindow).__TAURI_INTERNALS__;
 });
 
 // MutationObserver reports on a microtask; a rejected setTheme settles on
@@ -136,9 +169,68 @@ describe('followThemeInNativeWindow', () => {
   });
 
   test('by default it asks isTauri, which a test page is not', () => {
+    // A browser page: no Tauri internals at all.
+    delete (window as TauriWindow).__TAURI_INTERNALS__;
     root.dataset.theme = 'dark';
     stop = followThemeInNativeWindow();
     expect(sent).toEqual([]);
+    expect(remembered).toEqual([]);
+  });
+});
+
+// The window is built before the page runs, from the choice remembered
+// natively, so every choice the window is sent is remembered too.
+describe('remembering the choice for the next launch', () => {
+  test('the shown choice is remembered at startup and on every change', async () => {
+    root.dataset.theme = 'system';
+    stop = followThemeInNativeWindow(true);
+    root.dataset.theme = 'dark';
+    await settle();
+    root.dataset.theme = 'light';
+    await settle();
+    root.dataset.theme = 'system';
+    await settle();
+    expect(remembered).toEqual(['system', 'dark', 'light', 'system']);
+  });
+
+  test('an unchanged choice is not written again', async () => {
+    root.dataset.theme = 'dark';
+    stop = followThemeInNativeWindow(true);
+    root.dataset.theme = 'dark';
+    await settle();
+    expect(remembered).toEqual(['dark']);
+  });
+
+  test('a failed write is logged, the window still follows, and later choices are remembered', async () => {
+    const original = console.error;
+    const logged: unknown[][] = [];
+    console.error = (...args: unknown[]) => {
+      logged.push(args);
+    };
+    try {
+      root.dataset.theme = 'light';
+      failRemember = true;
+      stop = followThemeInNativeWindow(true);
+      await settle();
+      expect(logged.map((args) => args[0])).toEqual([
+        'theme: remembering the window appearance failed',
+      ]);
+      expect(sent).toEqual(['light']);
+      root.dataset.theme = 'dark';
+      await settle();
+      expect(remembered).toEqual(['light', 'dark']);
+      expect(sent).toEqual(['light', 'dark']);
+    } finally {
+      console.error = original;
+    }
+  });
+
+  test('outside Tauri nothing is remembered', async () => {
+    root.dataset.theme = 'dark';
+    stop = followThemeInNativeWindow(false);
+    root.dataset.theme = 'light';
+    await settle();
+    expect(remembered).toEqual([]);
   });
 });
 
@@ -229,17 +321,48 @@ describe('handing a pinned window back to the OS', () => {
     }
   });
 
-  test('startup on System and a swap between Light and Dark hold nothing', async () => {
+  // Setup may have built the window pinned from the window-theme file while
+  // the page's own stored choice is System (a dev build and the installed
+  // app share the file, not localStorage), so the first hand-back at startup
+  // is held too, until the media query changes.
+  test('startup on System holds transitions until the scheme changes', async () => {
     root.dataset.theme = 'system';
+    stop = followThemeInNativeWindow(true);
+    expect(sent).toEqual([null]);
+    expect(switching()).toBe(true);
+    land();
+    await settle();
+    await frames(3);
+    expect(switching()).toBe(true);
+    for (const listener of [...schemeListeners]) listener();
+    expect(schemeListeners.size).toBe(0);
+    await frames(3);
+    expect(switching()).toBe(false);
+  });
+
+  test('startup on System with no scheme change holds only briefly after the call lands', async () => {
+    root.dataset.theme = 'system';
+    stop = followThemeInNativeWindow(true);
+    expect(switching()).toBe(true);
+    land();
+    await settle();
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    await frames(3);
+    expect(switching()).toBe(false);
+    expect(schemeListeners.size).toBe(0);
+  });
+
+  test('startup on Light and a swap between Light and Dark hold nothing', async () => {
+    root.dataset.theme = 'light';
     stop = followThemeInNativeWindow(true);
     expect(switching()).toBe(false);
     land();
-    root.dataset.theme = 'light';
-    await settle();
-    land();
     root.dataset.theme = 'dark';
     await settle();
-    expect(sent).toEqual([null, 'light', 'dark']);
+    land();
+    root.dataset.theme = 'light';
+    await settle();
+    expect(sent).toEqual(['light', 'dark', 'light']);
     expect(switching()).toBe(false);
     expect(schemeListeners.size).toBe(0);
   });

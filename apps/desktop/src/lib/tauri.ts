@@ -1,3 +1,4 @@
+import type { ThemeChoice } from '@dispatch/ui';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 
@@ -111,6 +112,13 @@ export function revealInFinder(path: string): Promise<void> {
  * to the absolute path it was saved at, for a "Reveal in Finder" follow-up action. */
 export function exportTranscript(sessionId: string): Promise<string> {
   return invoke('export_transcript', { sessionId });
+}
+
+/** Remembers the theme choice natively (`window_theme::remember_window_theme`), so the next
+ * launch opens its window in that appearance before the page can run. `localStorage` stays
+ * the page's own record of the choice; this copy only removes the launch flash. Tauri only. */
+export function rememberWindowTheme(choice: ThemeChoice): Promise<void> {
+  return invoke('remember_window_theme', { choice });
 }
 
 export function getFileDiffForSessionFile(

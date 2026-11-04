@@ -40,7 +40,8 @@ void warmBoot(queryClient);
 followThemeFromOtherWindows();
 
 // In the Tauri app, the window's native appearance (its background before the
-// page paints, native menus) follows the stored choice too, not only the OS.
+// page paints, native menus) follows the stored choice too, not only the OS,
+// and the choice is remembered natively so the next launch opens in it.
 // A no-op in a browser.
 followThemeInNativeWindow();
 

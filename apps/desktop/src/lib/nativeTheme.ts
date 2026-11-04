@@ -1,7 +1,7 @@
 import { holdThemeSwitch, type ThemeChoice, themeChoiceOf } from '@dispatch/ui';
 import { getCurrentWindow, type Theme } from '@tauri-apps/api/window';
 
-import { isTauri } from './tauri';
+import { isTauri, rememberWindowTheme } from './tauri';
 
 /** The native appearance for a page theme: a chosen Light or Dark pins the
  *  window to it; System is null, which hands the window back to the OS. */
@@ -29,7 +29,10 @@ interface SchemeHold {
    for "system", flips only after the native call lands and the OS pushes
    its appearance. That flip would animate every colour transition, so this
    holds html[data-theme-switching] (holdThemeSwitch) until the query's next
-   change, or SCHEME_SETTLE_MS after the call lands if none comes. */
+   change, or SCHEME_SETTLE_MS after the call lands if none comes. That
+   includes the first call at startup, when the window may have opened
+   pinned from the window-theme file: a launch on System then holds
+   transitions for that short while. */
 function holdUntilSchemeSettles(): SchemeHold {
   const release = holdThemeSwitch();
   const query = window.matchMedia('(prefers-color-scheme: dark)');
@@ -60,7 +63,9 @@ function holdUntilSchemeSettles(): SchemeHold {
  * followThemeFromOtherWindows), so no caller has to remember to call it.
  * An unchanged value is not sent again, and a window handed back to the OS
  * keeps colour transitions off until the page's scheme has caught up
- * (holdUntilSchemeSettles). Outside Tauri (a browser on `dispatch ui`, plain
+ * (holdUntilSchemeSettles). Each choice it sends is also remembered natively
+ * (rememberWindowTheme), so the next launch builds its window in that
+ * appearance before this page has run at all. Outside Tauri (a browser on `dispatch ui`, plain
  * Vite) there is no native window and it does nothing. Returns the function
  * that stops following.
  */
@@ -72,9 +77,15 @@ export function followThemeInNativeWindow(
   let sent: Theme | null | undefined;
   let hold: SchemeHold | null = null;
   const sync = () => {
-    const next = nativeThemeFor(themeChoiceOf(root.dataset.theme));
+    const choice = themeChoiceOf(root.dataset.theme);
+    const next = nativeThemeFor(choice);
     if (next === sent) return;
-    const pinned = sent !== undefined && sent !== null;
+    // The first sync cannot know what the window shows: setup builds it in
+    // the appearance the window-theme file remembers, which can disagree
+    // with this page's stored choice (a dev build and the installed app share
+    // the file but not localStorage). So an unknown start counts as pinned,
+    // and a first hand-back to the OS is held like any other.
+    const pinned = sent !== null;
     sent = next;
     hold?.done();
     const current = pinned && next === null ? holdUntilSchemeSettles() : null;
@@ -90,6 +101,11 @@ export function followThemeInNativeWindow(
           console.error('theme: setting the window appearance failed', err);
         }
       );
+    // Only the next launch's first frames depend on this copy, so a failed
+    // write is logged and the page carries on.
+    rememberWindowTheme(choice).catch((err: unknown) => {
+      console.error('theme: remembering the window appearance failed', err);
+    });
   };
   sync();
   const observer = new MutationObserver(sync);

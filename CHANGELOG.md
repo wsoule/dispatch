@@ -50,7 +50,7 @@ holds what a user upgrading needs to know.
     project; in a browser opened on a daemon (`dispatch ui`), each daemon port
     keeps its own, so another port starts from the system theme until you choose
     again. The app window's native parts (its menus, the background shown before
-    the page draws) still follow the system theme.
+    the page draws) follow the choice too, from the first frame of a launch.
   - Quick open over the project's files is ⌘P on macOS and Ctrl+P elsewhere. On
     macOS, Ctrl+P keeps its text meaning (previous line) in every text field.
 - **Label colours, the license, doc bodies and the A2A listener save again from

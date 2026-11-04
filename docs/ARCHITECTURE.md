@@ -765,8 +765,10 @@ one per daemon port in a browser. In the Tauri app, `followThemeInNativeWindow`
 background where the page has not painted, the area a resize exposes, native
 menus) from `html[data-theme]` at startup and on every change, through
 `getCurrentWindow().setTheme` (`null` for System) and the
-`core:window:allow-set-theme` capability; only the first frames of a launch,
-before the page's script runs, still follow the OS.
+`core:window:allow-set-theme` capability. The choice is also remembered natively
+(`remember_window_theme`, a `window-theme` file in the app config dir), and
+setup builds the window (`create: false` in tauri.conf.json) with that theme, so
+a launch opens in the chosen appearance from its first frame.
 
 ### Overlays: one layer stack
 
