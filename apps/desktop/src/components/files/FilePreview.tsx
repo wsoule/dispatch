@@ -3,6 +3,7 @@ import { Button, Notice, SkeletonBlock } from '@dispatch/ui';
 import { FolderOpen } from 'lucide-react';
 import { type MouseEvent, useState, useSyncExternalStore } from 'react';
 
+import { revealActionLabel } from '../../lib/savedFile';
 import {
   downloadWorkspaceFile,
   isTauri,
@@ -304,9 +305,12 @@ export function FilePreview({ client, file, runId }: FilePreviewProps) {
  * navigation, so the link's own `href` (the raw route) is left to the browser.
  * In the desktop app, where wry cancels an `<a download>`, the backend streams
  * the file into Downloads itself (`startNativeSave`), and a status line that
- * stays mounted says where it was saved, with a Reveal in Finder action; that
- * outcome outlives the link (`nativeSaves`). One download at a time: a second
- * click while one is being set up does nothing.
+ * stays mounted says where it was saved, with an action that shows it in the
+ * file manager (`revealActionLabel`: "Reveal in Finder" on macOS, "Show in
+ * folder" elsewhere); that outcome outlives the link (`nativeSaves`). The app
+ * only ever talks to the daemon it started or attached to on this computer
+ * (http://127.0.0.1:<port>), the one address the backend's save accepts. One
+ * download at a time: a second click while one is being set up does nothing.
  */
 function DownloadLink({ client, file, runId }: FilePreviewProps) {
   const inApp = isTauri();
@@ -413,7 +417,7 @@ function DownloadLink({ client, file, runId }: FilePreviewProps) {
             });
           }}
         >
-          Reveal in Finder
+          {revealActionLabel()}
         </Button>
       )}
     </>

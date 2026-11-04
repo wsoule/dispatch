@@ -134,17 +134,20 @@ bidirectional controls are dropped, so a download is never a hidden or startup
 file and never disguises its extension. The bytes go to a `.download` sibling
 first and take the real name only when complete, and a daemon silent for 30
 seconds ends the download. The page says "Saved to …" in a status line that
-stays mounted, with a Reveal in Finder action, and the outcome outlives the link
+stays mounted, with an action that shows the file in its folder ("Reveal in
+Finder" on macOS, "Show in folder" elsewhere), and the outcome outlives the link
 (another file opened mid-download). A connection to a teammate's daemon, whose
 address is not loopback, is refused: the agent token never leaves the machine.
-Exported reports and transcripts land in the same folder by the same rule. Every
-native call to a daemon, not only this one, uses a client from
-`src-tauri/src/loopback.rs` that ignores `HTTP_PROXY`, `HTTPS_PROXY` and
-`ALL_PROXY` and follows no redirect, so no proxy sees a daemon token on the
-app's own native calls. The bundled `dispatch` CLI and MCP server, which agents
-run with the user's environment, add `127.0.0.1`, `localhost` and `::1` to
-`NO_PROXY` and `no_proxy` when they start (`exemptLoopbackFromProxy` in
-`@dispatch-foo/core`), so their calls to the daemon go straight to it as well.
+The app itself only ever talks to the daemon it started or attached to on this
+computer, so its Download always takes this path. Exported reports and
+transcripts land in the same folder by the same rule. Every native call to a
+daemon, not only this one, uses a client from `src-tauri/src/loopback.rs` that
+ignores `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` and follows no redirect, so
+no proxy sees a daemon token on the app's own native calls. The bundled
+`dispatch` CLI and MCP server, which agents run with the user's environment, add
+`127.0.0.1`, `localhost` and `::1` to `NO_PROXY` and `no_proxy` when they start
+(`exemptLoopbackFromProxy` in `@dispatch-foo/core`), so their calls to the
+daemon go straight to it as well.
 
 In a browser opened on a daemon, the same Download asks the daemon for a
 single-use ticket URL when it is clicked (`client.workspaceDownloadUrl`, which

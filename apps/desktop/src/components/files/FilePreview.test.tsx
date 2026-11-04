@@ -46,7 +46,8 @@ afterEach(() => {
 
 // A client whose raw reads answer with `respond` and whose download tickets
 // come from `ticket` (by default each one a fresh URL, `…?ticket=t-<n>`),
-// recording each path read and each ticket asked for.
+// recording each path read and each ticket asked for. Its raw-route links
+// have the shape the real client builds for a loopback daemon.
 function fakeClient(
   respond: (path: string) => Promise<Blob> = () =>
     Promise.resolve(new Blob([new Uint8Array([1, 2, 3])])),
@@ -72,7 +73,8 @@ function fakeClient(
           )
         : ticket(path);
     },
-    workspaceFileUrl: (path: string) => `http://127.0.0.1:4100/raw/${path}`,
+    workspaceFileUrl: (path: string) =>
+      `http://127.0.0.1:4100/api/files/raw?${new URLSearchParams({ path }).toString()}`,
   };
 }
 
@@ -535,7 +537,7 @@ test("on a team-local page Download is the browser's own streamed download of th
     );
     const link = screen.getByRole('link', { name: 'Download' });
     expect(link.getAttribute('href')).toBe(
-      'http://127.0.0.1:4100/raw/media/huge.mp4'
+      'http://127.0.0.1:4100/api/files/raw?path=media%2Fhuge.mp4'
     );
     // fireEvent returns false when a handler called preventDefault.
     expect(fireEvent.click(link)).toBe(true);
@@ -723,7 +725,34 @@ function playDesktopBackend(respond: () => Promise<unknown>): {
   return { calls };
 }
 
-test('in the desktop app Download saves through the backend and offers Reveal in Finder', async () => {
+// Runs `body` with navigator.platform reading `platform`, the value the
+// library's isApplePlatform falls back to (happy-dom has no userAgentData),
+// then puts the real one back.
+async function onPlatform(
+  platform: string,
+  body: () => Promise<void> | void
+): Promise<void> {
+  const own = Object.getOwnPropertyDescriptor(navigator, 'platform');
+  Object.defineProperty(navigator, 'platform', {
+    configurable: true,
+    get: () => platform,
+  });
+  try {
+    await body();
+  } finally {
+    if (own === undefined) {
+      Reflect.deleteProperty(navigator, 'platform');
+    } else {
+      Object.defineProperty(navigator, 'platform', own);
+    }
+  }
+}
+
+test('in the desktop app Download saves through the backend and offers Reveal in Finder on macOS', async () => {
+  await onPlatform('MacIntel', savesThroughTheBackend);
+});
+
+async function savesThroughTheBackend(): Promise<void> {
   let finish: (path: string) => void = () => undefined;
   const backend = playDesktopBackend(
     () =>
@@ -762,7 +791,9 @@ test('in the desktop app Download saves through the backend and offers Reveal in
     expect(backend.calls).toEqual([
       {
         cmd: 'download_workspace_file',
-        args: { url: 'http://127.0.0.1:4100/raw/media/huge.mp4' },
+        args: {
+          url: 'http://127.0.0.1:4100/api/files/raw?path=media%2Fhuge.mp4',
+        },
       },
     ]);
     expect(client.tickets).toEqual([]);
@@ -791,9 +822,44 @@ test('in the desktop app Download saves through the backend and offers Reveal in
   } finally {
     delete (window as TauriWindow).__TAURI_INTERNALS__;
   }
+}
+
+test('away from macOS the saved file is shown in its folder, not in Finder', async () => {
+  await onPlatform('Win32', async () => {
+    const backend = playDesktopBackend(() =>
+      Promise.resolve('C:\\Users\\me\\Downloads\\app.bin')
+    );
+    try {
+      render(
+        <FilePreview
+          client={fakeClient()}
+          file={{ ...BINARY, path: 'platform/app.bin' }}
+          runId={null}
+        />
+      );
+      fireEvent.click(screen.getByRole('link', { name: 'Download' }));
+      const show = await screen.findByRole('button', {
+        name: 'Show in folder',
+      });
+      expect(
+        screen.queryByRole('button', { name: 'Reveal in Finder' })
+      ).toBeNull();
+      fireEvent.click(show);
+      expect(backend.calls.at(-1)).toEqual({
+        cmd: 'reveal_in_finder',
+        args: { path: 'C:\\Users\\me\\Downloads\\app.bin' },
+      });
+    } finally {
+      delete (window as TauriWindow).__TAURI_INTERNALS__;
+    }
+  });
 });
 
 test("in the desktop app a refused save shows the backend's reason and the link stays usable", async () => {
+  await onPlatform('MacIntel', refusedSaveKeepsTheLink);
+});
+
+async function refusedSaveKeepsTheLink(): Promise<void> {
   const backend = playDesktopBackend(() =>
     Promise.reject('No running Dispatch daemon answers on port 4100.')
   );
@@ -828,9 +894,13 @@ test("in the desktop app a refused save shows the backend's reason and the link 
   } finally {
     delete (window as TauriWindow).__TAURI_INTERNALS__;
   }
-});
+}
 
 test('in the desktop app a save outlives its link: back on the file it says where the file went', async () => {
+  await onPlatform('MacIntel', saveOutlivesItsLink);
+});
+
+async function saveOutlivesItsLink(): Promise<void> {
   let finish: (path: string) => void = () => undefined;
   const backend = playDesktopBackend(
     () =>
@@ -906,4 +976,4 @@ test('in the desktop app a save outlives its link: back on the file it says wher
   } finally {
     delete (window as TauriWindow).__TAURI_INTERNALS__;
   }
-});
+}
