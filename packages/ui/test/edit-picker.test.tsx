@@ -272,7 +272,7 @@ describe('PickerPopover: filtering and the keyboard', () => {
 
   // A host's single-key shortcut opened it from elsewhere (a row's title):
   // Esc and a choice go back there; Tab still leaves from the trigger.
-  test('returnFocus takes focus on Esc and on a choice, not on Tab', () => {
+  test('returnFocus takes focus on Esc and on a choice, not on Tab', async () => {
     function KeyHost() {
       const [open, setOpen] = useState(false);
       return (
@@ -305,7 +305,11 @@ describe('PickerPopover: filtering and the keyboard', () => {
     expect(document.activeElement).toBe(title);
     openIt();
     fireEvent.keyDown(combobox(), { key: 'ArrowDown' });
-    fireEvent.keyDown(combobox(), { key: 'Enter' });
+    // The choice saves, and the save settles a microtask later: inside act.
+    await act(async () => {
+      fireEvent.keyDown(combobox(), { key: 'Enter' });
+      await Promise.resolve();
+    });
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(document.activeElement).toBe(title);
     openIt();

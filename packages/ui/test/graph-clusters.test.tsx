@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -933,15 +933,17 @@ describe('DependencyGraph with clusters', () => {
     if (cell === undefined) return;
     const at = (id: string) =>
       container.querySelector<HTMLElement>(`[data-graph-node="${id}"]`);
-    at(cell.id)?.focus();
+    // Focusing a box sets the graph's active box, a state update: inside act.
+    const focus = (id: string) => act(() => at(id)?.focus());
+    focus(cell.id);
     fireEvent.keyDown(at(cell.id) as HTMLElement, { key: 'ArrowRight' });
     expect(document.activeElement).toBe(at(rightOf(cell).id));
-    at(cell.id)?.focus();
+    focus(cell.id);
     fireEvent.keyDown(at(cell.id) as HTMLElement, { key: 'ArrowDown' });
     expect(document.activeElement).toBe(at(belowOf(cell).id));
     // Nothing lies left of the leftmost box of the whole drawing.
     const leftmost = [...layout.nodes].sort((a, b) => a.x - b.x)[0];
-    at(leftmost.id)?.focus();
+    focus(leftmost.id);
     fireEvent.keyDown(at(leftmost.id) as HTMLElement, { key: 'ArrowLeft' });
     expect(document.activeElement).toBe(at(leftmost.id));
   });
