@@ -911,6 +911,127 @@ describe('StatsStrip variant="compact" notes="hint"', () => {
     expect(cell?.hasAttribute('tabindex')).toBe(false);
   });
 
+  // Flight Plan's Running cell holds the slots picker. The pointer on the picker (or on
+  // the menu it opened) gets the picker's own words, never the cell's hint stacked over
+  // them, and a hover opens no hint while the picker is in use, so the one Escape closes
+  // the menu rather than a tip above it.
+  test("a cell's hint keeps away from a control in it and from the control's menu", async () => {
+    const withPicker = (menuOpen: boolean): StatCell[] => [
+      {
+        id: 'running',
+        label: 'Running',
+        value: (
+          <>
+            <span data-testid="words">2/4</span>
+            <button type="button">Slots</button>
+            {menuOpen ? (
+              <div role="menu" aria-label="Slots">
+                <button type="button" role="menuitem">
+                  3 slots
+                </button>
+              </div>
+            ) : null}
+          </>
+        ),
+        note: '1 queued',
+        hint: '2 of 4 slots in use; 1 queued',
+      },
+    ];
+    const { getByRole, getByTestId, queryByRole, rerender } = render(
+      <StatsStrip
+        variant="compact"
+        label="Plan"
+        notes="hint"
+        cells={withPicker(false)}
+      />
+    );
+    const picker = getByRole('button', { name: 'Slots' });
+    const words = getByTestId('words');
+    const cell = inner(picker.closest('li') ?? undefined);
+    expect(cell.hasAttribute('data-hint')).toBe(true);
+    const pause = (ms: number) =>
+      act(() => new Promise((resolve) => setTimeout(resolve, ms)));
+    const mouse = { pointerType: 'mouse' };
+    await coolDown();
+    // Straight onto the picker: no hint, even past the delay.
+    fireEvent.pointerEnter(picker, mouse);
+    await pause(350);
+    expect(tipText(queryByRole)).toBeNull();
+    // On along the cell to its words: the hint shows, after the delay.
+    fireEvent.pointerOver(words, { ...mouse, relatedTarget: picker });
+    expect(tipText(queryByRole)).toBeNull();
+    await pause(350);
+    expect(tipText(queryByRole)).toBe('2 of 4 slots in use; 1 queued');
+    // Back onto the picker: the hint goes, after the Tooltip's grace.
+    fireEvent.pointerOver(picker, { ...mouse, relatedTarget: words });
+    await pause(200);
+    expect(tipText(queryByRole)).toBeNull();
+    fireEvent.pointerLeave(picker, mouse);
+    // The picker's menu open, focus in it: a hover on the cell's words opens no hint
+    // over it, nor does the pointer on the menu itself.
+    rerender(
+      <StatsStrip
+        variant="compact"
+        label="Plan"
+        notes="hint"
+        cells={withPicker(true)}
+      />
+    );
+    const row = getByRole('menuitem', { name: '3 slots' });
+    act(() => row.focus());
+    expect(tipText(queryByRole)).toBeNull();
+    await coolDown();
+    fireEvent.pointerEnter(words, mouse);
+    await pause(350);
+    expect(tipText(queryByRole)).toBeNull();
+    fireEvent.pointerOver(row, { ...mouse, relatedTarget: words });
+    fireEvent.pointerOver(words, { ...mouse, relatedTarget: row });
+    await pause(350);
+    expect(tipText(queryByRole)).toBeNull();
+    fireEvent.pointerLeave(words, mouse);
+    rerender(
+      <StatsStrip
+        variant="compact"
+        label="Plan"
+        notes="hint"
+        cells={withPicker(false)}
+      />
+    );
+    // Keyboard focus on the picker (its own hint's turn): no cell hint on hover either.
+    act(() => picker.focus());
+    fireEvent.pointerEnter(words, mouse);
+    await pause(350);
+    expect(tipText(queryByRole)).toBeNull();
+    fireEvent.pointerLeave(words, mouse);
+    // Focus a press left on the picker is not use: the hover shows the hint again.
+    const matches = HTMLElement.prototype.matches;
+    HTMLElement.prototype.matches = function (this: HTMLElement, selector) {
+      return selector === ':focus-visible'
+        ? false
+        : matches.call(this, selector);
+    };
+    try {
+      await coolDown();
+      fireEvent.pointerEnter(words, mouse);
+      await pause(350);
+      expect(tipText(queryByRole)).toBe('2 of 4 slots in use; 1 queued');
+      fireEvent.pointerLeave(words, mouse);
+      await pause(200);
+    } finally {
+      HTMLElement.prototype.matches = matches;
+    }
+    // A hint the cell's own keyboard focus asked for stays while the pointer crosses
+    // the picker.
+    act(() => cell.focus());
+    expect(tipText(queryByRole)).toBe('2 of 4 slots in use; 1 queued');
+    fireEvent.pointerEnter(picker, mouse);
+    await pause(200);
+    expect(tipText(queryByRole)).toBe('2 of 4 slots in use; 1 queued');
+    fireEvent.pointerLeave(picker, mouse);
+    act(() => cell.blur());
+    expect(tipText(queryByRole)).toBeNull();
+  });
+
   // A 300px scroller; each cell 80px wide every 100px (the Spend cell 30px further),
   // moved by the scroll.
   function fakeScroll(items: HTMLElement[]): {

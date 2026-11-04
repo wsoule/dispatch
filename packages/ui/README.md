@@ -1031,16 +1031,22 @@ description and the key stays what a list item says. `variant` picks the shape:
   and the title is the cell's accessible description (hidden text it points to,
   not the tip's id, so nothing is read twice). Only noted cells are hinted: a
   linked cell keeps its note inline (the host's link takes no Tooltip), and a
-  cell with no note keeps its `title` as the plain hover hint, as inline does.
-  On a touch screen (`useTouchScreen()`, below), where no Tooltip opens, `hint`
-  draws the notes inline. A compact cell keeps the same element in both modes,
-  and a cell that holds focus as its note goes back on the row keeps `tabIndex`
-  -1 until focus moves on, so a host that switches mode (Flight Plan's when a
-  fan-out ends) never drops a focused cell to the page; any other cell not
-  hinted takes no tabindex, so a click on it never focuses the cell. A hint is
-  reached by hover and keyboard, so a host still keeps a fact a person needs at
-  a glance (which amount a value is) in the key or value, not only in a hinted
-  note.
+  cell with no note keeps its `title` as the plain hover hint, as inline does. A
+  control in a hinted cell (Flight Plan's slots picker) says what it does
+  itself: the cell's hint is not shown while the pointer is on the control or on
+  an overlay it opened (its `Menu`, its own `Tooltip`), goes when the pointer
+  moves onto one (a hint the cell's keyboard focus asked for stays) and comes
+  back on the cell's words, and a hover does not open it while the control holds
+  keyboard focus or focus is in its menu, so two tips never stack and one Escape
+  closes the menu. On a touch screen (`useTouchScreen()`, below), where no
+  Tooltip opens, `hint` draws the notes inline. A compact cell keeps the same
+  element in both modes, and a cell that holds focus as its note goes back on
+  the row keeps `tabIndex` -1 until focus moves on, so a host that switches mode
+  (Flight Plan's when a fan-out ends) never drops a focused cell to the page;
+  any other cell not hinted takes no tabindex, so a click on it never focuses
+  the cell. A hint is reached by hover and keyboard, so a host still keeps a
+  fact a person needs at a glance (which amount a value is) in the key or value,
+  not only in a hinted note.
 
 In forced colours the panel's cells draw outlines, since the rules between them
 are its border colour showing through a gap.

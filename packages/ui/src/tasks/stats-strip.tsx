@@ -79,6 +79,35 @@ interface CellTargetProps {
   children: ReactNode;
 }
 
+/** What inside a cell is a control, or an overlay of its own (a Menu it
+    opened, a control's own Tooltip): the cell's hint keeps away from it. */
+const CELL_CONTROL =
+  'a[href], button, input, select, textarea, summary, [tabindex], [role=menu], [role=listbox], [role=dialog], [role=tooltip], [popover]';
+
+/** An overlay a control in the cell opened, which focus can be inside. */
+const CELL_OVERLAY = '[role=menu], [role=listbox], [role=dialog], [popover]';
+
+/** Whether `target` is on a control or an overlay inside `cell` (never the
+    cell's own element, nor anything around the cell). */
+function onCellControl(cell: Element, target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  const control = target.closest(CELL_CONTROL);
+  return control !== null && control !== cell && cell.contains(control);
+}
+
+/** Whether a control inside `cell` is in use: it holds keyboard focus (and
+    shows its own hint, if it has one), or focus is in an overlay it opened
+    (its menu), however that focus got there. Focus a press left on it
+    (its menu closed with a click) is not use: the cell's hint shows on
+    hover again. */
+function cellControlInUse(cell: Element): boolean {
+  const active = cell.ownerDocument.activeElement;
+  if (active === null || active === cell || !cell.contains(active)) {
+    return false;
+  }
+  return active.closest(CELL_OVERLAY) !== null || focusIsVisible(active);
+}
+
 /* A compact cell's inner element, the same <div> whether its note is on
    the row or in its hint, so a strip that changes mode (Flight Plan's when
    a fan-out ends) keeps the node and the focus on it. Hinted, it is a tab
@@ -90,7 +119,15 @@ interface CellTargetProps {
    tabIndex -1, since Chromium drops focus from an element that stops
    being focusable. Any other cell not hinted takes no tabindex, so a
    click on it never focuses the cell, as on any text. It forwards the
-   Tooltip's ref and handlers. */
+   Tooltip's ref and handlers, except that the pointer on a control in the
+   cell (Flight Plan's slots picker), or on an overlay it opened, counts as
+   off the cell: the hint is not shown there (the control says what it
+   does itself), it goes when the pointer moves onto one (after the
+   Tooltip's grace; a hint keyboard focus on the cell asked for stays),
+   and it comes back when the pointer returns to the cell's words. Nor
+   does a hover open it while a control in the cell is in use
+   (cellControlInUse), so two tips never stack and one Escape closes the
+   control's menu. */
 function CellTarget({
   ref,
   hinted,
@@ -104,6 +141,9 @@ function CellTarget({
   onBlur,
   children,
 }: CellTargetProps) {
+  // The pointer is on a control or an overlay inside the cell: read on
+  // every move between the cell's elements, so the hint follows it.
+  const onControl = useRef(false);
   return (
     <div
       ref={ref}
@@ -112,8 +152,24 @@ function CellTarget({
       tabIndex={hinted ? 0 : holdsFocus ? -1 : undefined}
       title={hinted ? undefined : title}
       aria-describedby={hinted ? describedBy : undefined}
-      onPointerEnter={onPointerEnter}
-      onPointerLeave={onPointerLeave}
+      onPointerEnter={(event) => {
+        const cell = event.currentTarget;
+        onControl.current = onCellControl(cell, event.target);
+        if (onControl.current || cellControlInUse(cell)) return;
+        onPointerEnter?.(event);
+      }}
+      onPointerOver={(event) => {
+        const cell = event.currentTarget;
+        const now = onCellControl(cell, event.target);
+        if (now === onControl.current) return;
+        onControl.current = now;
+        if (now) onPointerLeave?.(event);
+        else if (!cellControlInUse(cell)) onPointerEnter?.(event);
+      }}
+      onPointerLeave={(event) => {
+        onControl.current = false;
+        onPointerLeave?.(event);
+      }}
       onPointerDown={onPointerDown}
       onFocus={onFocus}
       onBlur={onBlur}
