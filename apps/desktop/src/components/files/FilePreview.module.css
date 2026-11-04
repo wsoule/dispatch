@@ -57,6 +57,15 @@
   margin: 0;
 }
 
+/* The desktop app's "Saved to <path>" line: a long absolute path may have no
+   space to break at, so it wraps anywhere rather than running out of the
+   pane. */
+.saved {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
 .download {
   border-radius: var(--r-xs);
   color: var(--accent-ink);

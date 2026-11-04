@@ -1,6 +1,7 @@
 mod commands;
 mod cost;
 mod db;
+mod downloads;
 mod parser;
 mod registry;
 mod setup;
@@ -118,6 +119,7 @@ pub fn run() {
       commands::touch_project_opened,
       commands::list_github_repos,
       commands::clone_github_repo,
+      downloads::download_workspace_file,
       window_theme::remember_window_theme,
     ])
     .build(tauri::generate_context!())

@@ -22,6 +22,8 @@ interface Recorded {
   saved: { path: string; text: string }[];
   /** Paths whose raw bytes a preview read through `fetchWorkspaceBlob`. */
   blobs: string[];
+  /** Paths a Download asked a single-use ticket URL for. */
+  tickets: string[];
 }
 
 // The client members FilesView, its tree, its quick open and FilePreview
@@ -33,6 +35,7 @@ type FilesClient = Pick<
   | 'fetchWorkspaceFile'
   | 'saveWorkspaceFile'
   | 'workspaceFileUrl'
+  | 'workspaceDownloadUrl'
   | 'fetchWorkspaceBlob'
   | 'searchWorkspace'
 >;
@@ -111,6 +114,12 @@ function fakeData(
         : Promise.reject(new Error(saveError));
     },
     workspaceFileUrl: (path: string) => `http://127.0.0.1:4100/raw/${path}`,
+    workspaceDownloadUrl: (path: string): Promise<string> => {
+      recorded.tickets.push(path);
+      return Promise.resolve(
+        `http://127.0.0.1:4100/api/files/raw?ticket=t-${recorded.tickets.length}`
+      );
+    },
     fetchWorkspaceBlob: (path: string): Promise<Blob> => {
       recorded.blobs.push(path);
       return Promise.resolve(new Blob([new Uint8Array([1, 2, 3])]));
@@ -132,7 +141,7 @@ function fakeData(
 }
 
 function recorder(): Recorded {
-  return { fetched: [], saved: [], blobs: [] };
+  return { fetched: [], saved: [], blobs: [], tickets: [] };
 }
 
 // Lets the tree's root load (a resolved promise) land inside act.
@@ -281,6 +290,32 @@ test('a binary file shows its preview with no Preview toggle to misreport', asyn
   expect(await screen.findByRole('link', { name: /Download/ })).toBeTruthy();
   expect(screen.queryByLabelText('Editing build/app.bin')).toBeNull();
   expect(screen.queryByRole('button', { name: 'Preview' })).toBeNull();
+});
+
+// In a browser, Download asks the daemon for a single-use ticket URL when it
+// is clicked and hands that to the browser's own download: the page never
+// reads the bytes.
+test("a binary file's Download goes through a ticket, not a read into the page", async () => {
+  const recorded = recorder();
+  const clicked: string[] = [];
+  const originalClick = HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
+    clicked.push(this.href);
+  };
+  try {
+    render(<FilesView data={fakeData(recorded)} initialPath="build/app.bin" />);
+    fireEvent.click(await screen.findByRole('link', { name: 'Download' }));
+    await waitFor(() =>
+      expect(clicked).toEqual([
+        'http://127.0.0.1:4100/api/files/raw?ticket=t-1',
+      ])
+    );
+    expect(recorded.tickets).toEqual(['build/app.bin']);
+    expect(recorded.blobs).toEqual([]);
+    await settle();
+  } finally {
+    HTMLAnchorElement.prototype.click = originalClick;
+  }
 });
 
 // The preview reads an image's bytes with the client's credential and shows

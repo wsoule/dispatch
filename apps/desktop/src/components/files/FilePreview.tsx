@@ -1,7 +1,13 @@
-import type { ApiClient, WorkspaceFile } from '@dispatch/client';
-import { Notice, SkeletonBlock } from '@dispatch/ui';
-import { type MouseEvent, useState } from 'react';
+import { type ApiClient, ApiError, type WorkspaceFile } from '@dispatch/client';
+import { Button, Notice, SkeletonBlock } from '@dispatch/ui';
+import { FolderOpen } from 'lucide-react';
+import { type MouseEvent, useState, useSyncExternalStore } from 'react';
 
+import {
+  downloadWorkspaceFile,
+  isTauri,
+  revealInFinder,
+} from '../../lib/tauri';
 import { isTeamLocalPage } from '../../lib/teamLocal';
 import { Markdown } from '../runs/Markdown';
 import styles from './FilePreview.module.css';
@@ -18,13 +24,13 @@ import { type BlobRequest, useWorkspaceBlobUrl } from './useWorkspaceBlobUrl';
  * route through the client, with its credential, and shown from a `blob:`
  * URL; an SVG, which is a document that can script, gets a `data:` URL
  * instead (useWorkspaceBlobUrl says why). Anything else binary says so
- * plainly instead of rendering as mojibake, with a Download link that reads
- * the bytes the same way.
+ * plainly instead of rendering as mojibake, with a Download link (below) that
+ * leaves the bytes to the browser wherever it can.
  */
 
 type ClientForPreview = Pick<
   ApiClient,
-  'fetchWorkspaceBlob' | 'workspaceFileUrl'
+  'fetchWorkspaceBlob' | 'workspaceDownloadUrl' | 'workspaceFileUrl'
 >;
 
 interface FilePreviewProps {
@@ -96,6 +102,88 @@ function saveBlob(blob: Blob, name: string): void {
   link.download = name;
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+// Hands `url` to the browser's own download through a throwaway link. The
+// daemon serves a ticket URL as an attachment, so the browser streams the file
+// to disk and the page never holds it; `download` names it on the daemon's own
+// origin, and Content-Disposition names it anywhere else.
+function startDownload(url: string, name: string): void {
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.click();
+}
+
+// What a failed call has to say: an Error's message, or `fallback` when it
+// carries none.
+function failureReason(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message !== '' ? err.message : fallback;
+}
+
+// Whether a ticket call failed because the daemon has no ticket route at all:
+// a daemon from before tickets answers its catch-all 404 ("not found: /api/…")
+// or a 405. Every other refusal is about this file or this moment (404 "no such
+// file", 400 outside the project, 401 or 403, a 5xx, a network error), and
+// reading the whole file into the page would either fail the same way or hold
+// a file of any size in the tab, which is what tickets exist to avoid.
+function ticketRouteMissing(err: unknown): boolean {
+  return (
+    err instanceof ApiError &&
+    (err.status === 405 ||
+      (err.status === 404 && err.message !== 'no such file'))
+  );
+}
+
+/** Where a desktop save of one file stands: going, saved at `path`, or
+ *  refused for `reason`. */
+type NativeSave =
+  | { state: 'saving' }
+  | { state: 'saved'; path: string }
+  | { state: 'failed'; reason: string };
+
+// The desktop app's saves, by [runId, path], kept outside the Download link.
+// The backend goes on writing a file after its link unmounts (another file
+// opened mid-download), so the outcome lives here: back on the file, the link
+// says "Downloading…" or where it was saved instead of offering a second copy.
+// One small entry per file saved this session, replaced by the next save.
+const nativeSaves = new Map<string, NativeSave>();
+const nativeSaveListeners = new Set<() => void>();
+
+function setNativeSave(key: string, save: NativeSave): void {
+  nativeSaves.set(key, save);
+  for (const listener of nativeSaveListeners) listener();
+}
+
+function subscribeNativeSaves(listener: () => void): () => void {
+  nativeSaveListeners.add(listener);
+  return () => {
+    nativeSaveListeners.delete(listener);
+  };
+}
+
+// The save `key` names, re-rendering when it changes. Each entry is replaced,
+// never mutated, so the snapshot is stable between changes.
+function useNativeSave(key: string): NativeSave | undefined {
+  return useSyncExternalStore(subscribeNativeSaves, () => nativeSaves.get(key));
+}
+
+// The desktop app's save: the backend reads the raw route with the daemon's
+// own credential and writes the bytes to disk as they arrive, so the page
+// never holds the file. It rejects with its reason as a plain string.
+function startNativeSave(key: string, rawUrl: string): void {
+  setNativeSave(key, { state: 'saving' });
+  downloadWorkspaceFile(rawUrl).then(
+    (path) => setNativeSave(key, { state: 'saved', path }),
+    (err: unknown) =>
+      setNativeSave(key, {
+        state: 'failed',
+        reason:
+          typeof err === 'string' && err !== ''
+            ? err
+            : 'The file could not be saved.',
+      })
+  );
 }
 
 export function FilePreview({ client, file, runId }: FilePreviewProps) {
@@ -205,38 +293,89 @@ export function FilePreview({ client, file, runId }: FilePreviewProps) {
 
 /**
  * The Download link for a file the pane cannot show. On a bearer page (the
- * loopback page, the desktop app) a click reads the bytes through the client,
- * since the raw route 401s a bare navigation there, and saves them; the whole
- * file is held in memory meanwhile, and the sentence beside the link gives its
- * size. On a team-local page the session cookie authenticates a navigation, so
- * the link's own `href` (the raw route) is left to the browser, which streams
- * the file to disk at any size. One read at a time: a second click while one
- * is in flight does nothing.
+ * loopback page in a browser) the raw route 401s a bare navigation, so a click
+ * asks the daemon for a single-use ticket URL (`workspaceDownloadUrl`, minted
+ * then, since a ticket dies after one use or a minute) and points a throwaway
+ * `<a download>` at it: the browser streams the file to disk at any size. Only
+ * a daemon from before tickets (no ticket route: `ticketRouteMissing`) gets
+ * the old way, the bytes read through the client and saved from memory, and
+ * when that fails too the error line gives both reasons; any other refusal is
+ * shown as it is. On a team-local page the session cookie authenticates a
+ * navigation, so the link's own `href` (the raw route) is left to the browser.
+ * In the desktop app, where wry cancels an `<a download>`, the backend streams
+ * the file into Downloads itself (`startNativeSave`), and a status line that
+ * stays mounted says where it was saved, with a Reveal in Finder action; that
+ * outcome outlives the link (`nativeSaves`). One download at a time: a second
+ * click while one is being set up does nothing.
  */
 function DownloadLink({ client, file, runId }: FilePreviewProps) {
+  const inApp = isTauri();
+  const saveKey = JSON.stringify([runId, file.path]);
+  const native = useNativeSave(saveKey);
+  // The browser's save: its own state, since the browser's download UI takes
+  // over once the link is clicked.
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const nativeSave = inApp ? native : undefined;
+  const shownBusy = inApp ? nativeSave?.state === 'saving' : busy;
+  const shownError = inApp
+    ? nativeSave?.state === 'failed'
+      ? nativeSave.reason
+      : null
+    : error;
+  const savedTo = nativeSave?.state === 'saved' ? nativeSave.path : null;
+
+  // The browser's save: a ticket URL the browser downloads natively, or, for
+  // a daemon with no ticket route, the bytes read into the page and saved
+  // from a blob.
+  const saveInBrowser = (): void => {
+    const name = baseName(file.path);
+    client.workspaceDownloadUrl(file.path, { runId }).then(
+      (url) => {
+        startDownload(url, name);
+        setBusy(false);
+      },
+      (ticketError: unknown) => {
+        const ticket = failureReason(
+          ticketError,
+          'the daemon issued no download link'
+        );
+        if (!ticketRouteMissing(ticketError)) {
+          setError(ticket);
+          setBusy(false);
+          return;
+        }
+        client.fetchWorkspaceBlob(file.path, { runId }).then(
+          (blob) => {
+            saveBlob(blob, name);
+            setBusy(false);
+          },
+          (readError: unknown) => {
+            const read = failureReason(
+              readError,
+              'the daemon did not send the file'
+            );
+            setError(
+              `${ticket} (reading it into the page failed too: ${read})`
+            );
+            setBusy(false);
+          }
+        );
+      }
+    );
+  };
 
   const download = (event: MouseEvent<HTMLAnchorElement>): void => {
     if (isTeamLocalPage()) return;
     event.preventDefault();
-    if (busy) return;
+    if (shownBusy) return;
+    if (inApp) {
+      startNativeSave(saveKey, client.workspaceFileUrl(file.path, { runId }));
+      return;
+    }
     setBusy(true);
     setError(null);
-    client.fetchWorkspaceBlob(file.path, { runId }).then(
-      (blob) => {
-        saveBlob(blob, baseName(file.path));
-        setBusy(false);
-      },
-      (err: unknown) => {
-        setError(
-          err instanceof Error && err.message !== ''
-            ? err.message
-            : 'The daemon did not send the file.'
-        );
-        setBusy(false);
-      }
-    );
+    saveInBrowser();
   };
 
   return (
@@ -245,15 +384,37 @@ function DownloadLink({ client, file, runId }: FilePreviewProps) {
         href={client.workspaceFileUrl(file.path, { runId })}
         download={baseName(file.path)}
         className={styles.download}
-        aria-busy={busy || undefined}
+        aria-busy={shownBusy || undefined}
         onClick={download}
       >
-        {busy ? 'Downloading…' : 'Download'}
+        {shownBusy ? 'Downloading…' : 'Download'}
       </a>
-      {error === null ? null : (
+      {shownError === null ? null : (
         <p className="toneText" data-tone="danger" role="alert">
-          {`Download failed: ${error}`}
+          {`Download failed: ${shownError}`}
         </p>
+      )}
+      {/* Mounted, empty, before any save, so a screen reader announces the
+          line when a save fills it (a live region inserted already filled
+          is often not read out). */}
+      {inApp ? (
+        <p role="status" className={styles.saved}>
+          {savedTo === null ? '' : `Saved to ${savedTo}`}
+        </p>
+      ) : null}
+      {savedTo === null ? null : (
+        <Button
+          variant="quiet"
+          size="sm"
+          icon={<FolderOpen size={14} strokeWidth={1.8} aria-hidden />}
+          onClick={() => {
+            revealInFinder(savedTo).catch((err: unknown) => {
+              console.error(`Failed to reveal ${savedTo}:`, err);
+            });
+          }}
+        >
+          Reveal in Finder
+        </Button>
       )}
     </>
   );

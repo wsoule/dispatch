@@ -115,6 +115,48 @@ marks the window `create: false`, and setup builds it from that entry with the
 remembered theme, so it opens in the chosen appearance. `localStorage` stays the
 page's record of the choice; the native copy only removes the launch flash.
 
+## Downloads
+
+wry cancels an `<a download>` when the app sets no download handler, so in the
+Tauri app the file preview's Download (`src/components/files/FilePreview.tsx`)
+does not save a blob from the page. It hands the raw route's address
+(`client.workspaceFileUrl`, no credential) to the `download_workspace_file`
+command (`src-tauri/src/downloads.rs`), which accepts only a loopback daemon's
+raw route, finds that daemon by its discovery file, verifies it as attach does,
+reads the file with that daemon's agent token (straight to the daemon, never
+through a proxy or after a redirect) and streams it to disk. No token crosses
+that call and none goes in a URL, but this is no token boundary: the page holds
+the daemon's tokens anyway, through `ensure_dispatchd`. What it keeps out of the
+webview is the bytes. The file lands in the Downloads folder (`~/Downloads` when
+the platform names none, never the home folder itself) under its own name, or
+"name (1).ext" and so on when the name is taken; a leading dot becomes `_` and
+bidirectional controls are dropped, so a download is never a hidden or startup
+file and never disguises its extension. The bytes go to a `.download` sibling
+first and take the real name only when complete, and a daemon silent for 30
+seconds ends the download. The page says "Saved to …" in a status line that
+stays mounted, with a Reveal in Finder action, and the outcome outlives the link
+(another file opened mid-download). A connection to a teammate's daemon, whose
+address is not loopback, is refused: the agent token never leaves the machine.
+
+In a browser opened on a daemon, the same Download asks the daemon for a
+single-use ticket URL when it is clicked (`client.workspaceDownloadUrl`, which
+posts to `/api/files/download-ticket`) and points a throwaway `<a download>` at
+it, so the browser streams the file to disk itself. Only a daemon from before
+tickets, which has no ticket route (its catch-all 404, or a 405), gets the old
+way: the page reads the bytes through the client and saves them from memory, and
+when that fails too the error line gives both reasons. Any other refusal (no
+such file, a refused token, a server error, no answer) is shown as it is, so a
+large file is never read into the tab. Minting a ticket is a read, so it stays
+open while team sync turns on, as `GET /api/files/raw` does. A team-local page's
+session cookie authenticates the raw route directly, so there the link's own
+`href` is followed.
+
+Every app command is granted by name: `src-tauri/build.rs` lists them for
+tauri-build's app manifest, `src-tauri/capabilities/default.json` grants each
+`allow-<command>` to the main window, and `src/lib/tauriCommands.test.ts` fails
+when those lists and `generate_handler!` in `src-tauri/src/lib.rs` drift apart.
+A new command needs all three.
+
 ## Toolchain notes
 
 - **Catalog reconciliation:** `react`, `react-dom` → `19.2.7`; `@types/react` →

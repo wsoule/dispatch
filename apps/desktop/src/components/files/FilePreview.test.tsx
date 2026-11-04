@@ -1,5 +1,6 @@
-import type { ApiClient, WorkspaceFile } from '@dispatch/client';
+import { type ApiClient, ApiError, type WorkspaceFile } from '@dispatch/client';
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -11,7 +12,10 @@ import { Activity, type ReactNode } from 'react';
 
 import { FilePreview, PREVIEW_MAX_BYTES, previewPlan } from './FilePreview';
 
-type PreviewClient = Pick<ApiClient, 'fetchWorkspaceBlob' | 'workspaceFileUrl'>;
+type PreviewClient = Pick<
+  ApiClient,
+  'fetchWorkspaceBlob' | 'workspaceDownloadUrl' | 'workspaceFileUrl'
+>;
 
 // Object URLs made and revoked during a test, in order. happy-dom's own
 // createObjectURL is replaced so each blob gets a predictable name and the
@@ -40,19 +44,55 @@ afterEach(() => {
   URL.revokeObjectURL = originalRevoke;
 });
 
-// A client whose raw reads answer with `respond`, recording each path read.
+// A client whose raw reads answer with `respond` and whose download tickets
+// come from `ticket` (by default each one a fresh URL, `…?ticket=t-<n>`),
+// recording each path read and each ticket asked for.
 function fakeClient(
   respond: (path: string) => Promise<Blob> = () =>
-    Promise.resolve(new Blob([new Uint8Array([1, 2, 3])]))
-): PreviewClient & { reads: string[] } {
+    Promise.resolve(new Blob([new Uint8Array([1, 2, 3])])),
+  ticket?: (path: string) => Promise<string>
+): PreviewClient & {
+  reads: string[];
+  tickets: { path: string; runId: string | null | undefined }[];
+} {
   const reads: string[] = [];
+  const tickets: { path: string; runId: string | null | undefined }[] = [];
   return {
     reads,
+    tickets,
     fetchWorkspaceBlob: (path: string) => {
       reads.push(path);
       return respond(path);
     },
+    workspaceDownloadUrl: (path: string, scope?: { runId?: string | null }) => {
+      tickets.push({ path, runId: scope?.runId });
+      return ticket === undefined
+        ? Promise.resolve(
+            `http://127.0.0.1:4100/api/files/raw?ticket=t-${tickets.length}`
+          )
+        : ticket(path);
+    },
     workspaceFileUrl: (path: string) => `http://127.0.0.1:4100/raw/${path}`,
+  };
+}
+
+// Replaces HTMLAnchorElement's click for one test, recording the href and
+// download name of each link clicked (the page's throwaway download links);
+// `restore` puts the real click back.
+function recordLinkClicks(): {
+  clicked: { href: string; download: string }[];
+  restore: () => void;
+} {
+  const clicked: { href: string; download: string }[] = [];
+  const originalClick = HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click = mock(function (this: HTMLAnchorElement) {
+    clicked.push({ href: this.href, download: this.download });
+  });
+  return {
+    clicked,
+    restore: () => {
+      HTMLAnchorElement.prototype.click = originalClick;
+    },
   };
 }
 
@@ -285,37 +325,110 @@ test('a media file over the preview cap is offered as a download, never read up 
   expect(client.reads).toEqual([]);
 });
 
-test('a file too large to open says its size, and Download reads it with the client', async () => {
+const DUMP = file({
+  path: 'logs/dump.log',
+  size: 5 * 1024 * 1024,
+  kind: 'too-large',
+  text: null,
+});
+
+const BINARY = file({
+  path: 'app.bin',
+  size: 2048,
+  mime: 'application/octet-stream',
+  kind: 'binary',
+  text: null,
+});
+
+test('a file too large to open says its size, and Download streams it through a ticket URL minted on click', async () => {
   const client = fakeClient();
-  const clicked: { href: string; download: string }[] = [];
-  const click = mock(function (this: HTMLAnchorElement) {
-    clicked.push({ href: this.href, download: this.download });
-  });
-  const originalClick = HTMLAnchorElement.prototype.click;
-  HTMLAnchorElement.prototype.click = click;
+  const links = recordLinkClicks();
   try {
-    render(
-      <FilePreview
-        client={client}
-        file={file({
-          path: 'logs/dump.log',
-          size: 5 * 1024 * 1024,
-          kind: 'too-large',
-          text: null,
-        })}
-        runId={null}
-      />
-    );
+    render(<FilePreview client={client} file={DUMP} runId="run-3" />);
     expect(
       screen.getByText('Too large to open in the editor (5.0 MB).')
     ).toBeTruthy();
-    expect(client.reads).toEqual([]);
+    // Nothing is asked for before the click: a ticket dies after a minute.
+    expect(client.tickets).toEqual([]);
     const link = screen.getByRole('link', { name: 'Download' });
     expect(link.getAttribute('download')).toBe('dump.log');
-    fireEvent.click(link);
-    await waitFor(() => expect(clicked).toHaveLength(1));
+    // fireEvent returns false when a handler called preventDefault: the bare
+    // raw route, which 401s without the bearer header, is never navigated.
+    expect(fireEvent.click(link)).toBe(false);
+    await waitFor(() => expect(links.clicked).toHaveLength(1));
+    expect(client.tickets).toEqual([{ path: 'logs/dump.log', runId: 'run-3' }]);
+    expect(links.clicked[0]).toEqual({
+      href: 'http://127.0.0.1:4100/api/files/raw?ticket=t-1',
+      download: 'dump.log',
+    });
+    // The browser streams it: the page never read the bytes or made a blob.
+    expect(client.reads).toEqual([]);
+    expect(created).toEqual([]);
+    await waitFor(() =>
+      expect(
+        screen.getByRole('link', { name: 'Download' }).hasAttribute('aria-busy')
+      ).toBe(false)
+    );
+    expect(screen.queryByRole('alert')).toBeNull();
+  } finally {
+    links.restore();
+  }
+});
+
+test('every Download asks for a fresh ticket, and a click while one is pending does nothing', async () => {
+  let issue: (url: string) => void = () => undefined;
+  const client = fakeClient(
+    undefined,
+    () =>
+      new Promise<string>((resolve) => {
+        issue = resolve;
+      })
+  );
+  const links = recordLinkClicks();
+  try {
+    render(<FilePreview client={client} file={BINARY} runId={null} />);
+    fireEvent.click(screen.getByRole('link', { name: 'Download' }));
+    const busy = screen.getByRole('link', { name: 'Downloading…' });
+    expect(busy.getAttribute('aria-busy')).toBe('true');
+    // A second click while the ticket is on its way neither asks again nor
+    // follows the bare raw route.
+    expect(fireEvent.click(busy)).toBe(false);
+    expect(client.tickets).toHaveLength(1);
+    await act(async () => {
+      issue('http://127.0.0.1:4100/api/files/raw?ticket=first');
+      await Promise.resolve();
+    });
+    fireEvent.click(screen.getByRole('link', { name: 'Download' }));
+    await act(async () => {
+      issue('http://127.0.0.1:4100/api/files/raw?ticket=second');
+      await Promise.resolve();
+    });
+    expect(client.tickets).toHaveLength(2);
+    expect(links.clicked.map((entry) => entry.href)).toEqual([
+      'http://127.0.0.1:4100/api/files/raw?ticket=first',
+      'http://127.0.0.1:4100/api/files/raw?ticket=second',
+    ]);
+    expect(client.reads).toEqual([]);
+  } finally {
+    links.restore();
+  }
+});
+
+// What a daemon from before tickets answers the ticket route: its catch-all
+// 404 for a route it does not know.
+const NO_TICKET_ROUTE = () =>
+  Promise.reject(new ApiError('not found: /api/files/download-ticket', 404));
+
+test('when the daemon has no ticket route, Download falls back to reading the bytes and saving them', async () => {
+  const client = fakeClient(undefined, NO_TICKET_ROUTE);
+  const links = recordLinkClicks();
+  try {
+    render(<FilePreview client={client} file={DUMP} runId="run-3" />);
+    fireEvent.click(screen.getByRole('link', { name: 'Download' }));
+    await waitFor(() => expect(links.clicked).toHaveLength(1));
+    expect(client.tickets).toHaveLength(1);
     expect(client.reads).toEqual(['logs/dump.log']);
-    expect(clicked[0]).toEqual({
+    expect(links.clicked[0]).toEqual({
       href: 'blob:preview-1',
       download: 'dump.log',
     });
@@ -324,36 +437,79 @@ test('a file too large to open says its size, and Download reads it with the cli
     expect(created).toEqual([
       { url: 'blob:preview-1', type: 'application/octet-stream' },
     ]);
+    // The fallback worked, so there is nothing to report.
+    expect(screen.queryByRole('alert')).toBeNull();
   } finally {
-    HTMLAnchorElement.prototype.click = originalClick;
+    links.restore();
   }
 });
 
-test('a failed download says so in a danger line and leaves the link usable', async () => {
-  const client = fakeClient(() =>
-    Promise.reject(new Error('request failed: 401'))
+test('when the ticket route is missing and the fallback read fails too, the danger line gives both reasons and the link stays usable', async () => {
+  const client = fakeClient(
+    () => Promise.reject(new Error('request failed: 401')),
+    NO_TICKET_ROUTE
   );
-  render(
-    <FilePreview
-      client={client}
-      file={file({
-        path: 'app.bin',
-        size: 2048,
-        mime: 'application/octet-stream',
-        kind: 'binary',
-        text: null,
-      })}
-      runId={null}
-    />
-  );
+  render(<FilePreview client={client} file={BINARY} runId={null} />);
   expect(
     screen.getByText('Binary file (2.0 KB, application/octet-stream).')
   ).toBeTruthy();
   fireEvent.click(screen.getByRole('link', { name: 'Download' }));
   const alert = await screen.findByRole('alert');
-  expect(alert.textContent).toBe('Download failed: request failed: 401');
+  expect(alert.textContent).toBe(
+    'Download failed: not found: /api/files/download-ticket (reading it into the page failed too: request failed: 401)'
+  );
   expect(alert.getAttribute('data-tone')).toBe('danger');
+  expect(client.tickets).toHaveLength(1);
+  expect(client.reads).toEqual(['app.bin']);
+  expect(created).toEqual([]);
   expect(screen.getByRole('link', { name: 'Download' })).toBeTruthy();
+});
+
+test('a failure with no message still says what went wrong', async () => {
+  const client = fakeClient(
+    () => Promise.reject(new Error('')),
+    () => Promise.reject(new ApiError('', 404))
+  );
+  render(<FilePreview client={client} file={BINARY} runId={null} />);
+  fireEvent.click(screen.getByRole('link', { name: 'Download' }));
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toBe(
+    'Download failed: the daemon issued no download link (reading it into the page failed too: the daemon did not send the file)'
+  );
+});
+
+// Every refusal but a missing route is about this file or this moment, so the
+// page shows it and never reads a file of any size into the tab instead: a
+// server error, the file gone, a token refused, or no answer at all.
+test('a ticket refused for any other reason shows that reason alone and never reads the file into the page', async () => {
+  const huge = file({
+    path: 'media/huge.webm',
+    size: PREVIEW_MAX_BYTES * 40,
+    mime: 'video/webm',
+    preview: 'video',
+    kind: 'binary',
+    text: null,
+  });
+  for (const refusal of [
+    new ApiError('internal error', 500),
+    new ApiError('the daemon is restarting', 503),
+    new ApiError('no such file', 404),
+    new ApiError('token rejected', 401, 'auth_invalid_token'),
+    new TypeError('Failed to fetch'),
+  ]) {
+    const client = fakeClient(undefined, () => Promise.reject(refusal));
+    const view = render(
+      <FilePreview client={client} file={huge} runId={null} />
+    );
+    fireEvent.click(screen.getByRole('link', { name: 'Download' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe(`Download failed: ${refusal.message}`);
+    expect(client.tickets).toHaveLength(1);
+    expect(client.reads).toEqual([]);
+    expect(created).toEqual([]);
+    expect(screen.getByRole('link', { name: 'Download' })).toBeTruthy();
+    view.unmount();
+  }
 });
 
 test("on a team-local page Download is the browser's own streamed download of the raw route", () => {
@@ -383,6 +539,7 @@ test("on a team-local page Download is the browser's own streamed download of th
     );
     // fireEvent returns false when a handler called preventDefault.
     expect(fireEvent.click(link)).toBe(true);
+    expect(client.tickets).toEqual([]);
     expect(client.reads).toEqual([]);
     expect(created).toEqual([]);
     expect(link.hasAttribute('aria-busy')).toBe(false);
@@ -470,26 +627,22 @@ test('a file changed while hidden is read again on show, and the old URL goes', 
 });
 
 test("a download's busy state and failure stay with the file they were for", async () => {
-  let release: (blob: Blob) => void = () => undefined;
-  const client = fakeClient((path) =>
-    path === 'a.bin'
-      ? Promise.reject(new Error('no such file'))
-      : path === 'b.bin'
-        ? new Promise<Blob>((resolve) => {
-            release = resolve;
-          })
-        : Promise.resolve(new Blob([new Uint8Array([1])]))
+  let issue: (url: string) => void = () => undefined;
+  const client = fakeClient(
+    () => Promise.reject(new Error('no such file')),
+    (path) =>
+      path === 'a.bin'
+        ? Promise.reject(new ApiError('no such file', 404))
+        : path === 'b.bin'
+          ? new Promise<string>((resolve) => {
+              issue = resolve;
+            })
+          : Promise.resolve(
+              `http://127.0.0.1:4100/api/files/raw?ticket=${path}`
+            )
   );
-  const originalClick = HTMLAnchorElement.prototype.click;
-  HTMLAnchorElement.prototype.click = mock(() => undefined);
-  const binary = (path: string) =>
-    file({
-      path,
-      size: 2048,
-      mime: 'application/octet-stream',
-      kind: 'binary',
-      text: null,
-    });
+  const links = recordLinkClicks();
+  const binary = (path: string) => ({ ...BINARY, path });
   try {
     const view = render(
       <FilePreview client={client} file={binary('a.bin')} runId={null} />
@@ -507,7 +660,8 @@ test("a download's busy state and failure stay with the file they were for", asy
         .getByRole('link', { name: 'Downloading…' })
         .getAttribute('aria-busy')
     ).toBe('true');
-    // c.bin opens while b.bin is still read: its own link is idle and works.
+    // c.bin opens while b.bin's ticket is still on its way: its own link is
+    // idle and works.
     view.rerender(
       <FilePreview client={client} file={binary('c.bin')} runId={null} />
     );
@@ -515,14 +669,241 @@ test("a download's busy state and failure stay with the file they were for", asy
     expect(link.hasAttribute('aria-busy')).toBe(false);
     fireEvent.click(link);
     await waitFor(() =>
-      expect(client.reads).toEqual(['a.bin', 'b.bin', 'c.bin'])
+      expect(links.clicked.map((entry) => entry.href)).toEqual([
+        'http://127.0.0.1:4100/api/files/raw?ticket=c.bin',
+      ])
     );
-    release(new Blob([new Uint8Array([2])]));
-    await waitFor(() =>
-      expect(screen.getByRole('link', { name: 'Download' })).toBeTruthy()
-    );
+    expect(client.tickets.map((entry) => entry.path)).toEqual([
+      'a.bin',
+      'b.bin',
+      'c.bin',
+    ]);
+    // b.bin's ticket arriving late still starts b.bin's own download, and
+    // changes nothing on c.bin's link.
+    await act(async () => {
+      issue('http://127.0.0.1:4100/api/files/raw?ticket=b.bin');
+      await Promise.resolve();
+    });
+    expect(links.clicked.map((entry) => entry.href)).toEqual([
+      'http://127.0.0.1:4100/api/files/raw?ticket=c.bin',
+      'http://127.0.0.1:4100/api/files/raw?ticket=b.bin',
+    ]);
+    expect(screen.getByRole('link', { name: 'Download' })).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
+    // Nothing was read into the page: a.bin's ticket was refused for the
+    // file itself, which reading it would not have changed.
+    expect(client.reads).toEqual([]);
   } finally {
-    HTMLAnchorElement.prototype.click = originalClick;
+    links.restore();
+  }
+});
+
+// The desktop app: Tauri's `invoke` calls `window.__TAURI_INTERNALS__.invoke`,
+// so defining it plays the backend (and makes isTauri() true) without
+// mock.module, which bun hoists across every file in the run. Each command is
+// recorded with its arguments; `respond` answers download_workspace_file.
+type TauriWindow = Window & {
+  __TAURI_INTERNALS__?: {
+    invoke: (cmd: string, args: unknown) => Promise<unknown>;
+  };
+};
+
+function playDesktopBackend(respond: () => Promise<unknown>): {
+  calls: { cmd: string; args: unknown }[];
+} {
+  const calls: { cmd: string; args: unknown }[] = [];
+  (window as TauriWindow).__TAURI_INTERNALS__ = {
+    invoke: (cmd: string, args: unknown) => {
+      calls.push({ cmd, args });
+      if (cmd === 'download_workspace_file') return respond();
+      if (cmd === 'reveal_in_finder') return Promise.resolve(null);
+      return Promise.reject(new Error(`unexpected command ${cmd}`));
+    },
+  };
+  return { calls };
+}
+
+test('in the desktop app Download saves through the backend and offers Reveal in Finder', async () => {
+  let finish: (path: string) => void = () => undefined;
+  const backend = playDesktopBackend(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+  );
+  try {
+    const client = fakeClient();
+    render(
+      <FilePreview
+        client={client}
+        file={file({
+          path: 'media/huge.mp4',
+          size: PREVIEW_MAX_BYTES + 1,
+          mime: 'video/mp4',
+          preview: 'video',
+          kind: 'binary',
+          text: null,
+        })}
+        runId="run-7"
+      />
+    );
+    // fireEvent returns false when a handler called preventDefault: the
+    // webview's own download (which wry cancels) never starts.
+    expect(
+      fireEvent.click(screen.getByRole('link', { name: 'Download' }))
+    ).toBe(false);
+    expect(
+      screen
+        .getByRole('link', { name: 'Downloading…' })
+        .getAttribute('aria-busy')
+    ).toBe('true');
+    // The backend gets the raw route's address and nothing else: no token,
+    // and the page never reads the bytes itself.
+    expect(backend.calls).toEqual([
+      {
+        cmd: 'download_workspace_file',
+        args: { url: 'http://127.0.0.1:4100/raw/media/huge.mp4' },
+      },
+    ]);
+    expect(client.tickets).toEqual([]);
+    expect(client.reads).toEqual([]);
+    expect(created).toEqual([]);
+    // The status line is there, empty, before the save lands, so a screen
+    // reader announces it when it fills.
+    expect(screen.getByRole('status').textContent).toBe('');
+
+    await act(async () => {
+      finish('/Users/me/Downloads/huge (1).mp4');
+      await Promise.resolve();
+    });
+    const status = screen.getByRole('status');
+    expect(status.textContent).toBe(
+      'Saved to /Users/me/Downloads/huge (1).mp4'
+    );
+    expect(
+      screen.getByRole('link', { name: 'Download' }).hasAttribute('aria-busy')
+    ).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Reveal in Finder' }));
+    expect(backend.calls.at(-1)).toEqual({
+      cmd: 'reveal_in_finder',
+      args: { path: '/Users/me/Downloads/huge (1).mp4' },
+    });
+  } finally {
+    delete (window as TauriWindow).__TAURI_INTERNALS__;
+  }
+});
+
+test("in the desktop app a refused save shows the backend's reason and the link stays usable", async () => {
+  const backend = playDesktopBackend(() =>
+    Promise.reject('No running Dispatch daemon answers on port 4100.')
+  );
+  try {
+    render(
+      <FilePreview
+        client={fakeClient()}
+        file={file({
+          path: 'app.bin',
+          size: 2048,
+          mime: 'application/octet-stream',
+          kind: 'binary',
+          text: null,
+        })}
+        runId={null}
+      />
+    );
+    fireEvent.click(screen.getByRole('link', { name: 'Download' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe(
+      'Download failed: No running Dispatch daemon answers on port 4100.'
+    );
+    expect(screen.getByRole('status').textContent).toBe('');
+    expect(
+      screen.queryByRole('button', { name: 'Reveal in Finder' })
+    ).toBeNull();
+    // A second try goes out again: the old failure clears while it runs.
+    fireEvent.click(screen.getByRole('link', { name: 'Download' }));
+    expect(backend.calls).toHaveLength(2);
+    expect(screen.queryByRole('alert')).toBeNull();
+    await screen.findByRole('alert');
+  } finally {
+    delete (window as TauriWindow).__TAURI_INTERNALS__;
+  }
+});
+
+test('in the desktop app a save outlives its link: back on the file it says where the file went', async () => {
+  let finish: (path: string) => void = () => undefined;
+  const backend = playDesktopBackend(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+  );
+  const binary = (path: string) => ({ ...BINARY, path });
+  try {
+    const client = fakeClient();
+    const view = render(
+      <FilePreview
+        client={client}
+        file={binary('remount/app.bin')}
+        runId="run-9"
+      />
+    );
+    fireEvent.click(screen.getByRole('link', { name: 'Download' }));
+    // Another file opens while the backend is still writing this one.
+    view.rerender(
+      <FilePreview
+        client={client}
+        file={binary('remount/other.bin')}
+        runId="run-9"
+      />
+    );
+    expect(
+      screen.getByRole('link', { name: 'Download' }).hasAttribute('aria-busy')
+    ).toBe(false);
+    // Back on the first file mid-save: still busy, and a click starts no
+    // second copy.
+    view.rerender(
+      <FilePreview
+        client={client}
+        file={binary('remount/app.bin')}
+        runId="run-9"
+      />
+    );
+    const busy = screen.getByRole('link', { name: 'Downloading…' });
+    expect(fireEvent.click(busy)).toBe(false);
+    expect(
+      backend.calls.filter((c) => c.cmd === 'download_workspace_file')
+    ).toHaveLength(1);
+    // It finishes while the other file is open again.
+    view.rerender(
+      <FilePreview
+        client={client}
+        file={binary('remount/other.bin')}
+        runId="run-9"
+      />
+    );
+    await act(async () => {
+      finish('/Users/me/Downloads/app.bin');
+      await Promise.resolve();
+    });
+    expect(screen.getByRole('status').textContent).toBe('');
+    view.rerender(
+      <FilePreview
+        client={client}
+        file={binary('remount/app.bin')}
+        runId="run-9"
+      />
+    );
+    expect(screen.getByRole('status').textContent).toBe(
+      'Saved to /Users/me/Downloads/app.bin'
+    );
+    expect(
+      screen.getByRole('button', { name: 'Reveal in Finder' })
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('link', { name: 'Download' }).hasAttribute('aria-busy')
+    ).toBe(false);
+  } finally {
+    delete (window as TauriWindow).__TAURI_INTERNALS__;
   }
 });

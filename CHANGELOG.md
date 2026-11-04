@@ -53,6 +53,13 @@ holds what a user upgrading needs to know.
     the page draws) follow the choice too, from the first frame of a launch.
   - Quick open over the project's files is ⌘P on macOS and Ctrl+P elsewhere. On
     macOS, Ctrl+P keeps its text meaning (previous line) in every text field.
+- **Download in the Files view saves the file.** In the desktop app the file
+  goes straight to your Downloads folder, and the view says where it went with a
+  Reveal in Finder button; before, the app silently dropped the download. In a
+  browser opened on a daemon, the browser downloads the file itself at any size,
+  instead of the page reading the whole file into memory first. Update the
+  daemon to get this; with an older daemon a browser falls back to the in-memory
+  read.
 - **Label colours, the license, doc bodies and the A2A listener save again from
   the desktop app.** The daemon now accepts the PUT requests the app sends for
   them; before, the webview dropped each one before it reached the daemon, so
