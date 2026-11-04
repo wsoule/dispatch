@@ -892,6 +892,14 @@ describe('below the decide tier, what has its own route stays usable', () => {
     ]) {
       expect(isDisabled(control)).toBe(false);
     }
+    // A review diff draws unified in a column too narrow for two sides
+    // whatever the layout says (useFittedDiffLayout), and the row says so in
+    // words a person can check, not as a pixel width they cannot see.
+    expect(
+      screen.getByText(
+        'Review diffs show unified while their column is too narrow for two sides, which it is in most windows.'
+      )
+    ).toBeTruthy();
   });
 });
 

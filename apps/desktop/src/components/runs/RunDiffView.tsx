@@ -3,8 +3,9 @@ import { EmptyState, SkeletonBlock } from '@dispatch/ui';
 import type { CodeViewHandle } from '@pierre/diffs/react';
 import { FileTree, useFileTree } from '@pierre/trees/react';
 import { CircleAlert, FileX } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { type RefObject, useCallback, useEffect, useMemo, useRef } from 'react';
 
+import { useFittedDiffLayout } from '../../hooks/useFittedDiffLayout';
 import { normalizeDiffFilePath, toTreeGitStatus } from '../../lib/pierreTree';
 import { DiffSurface } from '../code/DiffSurface';
 import styles from './RunDiffView.module.css';
@@ -81,6 +82,48 @@ function ChangedFilesTree({
 }
 
 /**
+ * The diff column: the patch in one `DiffSurface`, drawn in the layout its column fits. The
+ * live run's diff sits in the same review column as the settled run's `PierreReviewDiff`, so it
+ * follows the same rule (`useFittedDiffLayout`): the reviewer's split becomes unified while the
+ * column is narrower than `SPLIT_MIN_WIDTH`, instead of cutting code mid-token, and the diff
+ * mounts once the column is measured, before the first paint. Its own component so the column
+ * is rendered whenever the hook is, which the one reading at mount relies on.
+ */
+function FittedDiffColumn({
+  patch,
+  viewRef,
+}: {
+  patch: string;
+  viewRef: RefObject<CodeViewHandle<undefined> | null>;
+}) {
+  const columnRef = useRef<HTMLDivElement>(null);
+  const layout = useFittedDiffLayout(columnRef);
+  const options = useMemo(
+    () => (layout === null ? undefined : { diffStyle: layout }),
+    [layout]
+  );
+  return (
+    // A flex column, not `overflow: auto`: the scroller has to be `CodeView` itself, and its
+    // `flex: 1` sizes it off this column directly rather than through a percentage.
+    <div
+      ref={columnRef}
+      className={styles.diffColumn}
+      data-slot="run-diff-column"
+      data-diff-layout={layout ?? undefined}
+    >
+      {layout === null ? null : (
+        <DiffSurface
+          patch={patch}
+          emptyLabel="No changes to show for this run."
+          viewRef={viewRef}
+          options={options}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
  * The shared unified-diff view: the whole run patch in one `DiffSurface` beside a
  * git-status-decorated @pierre/trees changed-files tree — clicking a file in the tree scrolls
  * its diff into view within that one scroller. Used by both the run Review surface and the Pull
@@ -139,15 +182,7 @@ export function RunDiffView({
           <ChangedFilesTree files={diff.files} onFileFocus={handleFileFocus} />
         )}
       </div>
-      {/* A flex column, not `overflow: auto`: the scroller has to be `CodeView` itself, and
-          its `flex: 1` sizes it off this column directly rather than through a percentage. */}
-      <div className={styles.diffColumn}>
-        <DiffSurface
-          patch={diff.patch}
-          emptyLabel="No changes to show for this run."
-          viewRef={viewRef}
-        />
-      </div>
+      <FittedDiffColumn patch={diff.patch} viewRef={viewRef} />
     </div>
   );
 }

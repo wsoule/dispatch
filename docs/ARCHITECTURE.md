@@ -650,7 +650,9 @@ stay short, so the cells and the controls share the row at common widths, but
 each still says what it counts; a cell's `title` adds detail and never holds the
 only copy of a fact. While a fan-out runs, Flight Plan puts Running, the ETA and
 the critical path first, since its controls leave the strip little room and the
-fade hides the end.
+fade hides the end. A review diff (`PierreReviewDiff` for a settled run,
+`RunDiffView` for a live one, both through `useFittedDiffLayout`) draws a split
+setting unified while its column is under 980px.
 
 ### Tokens only
 

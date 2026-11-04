@@ -48,6 +48,10 @@ holds what a user upgrading needs to know.
     of their cells fit beside the header's buttons; hover a cell for more
     detail. While a fan-out runs, Flight Plan's Running cell shows the agent
     slots meter, and the ETA and the critical path come right after it.
+  - A review diff set to split, of a live run or a settled one, shows unified
+    when its column is narrower than 980px, and goes back to split once the
+    column is wide enough. An agent finding's title wraps instead of being cut
+    off.
   - Settings opens as a page in the main column (⌘, and Escape still work).
   - The sidebar flips the theme between light and dark, and Settings → General
     also offers follow-the-system. The desktop app keeps the choice for every

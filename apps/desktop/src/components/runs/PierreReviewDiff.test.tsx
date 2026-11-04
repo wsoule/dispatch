@@ -19,7 +19,9 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react';
-import { describe, expect, it, mock } from 'bun:test';
+import { afterEach, describe, expect, it, mock } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { isValidElement, type ReactNode, useCallback, useRef } from 'react';
 
 import type { ReviewChatHandle } from './ReviewChatPanel';
@@ -37,6 +39,9 @@ import {
 // so `CodeView` renders no rows at all: neither the line selection nor the annotations it
 // produces can be driven through the DOM, and this element is the only way to reach them.
 let codeViewProps: Record<string, unknown> | null = null;
+// The `diffStyle` of every `CodeView` element the diff built, in order, so a test can tell
+// whether Pierre was ever handed a layout it then had to throw away.
+const codeViewStyles: unknown[] = [];
 
 // The items that `CodeView` element was last handed: the review diff only ever builds diff items.
 function currentItems(): CodeViewDiffItem<Annotation>[] {
@@ -51,6 +56,9 @@ void mock.module('@/components/runs/PierreWorkerPool', () => ({
     codeViewProps = isValidElement(children)
       ? (children.props as Record<string, unknown>)
       : null;
+    codeViewStyles.push(
+      (codeViewProps?.options as { diffStyle?: unknown } | undefined)?.diffStyle
+    );
     return children;
   },
 }));
@@ -1574,5 +1582,135 @@ describe('PierreReviewDiff — an open composer survives a thread landing before
     expect(
       screen.queryByRole('textbox', { name: 'Comment on line 2' })
     ).toBeNull();
+  });
+});
+
+describe('PierreReviewDiff — split falls back to unified in a narrow column', () => {
+  const SETTINGS_KEY = 'dispatch:diff-display-settings';
+  // The frame's width as the stub below reports it; happy-dom has no layout of its own.
+  let frameWidth = 0;
+  // Every ResizeObserver made while a test runs, so a test can report a resize to them.
+  let observers: { callback: () => void; targets: Element[] }[] = [];
+  const RealResizeObserver = globalThis.ResizeObserver;
+
+  // Gives the review diff's frame (a div) a width, and swaps in a ResizeObserver a test can
+  // fire. Both live on prototypes and globals every test file shares, so afterEach undoes them.
+  function stubLayout(width: number): void {
+    frameWidth = width;
+    Object.defineProperty(HTMLDivElement.prototype, 'clientWidth', {
+      configurable: true,
+      get(this: HTMLDivElement) {
+        return this.dataset.slot === 'review-diff' ? frameWidth : 0;
+      },
+    });
+    observers = [];
+    globalThis.ResizeObserver = class {
+      private readonly entry: { callback: () => void; targets: Element[] };
+      constructor(callback: () => void) {
+        this.entry = { callback, targets: [] };
+        observers.push(this.entry);
+      }
+      observe(target: Element) {
+        this.entry.targets.push(target);
+      }
+      unobserve() {}
+      disconnect() {
+        this.entry.targets = [];
+      }
+    } as unknown as typeof ResizeObserver;
+  }
+
+  // Reports a new frame width to whatever observes the frame, as a window resize would.
+  function resizeFrame(width: number): void {
+    frameWidth = width;
+    const target = document.querySelector('[data-slot=review-diff]');
+    act(() => {
+      for (const o of observers) {
+        if (target !== null && o.targets.includes(target)) o.callback();
+      }
+    });
+  }
+
+  afterEach(() => {
+    Reflect.deleteProperty(HTMLDivElement.prototype, 'clientWidth');
+    globalThis.ResizeObserver = RealResizeObserver;
+    window.localStorage.removeItem(SETTINGS_KEY);
+  });
+
+  const frame = () => document.querySelector('[data-slot=review-diff]');
+  const diffStyle = () =>
+    (codeViewProps?.options as { diffStyle?: string } | undefined)?.diffStyle;
+
+  it('draws a split setting unified in a column narrower than 980px', () => {
+    stubLayout(702);
+    renderDiff();
+    expect(frame()?.getAttribute('data-diff-layout')).toBe('unified');
+    expect(diffStyle()).toBe('unified');
+  });
+
+  it('keeps split where the column holds two readable sides', () => {
+    stubLayout(980);
+    renderDiff();
+    expect(frame()?.getAttribute('data-diff-layout')).toBe('split');
+    expect(diffStyle()).toBe('split');
+  });
+
+  it('follows the column as it narrows and widens again', () => {
+    stubLayout(1330);
+    renderDiff();
+    expect(diffStyle()).toBe('split');
+    resizeFrame(530);
+    expect(diffStyle()).toBe('unified');
+    expect(frame()?.getAttribute('data-diff-layout')).toBe('unified');
+    resizeFrame(1330);
+    expect(diffStyle()).toBe('split');
+  });
+
+  it('mounts the diff only once the column is measured, so Pierre never lays it out split first', () => {
+    stubLayout(702);
+    codeViewStyles.length = 0;
+    renderDiff();
+    expect(codeViewStyles.length).toBeGreaterThan(0);
+    expect([...new Set(codeViewStyles)]).toEqual(['unified']);
+  });
+
+  it('a column with no width yet (not laid out) leaves the setting standing, and later keeps the last answer', () => {
+    stubLayout(0);
+    renderDiff();
+    expect(diffStyle()).toBe('split');
+    resizeFrame(702);
+    expect(diffStyle()).toBe('unified');
+    // Hidden for a moment (a collapsed pane): the last answer holds.
+    resizeFrame(0);
+    expect(diffStyle()).toBe('unified');
+    expect(frame()?.getAttribute('data-diff-layout')).toBe('unified');
+  });
+
+  it('a unified setting stays unified at any width', () => {
+    window.localStorage.setItem(
+      SETTINGS_KEY,
+      JSON.stringify({ layout: 'unified' })
+    );
+    stubLayout(1600);
+    renderDiff();
+    expect(frame()?.getAttribute('data-diff-layout')).toBe('unified');
+    expect(diffStyle()).toBe('unified');
+  });
+
+  it("a finding's head wraps instead of cutting its title", () => {
+    const css = readFileSync(
+      join(import.meta.dir, 'PierreReviewDiff.module.css'),
+      'utf8'
+    );
+    const rule = (selector: string) =>
+      css.match(new RegExp(`\\${selector} \\{([^}]*)\\}`))?.[1] ?? '';
+    expect(rule('.findingHead')).toContain('flex-wrap: wrap;');
+    const title = rule('.findingTitle');
+    expect(title).toContain('flex: 1 1 16ch;');
+    expect(title).toContain('overflow-wrap: anywhere;');
+    expect(title).not.toContain('nowrap');
+    expect(title).not.toContain('ellipsis');
+    // The card's indent gives way in a narrow column instead of squeezing the card.
+    expect(rule('.annotation')).toContain('clamp(var(--s-3), 10%, 90px)');
   });
 });

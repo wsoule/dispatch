@@ -17,13 +17,15 @@
   min-height: 0;
 }
 
-/* An annotation under a line: threads, a composer or findings, indented past the diff's
-   gutter so the card hangs under the code it annotates. */
+/* An annotation under a line: threads, a composer or findings, indented into the code column
+   so the card hangs under the code it annotates. The indent is 10% of the annotation's row,
+   90px at most and 12px at least, so a narrow diff (a 530px review column, or one side of a
+   split) gives the card its width rather than spending it on the indent. */
 .annotation {
   display: flex;
   flex-direction: column;
   gap: var(--s-1);
-  padding: var(--s-1) var(--s-3) var(--s-1) 90px;
+  padding: var(--s-1) var(--s-3) var(--s-1) clamp(var(--s-3), 10%, 90px);
   font-family: var(--font-body);
   color: var(--text);
 }
@@ -41,10 +43,15 @@
   background: var(--tone-soft);
 }
 
+/* The finding's first line: icon, "Agent · minor", then the title. The title is never cut:
+   it takes the rest of the line and wraps inside it, or moves under the icon and severity
+   when less than 16 characters of room are left, so the head reads at any width. Items sit
+   at the top, so the icon and severity stay on the title's first line when it wraps. */
 .findingHead {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 2px 6px;
   min-width: 0;
   font-size: var(--fs-sm);
   line-height: var(--lh);
@@ -52,22 +59,24 @@
 
 .findingIcon {
   flex: none;
+  /* Centred in the head's first line: (12.5px x 1.45 - 14px) / 2. */
+  margin-top: 2px;
   color: var(--tone);
 }
 
+/* Smaller type on the head's line height, so it shares the title's first line. */
 .findingMeta {
   flex: none;
   font-size: var(--fs-xs);
+  line-height: calc(var(--fs-sm) * var(--lh));
   color: var(--tone-ink);
 }
 
 .findingTitle {
-  flex: 1 1 auto;
+  flex: 1 1 16ch;
   min-width: 0;
-  overflow: hidden;
   font-weight: var(--fw-medium);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .findingDetail {

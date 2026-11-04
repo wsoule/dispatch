@@ -39,6 +39,7 @@ import {
   ReviewComposer,
   ReviewThread,
 } from './ReviewThread';
+import { useFittedDiffLayout } from '@/hooks/useFittedDiffLayout';
 import { useRunFileLoader } from '@/hooks/useRunFileContents';
 import { snippetFromSelection } from '@/lib/conversation';
 import { createReviewEditor } from '@/lib/pierreEditor';
@@ -344,6 +345,12 @@ export function PierreReviewDiff({
   const observeAnnotation = useRenderOnAnnotationResize(viewRef);
   // The positioning frame for the floating selection bar, which is absolutely placed inside it.
   const containerRef = useRef<HTMLDivElement>(null);
+  // The layout the diff draws: the reviewer's setting (Settings > Diffs), except that split
+  // becomes unified while the frame is narrower than `SPLIT_MIN_WIDTH`, and comes back on its
+  // own once the frame is wide enough again. Null until the frame is measured (before the first
+  // paint), and the diff mounts only then, so Pierre lays it out once, in the right layout.
+  const layout = useFittedDiffLayout(containerRef);
+  const surfaceReady = layout !== null;
   // A patch's hunks alone don't carry the rest of the file — this loader fetches it from the
   // run's worktree, which is what makes unchanged-region expansion (and editing) possible at
   // all.
@@ -351,7 +358,7 @@ export function PierreReviewDiff({
     client ?? null,
     runId
   );
-  // Merged over the reviewer's own display settings by `DiffSurface`; only these two are
+  // Merged over the reviewer's own display settings by `DiffSurface`; the first four are
   // review-specific. `enableLineSelection` is what makes a drag down the line-number column
   // select a range, which is the only way `onSelectedLinesChange` ever fires — without it the
   // gutter affordance could never arm more than the one line it sits on.
@@ -359,15 +366,17 @@ export function PierreReviewDiff({
   // line's gutter; without it the button is rendered but never placed, so it never shows.
   // Pierre stacks the line number (z-index 1) over that slot, which would swallow the press,
   // so `unsafeCSS` (Pierre's hook for rules inside its shadow root) lifts the slot above it and
-  // moves it off the digits.
+  // moves it off the digits. `diffStyle` is the layout worked out above, which overrides the
+  // setting's own only in a frame too narrow for split.
   const diffOptions = useMemo(
     () => ({
       loadDiffFiles,
       enableLineSelection: true,
       enableGutterUtility: true,
       unsafeCSS: GUTTER_SLOT_CSS,
+      ...(layout === null ? {} : { diffStyle: layout }),
     }),
-    [loadDiffFiles]
+    [loadDiffFiles, layout]
   );
 
   // The one place a suggestion actually gets applied — shared by every `ReviewThread`'s own
@@ -952,9 +961,11 @@ export function PierreReviewDiff({
 
   // Declarative jump: the effect fires when `scrollTo` changes identity, so clicking the same
   // thread or file twice still scrolls (the caller bumps `nonce`). A file jump lands the
-  // file's header at the top of the scroller; a line jump centres the line.
+  // file's header at the top of the scroller; a line jump centres the line. It runs once more
+  // when the diff first mounts (`surfaceReady` turns true once and stays), so a jump the page
+  // asked for before the frame was measured still lands.
   useEffect(() => {
-    if (scrollTo == null) return;
+    if (scrollTo == null || !surfaceReady) return;
     if (scrollTo.line === undefined) {
       viewRef.current?.scrollTo({
         type: 'item',
@@ -970,46 +981,53 @@ export function PierreReviewDiff({
       side: 'additions',
       align: 'center',
     });
-  }, [scrollTo]);
+  }, [scrollTo, surfaceReady]);
 
   return (
     // A flex column, not a plain box: the bar is positioned against this element, and
     // `DiffSurface`'s scroll container sizes itself off a parent that resolves its own height.
-    <div ref={containerRef} className={styles.frame} data-slot="review-diff">
+    <div
+      ref={containerRef}
+      className={styles.frame}
+      data-slot="review-diff"
+      data-diff-layout={layout ?? undefined}
+    >
       {/* Everything shell-shaped — the worker pool, the crash boundary, the display settings,
           the empty/parse-error states, the scroll container — belongs to `DiffSurface`; what
           stays here is only what "review" means on top of a diff. `createReviewEditor` is the
           one place the editor's options are decided, shared with every other editable surface. */}
-      <DiffSurface<Annotation>
-        patch={patch}
-        parsed={parsed}
-        only={only}
-        items={items}
-        options={diffOptions}
-        viewRef={viewRef}
-        createEditor={createReviewEditor}
-        onItemEditComplete={handleEditComplete}
-        onSelectedLinesChange={(sel) =>
-          setSelection(
-            sel === null
-              ? null
-              : {
-                  file: sel.id,
-                  start: sel.range.start,
-                  end: sel.range.end,
-                  side: sel.range.side,
-                }
-          )
-        }
-        renderAnnotation={renderAnnotation}
-        renderHeaderMetadata={renderHeaderMetadata}
-        // Gated on the bar having anything to offer, not on `onAdd`: this affordance is the only
-        // thing that arms the bar, so tying it to comments alone would take Copy and Add to chat
-        // down with them on a surface that cannot take a comment.
-        renderGutterUtility={
-          selectionActions.length === 0 ? undefined : renderGutterUtility
-        }
-      />
+      {surfaceReady ? (
+        <DiffSurface<Annotation>
+          patch={patch}
+          parsed={parsed}
+          only={only}
+          items={items}
+          options={diffOptions}
+          viewRef={viewRef}
+          createEditor={createReviewEditor}
+          onItemEditComplete={handleEditComplete}
+          onSelectedLinesChange={(sel) =>
+            setSelection(
+              sel === null
+                ? null
+                : {
+                    file: sel.id,
+                    start: sel.range.start,
+                    end: sel.range.end,
+                    side: sel.range.side,
+                  }
+            )
+          }
+          renderAnnotation={renderAnnotation}
+          renderHeaderMetadata={renderHeaderMetadata}
+          // Gated on the bar having anything to offer, not on `onAdd`: this affordance is the only
+          // thing that arms the bar, so tying it to comments alone would take Copy and Add to chat
+          // down with them on a surface that cannot take a comment.
+          renderGutterUtility={
+            selectionActions.length === 0 ? undefined : renderGutterUtility
+          }
+        />
+      ) : null}
       <SelectionActions
         selection={armed?.selection ?? null}
         anchor={armed?.anchor ?? null}

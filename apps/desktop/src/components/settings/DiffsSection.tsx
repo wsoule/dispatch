@@ -75,6 +75,13 @@ index 3f1a2b4..9c8d7e6 100644
  }
 `;
 
+// What a split setting does in a review: the review page's diff column sits beside the
+// checklist and the properties rail, and in most windows it is too narrow for two readable
+// sides (useFittedDiffLayout's SPLIT_MIN_WIDTH), so it draws unified there. Said in words a
+// person can check against their own window rather than as a pixel width they cannot see.
+const REVIEW_LAYOUT_NOTE =
+  'Review diffs show unified while their column is too narrow for two sides, which it is in most windows.';
+
 /** How diffs render across Runs, Pull Requests, and the Git page. Backed by
  *  `useDiffDisplaySettings` (localStorage, per-browser) rather than
  *  `.dispatch/config.yml` — a viewing preference, not project configuration, so
@@ -92,6 +99,7 @@ export function DiffsSection() {
       >
         <SettingsRow
           title="Layout"
+          subtitle={REVIEW_LAYOUT_NOTE}
           control={
             <Select
               label="Diff layout"
