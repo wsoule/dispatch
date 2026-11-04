@@ -223,6 +223,40 @@ describe('POST /api/files/download-ticket', () => {
     expect((await redeem(w, ticket)).status).toBe(404);
   });
 
+  // The route stats the file and hands Bun a body that Bun opens only when it
+  // starts the response. Deleting the file inside Bun.file, after that stat,
+  // puts the deletion in exactly that window: Bun's open then fails with
+  // ENOENT in the server's error handler, which used to answer an opaque 500.
+  it('answers 404 when the file is deleted between the route’s check and the send', async () => {
+    const w = world();
+    const file = join(w.root, 'a.txt');
+    writeFileSync(file, 'a\n');
+    const ticket = await ticketFor(w, w.app, 'a.txt');
+    const realFile = Bun.file;
+    const deleteOnOpen = spyOn(Bun, 'file').mockImplementation(((
+      path: string,
+      options?: BlobPropertyBag
+    ) => {
+      const body = realFile(path, options);
+      if (path === file) unlinkSync(file);
+      return body;
+    }) as typeof Bun.file);
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const res = await redeem(w, ticket);
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: 'no such file' });
+      expect(deleteOnOpen).toHaveBeenCalledWith(file);
+      // An expected race, not a daemon fault: nothing is logged as one.
+      expect(errors).not.toHaveBeenCalled();
+    } finally {
+      deleteOnOpen.mockRestore();
+      errors.mockRestore();
+    }
+    // The ticket died with that attempt, as with any other answer.
+    expect((await redeem(w, ticket)).status).toBe(403);
+  });
+
   it('needs a credential to issue one', async () => {
     const w = world();
     const none = await call(w, null, 'POST', '/api/files/download-ticket', {

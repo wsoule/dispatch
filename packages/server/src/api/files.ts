@@ -267,6 +267,107 @@ function rawFileHeaders(path: string): Record<string, string> {
   };
 }
 
+// The raw route's not-found answer, for a path that is missing or not a
+// regular file, whether that is found before or after the route answers.
+function noSuchFile(): Response {
+  return errorResponse(404, 'no such file');
+}
+
+// How long after the raw route hands Bun a file body an ENOENT from opening
+// that path is still taken to be that body's. Bun opens the file as it starts
+// writing the response, a few milliseconds after the route returns; the
+// margin covers a daemon starved of CPU in between.
+const FILE_BODY_OPEN_GRACE_MS = 30_000;
+// The most file bodies remembered at once, so a burst of previews cannot grow
+// the list without bound. Past it the oldest are forgotten, and a deletion
+// racing one of them gets the opaque 500 again.
+const MAX_PENDING_FILE_BODIES = 1024;
+
+interface PendingFileBody {
+  path: string;
+  // The headers object of the response the body went out on. index.ts adds
+  // the CORS headers to it in place after the route returns, so the 404 that
+  // replaces the response can carry the same ones.
+  headers: Headers;
+  // performance.now() when the route answered: tests move Date, not this.
+  at: number;
+}
+
+// File bodies the raw route handed to Bun.serve, oldest first. Bun opens a
+// `Bun.file` body by path only once it starts sending it, and if the file was
+// deleted after the route's stat it throws ENOENT into the server's error
+// handler, which cannot see the request. This list is how that handler knows
+// the ENOENT is a raw-route file that vanished (see goneFileBodyResponse).
+const pendingFileBodies: PendingFileBody[] = [];
+
+// Forgets the bodies past the grace period, and the oldest past the cap.
+function forgetStaleFileBodies(now: number): void {
+  while (
+    pendingFileBodies.length > 0 &&
+    (pendingFileBodies.length > MAX_PENDING_FILE_BODIES ||
+      now - pendingFileBodies[0].at > FILE_BODY_OPEN_GRACE_MS)
+  ) {
+    pendingFileBodies.shift();
+  }
+}
+
+// The CORS headers (access-control-* and vary) a response carries, in header
+// order: what a gone-file 404 may copy from the body it replaces.
+function corsHeaders(headers: Headers): [string, string][] {
+  const cors: [string, string][] = [];
+  for (const [name, value] of headers) {
+    if (name.startsWith('access-control-') || name === 'vary') {
+      cors.push([name, value]);
+    }
+  }
+  return cors;
+}
+
+/**
+ * The raw route's 404 for an error Bun.serve raised while opening a file body
+ * the route handed it, or null for any other error. index.ts's error handler
+ * asks this first.
+ *
+ * The route stats the file, then returns a `Bun.file` that Bun opens later,
+ * when it starts the response. A file deleted in between (a checkout switching
+ * branches, an agent cleaning up) makes that open fail with ENOENT, which Bun
+ * hands to the server's error handler instead of to the route; without this
+ * the client got an opaque 500 for what is a plain not-found.
+ *
+ * The error names only the path, not the request, and a body stays listed
+ * after Bun has sent it, so several bodies for one path can be waiting. The
+ * newest one is forgotten, since it is the one Bun opens next. The 404 keeps
+ * the CORS headers only when every waiting body for that path carries the
+ * same ones, so the desktop webview can read it; when they differ (two
+ * origins, or a browser tab and the webview) it has none, as the 500 had,
+ * since one request's CORS grant must never answer another's.
+ */
+export function goneFileBodyResponse(err: unknown): Response | null {
+  if (typeof err !== 'object' || err === null) return null;
+  const { code, syscall, path } = err as {
+    code?: unknown;
+    syscall?: unknown;
+    path?: unknown;
+  };
+  if (code !== 'ENOENT' || syscall !== 'open' || typeof path !== 'string') {
+    return null;
+  }
+  forgetStaleFileBodies(performance.now());
+  const newest = pendingFileBodies.findLastIndex((body) => body.path === path);
+  if (newest === -1) return null;
+  const grants = pendingFileBodies
+    .filter((body) => body.path === path)
+    .map((body) => JSON.stringify(corsHeaders(body.headers)));
+  const [body] = pendingFileBodies.splice(newest, 1);
+  const res = noSuchFile();
+  if (grants.every((grant) => grant === grants[0])) {
+    for (const [name, value] of corsHeaders(body.headers)) {
+      res.headers.set(name, value);
+    }
+  }
+  return res;
+}
+
 /**
  * A 200 carrying the file at `path` with the raw route's headers plus
  * `extra`, or a 404 when it is gone or not a regular file.
@@ -276,6 +377,13 @@ function rawFileHeaders(path: string): Record<string, string> {
  * daemon's memory. Content-Length is stated here from a fresh stat so that
  * compressForNetwork can tell a file from an API reply; Bun sends the size it
  * actually streams, so a file that changes in between is never mislabelled.
+ *
+ * Opening the file here and serving the descriptor would close the window
+ * before Bun's own open, but Bun never closes a descriptor it was given and
+ * says nothing when it is done with one, and a JS stream over it loses both
+ * sendfile and the Content-Length (Bun sends any JS stream chunked). So the
+ * body stays a path, and a file deleted before Bun opens it is answered by
+ * goneFileBodyResponse instead.
  */
 function streamedFileResponse(
   path: string,
@@ -284,18 +392,22 @@ function streamedFileResponse(
   let size: number;
   try {
     const stat = statSync(path);
-    if (!stat.isFile()) return errorResponse(404, 'no such file');
+    if (!stat.isFile()) return noSuchFile();
     size = stat.size;
   } catch {
-    return errorResponse(404, 'no such file');
+    return noSuchFile();
   }
-  return new Response(Bun.file(path), {
+  const res = new Response(Bun.file(path), {
     headers: {
       ...rawFileHeaders(path),
       'content-length': String(size),
       ...extra,
     },
   });
+  const now = performance.now();
+  pendingFileBodies.push({ path, headers: res.headers, at: now });
+  forgetStaleFileBodies(now);
+  return res;
 }
 
 /** `GET /api/files/raw` — the bytes, for an image or PDF preview. */
