@@ -1,6 +1,8 @@
 // Spawning a terminal's child: Bun's native pty, or plain pipes. Kept apart
 // from the registry so the terminal worker can import it alone.
 
+import { ignoreClosedPipe } from './closedPipe.js';
+
 /** The slice of a spawned child this module uses, so a test can supply its own. */
 export interface TerminalProcess {
   readonly stdout: ReadableStream<Uint8Array>;
@@ -146,12 +148,14 @@ function spawnPiped(opts: SpawnTerminalOptions): TerminalProcess {
     stdout: mergeStreams(proc.stdout, proc.stderr),
     exited: proc.exited,
     write(data: string) {
-      // Both return promises that resolve once the bytes reach the pipe.
-      // Nothing here can act on that: a keystroke has no reply, and a write
-      // that fails because the child just exited is the ordinary race, which
-      // `exited` records. Awaiting would only serialize keystrokes behind it.
-      void proc.stdin.write(data);
-      void proc.stdin.flush();
+      // A keystroke has no reply, so nothing waits on either call; awaiting
+      // would only serialize keystrokes behind the pipe. A child that just
+      // exited is the ordinary race, which `exited` records: its EPIPE, thrown
+      // synchronously by write() or flush() when Bun has not yet seen the
+      // child go, or rejected by a write still flushing, is ignored. Thrown,
+      // it would escape to the caller and take down the terminal host.
+      ignoreClosedPipe(() => proc.stdin.write(data));
+      ignoreClosedPipe(() => proc.stdin.flush());
     },
     kill() {
       signalGroup(proc.pid, 'SIGHUP');

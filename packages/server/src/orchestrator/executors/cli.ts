@@ -1,6 +1,7 @@
 import type { ExecutorCommand } from '@dispatch-foo/core';
 import { agentEnv } from '@dispatch-foo/core';
 
+import { ignoreClosedPipe } from '../../closedPipe.js';
 import { FLOOR_COMMAND_ACTIONS } from '../../floor.js';
 import type {
   Executor,
@@ -91,37 +92,6 @@ export function buildArgv(
     );
   }
   return { argv, stdinPrompt: !usesPrompt };
-}
-
-// Whether `err` is EPIPE: a write to a pipe whose reading end is closed.
-function isClosedPipe(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    (err as { code?: unknown }).code === 'EPIPE'
-  );
-}
-
-// Runs a write to, or the close of, a child's stdin, and ignores EPIPE.
-// An agent can exit, or close its stdin, before it reads the whole prompt,
-// and that is not a failure of its own: its exit status and output say how
-// the run went. Bun's stdin sink reports EPIPE in one of two ways. If the
-// child is already gone when start() writes, which happens when the daemon
-// gets no CPU between the spawn and the write, write() or end() throws it.
-// If the child goes while a write is still flushing, the promise that write
-// returned rejects. Any other error is thrown or rejected as before.
-function ignoreClosedPipe(op: () => unknown): void {
-  let pending: unknown;
-  try {
-    pending = op();
-  } catch (err) {
-    if (!isClosedPipe(err)) throw err;
-    return;
-  }
-  if (pending instanceof Promise)
-    pending.catch((err: unknown) => {
-      if (!isClosedPipe(err)) throw err;
-    });
 }
 
 // Spawns the agent with Bun.spawn. Exported so a test can wrap the real
