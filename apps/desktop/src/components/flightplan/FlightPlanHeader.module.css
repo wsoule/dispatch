@@ -19,7 +19,8 @@
   opacity: 0.4;
 }
 
-/* The slots meter and the picker that changes the slots, side by side in one cell. */
+/* The slots in use (as text) and the picker that changes them, side by side in one
+   cell. */
 .slots {
   display: inline-flex;
   align-items: center;

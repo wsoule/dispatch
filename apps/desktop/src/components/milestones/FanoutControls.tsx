@@ -1,5 +1,9 @@
 import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
-import type { MilestoneProgress, MilestoneSession } from '@dispatch/client';
+import type {
+  MilestonePauseReason,
+  MilestoneProgress,
+  MilestoneSession,
+} from '@dispatch/client';
 import {
   Button,
   Chip,
@@ -40,11 +44,30 @@ const ICON = { size: 12, strokeWidth: 1.8 } as const;
 /** An icon-only verb's glyph: the library's 14px button icon, alone in its 26px square. */
 const ICON_ONLY = { size: 14, strokeWidth: 1.8 } as const;
 
-/** What Pause and Stop do, for their hint when they are drawn icon-only. */
+/** What each verb does, for its hint when it is drawn icon-only. */
 const PAUSE_HINT =
   'Pause the fan-out: live runs go on, no new ones start until you resume';
 const STOP_HINT =
   'Stop the fan-out for good: live runs go on, no new ones start';
+const RAISE_HINT = 'Raise the fan-out’s spend or run ceiling, then resume it';
+
+/** What Resume does after this pause, for its hint when it is drawn icon-only. Resume
+    keeps the session's ceilings, so after a ceiling pause the server's next fill pauses
+    it again (packages/server/src/orchestrator/milestone.ts: a run ceiling at once, a
+    spend ceiling once nothing is live) and no new run starts: the hint says so and
+    points at Raise ceiling…, rather than promising runs. */
+function resumeHint(reason: MilestonePauseReason | undefined): string {
+  switch (reason) {
+    case 'runs':
+      return 'Resume at the same run ceiling: it pauses again at once; use Raise ceiling… to go on';
+    case 'budget':
+      return 'Resume at the same spend ceiling: it pauses again once nothing is live; use Raise ceiling… to go on';
+    case 'human':
+    case 'fill-failed':
+    case undefined:
+      return 'Resume the fan-out at its ceilings: new runs start in free agent slots';
+  }
+}
 
 /** A verb in the row: a small secondary button with its leading icon. */
 function Verb({
@@ -166,12 +189,13 @@ export interface FanoutControlsProps {
   /** An active or paused session's spend pill; the Flight Plan header turns it off since
    * its strip has a Spend cell that says the same amounts (`spendCellWords`). */
   spend?: boolean;
-  /** Pause and Stop as icon-only buttons (still named Pause and Stop, each with a
-   * Tooltip saying what it does), for the Flight Plan header, whose strip is short of
-   * room while a fan-out runs (owner decision 2026-11-04). Stop then confirms in a
-   * ConfirmDialog first, since only its glyph sets it apart from Pause. The other verbs
-   * keep their words, and so do Pause and Stop on a touch screen, where no Tooltip opens
-   * (`useTouchScreen`). */
+  /** The verbs of an active or paused session as icon-only buttons (still named Pause,
+   * Stop, Resume and Raise ceiling…, each with a Tooltip saying what it does), for the
+   * Flight Plan header, whose strip is short of room while a fan-out runs or is paused
+   * (owner decisions 2026-11-04: Pause and Stop, then Resume and Raise ceiling…). Stop
+   * then confirms in a ConfirmDialog first, since only its glyph sets it apart from
+   * Pause. Send agents… and Land keep their words, and so does every verb on a touch
+   * screen, where no Tooltip opens (`useTouchScreen`). */
   iconVerbs?: boolean;
 }
 
@@ -202,7 +226,8 @@ export function sessionIdle(session: MilestoneSession | null): boolean {
  * and an Open button last. Header only — no bar under it, no card. Every async verb runs
  * through one busy flag; a failure shows as a red pill in the same row. `iconVerbs` draws
  * Pause and Stop icon-only, with their names and a Tooltip each, and Stop then asks first
- * in a ConfirmDialog; on a touch screen they keep their words.
+ * in a ConfirmDialog; paused, Resume and Raise ceiling… are icon-only as well. On a touch
+ * screen every verb keeps its words.
  */
 export function FanoutControls({
   milestone,
@@ -229,8 +254,8 @@ export function FanoutControls({
   // The icon-only Stop's confirmation is open.
   const [confirmingStop, setConfirmingStop] = useState(false);
   // A touch screen opens no Tooltip, so an icon-only verb there would be a bare glyph:
-  // Pause and Stop keep their words (and Stop its one press), as the strip beside them
-  // keeps its notes on the row there.
+  // the verbs keep their words (and Stop its one press), as the strip beside them keeps
+  // its notes on the row there.
   const touch = useTouchScreen();
   const iconOnly = iconVerbs && !touch;
   const milestoneId = milestone.meta.id;
@@ -366,24 +391,46 @@ export function FanoutControls({
             ? 'Paused'
             : pausedReasonLabel(session.pausedReason)}
         </Pill>
-        {onResume !== undefined && (
-          <Verb
-            disabled={busy}
-            onClick={() => void run(() => onResume(milestoneId))}
-            icon={<Play {...ICON} />}
-          >
-            Resume
-          </Verb>
-        )}
-        {onRaiseCeiling !== undefined && (
-          <Verb
-            disabled={busy}
-            onClick={() => onRaiseCeiling(milestoneId)}
-            icon={<ChevronsUp {...ICON} />}
-          >
-            Raise ceiling…
-          </Verb>
-        )}
+        {onResume !== undefined &&
+          (iconOnly ? (
+            <IconVerb
+              slot="fanout-resume"
+              name="Resume"
+              hint={resumeHint(session.pausedReason)}
+              disabled={busy}
+              onClick={() => void run(() => onResume(milestoneId))}
+              icon={<Play {...ICON_ONLY} />}
+            />
+          ) : (
+            <Verb
+              disabled={busy}
+              onClick={() => void run(() => onResume(milestoneId))}
+              icon={<Play {...ICON} />}
+            >
+              Resume
+            </Verb>
+          ))}
+        {onRaiseCeiling !== undefined &&
+          (iconOnly ? (
+            // Its name keeps the ellipsis: it opens a dialog, which hands focus back to
+            // this button when it closes.
+            <IconVerb
+              slot="fanout-raise"
+              name="Raise ceiling…"
+              hint={RAISE_HINT}
+              disabled={busy}
+              onClick={() => onRaiseCeiling(milestoneId)}
+              icon={<ChevronsUp {...ICON_ONLY} />}
+            />
+          ) : (
+            <Verb
+              disabled={busy}
+              onClick={() => onRaiseCeiling(milestoneId)}
+              icon={<ChevronsUp {...ICON} />}
+            >
+              Raise ceiling…
+            </Verb>
+          ))}
         {stopVerb}
       </>
     );

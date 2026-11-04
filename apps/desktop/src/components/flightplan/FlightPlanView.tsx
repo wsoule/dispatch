@@ -20,6 +20,7 @@ import {
   type MenuEntry,
   Skeleton,
   SkeletonRows,
+  Tooltip,
 } from '@dispatch/ui';
 import { ChevronDown, Waypoints } from 'lucide-react';
 import {
@@ -633,9 +634,10 @@ export function FlightPlan({
   // One container's fan-out verbs — the header's for the plan's own container, a band's
   // for its milestone — over the same session API the Milestones page uses. The header
   // (`band` false) shows the spend and the waves as strip cells instead, so its controls
-  // are only the verbs (Pause and Stop while running, icon-only so the strip keeps the
-  // room: owner decision 2026-11-04); a band keeps its spend pill, its wave strip, its
-  // worded verbs and its Open button.
+  // are only the verbs (Pause and Stop while running; the paused pill, Resume, Raise
+  // ceiling… and Stop while paused), icon-only so the strip keeps the room (owner
+  // decisions 2026-11-04); a band keeps its spend pill, its wave strip, its worded verbs
+  // and its Open button.
   const fanoutFor = useCallback(
     (milestone: TaskListItem, band: boolean): ReactNode => (
       <FanoutControls
@@ -660,10 +662,12 @@ export function FlightPlan({
   );
 
   // The plan's own live session's slots control, drawn in the header's slots cell beside
-  // the meter that already prints the total: an icon button whose name says the current
-  // slots, opening the choices as radio rows. Picking another one pauses and resumes the
-  // session at it. Null while the container has no active session; FanoutControls' own
-  // concurrency picker only renders while no session runs.
+  // the slots text that already prints the total: an icon button whose name says the
+  // current slots, opening the choices as radio rows, with a library Tooltip saying what
+  // it does (the cell's own hint stays away while the pointer is on it or its menu is
+  // open, so the two never stack). Picking another one pauses and resumes the session at
+  // it. Null while the container has no active session; FanoutControls' own concurrency
+  // picker only renders while no session runs.
   const slotsPickerFor = (milestone: TaskListItem): ReactNode => {
     const milestoneId = milestone.meta.id;
     const session =
@@ -689,15 +693,18 @@ export function FlightPlan({
         items={items}
         align="end"
         trigger={(props) => (
-          <Button
-            {...props}
-            variant="quiet"
-            size="sm"
-            data-slot="flight-slots-picker"
-            aria-label={name}
-            title={`Change the agent slots (${slotsText(session.concurrency)} now)`}
-            icon={<ChevronDown {...ICON} size={12} />}
-          />
+          <Tooltip
+            content={`Change the agent slots (${slotsText(session.concurrency)} now)`}
+          >
+            <Button
+              {...props}
+              variant="quiet"
+              size="sm"
+              data-slot="flight-slots-picker"
+              aria-label={name}
+              icon={<ChevronDown {...ICON} size={12} />}
+            />
+          </Tooltip>
         )}
       />
     );

@@ -1,4 +1,4 @@
-import { ProgressRule, type StatCell, StatsStrip } from '@dispatch/ui';
+import { type StatCell, StatsStrip } from '@dispatch/ui';
 import { TriangleAlert } from 'lucide-react';
 import type { ReactNode } from 'react';
 
@@ -30,32 +30,68 @@ export interface FlightHeaderStats {
   waves?: readonly Step[] | null;
 }
 
-// The agent slots meter: a ProgressRule of the slots in use, warning once every slot is
-// taken. Its name and value text say "agent slots" in full for a screen reader.
-function slotsMeter(used: number, total: number): ReactNode {
+// The agent slots in use as text, "2/4", with no meter track (owner decision 2026-11-04:
+// the track cost the strip ~48px it needs while a fan-out runs). The printed fraction is
+// hidden from a screen reader, which hears "2 of 4 agent slots in use" in its place, so
+// it is never read as a fraction ("two quarters").
+function slotsText(used: number, total: number): ReactNode {
   return (
-    <ProgressRule
-      data-slot="flight-slots"
-      done={used}
-      total={total}
-      aria-label="Agent slots"
-      valueText={`${used} of ${total} slots in use`}
-      tone={used >= total ? 'warning' : 'default'}
-    />
+    <span data-slot="flight-slots">
+      <span aria-hidden="true">
+        {used}/{total}
+      </span>
+      <span className="srOnly">{`${used} of ${total} agent slots in use`}</span>
+    </span>
   );
+}
+
+// The Queued and Landed counts while a fan-out runs or is paused, folded into the
+// running cell as its note (owner decision 2026-11-04), so the strip has two cells fewer
+// and every count is still there: in the cell's hint on hover and keyboard focus, in its
+// text for a screen reader (in list order), and on the row on a touch screen. A part
+// with nothing to say is dropped: no queued part with nothing queued, no landed part with
+// nothing in the plan. The landed part keeps its total ("0 of 12 landed"), which no other
+// cell says, in words rather than "0/12", since the note is what a screen reader hears
+// and a printed fraction can be read as one (or as a date). `hint` is the same facts as
+// a sentence, for the Tooltip.
+function countsNote(stats: FlightHeaderStats): {
+  note: string;
+  hint: string;
+} | null {
+  const note: string[] = [];
+  const hint: string[] = [];
+  if (stats.queued > 0) {
+    note.push(`${stats.queued} queued`);
+    hint.push(`${stats.queued} queued for a free agent slot`);
+  }
+  if (stats.total > 0) {
+    note.push(`${stats.done} of ${stats.total} landed`);
+    hint.push(`${stats.done} of ${stats.total} landed`);
+  }
+  if (note.length === 0) return null;
+  return { note: note.join(' · '), hint: hint.join('; ') };
 }
 
 // The strip's first cells: what runs and, while a fan-out holds slots, how many of them.
 // FlightPlanView counts a fan-out's slots in use as the plan's running nodes, so fanning
-// out one "Running" cell carries the slots meter (its "1/2" is both) and the header's
-// columns stay free for the critical path and the ETA. Only when hand-dispatched runs
-// push the running count past the slots does the strip keep a Slots meter and a Running
-// count apart, so the meter never hides a run. With no fan-out it is a plain count, and
-// "not fanning out" is the cell's hint (Ready and Send agents… say it on screen).
+// out one "Running" cell carries the slots in use as text (its "1/2" is both) and the
+// header's columns stay free for the critical path and the ETA. Only when
+// hand-dispatched runs push the running count past the slots does the strip keep a Slots
+// cell and a Running count apart, so the slots never hide a run. With no fan-out it is a
+// plain count, and "not fanning out" is the cell's hint (Ready and Send agents… say it on
+// screen). Fanning out, the Running cell (the second one when they split) also carries
+// the queued and landed counts as its note (`countsNote`).
 //
 // `picker` is the plan's own slots control (FlightPlanView's Menu trigger), drawn right
-// after the meter in the same cell: the meter already prints the slots' total, so the
-// control needs no words of its own on screen, only its accessible name.
+// after the slots in the same cell: they already print the total, so the control needs
+// no words of its own on screen, only its accessible name.
+//
+// The first cell keeps the id `running` (its React key) in every mode: the plain count
+// with no fan-out, the Running cell fanning out, and the Slots cell that holds the
+// picker when the runs pass the slots; the split's own Running count is
+// `running-count`. So the <li> survives a fan-out that ends, or splits, under keyboard
+// focus: a hinted Running cell that holds focus as its note goes back on the row keeps
+// it (the strip's tabIndex -1 hold), and the picker keeps its focus through a split.
 function runningCells(stats: FlightHeaderStats, picker: ReactNode): StatCell[] {
   const { slots, running } = stats;
   const tone = running > 0 ? 'info' : 'default';
@@ -73,36 +109,43 @@ function runningCells(stats: FlightHeaderStats, picker: ReactNode): StatCell[] {
   }
   const used = Math.min(slots.used, slots.total);
   const slotsHint = `${used} of ${slots.total} agent slots in use`;
-  const meter = withPicker(slotsMeter(used, slots.total), picker);
-  // The meter's cell keeps the id `slots` (its React key) whether it reads Running or
-  // Slots, so picking fewer slots than the runs in flight, which splits the count into a
-  // cell of its own, keeps the <li> that holds the picker, and with it the picker's focus.
+  const value = withPicker(slotsText(used, slots.total), picker);
+  const counts = countsNote(stats);
   if (running <= slots.total) {
+    // With the counts as its note the cell is hinted, and its hint starts with the slots'
+    // words: no title, which would be its description and read the slots a second time
+    // after the value's own words. With no counts it keeps them as its hover title.
     return [
       {
-        id: 'slots',
+        id: 'running',
         'data-slot': 'flight-stat',
         label: 'Running',
-        value: meter,
+        value,
         tone,
-        title: slotsHint,
+        ...(counts === null
+          ? { title: slotsHint }
+          : { note: counts.note, hint: `${slotsHint}; ${counts.hint}` }),
       },
     ];
   }
+  // Runs past the slots fill every one of them: the Slots cell warns, as the meter's
+  // track did, and its "3/3" says so in numbers, so the tone is never the only cue.
   return [
     {
-      id: 'slots',
+      id: 'running',
       'data-slot': 'flight-stat',
       label: 'Slots',
-      value: meter,
+      value,
+      tone: 'warning',
       title: slotsHint,
     },
     {
-      id: 'running',
+      id: 'running-count',
       'data-slot': 'flight-stat',
       label: 'Running',
       value: running,
       tone,
+      ...(counts === null ? {} : { note: counts.note, hint: counts.hint }),
     },
   ];
 }
@@ -160,7 +203,7 @@ function wavesCell(waves: readonly Step[] | null | undefined): StatCell | null {
 }
 
 // The cells in reading order once the spend has its place. A calm spend comes after the
-// counts, before the waves, the least urgent at the end where the strip's fade hides
+// timing, before the waves, the least urgent at the end where the strip's fade hides
 // first. A spend that needs reading is never left there: a paused session's spend leads
 // the strip (the paused verbs leave it its narrowest, and the amount is what Raise
 // ceiling… asks about), and an active session's spend near its ceiling comes straight
@@ -184,10 +227,11 @@ function placeSpend(
 
 // Every cell of the strip, in reading order. With no fan-out: running, ready, landed, then
 // the critical path. Fanning out, the cells that answer "when is it done" come first —
-// running (with the slots meter and its picker), the ETA, the critical path, then queued
-// and landed, then the fan-out's spend and waves — so a column too narrow for them all
-// hides the least urgent behind the strip's fade; a spend that warns or a paused session's
-// spend moves forward instead (`placeSpend`). The critical path's remaining time is its
+// running (with the slots in use, their picker, and the queued and landed counts as its
+// note: owner decision 2026-11-04), the ETA, the critical path, then the fan-out's spend
+// and waves — so a column too narrow for them all hides the least urgent behind the
+// strip's fade; a spend that warns or a paused session's spend moves forward instead
+// (`placeSpend`). The critical path's remaining time is its
 // note unless the ETA's "left" says the very same duration, and is always in its title
 // too. While fanning out the notes go into the cells' hints (`FlightPlanHeader`), so
 // each noted cell's `hint` is a sentence that says its note's facts.
@@ -199,24 +243,25 @@ function headerCells(stats: FlightHeaderStats, picker: ReactNode): StatCell[] {
     pace.samples === 0
       ? `assuming ${formatDuration(pace.medianMs).replace('~', '')} a run until more runs finish`
       : `at ${formatDuration(pace.medianMs).replace('~', '')} a run, the median of the last ${pace.samples}`;
-  const counts: StatCell[] = [
-    // Nothing is queued for a fan-out that is not running — only ready.
-    {
-      id: 'queued',
-      'data-slot': 'flight-stat',
-      label: fanningOut ? 'Queued' : 'Ready',
-      value: stats.queued,
-      title: fanningOut
-        ? 'Waiting for a free agent slot'
-        : 'Free to start, with no blocker ahead',
-    },
-    {
-      id: 'landed',
-      'data-slot': 'flight-stat',
-      label: 'Landed',
-      value: `${stats.done}/${stats.total}`,
-    },
-  ];
+  // With no fan-out the ready and landed counts are cells of their own; fanning out, the
+  // queued and landed counts are the running cell's note instead (`runningCells`).
+  const counts: StatCell[] = fanningOut
+    ? []
+    : [
+        {
+          id: 'queued',
+          'data-slot': 'flight-stat',
+          label: 'Ready',
+          value: stats.queued,
+          title: 'Free to start, with no blocker ahead',
+        },
+        {
+          id: 'landed',
+          'data-slot': 'flight-stat',
+          label: 'Landed',
+          value: `${stats.done}/${stats.total}`,
+        },
+      ];
   const timing: StatCell[] = [];
   if (showEta) {
     const etaBasis = `critical path, or the remaining work over the slots when that is longer, ${paceNote}`;
@@ -251,7 +296,7 @@ function headerCells(stats: FlightHeaderStats, picker: ReactNode): StatCell[] {
   }
   return placeSpend(
     runningCells(stats, picker),
-    fanningOut ? [...timing, ...counts] : [...counts, ...timing],
+    [...counts, ...timing],
     spendCell(stats.spend),
     wavesCell(stats.waves),
     stats
@@ -260,21 +305,23 @@ function headerCells(stats: FlightHeaderStats, picker: ReactNode): StatCell[] {
 
 /**
  * The Flight Plan's header: a library StatsStrip of what is running (with the agent slots
- * meter and, for the plan's own live fan-out, the `slotsPicker` that changes its slots),
- * the ETA and the critical path (its accent swatch is the legend for the highlighter on
- * the canvas), queued and landed, the fan-out's spend and waves, then the caller's fan-out
- * verbs as the strip's `end`, at the end of the same row. The picker, the spend and the
- * waves live in cells rather than beside the verbs, so the verbs take as little of the row
- * as they can and the cells keep the rest; a spend near its ceiling, or a paused session's,
- * moves to the front of the strip so it stays on screen. The strip is the compact variant (owner
- * decision 2026-11-03): one 26px row at every width, the cells scrolling sideways inside
- * the strip when the column is too narrow, so Plan mode and container pages keep their
- * canvas height; the controls drop under it only on a column too narrow for both. While a
- * fan-out runs or is paused (owner decision 2026-11-04) the cells' notes (the ETA's time
- * left, the critical path's, the spend's ceiling) move into their hints, a Tooltip on each
- * of those cells on hover and keyboard focus (the notes stay in the cells' text for a
- * screen reader, and on the row on a touch screen), and the caller draws Pause and Stop
- * icon-only, so more of the cells share the row with the verbs.
+ * in use and, for the plan's own live fan-out, the `slotsPicker` that changes them), the
+ * ETA and the critical path (its accent swatch is the legend for the highlighter on the
+ * canvas), ready and landed with no fan-out, the fan-out's spend and waves, then the
+ * caller's fan-out verbs as the strip's `end`, at the end of the same row. The picker, the
+ * spend and the waves live in cells rather than beside the verbs, so the verbs take as
+ * little of the row as they can and the cells keep the rest; a spend near its ceiling, or
+ * a paused session's, moves to the front of the strip so it stays on screen. The strip is
+ * the compact variant (owner decision 2026-11-03): one 26px row at every width, the cells
+ * scrolling sideways inside the strip when the column is too narrow, so Plan mode and
+ * container pages keep their canvas height; the controls drop under it only on a column
+ * too narrow for both. While a fan-out runs or is paused (owner decisions 2026-11-04) the
+ * cells' notes (the queued and landed counts, folded into the Running cell; the ETA's
+ * time left, the critical path's, the spend's ceiling) move into their hints, a Tooltip on
+ * each of those cells on hover and keyboard focus (the notes stay in the cells' text for a
+ * screen reader, and on the row on a touch screen), the slots in use are text with no
+ * meter track, and the caller draws every verb icon-only, so every cell shares the row
+ * with the verbs at 1440px.
  */
 export function FlightPlanHeader({
   stats,

@@ -7,7 +7,13 @@ import type {
   MilestoneSession,
   MilestoneWave,
 } from '@dispatch/client';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import { FANOUT_VERB_LABEL, fanoutVerbs } from '../../lib/fanoutVerbs';
@@ -591,6 +597,11 @@ const PAUSE_TIP =
   'Pause the fan-out: live runs go on, no new ones start until you resume';
 const STOP_TIP =
   'Stop the fan-out for good: live runs go on, no new ones start';
+// Then, paused (the same day's second decision), Resume and Raise ceiling… as well.
+// Resume's hint after a pause by hand, or a failed auto-dispatch (or no reason given).
+const RESUME_TIP =
+  'Resume the fan-out at its ceilings: new runs start in free agent slots';
+const RAISE_TIP = 'Raise the fan-out’s spend or run ceiling, then resume it';
 
 function tipText(): string | null {
   return screen.queryByRole('tooltip', { hidden: true })?.textContent ?? null;
@@ -755,25 +766,168 @@ test('iconVerbs: a verb pressed by keyboard keeps focus and one tip while its re
   expect(screen.getByRole('alert').textContent).toBe('pause failed');
 });
 
-test('iconVerbs while paused: Stop is icon-only and asks first, Resume and Raise ceiling… keep their words', async () => {
+test('iconVerbs while paused: Resume, Raise ceiling… and Stop are icon-only, named and hinted; Stop asks first', async () => {
   const { calls } = mount(
     progressWith([child('t-1', 'working')], {
       session: sessionWith('paused', { pausedReason: 'human' }),
     }),
     { iconVerbs: true, showOpen: false, spend: false }
   );
-  expect(buttonNames()).toEqual(['Resume', 'Raise ceiling…', '']);
+  // Every verb is a glyph alone; the paused pill keeps its words.
+  expect(buttonNames()).toEqual(['', '', '']);
+  expect(document.querySelector('[data-slot=paused-pill]')?.textContent).toBe(
+    'Paused — by you'
+  );
+  const resume = screen.getByRole('button', { name: 'Resume' });
+  const raise = screen.getByRole('button', { name: 'Raise ceiling…' });
   const stop = screen.getByRole('button', { name: 'Stop' });
-  expect(stop.textContent).toBe('');
-  act(() => stop.focus());
-  expect(tipText()).toBe(STOP_TIP);
-  act(() => stop.blur());
+  for (const [button, slot, tip] of [
+    [resume, 'fanout-resume', RESUME_TIP],
+    [raise, 'fanout-raise', RAISE_TIP],
+    [stop, 'fanout-stop', STOP_TIP],
+  ] as const) {
+    expect(button.getAttribute('data-slot')).toBe(slot);
+    expect(button.querySelector('svg')).not.toBeNull();
+    expect(button.hasAttribute('title')).toBe(false);
+    // Keyboard focus shows what it does at once, as the button's description.
+    act(() => button.focus());
+    const shown = screen.getByRole('tooltip', { hidden: true });
+    expect(shown.textContent).toBe(tip);
+    expect(button.getAttribute('aria-describedby')).toBe(shown.id);
+    act(() => button.blur());
+    expect(tipText()).toBeNull();
+  }
+  // A hover shows it too, after the tooltip's delay.
+  await wait(450);
+  fireEvent.pointerEnter(raise, { pointerType: 'mouse' });
+  expect(tipText()).toBeNull();
+  await wait(350);
+  expect(tipText()).toBe(RAISE_TIP);
+  fireEvent.pointerLeave(raise, { pointerType: 'mouse' });
+  await wait(200);
   expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
-  await settle(() => fireEvent.click(stop));
+  // Raise ceiling… opens the caller's dialog straight away; Resume resumes.
+  await settle(() => fireEvent.click(raise));
+  await settle(() => fireEvent.click(resume));
+  expect(calls).toEqual(['raise:e-1', 'resume:e-1']);
+  // Resume held the verbs while it ran, which redraws them: find Stop again.
+  await settle(() =>
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+  );
   await settle(() =>
     fireEvent.click(screen.getByRole('button', { name: 'Stop fan-out' }))
   );
-  expect(calls).toEqual(['stop:e-1']);
+  expect(calls).toEqual(['raise:e-1', 'resume:e-1', 'stop:e-1']);
+});
+
+// Resume holds the verbs while its request runs, like Pause: each disabled icon-only verb
+// keeps its hint through the Tooltip's focusable wrapper, and focus stays with Resume.
+test('iconVerbs while paused: a Resume in flight disables the verbs and keeps focus and hints', async () => {
+  let fail: (err: Error) => void = () => {};
+  mount(
+    progressWith([child('t-1', 'working')], {
+      session: sessionWith('paused', { pausedReason: 'human' }),
+    }),
+    {
+      iconVerbs: true,
+      showOpen: false,
+      spend: false,
+      onResume: () =>
+        new Promise<void>((_, reject) => {
+          fail = reject;
+        }),
+    }
+  );
+  const resume = screen.getByRole('button', { name: 'Resume' });
+  act(() => resume.focus());
+  await settle(() => fireEvent.click(resume));
+  const names = ['Resume', 'Raise ceiling…', 'Stop'];
+  for (const name of names) {
+    expect(screen.getByRole('button', { name }).hasAttribute('disabled')).toBe(
+      true
+    );
+  }
+  const wrapper = screen.getByRole('button', { name: 'Resume' }).parentElement;
+  if (!(wrapper instanceof HTMLElement)) throw new Error('no wrapper');
+  expect(document.activeElement).toBe(wrapper);
+  expect(
+    screen.queryAllByRole('tooltip', { hidden: true }).map((t) => t.textContent)
+  ).toEqual([RESUME_TIP]);
+  // The disabled Raise ceiling…'s hint stays reachable through its own wrapper.
+  const raiseWrapper = screen.getByRole('button', {
+    name: 'Raise ceiling…',
+  }).parentElement;
+  if (!(raiseWrapper instanceof HTMLElement)) throw new Error('no wrapper');
+  act(() => raiseWrapper.focus());
+  expect(
+    screen.queryAllByRole('tooltip', { hidden: true }).map((t) => t.textContent)
+  ).toEqual([RAISE_TIP]);
+  act(() => wrapper.focus());
+  await settle(() => fail(new Error('resume failed')));
+  const again = screen.getByRole('button', { name: 'Resume' });
+  expect(again.hasAttribute('disabled')).toBe(false);
+  expect(document.activeElement).toBe(again);
+  expect(screen.getByRole('alert').textContent).toBe('resume failed');
+});
+
+// Resume keeps the session's ceilings, so after a ceiling pause the server pauses it again
+// (a run ceiling at once, a spend ceiling once nothing is live) and no new run starts: the
+// icon-only Resume's hint, the only words a mouse user gets for it, says so and points at
+// Raise ceiling…, and promises new runs only after a pause that has no ceiling behind it.
+test('iconVerbs while paused: Resume says what it does after each kind of pause', () => {
+  const cases: [MilestoneSession['pausedReason'], string, string][] = [
+    [
+      'runs',
+      'Paused — run ceiling',
+      'Resume at the same run ceiling: it pauses again at once; use Raise ceiling… to go on',
+    ],
+    [
+      'budget',
+      'Paused — budget ceiling',
+      'Resume at the same spend ceiling: it pauses again once nothing is live; use Raise ceiling… to go on',
+    ],
+    ['human', 'Paused — by you', RESUME_TIP],
+    ['fill-failed', 'Paused — auto-dispatch failed', RESUME_TIP],
+    [undefined, 'Paused', RESUME_TIP],
+  ];
+  for (const [reason, pill, tip] of cases) {
+    const { unmount } = mount(
+      progressWith([child('t-1', 'working')], {
+        session: sessionWith(
+          'paused',
+          reason === undefined ? {} : { pausedReason: reason }
+        ),
+      }),
+      { iconVerbs: true, showOpen: false, spend: false }
+    );
+    expect(document.querySelector('[data-slot=paused-pill]')?.textContent).toBe(
+      pill
+    );
+    const resume = screen.getByRole('button', { name: 'Resume' });
+    act(() => resume.focus());
+    const shown = screen.getByRole('tooltip', { hidden: true });
+    expect([reason, shown.textContent]).toEqual([reason, tip]);
+    expect(resume.getAttribute('aria-describedby')).toBe(shown.id);
+    act(() => resume.blur());
+    // Raise ceiling…'s hint is the same whatever paused it.
+    const raise = screen.getByRole('button', { name: 'Raise ceiling…' });
+    act(() => raise.focus());
+    expect(tipText()).toBe(RAISE_TIP);
+    act(() => raise.blur());
+    unmount();
+  }
+});
+
+test('without iconVerbs, paused, Resume, Raise ceiling… and Stop keep their words', () => {
+  mount(
+    progressWith([child('t-1', 'working')], {
+      session: sessionWith('paused', { pausedReason: 'human' }),
+    }),
+    { showOpen: false, spend: false }
+  );
+  expect(buttonNames()).toEqual(['Resume', 'Raise ceiling…', 'Stop']);
+  act(() => screen.getByRole('button', { name: 'Resume' }).focus());
+  expect(tipText()).toBeNull();
 });
 
 test('without iconVerbs, Pause and Stop keep their words, no tooltip and no confirm', async () => {
@@ -791,9 +945,9 @@ test('without iconVerbs, Pause and Stop keep their words, no tooltip and no conf
   expect(calls).toEqual(['stop:e-1']);
 });
 
-// A touch screen opens no Tooltip, so an icon-only Pause or Stop there would be a bare
-// glyph: iconVerbs keeps their words (and Stop its one press), as the strip keeps its notes.
-test('iconVerbs on a touch screen: Pause and Stop keep their words and Stop its one press', async () => {
+// A touch screen opens no Tooltip, so an icon-only verb there would be a bare
+// glyph: iconVerbs keeps every verb's words (and Stop its one press), as the strip keeps its notes.
+test('iconVerbs on a touch screen: every verb keeps its words and Stop its one press', async () => {
   const original = window.matchMedia;
   window.matchMedia = ((query: string) =>
     ({
@@ -815,6 +969,16 @@ test('iconVerbs on a touch screen: Pause and Stop keep their words and Stop its 
     );
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(calls).toEqual(['stop:e-1']);
+    cleanup();
+    // Paused, Resume and Raise ceiling… keep their words as well.
+    mount(
+      progressWith([child('t-1', 'working')], {
+        session: sessionWith('paused', { pausedReason: 'human' }),
+      }),
+      { iconVerbs: true, showOpen: false, spend: false }
+    );
+    expect(buttonNames()).toEqual(['Resume', 'Raise ceiling…', 'Stop']);
+    expect(document.querySelector('[data-slot=fanout-resume]')).toBeNull();
   } finally {
     window.matchMedia = original;
   }

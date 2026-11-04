@@ -46,8 +46,11 @@ holds what a user upgrading needs to know.
     take you back there.
   - Live's and Flight Plan's header strips use shorter labels and notes, so more
     of their cells fit beside the header's buttons; hover a cell for more
-    detail. While a fan-out runs, Flight Plan's Running cell shows the agent
-    slots meter, and the ETA and the critical path come right after it.
+    detail. While a fan-out runs or is paused, Flight Plan's Running cell shows
+    the agent slots in use ("2/4") with the queued and landed counts in its
+    hint, the ETA and the critical path come right after it, and the fan-out's
+    buttons are icons that say what they do when you hover or focus them, so
+    every cell fits beside them.
   - A review diff set to split, of a live run or a settled one, shows unified
     when its column is narrower than 980px, and goes back to split once the
     column is wide enough. An agent finding's title wraps instead of being cut

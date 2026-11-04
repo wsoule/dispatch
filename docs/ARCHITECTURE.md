@@ -651,12 +651,12 @@ each still says what it counts; a cell's `title` adds detail and never holds the
 only copy of a fact. While a fan-out runs, Flight Plan puts Running, the ETA and
 the critical path first, since its controls leave the strip little room and the
 fade hides the end. Its fan-out's slots picker (in the Running cell, after the
-meter), spend and waves are cells, so its `end` holds only the verbs (Pause and
-Stop, or the paused pill, Resume, Raise ceiling… and Stop); a spend near its
-ceiling comes straight after Running, and a paused session's spend leads the
-strip, so neither is ever behind the fade. While a fan-out runs or is paused
-(owner decision 2026-11-04), Pause and Stop there are icon-only (named Pause and
-Stop, each with a Tooltip saying what it does; Stop then confirms in a
+slots in use), spend and waves are cells, so its `end` holds only the verbs
+(Pause and Stop, or the paused pill, Resume, Raise ceiling… and Stop); a spend
+near its ceiling comes straight after Running, and a paused session's spend
+leads the strip, so neither is ever behind the fade. While a fan-out runs or is
+paused (owner decision 2026-11-04), Pause and Stop there are icon-only (named
+Pause and Stop, each with a Tooltip saying what it does; Stop then confirms in a
 `ConfirmDialog`, since only its glyph sets it apart from Pause) and the cells'
 notes move into their hints (`StatsStrip` `notes="hint"`: a Tooltip on hover and
 keyboard focus; the note stays in the cell's text for a screen reader). Live's
@@ -664,12 +664,33 @@ spend note does the same, its key saying which amount the value is ("Today" for
 today's spend, else "Spend" for the live fan-outs' settled spend), so Live's
 cells fit beside Pause all at 1024px. A touch screen opens no Tooltip, so there
 both strips keep their notes on the row and Pause and Stop keep their words
-(`useTouchScreen`). Even so, Plan at 1440px with a fan-out still hides its last
-cells behind the fade (the Properties panel leaves the Plan column about 666px);
-what more to give up is an open owner question. A review diff
-(`PierreReviewDiff` for a settled run, `RunDiffView` for a live one, both
-through `useFittedDiffLayout`) draws a split setting unified while its column is
-under 980px.
+(`useTouchScreen`). That still left Plan at 1440px (a Plan column of about 654px
+beside the Properties panel) 178px too wide while a fan-out ran and 304px while
+paused, so (owner decision 2026-11-04, the owner's "just figure it out") Plan's
+header, while a fan-out runs or is paused, has no Queued or Landed cell: their
+counts are the Running cell's note ("3 queued · 5 of 12 landed", in words since
+the note is what a screen reader hears; a part with nothing to say dropped: no
+queued part with nothing queued, no landed part with nothing in the plan), so
+every count stays in its hint, in its text for a screen reader and on the row on
+a touch screen, where the note takes Running's blue as any toned cell's note
+does. That cell keeps one React key in every mode, so keyboard focus on it
+survives the fan-out's end. It draws its slots in use as text ("2/4", read as "2
+of 4 agent slots in use") with no meter track, so all slots taken no longer
+turns it amber ("4/4" says so); a Slots cell split off by runs past the slots
+keeps the warning tone. The slots picker after the text has a library Tooltip,
+and the cell's hint keeps away from the picker and its menu (`StatsStrip`). The
+paused verbs Resume and Raise ceiling… are icon-only like Pause and Stop (named,
+each with a Tooltip, words kept on a touch screen); Resume's tip follows why the
+session paused, since after a run or spend ceiling it pauses again at once and
+only Raise ceiling… goes on. Every cell is then on screen at 1440px, running,
+near the spend ceiling and paused, with a spend under $1,000 and a short pause
+reason (65px, 47px and 81px to spare, measured on 2026-11-04); a four-digit
+spend near its ceiling, or beside the "auto-dispatch failed" pill, is 1–2px over
+and its last cell goes behind the fade. With no fan-out Plan keeps its Ready and
+Landed cells; the milestone bands, the Milestones page and Live keep their
+worded verbs, and Live its slots meter. A review diff (`PierreReviewDiff` for a
+settled run, `RunDiffView` for a live one, both through `useFittedDiffLayout`)
+draws a split setting unified while its column is under 980px.
 
 ### Tokens only
 
