@@ -1,7 +1,7 @@
 import { cleanup, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, test } from 'bun:test';
 
-import { isApplePlatform, useModKeyLabel } from '../src/index';
+import { isApplePlatform, useModKeyLabel, useTouchScreen } from '../src/index';
 
 // isApplePlatform: the one platform test behind useModKeyLabel, exported so a
 // host binding its own keys (Dispatch's quick open) answers to the modifier
@@ -62,5 +62,37 @@ describe('isApplePlatform', () => {
     expect(renderHook(() => useModKeyLabel()).result.current).toBe('⌘');
     stub('platform', 'Win32');
     expect(renderHook(() => useModKeyLabel()).result.current).toBe('Ctrl');
+  });
+});
+
+// useTouchScreen: the query the compact StatsStrip's hinted notes and a host's
+// icon-only buttons go by, true where no Tooltip opens.
+describe('useTouchScreen', () => {
+  const matchBefore = window.matchMedia;
+  afterEach(() => {
+    window.matchMedia = matchBefore;
+  });
+
+  // A matchMedia that matches only `matching`, and records what was asked.
+  function stubMedia(matching: string | null): string[] {
+    const asked: string[] = [];
+    window.matchMedia = ((query: string) => {
+      asked.push(query);
+      return {
+        matches: query === matching,
+        media: query,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      } as unknown as MediaQueryList;
+    }) as typeof window.matchMedia;
+    return asked;
+  }
+
+  test('true on a touch screen or one with no hover, false with a mouse', () => {
+    const asked = stubMedia('(hover: none), (pointer: coarse)');
+    expect(renderHook(() => useTouchScreen()).result.current).toBe(true);
+    expect(asked).toContain('(hover: none), (pointer: coarse)');
+    stubMedia(null);
+    expect(renderHook(() => useTouchScreen()).result.current).toBe(false);
   });
 });

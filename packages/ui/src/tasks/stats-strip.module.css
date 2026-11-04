@@ -262,6 +262,29 @@ a.inner:focus-visible {
   min-width: 80px;
 }
 
+/* A cell whose note is in its hint (notes="hint"): its key underlined in
+   dots, the shape that says a hint is there (as a glossary word's), and
+   the help cursor on hover. */
+.compact .inner[data-hint] {
+  cursor: help;
+}
+
+.compact .inner[data-hint] .label {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+/* The focus ring of a cell the keyboard reaches (a hinted cell, or one
+   that kept focus as the strip put its note back on the row): 2px, 1px
+   out, so it reaches 3px past the cell, inside the scroller's 4px of
+   block padding (and 6px inline), and is never clipped. */
+.compact div.inner:focus-visible {
+  border-radius: var(--r-xs);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
 /* A linked cell's hover and focus fill reaches 6px past its words, on the
    link itself (the cell stays clear). */
 .compact a.inner {

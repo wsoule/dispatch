@@ -357,7 +357,8 @@ describe('task family server render', () => {
   test('the compact stat strip renders its list with no grid sizing', () => {
     const html = result.compactStats;
     // The row, the frame and the scroller wrap the list; on the server the
-    // scroller never overflows, so it takes no tab stop, role or fade.
+    // scroller never overflows, so it takes no tab stop, role or fade, and
+    // no cell (none hinted, none holding focus) takes a tabindex.
     expect(html).toMatch(
       /^<div[^>]*><div[^>]*><div[^>]*><ul data-slot="live-header"[^>]* data-variant="compact" aria-label="Live">/
     );

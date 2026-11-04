@@ -665,8 +665,16 @@ export interface StatCell extends DataAttributes {
    * was worked out ("Queued: waiting for a free slot"). Pointer-only, so it
    * adds detail and never holds the only copy of a fact: the same fact must
    * also be in words somewhere a keyboard reaches (the label, the note, or
-   * the page). */
+   * the page). Under the compact strip's `notes="hint"` it is also a
+   * hinted cell's accessible description. */
   title?: string;
+  /** compact `notes="hint"` only: what the cell's Tooltip says once its
+   * note leaves the row, in place of the default (the note, then the
+   * title). A sentence that states the note's facts, for a title that
+   * already says them (`$2.40 settled of the $10 ceiling…` under
+   * `of $10`) or a note that reads as a fragment on its own. Ignored for
+   * a cell with no note. */
+  hint?: string;
 }
 
 /** The host's `data-*` hooks land on the `<ul>` (Dispatch's
@@ -690,6 +698,18 @@ export interface StatsStripProps extends DataAttributes {
    * aligned, outside the list. They wrap under the strip only when a 12rem
    * strip and the controls cannot share the row. */
   end?: ReactNode;
+  /** compact only (the panel ignores it): where a cell's `note` goes.
+   * inline (default) draws it after the value. hint takes it off the row,
+   * for a header whose cells and controls are short of room: each unlinked
+   * cell with a note becomes a tab stop (its key underlined in dots, the
+   * cue that a hint is there) whose library Tooltip shows the cell's
+   * `hint` (else the note, then its `title`) on hover and keyboard focus.
+   * The note stays in the cell's text for assistive tech, and the title is
+   * its accessible description. Only noted cells are hinted: a linked cell
+   * keeps its note inline, and a cell with no note keeps its `title` as
+   * the plain hover hint, as in inline. On a touch screen (no hover, or a
+   * coarse pointer), where no Tooltip opens, hint draws the notes inline. */
+  notes?: 'inline' | 'hint';
 }
 
 /* ---- the grouped task table -------------------------------------------- */

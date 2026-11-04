@@ -10,6 +10,7 @@ import {
   Register,
   RegisterCell,
   RegisterRow,
+  type StatCell,
   StatsStrip,
   type UiLinkProps,
   UiLinkProvider,
@@ -615,6 +616,404 @@ describe('StatsStrip variant="compact": end controls and sideways scroll', () =>
       expect(container.querySelector('[tabindex]')).toBeNull();
       expect(observed).toEqual([]);
     });
+  });
+});
+
+describe('StatsStrip variant="compact" notes="hint"', () => {
+  const file = 'tasks/stats-strip.module.css';
+  const cells = [
+    { id: 'running', label: 'Running', value: 2, title: '2 of 4 slots' },
+    {
+      id: 'eta',
+      label: 'ETA',
+      value: '5:05 AM',
+      note: '~2h left',
+      title: 'The critical path, at 20m a run',
+      'data-slot': 'flight-eta',
+    },
+    {
+      id: 'spend',
+      label: 'Spend',
+      value: '$2.40',
+      note: 'of $10',
+      title: '$2.40 settled of the $10 ceiling, 2 runs',
+      // The title already says the note's facts: the Tooltip says it alone.
+      hint: '$2.40 settled of the $10 ceiling, 2 runs',
+    },
+    { id: 'waves', label: 'Waves', value: 2, note: 'of 3' },
+    {
+      id: 'overdue',
+      label: 'Overdue',
+      value: 2,
+      note: 'since Monday',
+      href: '/timeline',
+    },
+  ];
+
+  // The words a cell's inner element is described by (hidden text), or null.
+  function describedBy(li: Element | undefined): string | null {
+    const id = li?.firstElementChild?.getAttribute('aria-describedby');
+    if (id === null || id === undefined) return null;
+    const words = document.getElementById(id);
+    expect(words?.hidden).toBe(true);
+    return words?.textContent ?? null;
+  }
+
+  // A cell's words on screen: its text without what only assistive tech
+  // reads (srOnly) and without its hidden description.
+  function shown(node: Node): string {
+    if (node instanceof HTMLElement) {
+      if (node.hidden || node.classList.contains('srOnly')) return '';
+    }
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
+    return Array.from(node.childNodes).map(shown).join('');
+  }
+
+  function inner(li: Element | undefined): HTMLElement {
+    const el = li?.firstElementChild;
+    if (!(el instanceof HTMLElement)) throw new Error('no cell');
+    return el;
+  }
+
+  // The tip is aria-hidden (it never joins the cell's text), so the query
+  // looks past that.
+  function tipText(
+    query: (role: 'tooltip', options: { hidden: true }) => HTMLElement | null
+  ): string | null {
+    return query('tooltip', { hidden: true })?.textContent ?? null;
+  }
+
+  // Out of the Tooltip's 400ms warm window, which a tip another test (or a
+  // step before) closed would otherwise leave open, showing the next at once.
+  function coolDown(): Promise<void> {
+    return act(() => new Promise<void>((resolve) => setTimeout(resolve, 450)));
+  }
+
+  test("each unlinked cell's note leaves the row and stays in its text, its title the description", () => {
+    const { getAllByRole } = render(
+      <StatsStrip variant="compact" label="Plan" notes="hint" cells={cells} />
+    );
+    const items = getAllByRole('listitem');
+    expect(items.map(shown)).toEqual([
+      'Running2',
+      'ETA5:05 AM',
+      'Spend$2.40',
+      'Waves2',
+      // A linked cell keeps its note inline: the host's link takes no Tooltip.
+      'Overdue2since Monday',
+    ]);
+    // The notes are still in the cell's text, so a screen reader reading the
+    // list hears them (the title after it is hidden: the description only).
+    expect(items.map((li) => li.firstElementChild?.textContent)).toEqual([
+      'Running2',
+      'ETA5:05 AM~2h left',
+      'Spend$2.40of $10',
+      'Waves2of 3',
+      'Overdue2since Monday',
+    ]);
+    expect(items.map(describedBy)).toEqual([
+      null,
+      'The critical path, at 20m a run',
+      '$2.40 settled of the $10 ceiling, 2 runs',
+      null,
+      null,
+    ]);
+    // A hinted cell is a tab stop with the cue and no native title (its
+    // Tooltip shows the words); any other unlinked cell takes no tabindex
+    // (a click on it focuses nothing, as on any text) and keeps its title.
+    const targets = items.map((li) => li.firstElementChild);
+    expect(targets.map((el) => el?.getAttribute('tabindex') ?? null)).toEqual([
+      null,
+      '0',
+      '0',
+      '0',
+      null,
+    ]);
+    expect(targets.map((el) => el?.hasAttribute('data-hint'))).toEqual([
+      false,
+      true,
+      true,
+      true,
+      false,
+    ]);
+    expect(targets.map((el) => el?.getAttribute('title') ?? null)).toEqual([
+      '2 of 4 slots',
+      null,
+      null,
+      null,
+      null,
+    ]);
+    // The host's hooks stay on the <li>, never on the hint.
+    expect(items[1]?.getAttribute('data-slot')).toBe('flight-eta');
+  });
+
+  test("keyboard focus shows the cell's hint at once, read once; blur hides it", () => {
+    const { getAllByRole, queryByRole } = render(
+      <StatsStrip variant="compact" label="Plan" notes="hint" cells={cells} />
+    );
+    const items = getAllByRole('listitem');
+    const eta = inner(items[1]);
+    const described = eta.getAttribute('aria-describedby');
+    act(() => eta.focus());
+    // No hint of its own: the note, then the title.
+    expect(tipText(queryByRole)).toBe(
+      '~2h left. The critical path, at 20m a run'
+    );
+    // Its own hidden title describes it, not the tip's id as well: read once.
+    expect(eta.getAttribute('aria-describedby')).toBe(described);
+    act(() => eta.blur());
+    expect(tipText(queryByRole)).toBeNull();
+    // A host's hint is said as it is; a note with no title or hint says itself.
+    const spend = inner(items[2]);
+    act(() => spend.focus());
+    expect(tipText(queryByRole)).toBe(
+      '$2.40 settled of the $10 ceiling, 2 runs'
+    );
+    act(() => inner(items[3]).focus());
+    expect(tipText(queryByRole)).toBe('of 3');
+  });
+
+  test('a mouse hover shows the hint only after the delay, a touch never does', async () => {
+    const { getAllByRole, queryByRole } = render(
+      <StatsStrip variant="compact" label="Plan" notes="hint" cells={cells} />
+    );
+    await coolDown();
+    const spend = inner(getAllByRole('listitem')[2]);
+    fireEvent.pointerEnter(spend, { pointerType: 'touch' });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 350)));
+    expect(tipText(queryByRole)).toBeNull();
+    fireEvent.pointerEnter(spend, { pointerType: 'mouse' });
+    // Not at once: the Tooltip's 300ms delay.
+    expect(tipText(queryByRole)).toBeNull();
+    await act(() => new Promise((resolve) => setTimeout(resolve, 150)));
+    expect(tipText(queryByRole)).toBeNull();
+    await act(() => new Promise((resolve) => setTimeout(resolve, 200)));
+    expect(tipText(queryByRole)).toBe(
+      '$2.40 settled of the $10 ceiling, 2 runs'
+    );
+  });
+
+  test('inline (the default) and the panel keep every note on the row', () => {
+    const { getAllByRole } = render(
+      <>
+        <StatsStrip variant="compact" label="Inline" cells={cells} />
+        <StatsStrip label="Panel" notes="hint" cells={cells} />
+      </>
+    );
+    const items = getAllByRole('listitem');
+    const onRow = [
+      'Running2',
+      'ETA5:05 AM~2h left',
+      'Spend$2.40of $10',
+      'Waves2of 3',
+      'Overdue2since Monday',
+    ];
+    expect(items.map(shown)).toEqual([...onRow, ...onRow]);
+    expect(document.querySelector('[data-hint]')).toBeNull();
+    expect(document.querySelector('.srOnly')).toBeNull();
+    // Inline, an unlinked cell keeps its title as the native hint.
+    expect(inner(items[1]).getAttribute('title')).toBe(
+      'The critical path, at 20m a run'
+    );
+  });
+
+  test('on a touch screen (no hover, a coarse pointer) hint keeps the notes on the row', () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) =>
+      ({
+        matches: query === '(hover: none), (pointer: coarse)',
+        media: query,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }) as unknown as MediaQueryList) as typeof window.matchMedia;
+    try {
+      const { getAllByRole } = render(
+        <StatsStrip variant="compact" label="Plan" notes="hint" cells={cells} />
+      );
+      expect(getAllByRole('listitem').map(shown)).toEqual([
+        'Running2',
+        'ETA5:05 AM~2h left',
+        'Spend$2.40of $10',
+        'Waves2of 3',
+        'Overdue2since Monday',
+      ]);
+      expect(document.querySelector('[data-hint]')).toBeNull();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
+  // Flight Plan's header puts its notes back on the row when its fan-out ends: the
+  // focused cell must keep its element (and focus), not be remounted to <body>.
+  test('a cell keeps its element and focus as the strip changes mode', () => {
+    const { getAllByRole, queryByRole, rerender } = render(
+      <StatsStrip variant="compact" label="Plan" notes="hint" cells={cells} />
+    );
+    const eta = inner(getAllByRole('listitem')[1]);
+    act(() => eta.focus());
+    expect(tipText(queryByRole)).not.toBeNull();
+    rerender(
+      <StatsStrip variant="compact" label="Plan" notes="inline" cells={cells} />
+    );
+    const after = inner(getAllByRole('listitem')[1]);
+    expect(after).toBe(eta);
+    expect(document.activeElement).toBe(eta);
+    // No longer a tab stop or hinted, but still able to hold the focus it has.
+    expect(eta.getAttribute('tabindex')).toBe('-1');
+    expect(eta.hasAttribute('data-hint')).toBe(false);
+    expect(eta.hasAttribute('aria-describedby')).toBe(false);
+    expect(shown(eta)).toBe('ETA5:05 AM~2h left');
+    expect(tipText(queryByRole)).toBeNull();
+    // Once focus moves on it takes no tabindex, like the cells that never had
+    // a hint, so a later click on it focuses nothing.
+    act(() => eta.blur());
+    expect(eta.hasAttribute('tabindex')).toBe(false);
+    // And back: the same element is hinted again.
+    rerender(
+      <StatsStrip variant="compact" label="Plan" notes="hint" cells={cells} />
+    );
+    expect(inner(getAllByRole('listitem')[1])).toBe(eta);
+    expect(eta.getAttribute('tabindex')).toBe('0');
+  });
+
+  // Focus inside a cell (a control in its value, Flight Plan's slots picker) is
+  // the control's own: the cell's element stays out of the tab order and never
+  // takes a tabindex of its own for it.
+  test("focus on a control inside a cell leaves the cell's element alone", () => {
+    const withControl: StatCell[] = [
+      {
+        id: 'running',
+        label: 'Running',
+        value: <button type="button">2/4</button>,
+        note: 'slots',
+      },
+    ];
+    const { getByRole, rerender } = render(
+      <StatsStrip
+        variant="compact"
+        label="Plan"
+        notes="hint"
+        cells={withControl}
+      />
+    );
+    const button = getByRole('button', { name: '2/4' });
+    const cell = button.closest('li')?.firstElementChild;
+    act(() => button.focus());
+    rerender(
+      <StatsStrip
+        variant="compact"
+        label="Plan"
+        notes="inline"
+        cells={withControl}
+      />
+    );
+    expect(document.activeElement).toBe(button);
+    expect(cell?.hasAttribute('tabindex')).toBe(false);
+  });
+
+  // A 300px scroller; each cell 80px wide every 100px (the Spend cell 30px further),
+  // moved by the scroll.
+  function fakeScroll(items: HTMLElement[]): {
+    scroller: HTMLElement;
+    left: () => number;
+    setLeft: (value: number) => void;
+  } {
+    const scroller = items[0]?.closest('ul')?.parentElement;
+    if (scroller === null || scroller === undefined)
+      throw new Error('no scroller');
+    let left = 0;
+    Object.defineProperty(scroller, 'scrollLeft', {
+      configurable: true,
+      get: () => left,
+      set: (value: number) => {
+        left = value;
+      },
+    });
+    const box = (x: number, width: number) =>
+      ({
+        left: x,
+        right: x + width,
+        top: 0,
+        bottom: 26,
+        width,
+        height: 26,
+      }) as DOMRect;
+    scroller.getBoundingClientRect = () => box(0, 300);
+    items.forEach((li, i) => {
+      li.getBoundingClientRect = () =>
+        box(i * 100 - left + (i === 2 ? 30 : 0), 80);
+    });
+    return {
+      scroller,
+      left: () => left,
+      setLeft: (value) => {
+        left = value;
+      },
+    };
+  }
+
+  // Chromium's own scroll on focus leaves a cell that is only partly hidden alone, so
+  // the strip scrolls a cell the keyboard reaches clear of its 24px fades itself.
+  test('a cell that takes keyboard focus behind a fade is scrolled clear of it', () => {
+    const { getAllByRole } = render(
+      <StatsStrip variant="compact" label="Plan" notes="hint" cells={cells} />
+    );
+    const items = getAllByRole('listitem');
+    const strip = fakeScroll(items);
+    // The Spend cell sits at 230–310: past the right fade (276). Focus scrolls it to 276.
+    const spend = inner(items[2]);
+    act(() => spend.focus());
+    expect(strip.left()).toBe(34);
+    // Back to a cell before the left fade: it is scrolled to 24px from the start.
+    strip.setLeft(100);
+    act(() => inner(items[1]).focus());
+    expect(strip.left()).toBe(76);
+    // A cell already clear of both fades stays where it is.
+    act(() => spend.focus());
+    expect(strip.left()).toBe(76);
+  });
+
+  // A press focuses the control it lands on at mousedown; scrolling the strip then
+  // would slide it from under the pointer and lose the click (the slots picker's).
+  test('focus from a press (not :focus-visible) leaves the strip where it is', () => {
+    const { getAllByRole } = render(
+      <StatsStrip variant="compact" label="Plan" notes="hint" cells={cells} />
+    );
+    const items = getAllByRole('listitem');
+    const strip = fakeScroll(items);
+    const matches = HTMLElement.prototype.matches;
+    HTMLElement.prototype.matches = function (this: HTMLElement, selector) {
+      return selector === ':focus-visible'
+        ? false
+        : matches.call(this, selector);
+    };
+    try {
+      fireEvent.pointerDown(inner(items[2]));
+      act(() => inner(items[2]).focus());
+      expect(strip.left()).toBe(0);
+      strip.setLeft(79);
+      fireEvent.pointerDown(inner(items[0]));
+      act(() => inner(items[0]).focus());
+      expect(strip.left()).toBe(79);
+    } finally {
+      HTMLElement.prototype.matches = matches;
+    }
+  });
+
+  test("a hinted cell's key is underlined in dots; its ring fits the scroller's padding", () => {
+    const label = cssRule(file, '.compact .inner[data-hint] .label');
+    expect(label).toContain('text-decoration-style: dotted;');
+    expect(cssRule(file, '.compact .inner[data-hint]')).toContain(
+      'cursor: help;'
+    );
+    const ring = cssRule(file, '.compact div.inner:focus-visible');
+    expect(ring).toContain('outline: 2px solid var(--focus-ring);');
+    // The ring's reach (width + offset) stays inside the scroller's 4px of block
+    // padding, which clips anything further out.
+    const width = Number(/outline: (\d+)px/.exec(ring)?.[1]);
+    const offset = Number(/outline-offset: (\d+)px/.exec(ring)?.[1]);
+    expect(cssRule(file, '.scroller')).toContain('padding: 4px 6px;');
+    expect(width + offset).toBeLessThanOrEqual(4);
   });
 });
 

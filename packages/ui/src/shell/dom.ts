@@ -166,6 +166,19 @@ export function useMediaQuery(query: string): boolean {
   );
 }
 
+/** A touch screen, or a screen with no hover at all: a hover hint (a
+    Tooltip) never opens there, on hover or on a tap. */
+const TOUCH_QUERY = '(hover: none), (pointer: coarse)';
+
+/** Whether this is a touch screen (or one with no hover), where no Tooltip
+    opens: a component that puts words in a Tooltip draws them on screen
+    instead there (a compact StatsStrip's hinted notes, a host's icon-only
+    buttons drawn with their words). False on the server and the first
+    hydrating render. */
+export function useTouchScreen(): boolean {
+  return useMediaQuery(TOUCH_QUERY);
+}
+
 /** The shell's phone breakpoint (matches the CSS `width <= 900px`). */
 export const PHONE_QUERY = '(max-width: 900px)';
 export const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
