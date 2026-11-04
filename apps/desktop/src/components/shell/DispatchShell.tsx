@@ -6,6 +6,7 @@ import {
   type UiLinkProps,
   UiLinkProvider,
   useModKeyLabel,
+  useWidthBelow,
 } from '@dispatch/ui';
 import {
   Activity,
@@ -17,7 +18,6 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
-  useState,
 } from 'react';
 
 import {
@@ -115,22 +115,6 @@ const NarrowMainContext = createContext(false);
 /** Whether the shell's main area is too narrow for the expanded guide card beside its content. */
 export function useNarrowMain(): boolean {
   return useContext(NarrowMainContext);
-}
-
-// Tracks the content area's width with a ResizeObserver and reports whether it is narrow.
-function useIsNarrow(ref: React.RefObject<HTMLElement | null>): boolean {
-  const [narrow, setNarrow] = useState(false);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (el === null) return;
-    const measure = () => setNarrow(el.clientWidth < NARROW_MAIN_PX);
-    measure();
-    if (typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [ref]);
-  return narrow;
 }
 
 /** Handles a shell link's href in the app; true when it did, so the click is kept. */
@@ -341,7 +325,11 @@ export function DispatchShell({
   const settingsOpen = settings !== undefined && settings !== null;
   const { me, personFor } = usePeople();
   const contentRef = useRef<HTMLDivElement>(null);
-  const narrow = useIsNarrow(contentRef);
+  // Measured before the first paint as well as on every resize, so a narrow
+  // window never flashes the guide card expanded over the content.
+  const narrow = useWidthBelow(contentRef, NARROW_MAIN_PX, {
+    measureOnMount: true,
+  });
   const settingsRef = useRef<HTMLDivElement>(null);
   useSettingsFocus(settingsRef, settingsOpen, settingsPage);
   useScrollKeptUnderSettings(contentRef, settingsRef, settingsOpen);

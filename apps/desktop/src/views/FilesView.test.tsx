@@ -1,4 +1,5 @@
 import type {
+  ApiClient,
   WorkspaceFile,
   WorkspaceSearchResult,
   WorkspaceTree,
@@ -19,56 +20,111 @@ import { FilesView } from './FilesView';
 interface Recorded {
   fetched: string[];
   saved: { path: string; text: string }[];
+  /** Paths whose raw bytes a preview read through `fetchWorkspaceBlob`. */
+  blobs: string[];
 }
 
-// Only what FilesView, its tree and its quick open read; every fetch and save
-// is recorded. A save fails with `saveError` when one is given.
+// The client members FilesView, its tree, its quick open and FilePreview
+// call. The fake below is checked against them, so a renamed or replaced
+// member fails the typecheck here instead of silently going unexercised.
+type FilesClient = Pick<
+  ApiClient,
+  | 'fetchWorkspaceTree'
+  | 'fetchWorkspaceFile'
+  | 'saveWorkspaceFile'
+  | 'workspaceFileUrl'
+  | 'fetchWorkspaceBlob'
+  | 'searchWorkspace'
+>;
+
+// What the daemon says about a path, by its extension: `.bin` is binary with
+// no preview, `.png` a binary image, `.svg` a text file that previews as an
+// image, `.md` Markdown, anything else plain text.
+function describeFile(path: string): WorkspaceFile {
+  const base = {
+    path,
+    runId: null,
+    size: 1,
+    modifiedAt: '2026-11-03T00:00:00Z',
+  };
+  if (path.endsWith('.bin')) {
+    return {
+      ...base,
+      size: 2048,
+      mime: 'application/octet-stream',
+      preview: 'none',
+      kind: 'binary',
+      text: null,
+    };
+  }
+  if (path.endsWith('.png')) {
+    return {
+      ...base,
+      size: 3,
+      mime: 'image/png',
+      preview: 'image',
+      kind: 'binary',
+      text: null,
+    };
+  }
+  if (path.endsWith('.svg')) {
+    return {
+      ...base,
+      mime: 'image/svg+xml',
+      preview: 'image',
+      kind: 'text',
+      text: '<svg xmlns="http://www.w3.org/2000/svg"/>',
+    };
+  }
+  const markdown = path.endsWith('.md');
+  return {
+    ...base,
+    mime: markdown ? 'text/markdown' : 'text/plain',
+    preview: 'none',
+    kind: 'text',
+    text: markdown ? 'Some **bold** text' : 'x',
+  };
+}
+
+// Only what FilesView, its tree, its quick open and its preview read; every
+// fetch, save and raw read is recorded. A save fails with `saveError` when one
+// is given.
 function fakeData(
   recorded: Recorded,
   saveError: string | null = null
 ): DispatchProjectData {
-  return {
-    client: {
-      fetchWorkspaceTree: (path: string): Promise<WorkspaceTree> =>
-        Promise.resolve({ path, runId: null, entries: [] }),
-      fetchWorkspaceFile: (path: string): Promise<WorkspaceFile> => {
-        recorded.fetched.push(path);
-        // A `.bin` path is a binary file: no text, nothing to edit.
-        const binary = path.endsWith('.bin');
-        return Promise.resolve({
-          path,
-          runId: null,
-          size: binary ? 2048 : 1,
-          modifiedAt: '2026-11-03T00:00:00Z',
-          mime: binary
-            ? 'application/octet-stream'
-            : path.endsWith('.md')
-              ? 'text/markdown'
-              : 'text/plain',
-          preview: 'none',
-          kind: binary ? 'binary' : 'text',
-          text: binary
-            ? null
-            : path.endsWith('.md')
-              ? 'Some **bold** text'
-              : 'x',
-        });
-      },
-      saveWorkspaceFile: (path: string, text: string) => {
-        recorded.saved.push({ path, text });
-        return saveError === null
-          ? Promise.resolve({})
-          : Promise.reject(new Error(saveError));
-      },
-      workspaceFileUrl: (path: string) => `http://127.0.0.1:4100/raw/${path}`,
-      searchWorkspace: (query: string): Promise<WorkspaceSearchResult> =>
-        Promise.resolve({
-          runId: null,
-          query,
-          total: 1,
-          results: [{ path: 'src/b.ts', score: 1, positions: [4] }],
-        }),
+  const client: FilesClient = {
+    fetchWorkspaceTree: (path: string): Promise<WorkspaceTree> =>
+      Promise.resolve({ path, runId: null, entries: [] }),
+    fetchWorkspaceFile: (path: string): Promise<WorkspaceFile> => {
+      recorded.fetched.push(path);
+      return Promise.resolve(describeFile(path));
     },
+    saveWorkspaceFile: (path: string, text: string) => {
+      recorded.saved.push({ path, text });
+      return saveError === null
+        ? Promise.resolve({
+            path,
+            size: text.length,
+            modifiedAt: '2026-11-03T00:00:01Z',
+          })
+        : Promise.reject(new Error(saveError));
+    },
+    workspaceFileUrl: (path: string) => `http://127.0.0.1:4100/raw/${path}`,
+    fetchWorkspaceBlob: (path: string): Promise<Blob> => {
+      recorded.blobs.push(path);
+      return Promise.resolve(new Blob([new Uint8Array([1, 2, 3])]));
+    },
+    searchWorkspace: (query: string): Promise<WorkspaceSearchResult> =>
+      Promise.resolve({
+        runId: null,
+        query,
+        total: 1,
+        results: [{ path: 'src/b.ts', score: 1, positions: [4] }],
+      }),
+  };
+  return {
+    client,
     portLoading: false,
     portErrorDetail: null,
     retryEnsureDispatchd: () => {},
@@ -76,7 +132,7 @@ function fakeData(
 }
 
 function recorder(): Recorded {
-  return { fetched: [], saved: [] };
+  return { fetched: [], saved: [], blobs: [] };
 }
 
 // Lets the tree's root load (a resolved promise) land inside act.
@@ -225,6 +281,33 @@ test('a binary file shows its preview with no Preview toggle to misreport', asyn
   expect(await screen.findByRole('link', { name: /Download/ })).toBeTruthy();
   expect(screen.queryByLabelText('Editing build/app.bin')).toBeNull();
   expect(screen.queryByRole('button', { name: 'Preview' })).toBeNull();
+});
+
+// The preview reads an image's bytes with the client's credential and shows
+// them from a blob: URL; the raw route never goes into the img src, where a
+// bearer-authenticated page would get a 401.
+test('an image opens straight into its preview, read through fetchWorkspaceBlob', async () => {
+  const recorded = recorder();
+  render(<FilesView data={fakeData(recorded)} initialPath="img/shot.png" />);
+  const image = await screen.findByRole('img', { name: 'img/shot.png' });
+  expect(image.getAttribute('src')).toStartWith('blob:');
+  expect(recorded.fetched).toEqual(['img/shot.png']);
+  expect(recorded.blobs).toEqual(['img/shot.png']);
+  expect(screen.queryByLabelText('Editing img/shot.png')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Preview' })).toBeNull();
+});
+
+// An SVG is text the daemon marks `preview` "image": it opens in the editor,
+// and Preview swaps in the rendered image, read through the client.
+test('an SVG opens as text and offers Preview, which shows it as an image', async () => {
+  const recorded = recorder();
+  render(<FilesView data={fakeData(recorded)} initialPath="img/logo.svg" />);
+  expect(await screen.findByLabelText('Editing img/logo.svg')).toBeTruthy();
+  expect(recorded.blobs).toEqual([]);
+  fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+  const image = await screen.findByRole('img', { name: 'img/logo.svg' });
+  expect(image.getAttribute('src')).toStartWith('data:image/svg+xml');
+  expect(recorded.blobs).toEqual(['img/logo.svg']);
 });
 
 test('a controlled quick open is dropped while the daemon is down', async () => {

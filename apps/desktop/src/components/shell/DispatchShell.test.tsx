@@ -6,7 +6,11 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import type { NavAction } from '../../lib/appNav';
 import { FirstTaskGuide } from '../guide/FirstTaskGuide';
 import { PeopleProvider } from '../people/PeopleContext';
-import { DispatchShell, type DispatchShellProps } from './DispatchShell';
+import {
+  DispatchShell,
+  type DispatchShellProps,
+  useNarrowMain,
+} from './DispatchShell';
 import { projectWorkspaceSwitcher } from './projectWorkspaces';
 
 const PROJECTS: ShellSection = {
@@ -712,4 +716,83 @@ test('the guide starts expanded when the main area is wide', () => {
   expect(
     screen.getByRole('button', { name: 'Collapse the guide' })
   ).toBeTruthy();
+});
+
+// Reports the shell's narrow answer as text, where a view would read it.
+function NarrowProbe() {
+  return <p data-testid="narrow">{useNarrowMain() ? 'narrow' : 'wide'}</p>;
+}
+
+// A ResizeObserver stand-in that records what each observer watches, so a
+// test can fire the one on a given element; happy-dom never lays out, so its
+// own observers never call back.
+interface FakeObserver {
+  callback: ResizeObserverCallback;
+  targets: Element[];
+  disconnected: boolean;
+}
+function installFakeResizeObserver(): {
+  observers: FakeObserver[];
+  restore: () => void;
+} {
+  const real = globalThis.ResizeObserver;
+  const observers: FakeObserver[] = [];
+  class Fake {
+    private readonly record: FakeObserver;
+    constructor(callback: ResizeObserverCallback) {
+      this.record = { callback, targets: [], disconnected: false };
+      observers.push(this.record);
+    }
+    observe(target: Element) {
+      this.record.targets.push(target);
+    }
+    unobserve() {}
+    disconnect() {
+      this.record.disconnected = true;
+    }
+  }
+  globalThis.ResizeObserver = Fake as unknown as typeof ResizeObserver;
+  return {
+    observers,
+    restore: () => {
+      globalThis.ResizeObserver = real;
+    },
+  };
+}
+
+test('the narrow answer follows the main area as it resizes, and holds while it has no width', () => {
+  const fake = installFakeResizeObserver();
+  try {
+    mainWidth(1280);
+    const view = render(shell({ overseer: <NarrowProbe /> }).element);
+    const probe = screen.getByTestId('narrow');
+    expect(probe.textContent).toBe('wide');
+    // The observer on the closest observed box around the view: the
+    // shell's content area.
+    const watching = fake.observers.filter((o) =>
+      o.targets.some((t) => t.contains(probe))
+    );
+    const content = watching
+      .flatMap((o) => o.targets.map((target) => ({ o, target })))
+      .filter(({ target }) => target.contains(probe))
+      .sort((a, b) => (a.target.contains(b.target) ? 1 : -1))[0];
+    if (content === undefined) throw new Error('no observer on the content');
+    const resize = (px: number) => {
+      mainWidth(px);
+      act(() => content.o.callback([], content.o as unknown as ResizeObserver));
+    };
+    resize(1023);
+    expect(probe.textContent).toBe('narrow');
+    resize(1024);
+    expect(probe.textContent).toBe('wide');
+    resize(700);
+    expect(probe.textContent).toBe('narrow');
+    // A box with no width (not laid out) keeps the last answer.
+    resize(0);
+    expect(probe.textContent).toBe('narrow');
+    view.unmount();
+    expect(content.o.disconnected).toBe(true);
+  } finally {
+    fake.restore();
+  }
 });
