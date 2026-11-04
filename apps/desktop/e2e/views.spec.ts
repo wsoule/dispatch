@@ -110,9 +110,12 @@ for (const view of VIEWS) {
 // The review surface is a task page's Review tab: t-2e91aa ("Move cart state
 // to the session store") has a finished, unreviewed run whose diff the
 // fixture keeps as a snapshot (r-2e91aa.diff.json under storefront-home), so
-// the page opens on Review. Its own describe for a wider viewport: the page
-// sets the diff beside a review rail and the task's properties rail, which
-// leave the diff column too narrow to read at the suite's shared 1036px.
+// the page opens on Review. Its own describe for a wider viewport: at the
+// suite's shared 1036px the task page is under its rail breakpoint, so it
+// stacks the properties, the review checklist and the findings above the diff
+// and scrolls as one page, and the picked file's line stays below the fold.
+// 1600px keeps both rails beside the diff, the layout checked here, where the
+// diff column is still narrower than split needs and draws unified.
 test.describe('review detail', () => {
   test.use({ viewport: { width: 1600, height: 1100 } });
 

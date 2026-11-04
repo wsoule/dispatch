@@ -73,8 +73,10 @@ function commitAgentChange(worktree: string): void {
 }
 
 test.describe('editing a run diff end to end', () => {
-  // The task page sets the diff beside a review rail and the properties rail,
-  // which leave the diff column too narrow to edit in at the suite's 1036px.
+  // At the suite's 1036px the task page stacks its properties and review
+  // checklist above the diff and scrolls as one page, so the changed line
+  // stays below the fold; 1600px keeps the rails beside the diff (drawn
+  // unified there, its column being narrower than split needs).
   test.use({ viewport: { width: 1600, height: 1100 } });
 
   // The copy goes with its daemon, so the run and the edit need no undoing.
