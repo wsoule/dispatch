@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { exemptLoopbackFromProxy } from '@dispatch-foo/core';
+
 import { parseRootArg } from './argv.js';
 import type { HookClient } from './hook.js';
 import {
@@ -9,6 +11,11 @@ import {
   waitForMail,
 } from './hook.js';
 import { runStdioServer } from './server.js';
+
+// Every call to dispatchd carries a bearer token to http://127.0.0.1, and a
+// proxy in the agent's environment (HTTP_PROXY, ALL_PROXY) would otherwise
+// receive it: before any fetch, the loopback addresses join NO_PROXY.
+exemptLoopbackFromProxy();
 
 const argv = process.argv.slice(2);
 

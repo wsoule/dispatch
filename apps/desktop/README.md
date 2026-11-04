@@ -141,7 +141,10 @@ Exported reports and transcripts land in the same folder by the same rule. Every
 native call to a daemon, not only this one, uses a client from
 `src-tauri/src/loopback.rs` that ignores `HTTP_PROXY`, `HTTPS_PROXY` and
 `ALL_PROXY` and follows no redirect, so no proxy sees a daemon token on the
-app's own native calls.
+app's own native calls. The bundled `dispatch` CLI and MCP server, which agents
+run with the user's environment, add `127.0.0.1`, `localhost` and `::1` to
+`NO_PROXY` and `no_proxy` when they start (`exemptLoopbackFromProxy` in
+`@dispatch-foo/core`), so their calls to the daemon go straight to it as well.
 
 In a browser opened on a daemon, the same Download asks the daemon for a
 single-use ticket URL when it is clicked (`client.workspaceDownloadUrl`, which
