@@ -27,6 +27,7 @@ import {
 } from '../components/settings/fixtures.test-helper';
 import { OPERATOR_ONLY } from '../components/settings/SettingsGroup';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { SPLIT_MIN_WIDTH } from '../hooks/useFittedDiffLayout';
 import { useGlobalKeyboard } from '../hooks/useGlobalKeyboard';
 import type { SettingsPage } from '../lib/appNav';
 import type { GlobalKeyCommand } from '../lib/keyboard';
@@ -892,12 +893,11 @@ describe('below the decide tier, what has its own route stays usable', () => {
     ]) {
       expect(isDisabled(control)).toBe(false);
     }
-    // A review diff draws unified in a column too narrow for two sides
-    // whatever the layout says (useFittedDiffLayout), and the row says so in
-    // words a person can check, not as a pixel width they cannot see.
+    // A review diff draws unified below useFittedDiffLayout's SPLIT_MIN_WIDTH
+    // whatever the layout says, and the Layout row says so with that width.
     expect(
       screen.getByText(
-        'Review diffs show unified while their column is too narrow for two sides, which it is in most windows.'
+        `Split shows unified in a review while its diff is narrower than ${SPLIT_MIN_WIDTH}px.`
       )
     ).toBeTruthy();
   });

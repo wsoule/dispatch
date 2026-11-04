@@ -1,6 +1,7 @@
 import { Select } from '@dispatch/ui';
 
 import { useDiffDisplaySettings } from '../../hooks/useDiffDisplaySettings';
+import { SPLIT_MIN_WIDTH } from '../../hooks/useFittedDiffLayout';
 import type {
   DiffIndicatorStyle,
   DiffInlineHighlight,
@@ -76,11 +77,10 @@ index 3f1a2b4..9c8d7e6 100644
 `;
 
 // What a split setting does in a review: the review page's diff column sits beside the
-// checklist and the properties rail, and in most windows it is too narrow for two readable
-// sides (useFittedDiffLayout's SPLIT_MIN_WIDTH), so it draws unified there. Said in words a
-// person can check against their own window rather than as a pixel width they cannot see.
-const REVIEW_LAYOUT_NOTE =
-  'Review diffs show unified while their column is too narrow for two sides, which it is in most windows.';
+// checklist and the properties rail, and below useFittedDiffLayout's SPLIT_MIN_WIDTH it is
+// too narrow for two readable sides, so it draws unified there until it is wide enough
+// again. The width is read from that constant, so the note cannot drift from the rule.
+const REVIEW_LAYOUT_NOTE = `Split shows unified in a review while its diff is narrower than ${SPLIT_MIN_WIDTH}px.`;
 
 /** How diffs render across Runs, Pull Requests, and the Git page. Backed by
  *  `useDiffDisplaySettings` (localStorage, per-browser) rather than
