@@ -137,6 +137,10 @@ seconds ends the download. The page says "Saved to …" in a status line that
 stays mounted, with a Reveal in Finder action, and the outcome outlives the link
 (another file opened mid-download). A connection to a teammate's daemon, whose
 address is not loopback, is refused: the agent token never leaves the machine.
+Every native call to a daemon, not only this one, uses a client from
+`src-tauri/src/loopback.rs` that ignores `HTTP_PROXY`, `HTTPS_PROXY` and
+`ALL_PROXY` and follows no redirect, so no proxy sees a daemon token on the
+app's own native calls.
 
 In a browser opened on a daemon, the same Download asks the daemon for a
 single-use ticket URL when it is clicked (`client.workspaceDownloadUrl`, which

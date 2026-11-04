@@ -2,6 +2,7 @@ mod commands;
 mod cost;
 mod db;
 mod downloads;
+mod loopback;
 mod parser;
 mod registry;
 mod setup;

@@ -23,7 +23,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::sidecar;
+use crate::{loopback, sidecar};
 
 /// The daemon route that serves a workspace file's bytes (`GET /api/files/raw`).
 const RAW_ROUTE: &str = "/api/files/raw";
@@ -240,12 +240,10 @@ async fn copy_body(response: &mut reqwest::Response, file: &mut File) -> Result<
 #[tauri::command]
 pub async fn download_workspace_file(url: String) -> Result<String, String> {
     let request = parse_raw_file_url(&url)?;
-    // Straight to the loopback daemon: no system proxy (HTTP_PROXY would otherwise see the
-    // agent token), no redirects (the daemon never sends one, and the token must not follow
-    // one), and a per-read timeout so a stalled daemon frees the page's link.
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
+    // Straight to the loopback daemon (`loopback::builder`: no system proxy, which would
+    // otherwise see the agent token, and no redirects, which the token must not follow), with
+    // a per-read timeout so a stalled daemon frees the page's link.
+    let client = loopback::builder()
         .connect_timeout(Duration::from_secs(5))
         .read_timeout(READ_TIMEOUT)
         .build()

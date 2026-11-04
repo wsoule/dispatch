@@ -894,7 +894,8 @@ pub async fn ensure_dispatchd(
 ) -> Result<DaemonConnection, String> {
     let root = normalize_root(root)?;
     let root = root.as_str();
-    let client = reqwest::Client::new();
+    // Loopback only: no environment proxy may see the daemon's tokens (`loopback`).
+    let client = crate::loopback::client()?;
 
     // Onboarding still needs a fresh --init daemon. Validate any existing
     // generation first, then use the same guarded shutdown as explicit restart.
@@ -1751,7 +1752,7 @@ mod tests {
     async fn wait_for_spawned_daemon_sees_a_boot_that_died() {
         let mut child = Command::new("true").spawn().unwrap();
         let outcome = wait_for_spawned_daemon(
-            &reqwest::Client::new(),
+            &crate::loopback::client().unwrap(),
             "/tmp/dispatch-fixture-root-that-never-boots",
             &mut child,
             None,
@@ -2224,7 +2225,7 @@ mod tests {
         assert!(leaked.is_empty(), "app token found at rest in {leaked:?}");
 
         // --- a decide-tier action, with each credential ---
-        let http = reqwest::Client::new();
+        let http = crate::loopback::client().unwrap();
         let base = format!("http://127.0.0.1:{}", spawned.port);
 
         // A pending agent registration: approving it is a decide-tier action.
@@ -2350,7 +2351,7 @@ mod tests {
             .status()
             .expect("sh runs");
         assert!(started.success());
-        let client = reqwest::Client::new();
+        let client = crate::loopback::client().unwrap();
         let old_port = poll_for_healthy_daemon(&client, &root, Duration::from_secs(30))
             .await
             .expect("the external daemon comes up");
