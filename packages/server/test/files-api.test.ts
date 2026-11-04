@@ -1,5 +1,6 @@
 import { TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import * as fs from 'node:fs';
 import {
   existsSync,
   mkdirSync,
@@ -285,6 +286,43 @@ describe('GET /api/files/raw', () => {
     // No Origin at all after a cross-origin read: no grant either.
     expect((await read('http://localhost:5173')).status).toBe(200);
     expect(await readDeleted(null)).toMatchObject({ status: 404, allow: null });
+  });
+});
+
+// The containment check finds a path's deepest existing ancestor with lstat
+// and then resolves it with realpath. A file deleted between the two used to
+// fail the realpath and read as a path outside the project (400); it is
+// walked again and answers the route's plain not-found.
+describe('a file deleted while its path is checked', () => {
+  it('answers 404 no such file, not a containment refusal', async () => {
+    const file = join(root, 'logo.png');
+    const realLstat = fs.lstatSync;
+    let deleted = false;
+    const deleteAfterLstat = spyOn(fs, 'lstatSync').mockImplementation(((
+      path: string,
+      options?: Parameters<typeof fs.lstatSync>[1]
+    ) => {
+      const stat = realLstat(path, options);
+      if (path === file && !deleted) {
+        deleted = true;
+        rmSync(file);
+      }
+      return stat;
+    }) as typeof fs.lstatSync);
+    try {
+      const res = await apiFetch('/api/files/raw?path=logo.png');
+      expect(deleted).toBe(true);
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: 'no such file' });
+    } finally {
+      deleteAfterLstat.mockRestore();
+    }
+  });
+
+  it('still refuses a dangling symlink, whose target it cannot check', async () => {
+    symlinkSync(join(root, 'nowhere', 'gone.txt'), join(root, 'dangling'));
+    const res = await apiFetch('/api/files/raw?path=dangling');
+    expect(res.status).toBe(400);
   });
 });
 
