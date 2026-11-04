@@ -15,7 +15,14 @@ import {
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 
-import { APP_TOKEN, HOME, REPO, ROOT, VITE_PORT } from './paths';
+import {
+  APP_TOKEN,
+  DAEMON_GIT_ENV,
+  HOME,
+  REPO,
+  ROOT,
+  VITE_PORT,
+} from './paths';
 
 /** A daemon of the spec's own, on a copy of the storefront fixture. */
 export interface IsolatedDaemon {
@@ -157,6 +164,7 @@ export async function startIsolatedDaemon(
     {
       env: {
         ...process.env,
+        ...DAEMON_GIT_ENV,
         DISPATCH_HOME: home,
         DISPATCH_ENABLE_FAKES: '1',
         DISPATCH_APP_TOKEN: APP_TOKEN,

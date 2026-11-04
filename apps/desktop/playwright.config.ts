@@ -2,6 +2,7 @@ import { defineConfig } from '@playwright/test';
 
 import {
   APP_TOKEN,
+  DAEMON_GIT_ENV,
   DAEMON_PORT,
   HOME,
   REPO,
@@ -92,6 +93,9 @@ export default defineConfig({
       // Nothing uses a fake unless a request names it, so the screenshot specs
       // see the same daemon they always did.
       command: `DISPATCH_HOME=${HOME} DISPATCH_ENABLE_FAKES=1 DISPATCH_APP_TOKEN=${APP_TOKEN} bun ${REPO}/packages/server/src/bin.ts --root ${ROOT} --port ${DAEMON_PORT}`,
+      // Laid over process.env: a fixed git identity, so Setup's banner never
+      // depends on the machine (see DAEMON_GIT_ENV).
+      env: { ...DAEMON_GIT_ENV },
       port: DAEMON_PORT,
       reuseExistingServer: true,
     },
