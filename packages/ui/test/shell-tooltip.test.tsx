@@ -536,6 +536,111 @@ describe('Tooltip', () => {
     expect(button.getAttribute('aria-describedby')).toBe(tip()?.id ?? 'none');
   });
 
+  // A Button that goes busy (disabled) while its request runs swaps the
+  // Tooltip's focusable wrapper in, so React mounts a new element and the
+  // focused one is removed with no blur.
+  function BusyButton({ busy }: { busy: boolean }) {
+    return (
+      <Tooltip content="Pause the fan-out">
+        <Button icon={<svg />} aria-label="Pause" disabled={busy} />
+      </Tooltip>
+    );
+  }
+
+  test('a keyboard-focused trigger that turns disabled keeps focus and its tip, on the element in the page', () => {
+    const { rerender } = render(<BusyButton busy={false} />);
+    const button = screen.getByRole('button', { name: 'Pause' });
+    act(() => button.focus());
+    expect(tip()?.textContent).toBe('Pause the fan-out');
+    rerender(<BusyButton busy />);
+    // The old button is gone; focus moved onto the wrapper that replaced it, and the
+    // one tip there is wired to it (not left on a detached trigger).
+    expect(button.isConnected).toBe(false);
+    const wrapper = screen.getByRole('button', { name: 'Pause' }).parentElement;
+    expect(wrapper?.getAttribute('tabindex')).toBe('0');
+    expect(document.activeElement).toBe(wrapper);
+    expect(screen.queryAllByRole('tooltip', { hidden: true })).toHaveLength(1);
+    expect(wrapper?.getAttribute('aria-describedby')).toBe(tip()?.id ?? 'none');
+    // Enabled again (the request failed): focus and the tip move back onto the button.
+    rerender(<BusyButton busy={false} />);
+    const again = screen.getByRole('button', { name: 'Pause' });
+    expect(document.activeElement).toBe(again);
+    expect(again.getAttribute('aria-describedby')).toBe(tip()?.id ?? 'none');
+    act(() => again.blur());
+    expect(tip()).toBeNull();
+  });
+
+  test('a hover tip on a trigger that turns disabled hides, and focus elsewhere stays put', async () => {
+    const { rerender } = render(
+      <>
+        <BusyButton busy={false} />
+        <button type="button">Elsewhere</button>
+      </>
+    );
+    // Out of the warm window another test's tip may have left.
+    await wait(450);
+    const elsewhere = screen.getByRole('button', { name: 'Elsewhere' });
+    act(() => elsewhere.focus());
+    const button = screen.getByRole('button', { name: 'Pause' });
+    fireEvent.pointerEnter(button, { pointerType: 'mouse' });
+    await wait(350);
+    expect(tip()?.textContent).toBe('Pause the fan-out');
+    rerender(
+      <>
+        <BusyButton busy />
+        <button type="button">Elsewhere</button>
+      </>
+    );
+    expect(tip()).toBeNull();
+    expect(document.activeElement).toBe(elsewhere);
+  });
+
+  // Moving focus a press gave would show the ring and the tip to a mouse user (Chromium
+  // treats focus a script moves from <body> as :focus-visible): it stays where the
+  // browser put it, as for any control that turns disabled.
+  test('a trigger focused by a press that turns disabled shows no tip and gets no focus moved onto it', () => {
+    const { rerender } = render(<BusyButton busy={false} />);
+    const button = screen.getByRole('button', { name: 'Pause' });
+    // A press: pointerdown, then focus that is not :focus-visible.
+    fireEvent.pointerDown(button);
+    const visible = HTMLElement.prototype.matches;
+    HTMLElement.prototype.matches = function (this: HTMLElement, selector) {
+      return selector === ':focus-visible'
+        ? false
+        : visible.call(this, selector);
+    };
+    try {
+      act(() => button.focus());
+      expect(tip()).toBeNull();
+    } finally {
+      HTMLElement.prototype.matches = visible;
+    }
+    rerender(<BusyButton busy />);
+    expect(document.activeElement).toBe(document.body);
+    expect(tip()).toBeNull();
+  });
+
+  test('a tip whose trigger leaves the page hides at its next placement', async () => {
+    function Keyed({ k }: { k: string }) {
+      return (
+        <Tooltip content="Copy the link" defaultOpen>
+          <button key={k} type="button">
+            Copy
+          </button>
+        </Tooltip>
+      );
+    }
+    const { rerender } = render(<Keyed k="a" />);
+    expect(tip()?.textContent).toBe('Copy the link');
+    // A new key mounts a new button; the tip's anchor is the old one, gone.
+    rerender(<Keyed k="b" />);
+    act(() => {
+      window.dispatchEvent(new Event('resize'));
+    });
+    await frame();
+    expect(tip()).toBeNull();
+  });
+
   test('disabled never shows', () => {
     render(
       <Tooltip content="Archive" disabled defaultOpen>

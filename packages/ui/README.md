@@ -1697,10 +1697,16 @@ or middle click still opens the link.
   text of a heading or sentence it renders in; nothing renders while hidden. The
   child is cloned with a `ref` and pointer and focus handlers, so a component
   must forward them (`Button` does); a child that cannot take focus (a span, a
-  term, a disabled button) is wrapped in a `span` with `tabIndex={0}`. Gr8r's
-  inverted chip: `--text` fill, `--text-inv` words, 12px, at most 256px wide. It
-  never holds interactive content, nor the only copy of a fact. `defaultOpen`
-  shows it from the first render (a persistent hint, or a test without timers).
+  term, a disabled button) is wrapped in a `span` with `tabIndex={0}`. A child
+  that turns disabled or back (a `Button` going busy while its request runs)
+  swaps that wrapper in or out, so React mounts a new element: keyboard focus on
+  the old one (dropped to `<body>`, with no blur) moves onto the new one, its
+  tip with it, and any other tip hides, so none is left on a trigger gone from
+  the page; focus a press gave it stays where the browser puts it, as for any
+  control that turns disabled. Gr8r's inverted chip: `--text` fill, `--text-inv`
+  words, 12px, at most 256px wide. It never holds interactive content, nor the
+  only copy of a fact. `defaultOpen` shows it from the first render (a
+  persistent hint, or a test without timers).
 - `Dialog` is the centred modal for a short focused form or a reading view (a
   diff over a session): `title`, `description`, `size` sm 360px / md 520px / lg
   880px (a full-width sheet at 640px and below), `titleAction` (a Back button

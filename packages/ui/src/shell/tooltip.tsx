@@ -219,7 +219,11 @@ function placeTip(
  * follows the trigger through every scroll (the browser's own scroll to a
  * trigger just focused included), hiding only once the trigger is fully
  * out of view: scrolled out after showing, or never shown once scrolling
- * settles. While shown the
+ * settles. A child that turns disabled or back (a busy Button) swaps its
+ * focusable wrapper in or out: keyboard focus on the trigger moves onto
+ * the new element, the tip with it, and any other tip hides, so none is
+ * left on a trigger no longer in the page.
+ * While shown the
  * child carries `aria-describedby` to the `role="tooltip"` element, which
  * is aria-hidden so it never joins the text of a heading or sentence it
  * sits in; nothing is rendered while hidden.
@@ -349,6 +353,12 @@ export function Tooltip({
         tip.dataset.placed = 'true';
         return;
       }
+      // A trigger taken out of the page has no box: the tip would sit
+      // clamped at the window's corner, so it goes.
+      if (!anchor.isConnected) {
+        hide();
+        return;
+      }
       clips ??= clippingAncestors(anchor);
       const visible = inView(anchor, clips);
       if (!visible && (seen || !settling) && focusHeld()) {
@@ -385,7 +395,34 @@ export function Tooltip({
       document.removeEventListener('scroll', onScroll, true);
       hideFromTopLayer(tip);
     };
-  }, [shown, side]);
+    // `wrapped`: the trigger is a new element (below), so the tip follows it.
+  }, [shown, side, wrapped]);
+
+  // The trigger is replaced when the child turns disabled or back (a
+  // Button going busy while its request runs): the focusable wrapper comes
+  // or goes, and React mounts a new element where the old one was. The
+  // browser drops the old one's focus to <body> without a blur, so a
+  // keyboard user would lose their place and the tip their focus held
+  // would stay open on a detached trigger. Keyboard focus moves onto the
+  // new element, the tip with it; any other tip hides, and focus a press
+  // gave the old one stays where the browser put it, as for any control
+  // that turns disabled (moving it would show the ring and the tip to a
+  // mouse user). Focus that went somewhere else (a dialog the press
+  // opened) stays there.
+  const wasWrapped = useRef(wrapped);
+  useClientLayoutEffect(() => {
+    if (wasWrapped.current === wrapped) return;
+    wasWrapped.current = wrapped;
+    const anchor = anchorRef.current;
+    const active = document.activeElement;
+    const dropped = active === null || active === document.body;
+    if (heldByFocus.current && dropped && anchor?.isConnected === true) {
+      anchor.focus({ preventScroll: true });
+      return;
+    }
+    heldByFocus.current = false;
+    hide();
+  }, [wrapped]);
 
   const handlers = {
     onPointerEnter: (event: PointerEvent<HTMLElement>) => {
