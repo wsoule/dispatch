@@ -92,7 +92,9 @@ describe('a planned key rotation', () => {
     const a = await daemon('a2a-keys-a-');
     const b = await daemon('a2a-keys-b-');
     await paired(a, b);
-    await rotate(a);
+    const oldKid = kidOf(a.root);
+    const bNotices = await noticesOf(b);
+    const rotated = await rotate(a);
     const read = readA2ANextSigningKey(a.root);
     if (read.status !== 'ok') throw new Error('no next key');
     const k2 = read.next.jwk;
@@ -122,10 +124,30 @@ describe('a planned key rotation', () => {
     };
     // b re-pins alice's next key when a's push lands, which is not awaited
     // by rotate(); a statement naming k2 before then is simply unknown (404).
-    await waitFor(
-      () => b.handle.a2a.store!.getPeer('alice')?.keyThumbprint === k2Kid,
-      5000
-    );
+    try {
+      await waitFor(
+        () => b.handle.a2a.store!.getPeer('alice')?.keyThumbprint === k2Kid,
+        5000
+      );
+    } catch (err) {
+      // This wait has timed out now and then in CI only. Say why: was bob
+      // untold (a's push threw, and its retry is 30 s off), or told yet
+      // still pinning another key?
+      const pinned = b.handle.a2a.store!.getPeer('alice')?.keyThumbprint;
+      throw new Error(
+        `b never re-pinned alice's next key: ${JSON.stringify({
+          rotated,
+          pinned,
+          pinnedIs:
+            pinned === oldKid ? 'old' : pinned === k2Kid ? 'next' : 'other',
+          pendingPushes: a.handle.a2a
+            .store!.notices('key-push')
+            .map(({ id, attempts, at }) => ({ id, attempts, at })),
+          bNotices: bNotices(),
+        })}`,
+        { cause: err }
+      );
+    }
     // Unsigned, naming the pinned key but signed by another: refused.
     const forger = newPrivateJwk();
     const forged = await rawFetch(`${b.listener}/a2a/v1/dispatch/key-change`, {
