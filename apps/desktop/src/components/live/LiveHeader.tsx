@@ -9,51 +9,73 @@ import styles from './LiveHeader.module.css';
 
 const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
 
-/** The spend cell's short value and its note, from the parts that exist. */
+/** The spend cell's short value, its short note and the hint that says it in full. */
 interface LiveSpend {
   value: string;
   note: string;
+  title: string;
 }
 
-// What the fan-outs' settled spend is measured against: `of $60 ceilings`, or no ceiling.
-function ceilingNote(ceilings: LiveCeilings): string {
-  return ceilings.ceilingUsd === null
-    ? 'in fan-outs, no ceiling'
-    : `of ${formatUsd(ceilings.ceilingUsd)} ceilings`;
+// What the fan-outs' settled spend is measured against, for the note (`of $60 ceilings`,
+// worded as Overseer's flow columns word it, or `no ceiling`) and in full for the hint.
+function ceilingWords(ceilings: LiveCeilings): { note: string; title: string } {
+  const settled = formatUsd(ceilings.settledUsd);
+  if (ceilings.ceilingUsd === null) {
+    return {
+      note: 'no ceiling',
+      title: `${settled} settled in the live fan-outs, which set no ceiling`,
+    };
+  }
+  const ceiling = formatUsd(ceilings.ceilingUsd);
+  return {
+    note: `of ${ceiling} ceilings`,
+    title: `${settled} settled in the live fan-outs, of their ${ceiling} ceilings`,
+  };
 }
 
-// Today's spend as the cell's value with "today" and the fan-outs' ceilings as its note
-// (`$4.20` · `today · $8.10 of $60 ceilings`), else the ceilings alone (`$8.10` · `of $60
-// ceilings`), or null when there is neither. Only the short amount is the value; the
-// sentence is the note, which the compact strip sets inline after it in the quiet type.
+// Today's spend as the cell's value with "today" and the fan-outs' settled spend as its
+// note (`$4.20` · `today · $8.10 of $60 ceilings`), else the settled spend alone (`$8.10` ·
+// `of $60 ceilings`), or null when there is neither. The note says what each amount is in
+// a few words, since a hover hint reaches no keyboard or touch; the hint says it in full.
 function liveSpend(
   today: number | null,
   ceilings: LiveCeilings | null
 ): LiveSpend | null {
   if (today !== null) {
+    const spent = `${formatUsd(today)} spent today`;
+    if (ceilings === null) {
+      return { value: formatUsd(today), note: 'today', title: spent };
+    }
+    const words = ceilingWords(ceilings);
+    const settled = formatUsd(ceilings.settledUsd);
     return {
       value: formatUsd(today),
       note:
-        ceilings === null
-          ? 'today'
-          : `today · ${formatUsd(ceilings.settledUsd)} ${ceilingNote(ceilings)}`,
+        ceilings.ceilingUsd === null
+          ? `today · ${settled}, ${words.note}`
+          : `today · ${settled} ${words.note}`,
+      title: `${spent}; ${words.title}`,
     };
   }
-  return ceilings === null
-    ? null
-    : { value: formatUsd(ceilings.settledUsd), note: ceilingNote(ceilings) };
+  if (ceilings === null) return null;
+  const words = ceilingWords(ceilings);
+  return {
+    value: formatUsd(ceilings.settledUsd),
+    note: words.note,
+    title: words.title,
+  };
 }
 
 // The agent slots across every live fan-out: a ProgressRule meter (warning once every
-// slot is taken), else a quiet "No fan-out live".
+// slot is taken), else a quiet "None" whose hint says no fan-out is live.
 function slotsCell(slots: LiveTotals['slots']): StatCell {
   if (slots.total <= 0) {
     return {
       id: 'slots',
       label: 'Slots',
       value: 'None',
-      note: 'No fan-out live',
       tone: 'muted',
+      title: 'No fan-out is live, so no agent slots are held',
     };
   }
   const used = Math.min(slots.used, slots.total);
@@ -70,12 +92,15 @@ function slotsCell(slots: LiveTotals['slots']): StatCell {
         tone={slots.used >= slots.total ? 'warning' : 'default'}
       />
     ),
+    title: `${used} of ${slots.total} agent slots in use`,
   };
 }
 
 // Every cell of the strip, in reading order: slots, running, queued, waiting on a
 // teammate, landing, then the spend when there is any. A count takes its status tone
 // only while it is above zero (blue running and landing, amber blocked behind a teammate).
+// Keys stay short so the cells and Pause all share the header's row at common widths, but
+// each still says what it counts on its own; the hints only add detail.
 function headerCells(totals: LiveTotals, spend: LiveSpend | null): StatCell[] {
   const cells: StatCell[] = [
     slotsCell(totals.slots),
@@ -96,7 +121,7 @@ function headerCells(totals: LiveTotals, spend: LiveSpend | null): StatCell[] {
     {
       id: 'teammate',
       'data-slot': 'live-teammate',
-      label: 'Waiting on teammates',
+      label: 'Blocked on teammates',
       value: totals.waitingOnTeammate,
       tone: totals.waitingOnTeammate > 0 ? 'warning' : 'default',
       title: "Blocked behind a teammate's issue, which no fan-out starts",
@@ -116,6 +141,7 @@ function headerCells(totals: LiveTotals, spend: LiveSpend | null): StatCell[] {
       label: 'Spend',
       value: spend.value,
       note: spend.note,
+      title: spend.title,
     });
   }
   return cells;

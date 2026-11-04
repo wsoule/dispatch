@@ -348,10 +348,13 @@ describe('LiveView', () => {
     expect(text('live-running')).toBe('Running2');
     expect(text('live-queued')).toBe('Queued1');
     expect(
-      document.querySelector('[data-slot=live-queued]')?.getAttribute('title')
+      document
+        .querySelector('[data-slot=live-queued]')
+        ?.firstElementChild?.getAttribute('title')
     ).toBe('Starts on its own as a fan-out slot frees');
-    expect(text('live-teammate')).toBe('Waiting on teammates0');
-    // The short amount is the value; what it is measured against is the note.
+    expect(text('live-teammate')).toBe('Blocked on teammates0');
+    // The short amount is the value; what it is measured against is the note,
+    // short, and the hint says it in full.
     expect(text('live-spend')).toBe('Spend$4of $20 ceilings');
   });
 
@@ -451,7 +454,7 @@ describe('LiveView', () => {
       expect(node('t-z')?.getAttribute('data-state')).toBe('blocked');
       expect(
         document.querySelector('[data-slot=live-teammate]')?.textContent
-      ).toBe('Waiting on teammates0');
+      ).toBe('Blocked on teammates0');
     });
   });
 

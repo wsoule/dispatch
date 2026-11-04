@@ -44,6 +44,10 @@ holds what a user upgrading needs to know.
     with its lead, progress and next milestone.
   - Live opens from Runs and counts as part of it, so Escape and the "Runs" chip
     take you back there.
+  - Live's and Flight Plan's header strips use shorter labels and notes, so more
+    of their cells fit beside the header's buttons; hover a cell for more
+    detail. While a fan-out runs, Flight Plan's Running cell shows the agent
+    slots meter, and the ETA and the critical path come right after it.
   - Settings opens as a page in the main column (⌘, and Escape still work).
   - The sidebar flips the theme between light and dark, and Settings → General
     also offers follow-the-system. The desktop app keeps the choice for every

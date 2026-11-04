@@ -645,7 +645,12 @@ and milestones); Live under Runs. Live's and Flight Plan's headers use the
 compact `StatsStrip` (one 26px row of inline cells that scrolls sideways inside
 itself on a narrow column: edge fades, a tab stop only while it overflows or
 holds focus, a vertical wheel turned sideways), with the header's controls in
-its `end`, so the bands and the canvas keep their height.
+its `end`, so the bands and the canvas keep their height. Their keys and notes
+stay short, so the cells and the controls share the row at common widths, but
+each still says what it counts; a cell's `title` adds detail and never holds the
+only copy of a fact. While a fan-out runs, Flight Plan puts Running, the ETA and
+the critical path first, since its controls leave the strip little room and the
+fade hides the end.
 
 ### Tokens only
 

@@ -82,6 +82,59 @@ describe('LiveHeader', () => {
     expect(row?.childElementCount).toBe(1);
   });
 
+  test('short keys and notes that each say what they count, detail in each hint', () => {
+    const { getAllByRole } = renderHeader({ active: 1, resumable: 0 });
+    const cells = getAllByRole('listitem');
+    expect(cells.map((c) => c.textContent)).toEqual([
+      'Slots2/4',
+      'Running2',
+      'Queued3',
+      'Blocked on teammates1',
+      'Landing0',
+      'Spend$4.20today · $8.10 of $60 ceilings',
+    ]);
+    // Each hint is on the cell's inner element, never the <li>, so it is read as a
+    // description and the key stays the item's words.
+    expect(cells.map((c) => c.hasAttribute('title'))).toEqual(
+      cells.map(() => false)
+    );
+    expect(
+      cells.map((c) => c.firstElementChild?.getAttribute('title') ?? null)
+    ).toEqual([
+      '2 of 4 agent slots in use',
+      null,
+      'Starts on its own as a fan-out slot frees',
+      "Blocked behind a teammate's issue, which no fan-out starts",
+      null,
+      '$4.20 spent today; $8.10 settled in the live fan-outs, of their $60 ceilings',
+    ]);
+  });
+
+  test('no fan-out live and no ceiling: the hints say so', () => {
+    const { getAllByRole } = render(
+      <LiveHeader
+        totals={{ ...totals, slots: { used: 0, total: 0 } }}
+        spendToday={null}
+        ceilings={{ live: 1, settledUsd: 8.1, ceilingUsd: null }}
+        active={0}
+        resumable={0}
+        capped={0}
+        busy={false}
+        onPauseAll={() => {}}
+        onResumeAll={() => {}}
+      />
+    );
+    const cells = getAllByRole('listitem');
+    expect(cells[0]?.textContent).toBe('SlotsNone');
+    expect(cells[0]?.firstElementChild?.getAttribute('title')).toBe(
+      'No fan-out is live, so no agent slots are held'
+    );
+    expect(cells[5]?.textContent).toBe('Spend$8.10no ceiling');
+    expect(cells[5]?.firstElementChild?.getAttribute('title')).toBe(
+      '$8.10 settled in the live fan-outs, which set no ceiling'
+    );
+  });
+
   test('the header is padding and a rule around the one-row strip', () => {
     const css = readFileSync(
       join(import.meta.dir, 'LiveHeader.module.css'),

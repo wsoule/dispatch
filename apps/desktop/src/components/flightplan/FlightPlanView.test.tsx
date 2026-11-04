@@ -356,19 +356,13 @@ describe('FlightPlan', () => {
     ).toBe('compact');
     expect(bandText()).toContain('Send agents');
     // The strip reads label then value, cell by cell; with no fan-out nothing is
-    // queued, only ready.
+    // queued, only ready, and holds no slots (the Running cell's hint says so).
     expect(
       Array.from(
         document.querySelectorAll('[data-slot=flight-header] li'),
         (cell) => cell.textContent
       )
-    ).toEqual([
-      'SlotsNoneNot fanning out',
-      'Running0',
-      'Ready3',
-      'Landed0/3',
-      'Critical path1~20m',
-    ]);
+    ).toEqual(['Running0', 'Ready3', 'Landed0/3', 'Critical path1~20m']);
 
     // The project's session owns every milestone's nodes: one queue, its slots.
     view.rerenderWith(dataWith(tasks, [], [progress('active', 1, 'e-p')]));
