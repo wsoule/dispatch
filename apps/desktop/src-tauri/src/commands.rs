@@ -1,4 +1,5 @@
 use crate::db::{queries, Db};
+use crate::downloads;
 use crate::parser;
 use crate::registry;
 use crate::sidecar;
@@ -330,9 +331,10 @@ pub fn generate_report(db: State<'_, Db>, range_days: i64) -> Result<ReportData,
 /// Renders the same data `generate_report` returns as a standalone Markdown document, writes
 /// it to disk, and returns the absolute path — a shareable artifact for the manager/team-lead
 /// audience the Reports view exists for, not just an in-app table. Written under the user's
-/// Downloads directory (falling back to their home directory if that can't be resolved, e.g. a
-/// locked-down sandbox) rather than the app-data directory, since the whole point is for the
-/// user to find this file and hand it to someone else.
+/// Downloads directory (`downloads::download_dir`: `~/Downloads` when the platform names none
+/// or names the home folder, never the home folder itself) rather than the app-data
+/// directory, since the whole point is for the user to find this file and hand it to someone
+/// else.
 #[tauri::command]
 pub fn export_report(db: State<'_, Db>, range_days: i64) -> Result<String, String> {
     let report = {
@@ -340,8 +342,7 @@ pub fn export_report(db: State<'_, Db>, range_days: i64) -> Result<String, Strin
         build_report(&conn, range_days)?
     };
 
-    let dir = dirs::download_dir()
-        .or_else(dirs::home_dir)
+    let dir = downloads::download_dir()
         .ok_or_else(|| "could not resolve a directory to save the report into".to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
@@ -450,8 +451,7 @@ pub fn export_transcript(db: State<'_, Db>, session_id: String) -> Result<String
 
     let transcript = parser::render_markdown(&session.raw_log_path).map_err(|e| e.to_string())?;
 
-    let dir = dirs::download_dir()
-        .or_else(dirs::home_dir)
+    let dir = downloads::download_dir()
         .ok_or_else(|| "could not resolve a directory to save the transcript into".to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 

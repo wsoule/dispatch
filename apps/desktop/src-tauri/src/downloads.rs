@@ -123,6 +123,13 @@ fn download_dir_from(downloads: Option<PathBuf>, home: Option<PathBuf>) -> Optio
     }
 }
 
+/// The folder the app saves a file into for the user (a workspace download here, an exported
+/// report or transcript in `commands`): `download_dir_from` applied to this computer's
+/// Downloads and home folders, so it is never the home folder itself.
+pub(crate) fn download_dir() -> Option<PathBuf> {
+    download_dir_from(dirs::download_dir(), dirs::home_dir())
+}
+
 /// The `n`th candidate name for `name`: the name itself first, then "stem (1).ext",
 /// "stem (2).ext" …, the way a browser names a second copy. A name whose only dot leads it
 /// (".env") counts as all stem.
@@ -262,7 +269,7 @@ pub async fn download_workspace_file(url: String) -> Result<String, String> {
         ));
     }
 
-    let dir = download_dir_from(dirs::download_dir(), dirs::home_dir())
+    let dir = download_dir()
         .ok_or_else(|| "Could not find a folder to save the file into.".to_string())?;
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
@@ -379,6 +386,16 @@ mod tests {
             (Some(home.clone()), Some(home.clone())),
         ] {
             assert_ne!(download_dir_from(dl, h), Some(home.clone()));
+        }
+    }
+
+    #[test]
+    fn download_dir_on_this_computer_is_not_the_home_folder() {
+        // What exports and downloads really use: whatever this machine's Downloads setting
+        // is, the answer is never the home folder.
+        if let Some(home) = dirs::home_dir() {
+            let dir = download_dir().expect("a home folder always yields a folder");
+            assert!(!dir.components().eq(home.components()), "{dir:?}");
         }
     }
 
