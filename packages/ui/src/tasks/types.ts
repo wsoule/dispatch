@@ -659,10 +659,13 @@ export interface StatCell extends DataAttributes {
   tone?: UiTone;
   /** Makes the cell a link (Gr8r stat cards navigate to the filtered list). */
   href?: string;
-  /** A hover hint over the whole cell (the `<li>`'s title), for what the
-   * number counts or how it was worked out ("Queued: waiting for a free
-   * slot"). Pointer-only, so the same fact must also be in words somewhere
-   * a keyboard reaches (the label, the note, or the page). */
+  /** A hover hint over the cell (the title of the cell's inner element,
+   * not its `<li>`, so assistive tech reads it as a description and the
+   * item keeps no name of its own), for what the number counts or how it
+   * was worked out ("Queued: waiting for a free slot"). Pointer-only, so it
+   * adds detail and never holds the only copy of a fact: the same fact must
+   * also be in words somewhere a keyboard reaches (the label, the note, or
+   * the page). */
   title?: string;
 }
 
@@ -676,7 +679,7 @@ export interface StatsStripProps extends DataAttributes {
    * key, four across (two on phones). compact: a page header's one-row
    * strip (Live, Flight Plan) with no panel: each cell's icon, key, value
    * and note inline on a 26px row, cells parted by soft rules, a meter
-   * value (ProgressRule) 120px wide. The cells never wrap: when the column
+   * value (ProgressRule) at least 80px wide. The cells never wrap: when the column
    * is too narrow the strip scrolls sideways inside itself, fading the
    * edges that hide cells, and takes a tab stop (a group named
    * "<label>, scrolls sideways") only while it does. Same list, terms and

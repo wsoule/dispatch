@@ -68,7 +68,7 @@ describe('StatsStrip', () => {
     expect(link.textContent).toBe('Overdue2');
   });
 
-  test("a host's data-* reach the list and each cell, a cell's title its li", () => {
+  test("a host's data-* reach the list and each cell, a cell's title its inner element", () => {
     const { getByRole, getAllByRole } = render(
       <StatsStrip
         label="Live work"
@@ -99,10 +99,39 @@ describe('StatsStrip', () => {
     expect(list.getAttribute('data-testid')).toBe('live-stats');
     const [queued, eta] = getAllByRole('listitem');
     expect(queued?.getAttribute('data-slot')).toBe('live-queued');
-    expect(queued?.getAttribute('title')).toBe('Waiting for a free agent slot');
+    // The hint sits on the cell's inner element, never on the <li>: a
+    // listitem's title would become its whole accessible name and bury the
+    // key ("Queued") under the hint.
+    expect(queued?.hasAttribute('title')).toBe(false);
+    expect(queued?.firstElementChild?.getAttribute('title')).toBe(
+      'Waiting for a free agent slot'
+    );
     expect(eta?.getAttribute('data-slot')).toBe('flight-eta');
     expect(eta?.getAttribute('data-tone')).toBe('warning');
     expect(eta?.hasAttribute('title')).toBe(false);
+    expect(eta?.firstElementChild?.hasAttribute('title')).toBe(false);
+  });
+
+  test("a linked cell's title is on its link, which keeps its words as its name", () => {
+    const { getByRole, getAllByRole } = render(
+      <StatsStrip
+        cells={[
+          {
+            id: 'overdue',
+            label: 'Overdue',
+            value: 2,
+            href: '/timeline',
+            title: 'Milestones past their target date',
+          },
+        ]}
+      />
+    );
+    const [cell] = getAllByRole('listitem');
+    expect(cell?.hasAttribute('title')).toBe(false);
+    const link = getByRole('link', { name: 'Overdue 2' });
+    expect(link.getAttribute('title')).toBe(
+      'Milestones past their target date'
+    );
   });
 
   test('without data-* or title it adds no attribute', () => {
@@ -171,7 +200,10 @@ describe('StatsStrip variant="compact"', () => {
     expect(cells[2]?.textContent).toBe(
       'Spend$4.20today · $8.10 of $60 ceilings'
     );
-    expect(cells[2]?.getAttribute('title')).toBe('Settled spend');
+    expect(cells[2]?.hasAttribute('title')).toBe(false);
+    expect(cells[2]?.firstElementChild?.getAttribute('title')).toBe(
+      'Settled spend'
+    );
     expect(cells[2]?.getAttribute('data-slot')).toBe('live-spend');
     expect(
       getByRole('progressbar', { name: 'Agent slots' }).getAttribute(
@@ -234,21 +266,25 @@ describe('StatsStrip variant="compact"', () => {
     ).toBe('white-space: nowrap;');
     // The value drops the panel's 22px figure for the body size.
     expect(cssRule(file, '.compact .value')).toContain('font-size: var(--fs);');
+    // A meter at least 80px wide: the ProgressRule's 40px track minimum and
+    // its receipt. A minimum, not a width, so "16/16" or "100/128" widens
+    // the value instead of running past the rule into the next cell.
     expect(cssRule(file, ".compact .value:has([role='progressbar'])")).toBe(
-      'width: 120px;'
+      'min-width: 80px;'
     );
   });
 
   test('rules are borders centred in the gap; the scroller cuts the first', () => {
-    expect(cssRule(file, '.compact')).toContain('gap: 25px;');
+    // 8px of air, the rule, 8px of air.
+    expect(cssRule(file, '.compact')).toContain('gap: 17px;');
     const rule = cssRule(file, '.compact .cell::before');
-    expect(rule).toContain('left: -13px;');
+    expect(rule).toContain('left: -9px;');
     // A border, not a fill, so forced colours keep it.
     expect(rule).toContain('border-left: 1px solid var(--border);');
     expect(rule).not.toContain('background');
     // The scroller reaches 6px past the frame on both sides: as far as a
     // linked cell's fill, past its focus ring (3 to 5px out), and short of
-    // the first cell's rule 13px out.
+    // the first cell's rule 9px out.
     const scroller = cssRule(file, '.scroller');
     expect(scroller).toContain('margin: -4px -6px;');
     expect(scroller).toContain('padding: 4px 6px;');

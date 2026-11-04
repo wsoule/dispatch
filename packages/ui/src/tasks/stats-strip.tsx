@@ -167,9 +167,10 @@ function useInlineOverflow(
    it has focus) and turns a vertical mouse wheel sideways (the list's
    data-variant says "compact" to hosts and tests). The controls
    wrap under the strip only when even a 12rem strip leaves them no room.
-   The host's data-* hooks land on the list and on each cell's <li> (with
-   the cell's title as a hover hint); the cell's own data-tone wins over a
-   host's. */
+   The host's data-* hooks land on the list and on each cell's <li>; the
+   cell's title is a hover hint on its inner element, not the <li>, so it
+   reads as a description and never as the item's name. The cell's own
+   data-tone wins over a host's. */
 export function StatsStrip(props: StatsStripProps) {
   const { cells, label = 'Summary', variant = 'panel', end } = props;
   const compact = variant === 'compact';
@@ -204,7 +205,6 @@ export function StatsStrip(props: StatsStripProps) {
             {...dataAttributes(cell)}
             className={cx(styles.cell, styles[tone])}
             data-tone={tone}
-            title={cell.title}
             style={
               last && span > 1
                 ? ({ '--stat-span': span } as CSSProperties)
@@ -212,11 +212,15 @@ export function StatsStrip(props: StatsStripProps) {
             }
           >
             {cell.href !== undefined ? (
-              <Link href={cell.href} className={styles.inner}>
+              <Link
+                href={cell.href}
+                className={styles.inner}
+                title={cell.title}
+              >
                 <CellBody cell={cell} />
               </Link>
             ) : (
-              <div className={styles.inner}>
+              <div className={styles.inner} title={cell.title}>
                 <CellBody cell={cell} />
               </div>
             )}

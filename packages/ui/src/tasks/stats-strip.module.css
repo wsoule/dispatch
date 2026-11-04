@@ -140,7 +140,7 @@ a.inner:focus-visible {
    when the column is narrower than they are. It reaches 6px past the
    frame on both sides and 4px above and below (margin, padded back), so
    a linked cell's fill (6px past its words) and its focus ring (3 to 5px
-   out) are not cut at the ends, while the first cell's rule (13px left
+   out) are not cut at the ends, while the first cell's rule (9px left
    of it) is. No scrollbar, so overflowing never changes the row's height:
    the edge fades say there is more, and a trackpad, Shift + wheel, a
    swipe, Tab through linked cells or the arrow keys (the scroller takes
@@ -197,14 +197,16 @@ a.inner:focus-visible {
 
 /* No panel: the cells sit inline on the header's own surface, each a
    26px row (--h-sm) of icon, key, value and note, parted by a soft rule
-   centred in the 25px gap (the cell's ::before, 13px left of it). The
-   list is as wide as its cells (the scroller clips it), so they never
-   wrap and the first cell's rule falls outside the scroller. */
+   centred in the 17px gap (the cell's ::before, 9px left of it: 8px of
+   air either side, so a page header's cells and its controls share one
+   row at common widths). The list is as wide as its cells (the scroller
+   clips it), so they never wrap and the first cell's rule falls outside
+   the scroller. */
 .compact {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 25px;
+  gap: 17px;
   width: max-content;
   overflow: visible;
   border: 0;
@@ -224,7 +226,7 @@ a.inner:focus-visible {
   position: absolute;
   top: 5px;
   bottom: 5px;
-  left: -13px;
+  left: -9px;
   border-left: 1px solid var(--border);
 }
 
@@ -252,10 +254,12 @@ a.inner:focus-visible {
   letter-spacing: 0;
 }
 
-/* A meter value (ProgressRule) gets a fixed track to fill; an engine
-   without :has() draws its 40px minimum. */
+/* A meter value (ProgressRule) is at least 80px: a 40px track (the
+   meter's own minimum) beside its "3/4" receipt. A longer receipt
+   ("16/16", "100/128") widens the value instead of running into the next
+   cell. An engine without :has() draws the meter's own minimum. */
 .compact .value:has([role='progressbar']) {
-  width: 120px;
+  min-width: 80px;
 }
 
 /* A linked cell's hover and focus fill reaches 6px past its words, on the

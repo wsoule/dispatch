@@ -342,8 +342,10 @@ describe('task family server render', () => {
     expect(html).toMatch(
       /<li data-slot="flight-stat"[^>]* data-tone="default">/
     );
+    // The cell's hint sits on its inner element, never on the <li>, whose
+    // accessible name it would otherwise become.
     expect(html).toMatch(
-      /<li data-slot="flight-critical-stat"[^>]* data-tone="default" title="The longest chain of open work">/
+      /<li data-slot="flight-critical-stat"[^>]* data-tone="default"><div title="The longest chain of open work">/
     );
     expect(html).toMatch(
       /<span data-slot="flight-slots"[^>]* data-tone="default">/
