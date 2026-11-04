@@ -97,7 +97,10 @@ export class SharingState {
 }
 
 /** Whether the API refuses this request while a restart is pending:
- *  everything but reads and the team start or join that share it. */
+ *  everything but reads, the team start or join that share it, and minting a
+ *  file download ticket. A ticket only lets one read of a file through
+ *  (`GET /api/files/raw`, which stays open) and starts nothing, so refusing it
+ *  would only fail a browser's download for no reason. */
 export function frozenBySharing(
   state: SharingState | undefined,
   method: string,
@@ -106,11 +109,10 @@ export function frozenBySharing(
   if (state?.pending !== true) return false;
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS')
     return false;
-  return !(
-    segments.length === 2 &&
-    segments[0] === 'team' &&
-    (segments[1] === 'start' || segments[1] === 'join')
-  );
+  if (segments.length !== 2) return true;
+  const [area, action] = segments;
+  if (area === 'team') return !(action === 'start' || action === 'join');
+  return !(area === 'files' && action === 'download-ticket');
 }
 
 /** The refusal the API answers a frozen request with. */

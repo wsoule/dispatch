@@ -72,6 +72,13 @@ describe('turnOnSharing', () => {
     expect(frozenBySharing(state, 'POST', ['tasks', 't-1', 'runs'])).toBe(true);
     expect(frozenBySharing(state, 'GET', ['tasks'])).toBe(false);
     expect(frozenBySharing(state, 'POST', ['team', 'join'])).toBe(false);
+    // A download ticket only lets a read through, and reads stay open.
+    expect(frozenBySharing(state, 'POST', ['files', 'download-ticket'])).toBe(
+      false
+    );
+    expect(frozenBySharing(state, 'GET', ['files', 'raw'])).toBe(false);
+    expect(frozenBySharing(state, 'POST', ['files', 'write'])).toBe(true);
+    expect(frozenBySharing(state, 'POST', ['team', 'leave'])).toBe(true);
     await done;
     expect(log.filter((l) => l === 'restart')).toHaveLength(1);
     expect(log[0]).toMatch(/^hold /);

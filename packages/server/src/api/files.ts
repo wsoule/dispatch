@@ -7,10 +7,11 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, extname, join, relative, sep } from 'node:path';
+import { basename, dirname, extname, join, relative, sep } from 'node:path';
 
 import type { ApiContext } from '../api.js';
 import { rankFuzzy } from '../fuzzy.js';
+import type { DownloadTickets } from './downloadTickets.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 import {
   isDirectory,
@@ -252,6 +253,51 @@ export async function writeFile(
   });
 }
 
+// Headers every response carrying a file's bytes gets, preview or download.
+// The bytes are served from the user's own checkout and can change under an
+// open preview, so nothing may cache them. The CSP is belt and braces for the
+// SVG case: an SVG is a document, and serving one from the daemon's origin
+// would otherwise let it script against the API.
+function rawFileHeaders(path: string): Record<string, string> {
+  return {
+    'content-type': mimeForPath(path),
+    'cache-control': 'no-store',
+    'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'",
+    'x-content-type-options': 'nosniff',
+  };
+}
+
+/**
+ * A 200 carrying the file at `path` with the raw route's headers plus
+ * `extra`, or a 404 when it is gone or not a regular file.
+ *
+ * The body is a `Bun.file`, which Bun.serve streams from disk (sendfile on a
+ * plain socket, chunked reads under TLS) rather than holding the file in the
+ * daemon's memory. Content-Length is stated here from a fresh stat so that
+ * compressForNetwork can tell a file from an API reply; Bun sends the size it
+ * actually streams, so a file that changes in between is never mislabelled.
+ */
+function streamedFileResponse(
+  path: string,
+  extra: Record<string, string> = {}
+): Response {
+  let size: number;
+  try {
+    const stat = statSync(path);
+    if (!stat.isFile()) return errorResponse(404, 'no such file');
+    size = stat.size;
+  } catch {
+    return errorResponse(404, 'no such file');
+  }
+  return new Response(Bun.file(path), {
+    headers: {
+      ...rawFileHeaders(path),
+      'content-length': String(size),
+      ...extra,
+    },
+  });
+}
+
 /** `GET /api/files/raw` — the bytes, for an image or PDF preview. */
 export function rawFile(
   ctx: FileRouteContext,
@@ -265,18 +311,145 @@ export function rawFile(
   if (!existsSync(resolved.path) || isDirectory(resolved.path)) {
     return errorResponse(404, 'no such file');
   }
-  return new Response(readFileSync(resolved.path), {
-    headers: {
-      'content-type': mimeForPath(resolved.path),
-      // The bytes are served from the user's own checkout and can change under
-      // an open preview, so nothing may cache them.
-      'cache-control': 'no-store',
-      // Belt and braces for the SVG case: an SVG is a document, and serving one
-      // inline from the daemon's origin would let it script against the API.
-      'content-security-policy':
-        "default-src 'none'; style-src 'unsafe-inline'",
-      'x-content-type-options': 'nosniff',
-    },
+  return streamedFileResponse(resolved.path);
+}
+
+// RFC 5987 percent-encoding for `filename*`: encodeURIComponent leaves
+// `'()*` alone, and those are not attr-chars, so they are escaped too.
+function rfc5987(value: string): string {
+  return encodeURIComponent(value).replace(
+    /['()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`
+  );
+}
+
+/**
+ * The Content-Disposition for downloading `path`: always an attachment, named
+ * after the file. The quoted `filename` is printable ASCII only, with quotes,
+ * backslashes and anything else that could end the header value or the
+ * parameter turned into `_`; the exact name travels in `filename*`.
+ */
+export function attachmentDisposition(path: string): string {
+  const name = basename(path);
+  const ascii = name.replace(/[^\x20-\x7e]|["\\;%]/g, '_').trim();
+  const fallback = ascii === '' ? 'download' : ascii;
+  let exact: string;
+  try {
+    exact = rfc5987(name);
+  } catch {
+    // A name with an unpaired surrogate cannot be UTF-8 encoded; the ASCII
+    // fallback alone still names the download.
+    return `attachment; filename="${fallback}"`;
+  }
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${exact}`;
+}
+
+/**
+ * `POST /api/files/download-ticket` — a one-time URL for downloading a file.
+ *
+ * Body `{ path, runId? }`, checked by the same resolver, against the same
+ * project or run worktree, as `GET /api/files/raw`. Answers
+ * `{ ticket, expiresAt }`; `GET /api/files/raw?ticket=<ticket>` then serves
+ * the file once without a bearer header (see downloadTickets.ts).
+ * `stillAuthorized` re-checks the caller's credential when the ticket is used.
+ */
+export async function issueDownloadTicket(
+  req: Request,
+  ctx: FileRouteContext,
+  tickets: DownloadTickets,
+  stillAuthorized: () => boolean
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as Record<string, unknown>;
+  if (typeof body.path !== 'string' || body.path === '') {
+    return errorResponse(400, 'path is required');
+  }
+  if (
+    body.runId !== undefined &&
+    body.runId !== null &&
+    typeof body.runId !== 'string'
+  ) {
+    return errorResponse(400, 'runId must be a string');
+  }
+  const resolved = resolveWorkspacePath(ctx.rootDir, {
+    runId: body.runId,
+    path: body.path,
+  });
+  if (!resolved.ok) return errorResponse(400, resolved.message);
+  if (!existsSync(resolved.path) || isDirectory(resolved.path)) {
+    return errorResponse(404, 'no such file');
+  }
+  const issued = tickets.issue({
+    runId: resolved.runId,
+    path: body.path,
+    resolvedPath: resolved.path,
+    stillAuthorized,
+  });
+  return jsonResponse(issued, 201);
+}
+
+// Why a ticket was not honoured. One message for every way a ticket can be
+// dead, so a caller learns nothing about which tickets exist.
+const DEAD_TICKET = 'download ticket is unknown, already used or expired';
+
+function ticketRefused(message: string, code: string): Response {
+  return jsonResponse({ error: message, code }, 403);
+}
+
+/**
+ * `GET /api/files/raw?ticket=<ticket>` — the file a download ticket names,
+ * streamed once as an attachment. No bearer header: the ticket is the
+ * credential, and it dies here whether or not the download succeeds.
+ *
+ * The path is resolved again, through the same resolver, from what the ticket
+ * was issued for, so it stays inside the project or the run's worktree: a
+ * symlink swapped in meanwhile that points outside is refused. The comparison
+ * with the path resolved at issue is textual (the resolver does not follow
+ * links), so a link swapped in to another file inside the same root is
+ * served, which the holder could have asked a ticket for anyway. A `path` or
+ * `runId` on the URL must name that same file.
+ */
+export function downloadWithTicket(
+  ctx: FileRouteContext,
+  tickets: DownloadTickets,
+  params: URLSearchParams
+): Response {
+  const grant = tickets.take(params.get('ticket') ?? '');
+  if (grant === null) return ticketRefused(DEAD_TICKET, 'download_ticket_dead');
+  if (!grant.stillAuthorized()) {
+    return ticketRefused(
+      'the credential this download ticket was issued to no longer reaches this file',
+      'download_ticket_revoked'
+    );
+  }
+  if (params.has('path') || params.has('runId')) {
+    const named = resolveWorkspacePath(ctx.rootDir, {
+      runId: params.get('runId'),
+      path: params.get('path'),
+    });
+    if (!named.ok || named.path !== grant.resolvedPath) {
+      return ticketRefused(
+        'this download ticket is for a different file',
+        'download_ticket_wrong_path'
+      );
+    }
+  }
+  const resolved = resolveWorkspacePath(ctx.rootDir, {
+    runId: grant.runId,
+    path: grant.path,
+  });
+  if (!resolved.ok) return errorResponse(400, resolved.message);
+  if (resolved.path !== grant.resolvedPath) {
+    return ticketRefused(
+      'this download ticket is for a different file',
+      'download_ticket_wrong_path'
+    );
+  }
+  return streamedFileResponse(resolved.path, {
+    'content-disposition': attachmentDisposition(resolved.path),
+    // The URL carries the ticket; a dead one, but no page needs to see it.
+    'referrer-policy': 'no-referrer',
   });
 }
 

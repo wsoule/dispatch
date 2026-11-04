@@ -34,6 +34,11 @@ export async function compressForNetwork(
 ): Promise<Response> {
   if (peer === null || isLoopbackAddress(peer)) return res;
   if (res.headers.has('content-encoding')) return res;
+  // A response that declares its length up front is a file streamed from disk
+  // (`/api/files/raw`, a download): compressing it would read the whole file
+  // into the daemon's memory first, and a JSON file in the checkout is not an
+  // API reply.
+  if (res.headers.has('content-length')) return res;
   const type = res.headers.get('content-type') ?? '';
   if (!type.startsWith('application/json')) return res;
   if (!acceptsGzip(req.headers.get('accept-encoding'))) return res;

@@ -173,6 +173,17 @@ they're for:
 - **Overseer** — `/api/overseer`, `/api/overseer/:id/message`; its action
   confirmations and built-in tool-call approvals are gates on the message bus
 - **Integrations** — `/api/linear/*`
+- **Files** — `/api/files/*`: browse, read, search and preview a checkout or a
+  run's worktree, every path held inside it by `api/workspacePaths.ts`. A page
+  that authenticates with a bearer header downloads through
+  `POST /api/files/download-ticket`, which checks the path and credential as
+  `GET /api/files/raw` would and returns `{ ticket, expiresAt }`;
+  `GET /api/files/raw?ticket=` then streams that one file once, as an
+  attachment, with no header, within 60 seconds and while the credential that
+  asked still holds. Tickets live only in the daemon's memory
+  (`api/downloadTickets.ts`) and work on no other route. Minting one starts
+  nothing and only lets one read through, so it stays open while team sync turns
+  on, as reads do.
 - **Meta** — `/api/health`, `/api/sync`, `/api/config`, `/api/agents`
 
 Push updates go over a **WebSocket event bus** (`events.ts`), not SSE. The

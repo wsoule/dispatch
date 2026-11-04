@@ -67,4 +67,24 @@ describe('compressForNetwork', () => {
     );
     expect(blob.headers.get('content-encoding')).toBeNull();
   });
+
+  it('streams a JSON file from the raw route untouched, never buffering it', async () => {
+    // The raw route declares the file's length; its body is a stream that a
+    // gzip pass would have to read to the end first.
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(big));
+        controller.close();
+      },
+    });
+    const file = new Response(body, {
+      headers: { ...json, 'content-length': String(big.length) },
+    });
+    const res = await compressForNetwork(accepting(), file, '10.0.0.2');
+    expect(res).toBe(file);
+    expect(res.headers.get('content-encoding')).toBeNull();
+    // Nothing read the stream on the way through.
+    expect(res.bodyUsed).toBe(false);
+    expect(await res.text()).toBe(big);
+  });
 });
