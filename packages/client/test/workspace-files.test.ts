@@ -85,3 +85,82 @@ describe('workspace file bytes', () => {
     }
   });
 });
+
+// A Download link cannot carry the bearer header either, and reading the file
+// into a Blob first holds all of it in the page: the link points at a one-time
+// ticket URL instead, which the daemon serves once with no header at all.
+describe('workspace download URL', () => {
+  it('asks for a ticket with the bearer token and returns the URL it opens', async () => {
+    const s = stub(
+      () =>
+        new Response(
+          JSON.stringify({
+            ticket: 'abc_-123',
+            expiresAt: '2026-11-03T00:01:00.000Z',
+          }),
+          { status: 201, headers: { 'content-type': 'application/json' } }
+        )
+    );
+    try {
+      const url = await createApiClient(BASE, 'tok').workspaceDownloadUrl(
+        'out/a b.zip',
+        { runId: 'run-1' }
+      );
+      expect(url).toBe(`${BASE}/api/files/raw?ticket=abc_-123`);
+      const call = s.calls[0];
+      expect(call.url).toBe(`${BASE}/api/files/download-ticket`);
+      expect(call.init?.method).toBe('POST');
+      const headers = new Headers(call.init?.headers);
+      expect(headers.get('authorization')).toBe('Bearer tok');
+      expect(headers.get('content-type')).toBe('application/json');
+      expect(JSON.parse(call.init?.body as string)).toEqual({
+        path: 'out/a b.zip',
+        runId: 'run-1',
+      });
+      // The URL itself carries no token: only the single-use ticket.
+      expect(url).not.toContain('tok');
+      expect(url).not.toContain('path=');
+    } finally {
+      s.restore();
+    }
+  });
+
+  it('sends no runId for the checkout', async () => {
+    const s = stub(
+      () =>
+        new Response(JSON.stringify({ ticket: 't', expiresAt: '' }), {
+          status: 201,
+          headers: { 'content-type': 'application/json' },
+        })
+    );
+    try {
+      await createApiClient(BASE, 'tok').workspaceDownloadUrl('a.pdf', {
+        runId: null,
+      });
+      expect(JSON.parse(s.calls[0].init?.body as string)).toEqual({
+        path: 'a.pdf',
+      });
+    } finally {
+      s.restore();
+    }
+  });
+
+  it('rejects with the server error instead of returning a dead URL', async () => {
+    const s = stub(
+      () =>
+        new Response(JSON.stringify({ error: 'no such file' }), {
+          status: 404,
+          headers: { 'content-type': 'application/json' },
+        })
+    );
+    try {
+      const err = await createApiClient(BASE, 'tok')
+        .workspaceDownloadUrl('gone.bin')
+        .catch((error: unknown) => error);
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).status).toBe(404);
+    } finally {
+      s.restore();
+    }
+  });
+});

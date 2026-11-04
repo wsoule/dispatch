@@ -4472,6 +4472,16 @@ export interface ApiClient {
    */
   workspaceFileUrl(path: string, scope?: WorkspaceScope): string;
   /**
+   * A one-time URL that downloads a file with no credential on the request:
+   * the daemon checks the path and this client's token now, and the URL then
+   * serves the file once, as an attachment, within about a minute. It is what
+   * a Download link on a bearer-authenticated page points at, so the browser
+   * streams the file to disk instead of the page holding it in memory first.
+   * Rejects with the server's error (400 outside the project or worktree, 404
+   * for no such file) like any other call.
+   */
+  workspaceDownloadUrl(path: string, scope?: WorkspaceScope): Promise<string>;
+  /**
    * A file's raw bytes, read with this client's credential like every other
    * call. A page shows them through `URL.createObjectURL`, since an `img` or
    * `iframe` pointed at the raw route would 401 on a bearer-authenticated
@@ -5601,6 +5611,20 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       }),
     workspaceFileUrl: (path, scope = {}) =>
       `${baseUrl}/api/files/raw?${workspaceQuery(path, scope)}`,
+    workspaceDownloadUrl: async (path, scope = {}) => {
+      const { ticket } = await request<{ ticket: string; expiresAt: string }>(
+        target,
+        '/api/files/download-ticket',
+        {
+          method: 'POST',
+          ...jsonBody({
+            path,
+            ...(scope.runId == null ? {} : { runId: scope.runId }),
+          }),
+        }
+      );
+      return `${baseUrl}/api/files/raw?${new URLSearchParams({ ticket }).toString()}`;
+    },
     fetchWorkspaceBlob: (path, scope = {}) =>
       requestBlob(
         target,
