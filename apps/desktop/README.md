@@ -55,8 +55,10 @@ a run has changed it, with `moonx demo:demo -- reset --no-push`.
 
 Without a Mac, run it in CI: `.github/workflows/desktop-macos.yml` runs on
 `macos-15` by hand, and on a push to a working branch that changes the workflow
-file. Since macOS minutes cost money, it never runs on a pull request, on a push
-to main, on a tag or on Dependabot's branches. To refresh the baselines:
+file, an e2e spec or helper, or `playwright.config.ts` (not one that changes
+only baselines). Since macOS minutes cost money, it never runs on a pull
+request, on a push to main, on a tag or on Dependabot's branches. To refresh the
+baselines:
 
 ```bash
 gh workflow run desktop-macos.yml -f update_snapshots=true

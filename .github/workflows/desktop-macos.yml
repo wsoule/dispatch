@@ -5,11 +5,12 @@ name: Desktop e2e (macOS)
 # (moon's desktop:e2e and desktop:e2e-update are runInCI: skip), and the
 # project's agents have no Mac. macOS minutes are a cost the owner opts into,
 # so it runs only by hand (workflow_dispatch), and on a push to a working
-# branch that changes this file, as its own self-test. Never on a pull
-# request, a push to main (the merge that adds or edits it), a tag (a release's
-# v* tags: GitHub skips path filters for tags, and defining only a branch
-# filter keeps tag pushes out), or Dependabot's weekly bump of the actions
-# pinned here (its dependabot/** branches).
+# branch that changes this file (its own self-test), an e2e spec or helper, or
+# the Playwright config, but not one that changes only baselines. Never on a
+# pull request, a push to main (the merge that adds or edits it), a tag (a
+# release's v* tags: GitHub skips path filters for tags, and defining only a
+# branch filter keeps tag pushes out), or Dependabot's weekly bump of the
+# actions pinned here (its dependabot/** branches).
 #
 # Each run:
 #   1. writes the -darwin baselines (desktop:e2e-update) when it is a push or
@@ -38,6 +39,12 @@ on:
       - 'dependabot/**'
     paths:
       - '.github/workflows/desktop-macos.yml'
+      # A spec or harness change is checked on the only machine that runs it
+      # (ci.yml's Linux job skips desktop:e2e). Not the baselines themselves:
+      # committing reviewed -darwin PNGs needs no second run.
+      - 'apps/desktop/e2e/**'
+      - 'apps/desktop/playwright.config.ts'
+      - '!apps/desktop/e2e/**-snapshots/**'
 
 permissions:
   contents: read
