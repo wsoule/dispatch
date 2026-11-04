@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { homeDir } from '@tauri-apps/api/path';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 
 import type { DaemonConnection } from './daemonAuth';
@@ -274,12 +275,22 @@ export function touchProjectOpened(path: string): Promise<void> {
 /** Opens a native folder picker (via the `tauri-plugin-dialog` JS API) and resolves to the
  * chosen absolute path, or `null` if the user cancelled. Uses the plugin's JS `open` directly
  * rather than a bespoke Rust command — it's the idiomatic Tauri-2 surface and needs only the
- * `dialog:default` capability. Returns `null` in browser-dev, where no native dialog exists. */
-export function pickDirectory(): Promise<string | null> {
-  if (!isTauri()) return Promise.resolve(null);
-  return openDialog({ directory: true, multiple: false }).then((result) =>
-    typeof result === 'string' ? result : null
-  );
+ * `dialog:default` capability. Returns `null` in browser-dev, where no native dialog exists.
+ *
+ * The picker opens in `startIn` when given, else the home folder. Without a starting folder
+ * macOS reopens wherever the panel was last used, which is usually inside a project already
+ * added, so every Add project pick began there. */
+export async function pickDirectory(
+  startIn?: string | null
+): Promise<string | null> {
+  if (!isTauri()) return null;
+  const defaultPath = startIn ?? (await homeDir().catch(() => undefined));
+  const result = await openDialog({
+    directory: true,
+    multiple: false,
+    defaultPath,
+  });
+  return typeof result === 'string' ? result : null;
 }
 
 /** A GitHub repository from `gh repo list`, for the "From GitHub" clone flow. */

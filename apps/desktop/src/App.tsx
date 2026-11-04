@@ -150,7 +150,7 @@ import {
 } from './lib/paletteEntries';
 import { PALETTE_SECTION_CAPS } from './lib/paletteSections';
 import { buildPosts, type Post, questionToAnswer } from './lib/posts';
-import { basename } from './lib/projectName';
+import { basename, parentDir } from './lib/projectName';
 import { prNumberFromUrl } from './lib/reviewTarget';
 import { isTerminalRunState } from './lib/runState';
 import {
@@ -2429,6 +2429,11 @@ function App() {
                           await handleAddProject(path);
                         }}
                         onClose={() => setAddProjectOpen(false)}
+                        startIn={
+                          root === undefined || root === null
+                            ? null
+                            : parentDir(root)
+                        }
                       />
                     )}
 
