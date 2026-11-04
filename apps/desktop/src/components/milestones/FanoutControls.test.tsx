@@ -494,6 +494,31 @@ test('waves={false} drops the wave strip and keeps the verbs', () => {
   expect(screen.getByRole('button', { name: 'Pause' })).not.toBeNull();
 });
 
+// The Flight Plan header shows the spend in its strip's Spend cell, so its controls drop the
+// pill in both states that draw one, and keep every verb.
+test('spend={false} drops the spend pill while active and paused, and keeps the verbs', () => {
+  const active = progressWith([child('t-1', 'working')], {
+    session: sessionWith('active'),
+  });
+  const { unmount } = mount(active);
+  expect(document.querySelector('[data-slot=spend-pill]')).not.toBeNull();
+  unmount();
+  const first = mount(active, { spend: false });
+  expect(document.querySelector('[data-slot=spend-pill]')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Pause' })).not.toBeNull();
+  expect(screen.getByRole('button', { name: 'Stop' })).not.toBeNull();
+  first.unmount();
+  mount(
+    progressWith([child('t-1', 'working')], {
+      session: sessionWith('paused'),
+    }),
+    { spend: false }
+  );
+  expect(document.querySelector('[data-slot=spend-pill]')).toBeNull();
+  expect(document.querySelector('[data-slot=paused-pill]')).not.toBeNull();
+  expect(screen.getByRole('button', { name: 'Resume' })).not.toBeNull();
+});
+
 // A caller with no land wiring keeps the board's old offer: Send agents… where Land would be.
 test('Land without an onLand handler falls back to Send agents…', () => {
   mount(progressWith([child('t-1', 'landed')]), { onLand: undefined });

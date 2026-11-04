@@ -42,7 +42,11 @@ import {
   concurrencyLabel,
 } from '../../lib/milestoneConcurrency';
 import { rollupMilestoneStatus } from '../../lib/milestoneRollup';
-import type { WorkMilestoneOptions } from '../../lib/milestoneSession';
+import {
+  spendCellWords,
+  waveSteps,
+  type WorkMilestoneOptions,
+} from '../../lib/milestoneSession';
 import { pendingStarts } from '../../lib/optimisticDispatch';
 import { tasksWithFinishedRun } from '../../lib/runState';
 import { assigneeRef } from '../../lib/taskDisplay';
@@ -105,7 +109,8 @@ export interface FlightPlanProps {
 
 const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
 
-/** A fan-out's agent slots as the slots trigger reads them: "1 slot", "3 slots". */
+/** A fan-out's agent slots as the slots picker's name and hint say them: "1 slot",
+ * "3 slots". */
 function slotsText(slots: number): string {
   return `${slots} ${slots === 1 ? 'slot' : 'slots'}`;
 }
@@ -626,74 +631,75 @@ export function FlightPlan({
   );
 
   // One container's fan-out verbs — the header's for the plan's own container, a band's
-  // for its milestone — over the same session API the Milestones page uses.
+  // for its milestone — over the same session API the Milestones page uses. The header
+  // (`band` false) shows the spend and the waves as strip cells instead, so its controls
+  // are only the verbs (Pause and Stop while running); a band keeps its spend pill, its
+  // wave strip and its Open button.
   const fanoutFor = useCallback(
-    (milestone: TaskListItem, band: boolean): ReactNode => {
-      const milestoneId = milestone.meta.id;
-      const progress = data.milestoneProgressById.get(milestoneId);
-      const session = progress?.session ?? null;
-      const choices = concurrencyChoices(
-        data.config?.orchestrator.milestoneConcurrency ?? 3,
-        data.config?.orchestrator.maxConcurrency
-      );
-      // The live session's ceiling as radio rows; picking another one pauses and resumes
-      // the session at it. Beside FanoutControls, whose own concurrency picker only
-      // renders while no session runs.
-      const slotItems: MenuEntry[] =
-        session?.state === 'active'
-          ? choices.map((choice) => ({
-              kind: 'radio',
-              id: String(choice),
-              label: concurrencyLabel(choice),
-              checked: choice === session.concurrency,
-              onSelect: () => {
-                if (choice !== session.concurrency)
-                  void setCeiling(milestoneId, choice);
-              },
-            }))
-          : [];
-      return (
-        <>
-          {!band && session?.state === 'active' && (
-            <Menu
-              label={`Agent slots for ${milestoneId}`}
-              items={slotItems}
-              align="end"
-              trigger={(props) => (
-                <Button
-                  {...props}
-                  variant="secondary"
-                  size="sm"
-                  // The name carries the visible text, so "click 2 slots" finds it.
-                  aria-label={`Agent slots for ${milestoneId}: ${slotsText(session.concurrency)}`}
-                  iconAfter={<ChevronDown {...ICON} size={12} />}
-                >
-                  {slotsText(session.concurrency)}
-                </Button>
-              )}
-            />
-          )}
-          <FanoutControls
-            milestone={milestone}
-            model={model}
-            progress={progress}
-            phases={false}
-            onSendAgents={(id) => setDialog({ milestoneId: id, mode: 'start' })}
-            onPause={data.handlePauseMilestone}
-            onResume={data.handleResumeMilestone}
-            onRaiseCeiling={(id) =>
-              setDialog({ milestoneId: id, mode: 'raise' })
-            }
-            onStop={data.handleStopMilestone}
-            onLand={data.handleLandMilestone}
-            onOpenMilestone={(id) => onOpenTask(id)}
-            showOpen={band}
-          />
-        </>
-      );
-    },
-    [data, model, setCeiling, onOpenTask]
+    (milestone: TaskListItem, band: boolean): ReactNode => (
+      <FanoutControls
+        milestone={milestone}
+        model={model}
+        progress={data.milestoneProgressById.get(milestone.meta.id)}
+        phases={false}
+        spend={band}
+        waves={band}
+        onSendAgents={(id) => setDialog({ milestoneId: id, mode: 'start' })}
+        onPause={data.handlePauseMilestone}
+        onResume={data.handleResumeMilestone}
+        onRaiseCeiling={(id) => setDialog({ milestoneId: id, mode: 'raise' })}
+        onStop={data.handleStopMilestone}
+        onLand={data.handleLandMilestone}
+        onOpenMilestone={(id) => onOpenTask(id)}
+        showOpen={band}
+      />
+    ),
+    [data, model, onOpenTask]
   );
+
+  // The plan's own live session's slots control, drawn in the header's slots cell beside
+  // the meter that already prints the total: an icon button whose name says the current
+  // slots, opening the choices as radio rows. Picking another one pauses and resumes the
+  // session at it. Null while the container has no active session; FanoutControls' own
+  // concurrency picker only renders while no session runs.
+  const slotsPickerFor = (milestone: TaskListItem): ReactNode => {
+    const milestoneId = milestone.meta.id;
+    const session =
+      data.milestoneProgressById.get(milestoneId)?.session ?? null;
+    if (session?.state !== 'active') return null;
+    const items: MenuEntry[] = concurrencyChoices(
+      data.config?.orchestrator.milestoneConcurrency ?? 3,
+      data.config?.orchestrator.maxConcurrency
+    ).map((choice) => ({
+      kind: 'radio',
+      id: String(choice),
+      label: concurrencyLabel(choice),
+      checked: choice === session.concurrency,
+      onSelect: () => {
+        if (choice !== session.concurrency)
+          void setCeiling(milestoneId, choice);
+      },
+    }));
+    const name = `Agent slots for ${milestoneId}: ${slotsText(session.concurrency)}`;
+    return (
+      <Menu
+        label={`Agent slots for ${milestoneId}`}
+        items={items}
+        align="end"
+        trigger={(props) => (
+          <Button
+            {...props}
+            variant="quiet"
+            size="sm"
+            data-slot="flight-slots-picker"
+            aria-label={name}
+            title={`Change the agent slots (${slotsText(session.concurrency)} now)`}
+            icon={<ChevronDown {...ICON} size={12} />}
+          />
+        )}
+      />
+    );
+  };
 
   // A live fan-out over the whole plan; one from before plan-wide fan-outs covers
   // only the direct band, so the milestone bands keep their own controls.
@@ -766,6 +772,11 @@ export function FlightPlan({
     }
   }
   const eta = etaMs(path, activeSlots === 0 ? null : activeSlots);
+  // The plan's own session: its spend while it is active or paused (where the controls
+  // drew their pill; paused, it leads the strip), its waves while it is active (where
+  // they drew their strip).
+  const containerProgress = data.milestoneProgressById.get(containerId);
+  const containerState = containerProgress?.session?.state;
   const stats: FlightHeaderStats = {
     slots: { used: plan.running, total: concurrency },
     running: plan.running,
@@ -775,6 +786,16 @@ export function FlightPlan({
     critical: { count: path.ids.length, ms: path.ms },
     eta: eta === null ? null : { at: now + eta, ms: eta },
     pace,
+    spend:
+      containerProgress !== undefined &&
+      (containerState === 'active' || containerState === 'paused')
+        ? spendCellWords(containerProgress.spend)
+        : null,
+    paused: containerState === 'paused',
+    waves:
+      containerProgress !== undefined && containerState === 'active'
+        ? waveSteps(containerProgress.waves)
+        : null,
   };
 
   const dialogMilestone =
@@ -793,7 +814,11 @@ export function FlightPlan({
   return (
     <div data-slot="flight-plan" className={cx(styles.root, className)}>
       {/* The container's fan-out covers the whole plan, every band included. */}
-      <FlightPlanHeader stats={stats} controls={fanoutFor(container, false)} />
+      <FlightPlanHeader
+        stats={stats}
+        controls={fanoutFor(container, false)}
+        slotsPicker={slotsPickerFor(container)}
+      />
       {nodes.length === 0 ? (
         <div className={styles.empty}>
           <EmptyState

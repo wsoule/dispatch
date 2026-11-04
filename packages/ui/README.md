@@ -996,7 +996,7 @@ stays what a list item says. `variant` picks the shape:
   A host keeps keys and notes short so the cells and its controls share the row
   at common widths. A `title` adds detail to what the cell already says and
   never holds the only copy of a fact: a hover hint reaches no keyboard or
-  touch. The header's own controls go in `end` (Pause all, a slots picker,
+  touch. The header's own controls go in `end` (Pause all, Raise ceiling…,
   Stop): they sit at the end of the same row, right aligned and outside the
   list, and drop under the strip only when a 12rem strip and the controls cannot
   share the row. The cells never wrap: when the column is too narrow the strip

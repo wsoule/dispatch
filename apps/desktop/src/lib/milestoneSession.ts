@@ -189,6 +189,37 @@ export function spendTitle(spend: MilestoneSpend): string {
   return parts.join(' · ');
 }
 
+/** A session's spend as a header's stat cell says it: the settled amount, a short note
+ * naming the ceiling, the hover hint in full, and whether the spend is near its ceiling
+ * (`spendTone`'s warning, which counts the in-flight estimate). */
+export interface SpendCellWords {
+  value: string;
+  note: string;
+  title: string;
+  nearCeiling: boolean;
+}
+
+/** The Spend cell's words for one fan-out session: `$9.81` · `of $10` (or `no ceiling`),
+ * with the pill's hover text (`spendTitle`) after the amounts in the hint, and "near its
+ * ceiling" there too while `spendTone` warns. The Flight Plan header shows this cell in
+ * place of the controls' spend pill, so the two never disagree on the amounts. */
+export function spendCellWords(spend: MilestoneSpend): SpendCellWords {
+  const settled = formatUsd(spend.settledUsd);
+  const nearCeiling = spendTone(spend) === 'warning';
+  const ceiling =
+    spend.maxSpendUsd === null ? null : formatUsd(spend.maxSpendUsd);
+  const amounts =
+    ceiling === null
+      ? `${settled} settled, with no ceiling`
+      : `${settled} settled of the ${ceiling} ceiling`;
+  return {
+    value: settled,
+    note: ceiling === null ? 'no ceiling' : `of ${ceiling}`,
+    title: `${amounts}${nearCeiling ? ', near it' : ''} · ${spendTitle(spend)}`,
+    nearCeiling,
+  };
+}
+
 /** The paused pill's text, by why the session stopped filling. */
 export function pausedReasonLabel(reason: MilestonePauseReason): string {
   switch (reason) {

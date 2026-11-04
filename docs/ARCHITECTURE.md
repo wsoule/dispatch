@@ -650,9 +650,13 @@ stay short, so the cells and the controls share the row at common widths, but
 each still says what it counts; a cell's `title` adds detail and never holds the
 only copy of a fact. While a fan-out runs, Flight Plan puts Running, the ETA and
 the critical path first, since its controls leave the strip little room and the
-fade hides the end. A review diff (`PierreReviewDiff` for a settled run,
-`RunDiffView` for a live one, both through `useFittedDiffLayout`) draws a split
-setting unified while its column is under 980px.
+fade hides the end. Its fan-out's slots picker (in the Running cell, after the
+meter), spend and waves are cells, so its `end` holds only the verbs (Pause and
+Stop, or the paused pill, Resume, Raise ceiling… and Stop); a spend near its
+ceiling comes straight after Running, and a paused session's spend leads the
+strip, so neither is ever behind the fade. A review diff (`PierreReviewDiff` for
+a settled run, `RunDiffView` for a live one, both through `useFittedDiffLayout`)
+draws a split setting unified while its column is under 980px.
 
 ### Tokens only
 

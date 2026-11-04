@@ -112,8 +112,11 @@ export interface FanoutControlsProps {
    * counts the same children. */
   phases?: boolean;
   /** An active session's wave strip; the Live view turns it off since its band draws the
-   * same waves. */
+   * same waves, and the Flight Plan header since its strip has a Waves cell. */
   waves?: boolean;
+  /** An active or paused session's spend pill; the Flight Plan header turns it off since
+   * its strip has a Spend cell that says the same amounts (`spendCellWords`). */
+  spend?: boolean;
 }
 
 /** No session, or one that has run its course — the caller's own live-run pill speaks
@@ -160,6 +163,7 @@ export function FanoutControls({
   showOpen = true,
   phases = true,
   waves = true,
+  spend: showSpend = true,
 }: FanoutControlsProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -188,7 +192,7 @@ export function FanoutControls({
   // Settled spend against its ceiling, shown while a session is active or paused. The hover
   // text names the near-ceiling state the amber dot conveys, so it reads without colour.
   let spendPill: ReactNode = null;
-  if (progress !== undefined) {
+  if (showSpend && progress !== undefined) {
     const spend = progress.spend;
     const nearCeiling = spendTone(spend) === 'warning';
     spendPill = (
@@ -257,7 +261,8 @@ export function FanoutControls({
       </>
     );
   } else if (paused) {
-    // The ceiling that tripped stays on screen next to Raise ceiling….
+    // The ceiling that tripped stays on screen next to Raise ceiling…; a caller that
+    // turns the pill off (the Flight Plan header) leads its own strip with the spend.
     controls = (
       <>
         {spendPill}

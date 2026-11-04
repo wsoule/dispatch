@@ -386,11 +386,18 @@ describe('FlightPlan', () => {
       },
     } as DispatchProjectData;
     mount(data);
-    // The name carries the trigger's visible text (label in name).
+    // The trigger sits in the header's Running cell, right after the meter that prints
+    // the total, so it is an icon button: its name says the slots it would change.
     const trigger = screen.getByRole('button', {
       name: 'Agent slots for e-1: 2 slots',
     });
-    expect(trigger.textContent).toBe('2 slots');
+    expect(trigger.textContent).toBe('');
+    expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
+    const cell = trigger.closest('li');
+    expect(
+      cell?.querySelector('[data-slot=flight-slots] [role=progressbar]')
+    ).not.toBeNull();
+    expect(cell?.closest('ul')?.getAttribute('aria-label')).toBe('Flight plan');
     // A menu places itself a microtask after it opens, so let the queue drain.
     const settle = (work: () => void) =>
       act(async () => {
@@ -422,6 +429,93 @@ describe('FlightPlan', () => {
       fireEvent.click(screen.getAllByRole('menuitemradio')[2])
     );
     expect(calls).toEqual(['pause e-1', 'resume e-1 3']);
+  });
+
+  test("the header's verbs are only Pause and Stop: the spend and the waves are strip cells", () => {
+    const waves = [
+      { index: 1, total: 2, byPhase: { landed: 2 } },
+      { index: 2, total: 1, byPhase: { working: 1 } },
+    ];
+    mount(
+      dataWith(
+        plan(),
+        [LIVE],
+        [
+          {
+            ...progress('active', 2),
+            spend: {
+              settledUsd: 9.81,
+              liveCount: 1,
+              estimatedLiveUsd: 0,
+              runsStarted: 2,
+              maxSpendUsd: 10,
+              maxRuns: null,
+            },
+            waves,
+          },
+        ]
+      )
+    );
+    const header = document.querySelector<HTMLElement>(
+      '[data-slot=flight-header]'
+    );
+    const list = screen.getByRole('list', { name: 'Flight plan' });
+    // No pill or strip beside the verbs: the row's end holds the two buttons alone.
+    expect(header?.querySelector('[data-slot=spend-pill]')).toBeNull();
+    const pause = screen.getByRole('button', { name: 'Pause' });
+    const stop = screen.getByRole('button', { name: 'Stop' });
+    expect(list.contains(pause)).toBe(false);
+    expect(
+      Array.from(pause.parentElement?.children ?? [], (el) => el.textContent)
+    ).toEqual(['Pause', 'Stop']);
+    expect(pause.parentElement).toBe(stop.parentElement);
+    // The spend is a cell, amber near its ceiling with a shape and words besides.
+    const spend = list.querySelector('[data-slot=flight-spend]');
+    // Key, value (with its words for a screen reader), then the note.
+    expect(spend?.textContent).toBe(
+      ['Spend', '$9.81', ', near its ceiling', 'of $10'].join('')
+    );
+    expect(spend?.getAttribute('data-tone')).toBe('warning');
+    expect(spend?.querySelector('svg')).not.toBeNull();
+    // Near its ceiling the spend comes straight after the running cell, where the
+    // strip's fade never reaches, rather than after the counts.
+    const order = Array.from(list.children, (li) =>
+      li.getAttribute('data-slot')
+    );
+    expect(order.slice(0, 2)).toEqual(['flight-stat', 'flight-spend']);
+    expect(list.children[0]?.textContent?.startsWith('Running')).toBe(true);
+    // The waves are a cell with each wave named, last.
+    const wavesCell = list.querySelector('[data-slot=flight-waves]');
+    expect(wavesCell?.textContent).toBe('WavesWave 1: passedWave 2: active');
+    expect(order.at(-1)).toBe('flight-waves');
+  });
+
+  test('a paused plan leads its strip with the spend and has no slots picker', () => {
+    mount(dataWith(plan(), [LIVE], [progress('paused', 2)]));
+    const list = screen.getByRole('list', { name: 'Flight plan' });
+    // The paused verbs leave the strip its narrowest, so the amount Raise ceiling… asks
+    // about is the first cell.
+    expect(list.firstElementChild?.getAttribute('data-slot')).toBe(
+      'flight-spend'
+    );
+    expect(list.querySelector('[data-slot=flight-spend]')?.textContent).toBe(
+      'Spend$0no ceiling'
+    );
+    expect(list.querySelector('[data-slot=flight-waves]')).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: /^Agent slots for/ })
+    ).toBeNull();
+    expect(screen.getByRole('button', { name: 'Resume' })).toBeTruthy();
+  });
+
+  test('with no fan-out the header has no spend, waves or slots picker', () => {
+    mount(dataWith(plan()));
+    const list = screen.getByRole('list', { name: 'Flight plan' });
+    expect(list.querySelector('[data-slot=flight-spend]')).toBeNull();
+    expect(list.querySelector('[data-slot=flight-waves]')).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: /^Agent slots for/ })
+    ).toBeNull();
   });
 
   test('a node the server will not start never reads as next up', () => {

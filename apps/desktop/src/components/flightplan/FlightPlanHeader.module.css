@@ -19,6 +19,18 @@
   opacity: 0.4;
 }
 
+/* The slots meter and the picker that changes the slots, side by side in one cell. */
+.slots {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+/* The fan-out's waves in their cell: one short track the waves share equally. */
+.waves {
+  width: 48px;
+}
+
 @media (forced-colors: active) {
   .criticalSwatch {
     border: 1px solid CanvasText;

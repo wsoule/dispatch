@@ -20,6 +20,7 @@ import {
   phaseTone,
   rulingsWaiting,
   showsPhasePill,
+  spendCellWords,
   spendPillLabel,
   spendTitle,
   spendTone,
@@ -257,6 +258,35 @@ describe('spend copy', () => {
     expect(spendTone(spend({ settledUsd: 9999, maxSpendUsd: null }))).toBe(
       'working'
     );
+  });
+
+  test('spendCellWords: the settled amount, the ceiling as its note, and the pill hint', () => {
+    expect(
+      spendCellWords(
+        spend({ settledUsd: 9.81, liveCount: 0, estimatedLiveUsd: 0 })
+      )
+    ).toEqual({
+      value: '$9.81',
+      note: 'of $60',
+      title: '$9.81 settled of the $60 ceiling · 7/20 runs',
+      nearCeiling: false,
+    });
+    // Near the ceiling counts the in-flight estimate, and the hint says so in words.
+    expect(spendCellWords(spend())).toEqual({
+      value: '$41.20',
+      note: 'of $60',
+      title:
+        '$41.20 settled of the $60 ceiling, near it · +~$30.00 in flight · 7/20 runs',
+      nearCeiling: true,
+    });
+    expect(
+      spendCellWords(spend({ maxSpendUsd: null, maxRuns: null, liveCount: 0 }))
+    ).toEqual({
+      value: '$41.20',
+      note: 'no ceiling',
+      title: '$41.20 settled, with no ceiling · 7 runs',
+      nearCeiling: false,
+    });
   });
 });
 
