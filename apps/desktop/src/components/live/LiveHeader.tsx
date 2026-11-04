@@ -9,15 +9,17 @@ import styles from './LiveHeader.module.css';
 
 const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
 
-/** The spend cell's short value, its short note and the hint that says it in full. */
+/** The spend cell's key, its short value, its short note (if any) and the title that says
+ * it in full. */
 interface LiveSpend {
+  label: string;
   value: string;
-  note: string;
+  note?: string;
   title: string;
 }
 
 // What the fan-outs' settled spend is measured against, for the note (`of $60 ceilings`,
-// worded as Overseer's flow columns word it, or `no ceiling`) and in full for the hint.
+// worded as Overseer's flow columns word it, or `no ceiling`) and in full for the title.
 function ceilingWords(ceilings: LiveCeilings): { note: string; title: string } {
   const settled = formatUsd(ceilings.settledUsd);
   if (ceilings.ceilingUsd === null) {
@@ -33,10 +35,12 @@ function ceilingWords(ceilings: LiveCeilings): { note: string; title: string } {
   };
 }
 
-// Today's spend as the cell's value with "today" and the fan-outs' settled spend as its
-// note (`$4.20` · `today · $8.10 of $60 ceilings`), else the settled spend alone (`$8.10` ·
-// `of $60 ceilings`), or null when there is neither. The note says what each amount is in
-// a few words, since a hover hint reaches no keyboard or touch; the hint says it in full.
+// The key says which amount the value is, so it reads at a glance on the row (the strip
+// puts the note in the cell's hint, `LiveHeader`): today's spend under "Today" with the
+// fan-outs' settled spend as its note (`$4.20` · `$8.10 of $60 ceilings`), else the live
+// fan-outs' settled spend under "Spend" (`$8.10` · `of $60 ceilings`), or null when there
+// is neither. Keys of five letters, so the cells still fit beside Pause all at 1024px
+// ("Spend today" would not). The title says it all in full and is the hint's words.
 function liveSpend(
   today: number | null,
   ceilings: LiveCeilings | null
@@ -44,22 +48,24 @@ function liveSpend(
   if (today !== null) {
     const spent = `${formatUsd(today)} spent today`;
     if (ceilings === null) {
-      return { value: formatUsd(today), note: 'today', title: spent };
+      return { label: 'Today', value: formatUsd(today), title: spent };
     }
     const words = ceilingWords(ceilings);
     const settled = formatUsd(ceilings.settledUsd);
     return {
+      label: 'Today',
       value: formatUsd(today),
       note:
         ceilings.ceilingUsd === null
-          ? `today · ${settled}, ${words.note}`
-          : `today · ${settled} ${words.note}`,
+          ? `${settled}, ${words.note}`
+          : `${settled} ${words.note}`,
       title: `${spent}; ${words.title}`,
     };
   }
   if (ceilings === null) return null;
   const words = ceilingWords(ceilings);
   return {
+    label: 'Spend',
     value: formatUsd(ceilings.settledUsd),
     note: words.note,
     title: words.title,
@@ -100,7 +106,8 @@ function slotsCell(slots: LiveTotals['slots']): StatCell {
 // teammate, landing, then the spend when there is any. A count takes its status tone
 // only while it is above zero (blue running and landing, amber blocked behind a teammate).
 // Keys stay short so the cells and Pause all share the header's row at common widths, but
-// each still says what it counts on its own; the hints only add detail.
+// each still says what it counts on its own; the hints only add detail, and hold the
+// spend's note.
 function headerCells(totals: LiveTotals, spend: LiveSpend | null): StatCell[] {
   const cells: StatCell[] = [
     slotsCell(totals.slots),
@@ -138,10 +145,12 @@ function headerCells(totals: LiveTotals, spend: LiveSpend | null): StatCell[] {
     cells.push({
       id: 'spend',
       'data-slot': 'live-spend',
-      label: 'Spend',
+      label: spend.label,
       value: spend.value,
-      note: spend.note,
+      ...(spend.note === undefined ? {} : { note: spend.note }),
       title: spend.title,
+      // The title says the note's amounts: the hint says it alone.
+      hint: spend.title,
     });
   }
   return cells;
@@ -217,7 +226,10 @@ interface LiveHeaderProps {
  * passed as the strip's `end` so it sits at the end of the same row. The strip is the
  * compact variant (owner decision 2026-11-03): one 26px row at every width, the cells
  * scrolling sideways inside the strip when the column is too narrow, so the bands keep
- * the height the old panel took.
+ * the height the old panel took. As on Flight Plan's (owner decision 2026-11-04), the
+ * spend's note is in the cell's hint (a Tooltip on hover and keyboard focus; still in the
+ * cell's text for a screen reader, and on the row on a touch screen) while its key says
+ * which amount the value is, so every cell fits beside Pause all at 1024px.
  */
 export const LiveHeader = memo(function LiveHeader({
   totals,
@@ -237,6 +249,7 @@ export const LiveHeader = memo(function LiveHeader({
         variant="compact"
         data-slot="live-header"
         label="Live"
+        notes="hint"
         cells={headerCells(totals, spend)}
         end={fleetControl({
           active,

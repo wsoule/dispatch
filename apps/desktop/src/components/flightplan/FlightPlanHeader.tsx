@@ -141,6 +141,8 @@ function spendCell(spend: SpendCellWords | null | undefined): StatCell | null {
     note: spend.note,
     tone: spend.nearCeiling ? 'warning' : 'default',
     title: spend.title,
+    // The title already says the note's amounts: the hint says it alone.
+    hint: spend.title,
   };
 }
 
@@ -185,9 +187,10 @@ function placeSpend(
 // running (with the slots meter and its picker), the ETA, the critical path, then queued
 // and landed, then the fan-out's spend and waves — so a column too narrow for them all
 // hides the least urgent behind the strip's fade; a spend that warns or a paused session's
-// spend moves forward instead (`placeSpend`). Notes stay short so the cells and the
-// verbs share the header's row: the critical path's remaining time is its note unless the
-// ETA's "left" says the very same duration, and is always in its hint too.
+// spend moves forward instead (`placeSpend`). The critical path's remaining time is its
+// note unless the ETA's "left" says the very same duration, and is always in its title
+// too. While fanning out the notes go into the cells' hints (`FlightPlanHeader`), so
+// each noted cell's `hint` is a sentence that says its note's facts.
 function headerCells(stats: FlightHeaderStats, picker: ReactNode): StatCell[] {
   const { slots, critical, eta, pace } = stats;
   const fanningOut = slots.total !== null;
@@ -216,13 +219,15 @@ function headerCells(stats: FlightHeaderStats, picker: ReactNode): StatCell[] {
   ];
   const timing: StatCell[] = [];
   if (showEta) {
+    const etaBasis = `critical path, or the remaining work over the slots when that is longer, ${paceNote}`;
     timing.push({
       id: 'eta',
       'data-slot': 'flight-eta',
       label: 'ETA',
       value: formatEta(eta.at, eta.at - eta.ms),
       note: `${formatDuration(eta.ms)} left`,
-      title: `The critical path, or the remaining work over the slots when that is longer, ${paceNote}`,
+      title: `The ${etaBasis}`,
+      hint: `${formatDuration(eta.ms)} left, by the ${etaBasis}`,
     });
   }
   if (critical.count > 0) {
@@ -230,6 +235,7 @@ function headerCells(stats: FlightHeaderStats, picker: ReactNode): StatCell[] {
     // The ETA is the longer of the critical path and the remaining work over the slots, so
     // its "left" can be a different, longer time: the path's own time then stays on screen.
     const sameAsEta = showEta && formatDuration(eta.ms) === left;
+    const title = `The longest chain still to land, ${left} of work ${paceNote}`;
     timing.push({
       id: 'critical',
       'data-slot': 'flight-critical-stat',
@@ -238,7 +244,9 @@ function headerCells(stats: FlightHeaderStats, picker: ReactNode): StatCell[] {
       icon: <span className={styles.criticalSwatch} />,
       value: critical.count,
       ...(sameAsEta ? {} : { note: left }),
-      title: `The longest chain still to land, ${left} of work ${paceNote}`,
+      title,
+      // The title says the note's time: the hint says it alone.
+      hint: title,
     });
   }
   return placeSpend(
@@ -261,7 +269,12 @@ function headerCells(stats: FlightHeaderStats, picker: ReactNode): StatCell[] {
  * moves to the front of the strip so it stays on screen. The strip is the compact variant (owner
  * decision 2026-11-03): one 26px row at every width, the cells scrolling sideways inside
  * the strip when the column is too narrow, so Plan mode and container pages keep their
- * canvas height; the controls drop under it only on a column too narrow for both.
+ * canvas height; the controls drop under it only on a column too narrow for both. While a
+ * fan-out runs or is paused (owner decision 2026-11-04) the cells' notes (the ETA's time
+ * left, the critical path's, the spend's ceiling) move into their hints, a Tooltip on each
+ * of those cells on hover and keyboard focus (the notes stay in the cells' text for a
+ * screen reader, and on the row on a touch screen), and the caller draws Pause and Stop
+ * icon-only, so more of the cells share the row with the verbs.
  */
 export function FlightPlanHeader({
   stats,
@@ -277,6 +290,7 @@ export function FlightPlanHeader({
       <StatsStrip
         variant="compact"
         label="Flight plan"
+        notes={stats.slots.total === null ? 'inline' : 'hint'}
         cells={headerCells(stats, slotsPicker)}
         end={controls}
       />

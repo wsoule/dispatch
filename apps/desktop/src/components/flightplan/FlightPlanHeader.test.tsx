@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -23,21 +23,53 @@ const etaText = formatEta(
   (stats.eta?.at ?? 0) - (stats.eta?.ms ?? 0)
 );
 
-// Each cell's words (key, value, note) and its hover hint, in reading order. The hint
-// is on the cell's inner element, never the <li>, whose name it would otherwise become.
-// Only the strip's own items: the Waves cell holds a list of its own.
-function cellsOf(root: HTMLElement): { text: string; title: string }[] {
+// Each cell's words, in reading order, from its inner element (never the <li>, whose
+// name they would otherwise become): `text` is what the row shows (key, value, and the
+// note while it is on the row), `note` a note moved into the cell's hint (still in the
+// cell's text for a screen reader, as srOnly words), `title` its native hover title, and
+// `described` the hidden words a hinted cell's accessible description holds (its
+// title). Only the strip's own items: the Waves cell holds a list of its own.
+function cellsOf(
+  root: HTMLElement
+): { text: string; note: string; title: string; described: string }[] {
   return Array.from(
     root.querySelectorAll('[data-variant=compact] > li'),
     (li) => {
       expect(li.hasAttribute('title')).toBe(false);
+      const inner = li.firstElementChild;
+      if (inner === null) throw new Error('no cell');
+      const spoken = Array.from(inner.children).find((el) =>
+        el.classList.contains('srOnly')
+      );
+      const id = inner.getAttribute('aria-describedby');
+      const described = id === null ? null : document.getElementById(id);
+      if (described !== null) expect(described.hidden).toBe(true);
       return {
-        text: li.textContent ?? '',
-        title: li.firstElementChild?.getAttribute('title') ?? '',
+        text: Array.from(inner.childNodes)
+          .filter((node) => node !== spoken)
+          .map((node) => node.textContent)
+          .join(''),
+        note: spoken?.textContent ?? '',
+        title: inner.getAttribute('title') ?? '',
+        described: described?.textContent ?? '',
       };
     }
   );
 }
+
+// The words the tooltip shows (it is aria-hidden, so the query looks past that).
+function tipText(): string | null {
+  return screen.queryByRole('tooltip', { hidden: true })?.textContent ?? null;
+}
+
+function wait(ms: number): Promise<void> {
+  return act(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+}
+
+const ETA_TITLE =
+  'The critical path, or the remaining work over the slots when that is longer, at 20m a run, the median of the last 3';
+const PATH_TITLE =
+  'The longest chain still to land, ~20m of work at 20m a run, the median of the last 3';
 
 describe('FlightPlanHeader', () => {
   test('the fan-out controls sit at the end of the strip row, outside the list', () => {
@@ -98,12 +130,12 @@ describe('FlightPlanHeader', () => {
     const cells = cellsOf(container);
     // Running, then when it lands (the ETA and the critical path), then the counts: the
     // fan-out controls leave the strip little room, and its fade hides the end. The
-    // ETA's 1h 40m is the remaining work over the slots, longer than the path's own
-    // 20m, so the path keeps its time on screen.
+    // notes are in the cells' hints while fanning out (owner decision 2026-11-04), so
+    // the row holds only keys and values.
     expect(cells.map((c) => c.text)).toEqual([
       'Running1/3',
-      `ETA${etaText}~1h 40m left`,
-      'Critical path1~20m',
+      `ETA${etaText}`,
+      'Critical path1',
       'Queued4',
       'Landed26/50',
     ]);
@@ -112,11 +144,104 @@ describe('FlightPlanHeader', () => {
     );
     expect(meter?.getAttribute('aria-label')).toBe('Agent slots');
     expect(meter?.getAttribute('aria-valuetext')).toBe('1 of 3 slots in use');
-    // The full wording stays in each cell's hint.
-    expect(cells[0]?.title).toBe('1 of 3 agent slots in use');
-    expect(cells[2]?.title).toBe(
-      'The longest chain still to land, ~20m of work at 20m a run, the median of the last 3'
+    // The notes are in the hints, and still in the cells' text for a screen reader. The
+    // ETA's 1h 40m is the remaining work over the slots, longer than the path's own 20m,
+    // so the path keeps a note of its own time.
+    expect(cells.map((c) => c.note)).toEqual([
+      '',
+      '~1h 40m left',
+      '~20m',
+      '',
+      '',
+    ]);
+    // A hinted cell's title is its description; any other cell keeps its native title.
+    expect(cells.map((c) => c.described)).toEqual([
+      '',
+      ETA_TITLE,
+      PATH_TITLE,
+      '',
+      '',
+    ]);
+    expect(cells.map((c) => c.title)).toEqual([
+      '1 of 3 agent slots in use',
+      '',
+      '',
+      'Waiting for a free agent slot',
+      '',
+    ]);
+  });
+
+  test('fanning out, every note is in a hint reached by keyboard focus and hover', async () => {
+    const { container } = render(
+      <FlightPlanHeader stats={stats} controls={null} />
     );
+    const eta = container.querySelector('[data-slot=flight-eta] > div');
+    const path = container.querySelector(
+      '[data-slot=flight-critical-stat] > div'
+    );
+    if (!(eta instanceof HTMLElement) || !(path instanceof HTMLElement))
+      throw new Error('no hinted cells');
+    // Tab stops with the cue.
+    for (const cell of [eta, path]) {
+      expect(cell.tabIndex).toBe(0);
+      expect(cell.hasAttribute('data-hint')).toBe(true);
+    }
+    // A hover first, out of the warm window a tip another test closed would leave:
+    // not at once, only after the tooltip's 300ms delay.
+    await wait(450);
+    fireEvent.pointerEnter(eta, { pointerType: 'mouse' });
+    expect(tipText()).toBeNull();
+    await wait(150);
+    expect(tipText()).toBeNull();
+    await wait(200);
+    // The ETA's hint says its note's time in a sentence with the title's basis.
+    const etaHint =
+      '~1h 40m left, by the critical path, or the remaining work over the slots when that is longer, at 20m a run, the median of the last 3';
+    expect(tipText()).toBe(etaHint);
+    fireEvent.pointerLeave(eta, { pointerType: 'mouse' });
+    await wait(200);
+    expect(tipText()).toBeNull();
+    // Keyboard focus shows it at once. Its description stays its own hidden title, never
+    // the tip's id beside it, so a screen reader hears each fact once.
+    act(() => eta.focus());
+    expect(tipText()).toBe(etaHint);
+    expect(eta.getAttribute('aria-describedby')?.split(' ')).toHaveLength(1);
+    act(() => eta.blur());
+    expect(tipText()).toBeNull();
+    // The path's title already says its time: its hint is the title alone.
+    act(() => path.focus());
+    expect(tipText()).toBe(PATH_TITLE);
+    act(() => path.blur());
+  });
+
+  // The strip puts its notes back on the row when the fan-out ends: a focused cell keeps
+  // its element, so focus is not dropped to the page.
+  test('a focused critical path cell keeps its focus when the fan-out ends', () => {
+    const { container, rerender } = render(
+      <FlightPlanHeader stats={stats} controls={null} />
+    );
+    const path = container.querySelector(
+      '[data-slot=flight-critical-stat] > div'
+    );
+    if (!(path instanceof HTMLElement)) throw new Error('no path cell');
+    act(() => path.focus());
+    rerender(
+      <FlightPlanHeader
+        stats={{
+          ...stats,
+          slots: { used: 0, total: null },
+          running: 0,
+          eta: null,
+        }}
+        controls={null}
+      />
+    );
+    const after = container.querySelector(
+      '[data-slot=flight-critical-stat] > div'
+    );
+    expect(after).toBe(path);
+    expect(document.activeElement).toBe(path);
+    expect(cellsOf(container)[3]?.text).toBe('Critical path1~20m');
   });
 
   test("the critical path drops its note only when the ETA's time left is the same", () => {
@@ -131,13 +256,21 @@ describe('FlightPlanHeader', () => {
     );
     const cells = cellsOf(container);
     expect(cells.slice(1, 3).map((c) => c.text)).toEqual([
-      `ETA${etaText}~1h 40m left`,
+      `ETA${etaText}`,
       'Critical path2',
     ]);
-    // The time is still in the hint.
+    expect(cells[1]?.note).toBe('~1h 40m left');
+    // With no note the path has no hint of its own: its time is in its hover title.
+    expect(cells[2]?.note).toBe('');
+    expect(cells[2]?.described).toBe('');
     expect(cells[2]?.title).toBe(
       'The longest chain still to land, ~1h 40m of work at 20m a run, the median of the last 3'
     );
+    expect(
+      container
+        .querySelector('[data-slot=flight-critical-stat] > div')
+        ?.hasAttribute('data-hint')
+    ).toBe(false);
   });
 
   test('with no fan-out the Running count says so in its hint, and the critical path its time', () => {
@@ -153,6 +286,8 @@ describe('FlightPlanHeader', () => {
       />
     );
     const cells = cellsOf(container);
+    // With no fan-out the row has room: the critical path's note stays on screen, and
+    // no cell takes a tab stop for a hint.
     expect(cells.map((c) => c.text)).toEqual([
       'Running0',
       'Ready4',
@@ -160,6 +295,11 @@ describe('FlightPlanHeader', () => {
       'Critical path1~20m',
     ]);
     expect(cells[0]?.title).toBe('Not fanning out, so no agent slots are held');
+    expect(cells[3]?.title).toBe(PATH_TITLE);
+    expect(container.querySelector('[data-hint]')).toBeNull();
+    expect(
+      container.querySelector('[data-variant=compact] .srOnly')
+    ).toBeNull();
     expect(container.querySelector('[role=progressbar]')).toBeNull();
   });
 
@@ -240,14 +380,25 @@ describe('FlightPlanHeader', () => {
     const cells = cellsOf(container);
     expect(cells.slice(5)).toEqual([
       {
-        text: 'Spend$9.81of $60',
-        title: '$9.81 settled of the $60 ceiling · 2 runs',
+        text: 'Spend$9.81',
+        note: 'of $60',
+        title: '',
+        described: '$9.81 settled of the $60 ceiling · 2 runs',
       },
       {
         text: 'WavesWave 1: passedWave 2: active',
+        note: '',
         title: 'Wave 1: passed, Wave 2: active',
+        described: '',
       },
     ]);
+    // The spend's title already says its ceiling: the hint is the title alone, never
+    // "of $60." before it.
+    const cell = container.querySelector('[data-slot=flight-spend] > div');
+    if (!(cell instanceof HTMLElement)) throw new Error('no spend cell');
+    act(() => cell.focus());
+    expect(tipText()).toBe('$9.81 settled of the $60 ceiling · 2 runs');
+    act(() => cell.blur());
     const spend = container.querySelector('[data-slot=flight-spend]');
     expect(spend?.getAttribute('data-tone')).toBe('default');
     // No warning shape away from the ceiling.
@@ -296,9 +447,9 @@ describe('FlightPlanHeader', () => {
     );
     expect(cellsOf(container).map((c) => c.text)).toEqual([
       'Running1/3',
-      ['Spend', '$55', ', near its ceiling', 'of $60'].join(''),
-      `ETA${etaText}~1h 40m left`,
-      'Critical path1~20m',
+      ['Spend', '$55', ', near its ceiling'].join(''),
+      `ETA${etaText}`,
+      'Critical path1',
       'Queued4',
       'Landed26/50',
       'WavesWave 1: passedWave 2: active',
@@ -322,7 +473,7 @@ describe('FlightPlanHeader', () => {
     ).toEqual([
       'Slots3/3',
       'Running4',
-      ['Spend', '$55', ', near its ceiling', 'of $60'].join(''),
+      ['Spend', '$55', ', near its ceiling'].join(''),
     ]);
   });
 
@@ -339,13 +490,17 @@ describe('FlightPlanHeader', () => {
         controls={null}
       />
     );
-    expect(cellsOf(container).map((c) => c.text)).toEqual([
-      'Spend$4of $60',
+    const cells = cellsOf(container);
+    expect(cells.map((c) => c.text)).toEqual([
+      'Spend$4',
       'Running1/3',
-      'Critical path1~20m',
+      'Critical path1',
       'Queued4',
       'Landed26/50',
     ]);
+    // Paused, the notes are in the hints as well: the paused verbs need the room most.
+    expect(cells.map((c) => c.note)).toEqual(['of $60', '', '~20m', '', '']);
+    expect(cells[0]?.described).toBe('$4 settled of the $60 ceiling · 2 runs');
   });
 
   // Picking fewer slots than the runs in flight splits the meter's cell into Slots and

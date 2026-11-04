@@ -353,9 +353,21 @@ describe('LiveView', () => {
         ?.firstElementChild?.getAttribute('title')
     ).toBe('Starts on its own as a fan-out slot frees');
     expect(text('live-teammate')).toBe('Blocked on teammates0');
-    // The short amount is the value; what it is measured against is the note,
-    // short, and the hint says it in full.
-    expect(text('live-spend')).toBe('Spend$4of $20 ceilings');
+    // With no spend today the value is the live fan-outs' settled spend ("Today" keys
+    // today's). What it is measured against is the note, in the cell's hint (owner
+    // decision 2026-11-04) and still in its text for a screen reader; the title says it
+    // in full and is the cell's accessible description.
+    const spend = document.querySelector('[data-slot=live-spend] > div');
+    expect(spend?.textContent).toBe('Spend$4of $20 ceilings');
+    expect(spend?.querySelector(':scope > .srOnly')?.textContent).toBe(
+      'of $20 ceilings'
+    );
+    const described = spend?.getAttribute('aria-describedby');
+    const title = described ? document.getElementById(described) : null;
+    expect(title?.hidden).toBe(true);
+    expect(title?.textContent).toBe(
+      '$4 settled in the live fan-outs, of their $20 ceilings'
+    );
   });
 
   test('j/k walk the nodes band after band, J/K jump a band', () => {

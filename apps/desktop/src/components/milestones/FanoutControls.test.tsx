@@ -584,3 +584,238 @@ test('the verbs drawn are exactly the ones fanoutVerbs offers', () => {
     unmount();
   }
 });
+
+// The Flight Plan header's verbs (owner decision 2026-11-04): Pause and Stop icon-only,
+// keeping their names, each with a Tooltip that says what it does; Stop asks first.
+const PAUSE_TIP =
+  'Pause the fan-out: live runs go on, no new ones start until you resume';
+const STOP_TIP =
+  'Stop the fan-out for good: live runs go on, no new ones start';
+
+function tipText(): string | null {
+  return screen.queryByRole('tooltip', { hidden: true })?.textContent ?? null;
+}
+
+function wait(ms: number): Promise<void> {
+  return act(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+}
+
+test('iconVerbs: Pause and Stop are icon-only, named, and hinted on focus and after a hover delay', async () => {
+  mount(
+    progressWith([child('t-1', 'working')], { session: sessionWith('active') }),
+    { iconVerbs: true, showOpen: false }
+  );
+  const pause = screen.getByRole('button', { name: 'Pause' });
+  const stop = screen.getByRole('button', { name: 'Stop' });
+  for (const [button, slot] of [
+    [pause, 'fanout-pause'],
+    [stop, 'fanout-stop'],
+  ] as const) {
+    // No words on the button, only its icon; the Tooltip is the one hint (no title).
+    expect(button.textContent).toBe('');
+    expect(button.querySelector('svg')).not.toBeNull();
+    expect(button.getAttribute('data-slot')).toBe(slot);
+    expect(button.hasAttribute('title')).toBe(false);
+    expect(button.hasAttribute('aria-describedby')).toBe(false);
+  }
+  // A hover first, out of the warm window a tip another test closed would leave: not at
+  // once, only after the tooltip's 300ms delay.
+  await wait(450);
+  fireEvent.pointerEnter(stop, { pointerType: 'mouse' });
+  expect(tipText()).toBeNull();
+  await wait(150);
+  expect(tipText()).toBeNull();
+  await wait(200);
+  expect(tipText()).toBe(STOP_TIP);
+  fireEvent.pointerLeave(stop, { pointerType: 'mouse' });
+  await wait(200);
+  expect(tipText()).toBeNull();
+  // Keyboard focus shows the hint at once and makes it the button's description.
+  act(() => pause.focus());
+  const tip = screen.getByRole('tooltip', { hidden: true });
+  expect(tip.textContent).toBe(PAUSE_TIP);
+  expect(pause.getAttribute('aria-describedby')).toBe(tip.id);
+  act(() => pause.blur());
+  expect(tipText()).toBeNull();
+  act(() => stop.focus());
+  expect(tipText()).toBe(STOP_TIP);
+  act(() => stop.blur());
+});
+
+test('iconVerbs: Pause pauses; Stop asks first and stops only once confirmed', async () => {
+  const { calls } = mount(
+    progressWith([child('t-1', 'working')], { session: sessionWith('active') }),
+    { iconVerbs: true, showOpen: false }
+  );
+  await settle(() =>
+    fireEvent.click(screen.getByRole('button', { name: 'Pause' }))
+  );
+  expect(calls).toEqual(['pause:e-1']);
+  const stop = screen.getByRole('button', { name: 'Stop' });
+  act(() => stop.focus());
+  await settle(() => fireEvent.click(stop));
+  // Not yet: a dialog says what Stop does, in words, with Cancel focused.
+  expect(calls).toEqual(['pause:e-1']);
+  const dialog = screen.getByRole('alertdialog', { name: 'Stop the fan-out?' });
+  expect(dialog.textContent).toContain('cannot be resumed');
+  expect(document.activeElement).toBe(
+    screen.getByRole('button', { name: 'Cancel' })
+  );
+  await settle(() =>
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  );
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  expect(calls).toEqual(['pause:e-1']);
+  // Focus is back on Stop, which never left the page.
+  expect(document.activeElement).toBe(stop);
+  await settle(() => fireEvent.click(stop));
+  await settle(() =>
+    fireEvent.click(screen.getByRole('button', { name: 'Stop fan-out' }))
+  );
+  expect(calls).toEqual(['pause:e-1', 'stop:e-1']);
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  expect(document.activeElement).toBe(stop);
+});
+
+test('iconVerbs: a failed stop closes the dialog and shows the error pill', async () => {
+  let fail: (err: Error) => void = () => {};
+  mount(
+    progressWith([child('t-1', 'working')], { session: sessionWith('active') }),
+    {
+      iconVerbs: true,
+      showOpen: false,
+      onStop: () =>
+        new Promise<void>((_, reject) => {
+          fail = reject;
+        }),
+    }
+  );
+  const stop = screen.getByRole('button', { name: 'Stop' });
+  await settle(() => fireEvent.click(stop));
+  await settle(() =>
+    fireEvent.click(screen.getByRole('button', { name: 'Stop fan-out' }))
+  );
+  // While the stop runs the dialog waits on it; the verbs behind it keep their elements.
+  expect(screen.getByRole('alertdialog')).not.toBeNull();
+  const during = screen.getByRole('button', { name: 'Stop' });
+  expect(during).toBe(stop);
+  await settle(() => fail(new Error('stop failed')));
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  expect(screen.getByRole('alert').textContent).toBe('stop failed');
+});
+
+// A keyboard press on a verb whose request is held: the verbs go disabled, which swaps the
+// Tooltip's focusable wrapper in (a new element). Focus and the one tip move onto it, never
+// left on the removed button (a stray tip at the window's corner), and back when it fails.
+test('iconVerbs: a verb pressed by keyboard keeps focus and one tip while its request runs and fails', async () => {
+  let fail: (err: Error) => void = () => {};
+  mount(
+    progressWith([child('t-1', 'working')], { session: sessionWith('active') }),
+    {
+      iconVerbs: true,
+      showOpen: false,
+      onPause: () =>
+        new Promise<void>((_, reject) => {
+          fail = reject;
+        }),
+    }
+  );
+  const pause = screen.getByRole('button', { name: 'Pause' });
+  act(() => pause.focus());
+  expect(tipText()).toBe(PAUSE_TIP);
+  // Enter or Space on a focused button clicks it.
+  await settle(() => fireEvent.click(pause));
+  const busyPause = screen.getByRole('button', { name: 'Pause' });
+  const busyStop = screen.getByRole('button', { name: 'Stop' });
+  expect(busyPause.hasAttribute('disabled')).toBe(true);
+  expect(busyStop.hasAttribute('disabled')).toBe(true);
+  expect(pause.isConnected).toBe(false);
+  const wrapper = busyPause.parentElement;
+  if (!(wrapper instanceof HTMLElement)) throw new Error('no wrapper');
+  expect(document.activeElement).toBe(wrapper);
+  const tips = screen.queryAllByRole('tooltip', { hidden: true });
+  expect(tips.map((tip) => tip.textContent)).toEqual([PAUSE_TIP]);
+  expect(wrapper.getAttribute('aria-describedby')).toBe(tips[0]?.id ?? 'none');
+  // The disabled Stop's hint stays reachable through its own wrapper.
+  const stopWrapper = busyStop.parentElement;
+  if (!(stopWrapper instanceof HTMLElement)) throw new Error('no wrapper');
+  act(() => stopWrapper.focus());
+  expect(
+    screen.queryAllByRole('tooltip', { hidden: true }).map((t) => t.textContent)
+  ).toEqual([STOP_TIP]);
+  act(() => wrapper.focus());
+  // The request fails: the verbs come back, focus and the tip with them.
+  await settle(() => fail(new Error('pause failed')));
+  const again = screen.getByRole('button', { name: 'Pause' });
+  expect(again.hasAttribute('disabled')).toBe(false);
+  expect(document.activeElement).toBe(again);
+  const after = screen.queryAllByRole('tooltip', { hidden: true });
+  expect(after.map((tip) => tip.textContent)).toEqual([PAUSE_TIP]);
+  expect(again.getAttribute('aria-describedby')).toBe(after[0]?.id ?? 'none');
+  expect(screen.getByRole('alert').textContent).toBe('pause failed');
+});
+
+test('iconVerbs while paused: Stop is icon-only and asks first, Resume and Raise ceiling… keep their words', async () => {
+  const { calls } = mount(
+    progressWith([child('t-1', 'working')], {
+      session: sessionWith('paused', { pausedReason: 'human' }),
+    }),
+    { iconVerbs: true, showOpen: false, spend: false }
+  );
+  expect(buttonNames()).toEqual(['Resume', 'Raise ceiling…', '']);
+  const stop = screen.getByRole('button', { name: 'Stop' });
+  expect(stop.textContent).toBe('');
+  act(() => stop.focus());
+  expect(tipText()).toBe(STOP_TIP);
+  act(() => stop.blur());
+  expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
+  await settle(() => fireEvent.click(stop));
+  await settle(() =>
+    fireEvent.click(screen.getByRole('button', { name: 'Stop fan-out' }))
+  );
+  expect(calls).toEqual(['stop:e-1']);
+});
+
+test('without iconVerbs, Pause and Stop keep their words, no tooltip and no confirm', async () => {
+  const { calls } = mount(
+    progressWith([child('t-1', 'working')], { session: sessionWith('active') }),
+    { showOpen: false, spend: false }
+  );
+  expect(buttonNames()).toEqual(['Pause', 'Stop']);
+  act(() => screen.getByRole('button', { name: 'Pause' }).focus());
+  expect(tipText()).toBeNull();
+  await settle(() =>
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+  );
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  expect(calls).toEqual(['stop:e-1']);
+});
+
+// A touch screen opens no Tooltip, so an icon-only Pause or Stop there would be a bare
+// glyph: iconVerbs keeps their words (and Stop its one press), as the strip keeps its notes.
+test('iconVerbs on a touch screen: Pause and Stop keep their words and Stop its one press', async () => {
+  const original = window.matchMedia;
+  window.matchMedia = ((query: string) =>
+    ({
+      matches: query === '(hover: none), (pointer: coarse)',
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }) as unknown as MediaQueryList) as typeof window.matchMedia;
+  try {
+    const { calls } = mount(
+      progressWith([child('t-1', 'working')], {
+        session: sessionWith('active'),
+      }),
+      { iconVerbs: true, showOpen: false, spend: false }
+    );
+    expect(buttonNames()).toEqual(['Pause', 'Stop']);
+    await settle(() =>
+      fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    );
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(calls).toEqual(['stop:e-1']);
+  } finally {
+    window.matchMedia = original;
+  }
+});

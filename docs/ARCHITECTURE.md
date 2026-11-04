@@ -654,9 +654,22 @@ fade hides the end. Its fan-out's slots picker (in the Running cell, after the
 meter), spend and waves are cells, so its `end` holds only the verbs (Pause and
 Stop, or the paused pill, Resume, Raise ceiling… and Stop); a spend near its
 ceiling comes straight after Running, and a paused session's spend leads the
-strip, so neither is ever behind the fade. A review diff (`PierreReviewDiff` for
-a settled run, `RunDiffView` for a live one, both through `useFittedDiffLayout`)
-draws a split setting unified while its column is under 980px.
+strip, so neither is ever behind the fade. While a fan-out runs or is paused
+(owner decision 2026-11-04), Pause and Stop there are icon-only (named Pause and
+Stop, each with a Tooltip saying what it does; Stop then confirms in a
+`ConfirmDialog`, since only its glyph sets it apart from Pause) and the cells'
+notes move into their hints (`StatsStrip` `notes="hint"`: a Tooltip on hover and
+keyboard focus; the note stays in the cell's text for a screen reader). Live's
+spend note does the same, its key saying which amount the value is ("Today" for
+today's spend, else "Spend" for the live fan-outs' settled spend), so Live's
+cells fit beside Pause all at 1024px. A touch screen opens no Tooltip, so there
+both strips keep their notes on the row and Pause and Stop keep their words
+(`useTouchScreen`). Even so, Plan at 1440px with a fan-out still hides its last
+cells behind the fade (the Properties panel leaves the Plan column about 666px);
+what more to give up is an open owner question. A review diff
+(`PierreReviewDiff` for a settled run, `RunDiffView` for a live one, both
+through `useFittedDiffLayout`) draws a split setting unified while its column is
+under 980px.
 
 ### Tokens only
 

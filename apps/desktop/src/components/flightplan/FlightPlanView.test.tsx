@@ -460,21 +460,40 @@ describe('FlightPlan', () => {
       '[data-slot=flight-header]'
     );
     const list = screen.getByRole('list', { name: 'Flight plan' });
-    // No pill or strip beside the verbs: the row's end holds the two buttons alone.
+    // No pill or strip beside the verbs: the row's end holds the two buttons alone,
+    // icon-only (owner decision 2026-11-04), still named Pause and Stop.
     expect(header?.querySelector('[data-slot=spend-pill]')).toBeNull();
     const pause = screen.getByRole('button', { name: 'Pause' });
     const stop = screen.getByRole('button', { name: 'Stop' });
     expect(list.contains(pause)).toBe(false);
     expect(
-      Array.from(pause.parentElement?.children ?? [], (el) => el.textContent)
-    ).toEqual(['Pause', 'Stop']);
+      Array.from(pause.parentElement?.children ?? [], (el) => [
+        el.getAttribute('aria-label'),
+        el.textContent,
+      ])
+    ).toEqual([
+      ['Pause', ''],
+      ['Stop', ''],
+    ]);
     expect(pause.parentElement).toBe(stop.parentElement);
     // The spend is a cell, amber near its ceiling with a shape and words besides.
     const spend = list.querySelector('[data-slot=flight-spend]');
-    // Key, value (with its words for a screen reader), then the note.
-    expect(spend?.textContent).toBe(
+    // Key, value (with its words for a screen reader), then the note, which is in the
+    // cell's hint while fanning out (owner decision 2026-11-04) and so on screen only
+    // for a screen reader (srOnly); the title is the cell's hidden description.
+    const inner = spend?.firstElementChild;
+    expect(inner?.textContent).toBe(
       ['Spend', '$9.81', ', near its ceiling', 'of $10'].join('')
     );
+    expect(inner?.querySelector(':scope > .srOnly')?.textContent).toBe(
+      'of $10'
+    );
+    const described = inner?.getAttribute('aria-describedby');
+    const title = described ? document.getElementById(described) : null;
+    expect(title?.hidden).toBe(true);
+    expect(
+      title?.textContent?.startsWith('$9.81 settled of the $10 ceiling')
+    ).toBe(true);
     expect(spend?.getAttribute('data-tone')).toBe('warning');
     expect(spend?.querySelector('svg')).not.toBeNull();
     // Near its ceiling the spend comes straight after the running cell, where the
@@ -498,9 +517,15 @@ describe('FlightPlan', () => {
     expect(list.firstElementChild?.getAttribute('data-slot')).toBe(
       'flight-spend'
     );
-    expect(list.querySelector('[data-slot=flight-spend]')?.textContent).toBe(
-      'Spend$0no ceiling'
+    const spend = list.querySelector('[data-slot=flight-spend] > div');
+    // The note is in the cell's hint (srOnly words on the row); the paused verbs keep
+    // Stop icon-only.
+    expect(spend?.textContent).toBe('Spend$0no ceiling');
+    expect(spend?.querySelector(':scope > .srOnly')?.textContent).toBe(
+      'no ceiling'
     );
+    expect(spend?.hasAttribute('data-hint')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Stop' }).textContent).toBe('');
     expect(list.querySelector('[data-slot=flight-waves]')).toBeNull();
     expect(
       screen.queryByRole('button', { name: /^Agent slots for/ })

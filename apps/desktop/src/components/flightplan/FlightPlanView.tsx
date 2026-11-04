@@ -633,8 +633,9 @@ export function FlightPlan({
   // One container's fan-out verbs — the header's for the plan's own container, a band's
   // for its milestone — over the same session API the Milestones page uses. The header
   // (`band` false) shows the spend and the waves as strip cells instead, so its controls
-  // are only the verbs (Pause and Stop while running); a band keeps its spend pill, its
-  // wave strip and its Open button.
+  // are only the verbs (Pause and Stop while running, icon-only so the strip keeps the
+  // room: owner decision 2026-11-04); a band keeps its spend pill, its wave strip, its
+  // worded verbs and its Open button.
   const fanoutFor = useCallback(
     (milestone: TaskListItem, band: boolean): ReactNode => (
       <FanoutControls
@@ -652,6 +653,7 @@ export function FlightPlan({
         onLand={data.handleLandMilestone}
         onOpenMilestone={(id) => onOpenTask(id)}
         showOpen={band}
+        iconVerbs={!band}
       />
     ),
     [data, model, onOpenTask]

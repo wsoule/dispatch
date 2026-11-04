@@ -1,6 +1,13 @@
 import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
 import type { MilestoneProgress, MilestoneSession } from '@dispatch/client';
-import { Button, Chip, ProgressPie } from '@dispatch/ui';
+import {
+  Button,
+  Chip,
+  ConfirmDialog,
+  ProgressPie,
+  Tooltip,
+  useTouchScreen,
+} from '@dispatch/ui';
 import {
   ChevronsUp,
   GitMerge,
@@ -30,6 +37,14 @@ import { StepStrip } from '../status/StepStrip';
 import styles from './FanoutControls.module.css';
 
 const ICON = { size: 12, strokeWidth: 1.8 } as const;
+/** An icon-only verb's glyph: the library's 14px button icon, alone in its 26px square. */
+const ICON_ONLY = { size: 14, strokeWidth: 1.8 } as const;
+
+/** What Pause and Stop do, for their hint when they are drawn icon-only. */
+const PAUSE_HINT =
+  'Pause the fan-out: live runs go on, no new ones start until you resume';
+const STOP_HINT =
+  'Stop the fan-out for good: live runs go on, no new ones start';
 
 /** A verb in the row: a small secondary button with its leading icon. */
 function Verb({
@@ -53,6 +68,40 @@ function Verb({
     >
       {children}
     </Button>
+  );
+}
+
+/** A verb drawn as the library's icon-only button: named by its verb (the name it has
+    with words), with a Tooltip that says what it does on hover and keyboard focus. A
+    disabled one (a verb in flight) keeps its hint: the Tooltip wraps it in a focusable
+    span, since a disabled button takes no focus. */
+function IconVerb({
+  slot,
+  name,
+  hint,
+  icon,
+  disabled,
+  onClick,
+}: {
+  slot: string;
+  name: string;
+  hint: string;
+  icon: ReactNode;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Tooltip content={hint}>
+      <Button
+        variant="secondary"
+        size="sm"
+        data-slot={slot}
+        aria-label={name}
+        icon={icon}
+        disabled={disabled}
+        onClick={onClick}
+      />
+    </Tooltip>
   );
 }
 
@@ -117,6 +166,13 @@ export interface FanoutControlsProps {
   /** An active or paused session's spend pill; the Flight Plan header turns it off since
    * its strip has a Spend cell that says the same amounts (`spendCellWords`). */
   spend?: boolean;
+  /** Pause and Stop as icon-only buttons (still named Pause and Stop, each with a
+   * Tooltip saying what it does), for the Flight Plan header, whose strip is short of
+   * room while a fan-out runs (owner decision 2026-11-04). Stop then confirms in a
+   * ConfirmDialog first, since only its glyph sets it apart from Pause. The other verbs
+   * keep their words, and so do Pause and Stop on a touch screen, where no Tooltip opens
+   * (`useTouchScreen`). */
+  iconVerbs?: boolean;
 }
 
 /** No session, or one that has run its course — the caller's own live-run pill speaks
@@ -144,7 +200,9 @@ export function sessionIdle(session: MilestoneSession | null): boolean {
  * - paused: the spend pill, why it paused, Resume, Raise ceiling…, Stop;
  *
  * and an Open button last. Header only — no bar under it, no card. Every async verb runs
- * through one busy flag; a failure shows as a red pill in the same row.
+ * through one busy flag; a failure shows as a red pill in the same row. `iconVerbs` draws
+ * Pause and Stop icon-only, with their names and a Tooltip each, and Stop then asks first
+ * in a ConfirmDialog; on a touch screen they keep their words.
  */
 export function FanoutControls({
   milestone,
@@ -164,9 +222,17 @@ export function FanoutControls({
   phases = true,
   waves = true,
   spend: showSpend = true,
+  iconVerbs = false,
 }: FanoutControlsProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The icon-only Stop's confirmation is open.
+  const [confirmingStop, setConfirmingStop] = useState(false);
+  // A touch screen opens no Tooltip, so an icon-only verb there would be a bare glyph:
+  // Pause and Stop keep their words (and Stop its one press), as the strip beside them
+  // keeps its notes on the row there.
+  const touch = useTouchScreen();
+  const iconOnly = iconVerbs && !touch;
   const milestoneId = milestone.meta.id;
   const session = progress?.session ?? null;
   const progressChildren = progress?.children ?? [];
@@ -177,15 +243,18 @@ export function FanoutControls({
   const paused = verbs.includes('resume') && session !== null;
 
   // One verb at a time; a rejected handler's message replaces the verbs' error pill.
-  async function run(action: () => Promise<void>) {
-    setBusy(true);
+  // `hold` false leaves the verbs enabled, for a verb whose own dialog waits on it (the
+  // icon-only Stop's ConfirmDialog): it keeps the verbs' elements, so the dialog can hand
+  // focus back to Stop when it closes.
+  async function run(action: () => Promise<void>, hold = true) {
+    if (hold) setBusy(true);
     setError(null);
     try {
       await action();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setBusy(false);
+      if (hold) setBusy(false);
     }
   }
 
@@ -209,6 +278,28 @@ export function FanoutControls({
       </Pill>
     );
   }
+
+  // Stop, in an active or a paused session's controls. Icon-only it asks first: its glyph
+  // beside Pause's is all that tells the two apart, a touch screen never shows its hint,
+  // and a stop cannot be undone.
+  const stopVerb = iconOnly ? (
+    <IconVerb
+      slot="fanout-stop"
+      name="Stop"
+      hint={STOP_HINT}
+      disabled={busy}
+      onClick={() => setConfirmingStop(true)}
+      icon={<Square {...ICON_ONLY} />}
+    />
+  ) : (
+    <Verb
+      disabled={busy}
+      onClick={() => void run(() => onStop(milestoneId))}
+      icon={<Square {...ICON} />}
+    >
+      Stop
+    </Verb>
+  );
 
   let controls: ReactNode;
   if (active) {
@@ -242,22 +333,26 @@ export function FanoutControls({
             className={styles.waves}
           />
         )}
-        {onPause !== undefined && (
-          <Verb
-            disabled={busy}
-            onClick={() => void run(() => onPause(milestoneId))}
-            icon={<Pause {...ICON} />}
-          >
-            Pause
-          </Verb>
-        )}
-        <Verb
-          disabled={busy}
-          onClick={() => void run(() => onStop(milestoneId))}
-          icon={<Square {...ICON} />}
-        >
-          Stop
-        </Verb>
+        {onPause !== undefined &&
+          (iconOnly ? (
+            <IconVerb
+              slot="fanout-pause"
+              name="Pause"
+              hint={PAUSE_HINT}
+              disabled={busy}
+              onClick={() => void run(() => onPause(milestoneId))}
+              icon={<Pause {...ICON_ONLY} />}
+            />
+          ) : (
+            <Verb
+              disabled={busy}
+              onClick={() => void run(() => onPause(milestoneId))}
+              icon={<Pause {...ICON} />}
+            >
+              Pause
+            </Verb>
+          ))}
+        {stopVerb}
       </>
     );
   } else if (paused) {
@@ -289,13 +384,7 @@ export function FanoutControls({
             Raise ceiling…
           </Verb>
         )}
-        <Verb
-          disabled={busy}
-          onClick={() => void run(() => onStop(milestoneId))}
-          icon={<Square {...ICON} />}
-        >
-          Stop
-        </Verb>
+        {stopVerb}
       </>
     );
   } else if (verbs.includes('land') && onLand !== undefined) {
@@ -348,6 +437,26 @@ export function FanoutControls({
       )}
       {children}
       {controls}
+      {iconOnly && (active || paused) && (
+        <ConfirmDialog
+          open={confirmingStop}
+          data-slot="fanout-stop-confirm"
+          title="Stop the fan-out?"
+          confirmLabel="Stop fan-out"
+          tone="danger"
+          // The dialog waits on the stop (its confirm busy) and closes once it settles; a
+          // failure shows as the verbs' error pill.
+          onConfirm={() =>
+            run(() => onStop(milestoneId), false).finally(() =>
+              setConfirmingStop(false)
+            )
+          }
+          onCancel={() => setConfirmingStop(false)}
+        >
+          Runs already live go on, but no new ones start, and a stopped fan-out
+          cannot be resumed. Pause it instead to start it again later.
+        </ConfirmDialog>
+      )}
       {error !== null && (
         <Pill role="alert" tone="danger" title={error}>
           {error}
