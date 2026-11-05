@@ -196,7 +196,8 @@ import { readinessFor, ReadinessStore } from './judgments/readiness.js';
 import type { ReadinessReading } from './judgments/readiness.js';
 import { buildLandingSnapshot } from './landing.js';
 import type { LedgerStorePort } from './ledger.js';
-import { HttpLinearClient } from './linear/client.js';
+import type { LinearPersonEdits } from './linear/personEdits.js';
+import type { LinearSignIn, LinearSignInViewer } from './linear/signIn.js';
 import type { LinearExportScope } from './linear/state.js';
 import type { LinearSync } from './linear/sync.js';
 import {
@@ -409,6 +410,12 @@ export interface ApiContext {
   // The one feed of everything awaiting a human — see decisionFeed.ts.
   decisionFeed: DecisionFeed;
   linearSync: LinearSync;
+  /** "Sign in with Linear" for this daemon's owner; absent in contexts built
+   *  without a daemon, where the routes answer 404. */
+  linearSignIn?: LinearSignIn;
+  /** Which task parts the owner last set, so their own edits reach Linear
+   *  with their sign-in (linear/personEdits.ts). */
+  linearPersonEdits?: LinearPersonEdits;
   // Cached once at boot (see pr.ts's detectPrCapability) — exposed at
   // GET /api/health as `pr` so a client can hide/disable the PR action
   // without probing per-run.
@@ -835,6 +842,9 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
   });
   if (!created.ok) return errorResponse(400, created.error);
   ctx.taskAuthorship?.created(created.doc, humanOperator(ctx));
+  // Only the owner's own credential: their sign-in may then carry the push.
+  if (ctx.ownerCredential === true)
+    ctx.linearPersonEdits?.created(created.doc, ctx.actorContext.humanRef);
   return jsonResponse(created.doc, 201);
 }
 
@@ -995,6 +1005,8 @@ async function updateTask(
   const doc = ctx.store.update(id, patch);
   markA2AChild(ctx, id, doc.meta.parent);
   ctx.taskAuthorship?.edited(existing, doc, humanOperator(ctx));
+  if (ctx.ownerCredential === true)
+    ctx.linearPersonEdits?.edited(existing, doc, ctx.actorContext.humanRef);
   ctx.cache.refresh(ctx.store, [id]);
   ctx.events.broadcast({ type: 'task.changed', ids: [id] });
   return jsonResponse(doc);
@@ -1204,6 +1216,10 @@ function operatorOnlyKeys(body: Record<string, unknown>): string[] {
   if ('prWorktreeDir' in body) keys.push('prWorktreeDir');
   if ('autoCommit' in body) keys.push('autoCommit');
   if (has(body.notifications, 'webhook')) keys.push('notifications.webhook');
+  // Which OAuth app a consent screen names, and where Linear sends the code.
+  for (const field of ['oauthClientId', 'oauthCallbackPort']) {
+    if (has(body.linear, field)) keys.push(`linear.${field}`);
+  }
   for (const field of ['command', 'installCommand']) {
     if (has(body.preview, field)) keys.push(`preview.${field}`);
   }
@@ -1820,7 +1836,7 @@ async function connectLinear(req: Request, ctx: ApiContext): Promise<Response> {
     return errorResponse(400, 'apiKey must be a non-empty string');
   }
   const apiKey = body.apiKey.trim();
-  const result = await new HttpLinearClient(apiKey).viewer();
+  const result = await ctx.linearSync.clientFor(apiKey).viewer();
   if (!result.ok) return linearErrorResponse(result);
   ctx.linearSync.connect(apiKey);
   ctx.events.broadcast({ type: 'config.changed' });
@@ -1833,6 +1849,104 @@ async function disconnectLinear(ctx: ApiContext): Promise<Response> {
   await ctx.linearSync.disconnect();
   ctx.events.broadcast({ type: 'config.changed' });
   return jsonResponse(ctx.linearSync.status());
+}
+
+// Who is asking for the Linear account view: the owner on their app token,
+// the shared agent token (CLI, agents, a window attached without the app
+// token), or a teammate.
+function linearSignInViewer(ctx: ApiContext): LinearSignInViewer {
+  if (ctx.ownerCredential === true) return 'owner';
+  if (ctx.viaAgentToken === true) return 'agent';
+  return 'teammate';
+}
+
+// Sign-in and sign-out keep a Linear token on this machine, so only its
+// owner, on their own app token, may do either: never a teammate at any
+// tier, the shared agent token, a run or an A2A client.
+function linearSignInOwnerOnly(ctx: ApiContext): Response | null {
+  if (ctx.ownerCredential === true) return null;
+  return authErrorResponse(
+    403,
+    'Linear sign-in keeps a Linear token on this machine, so only its owner can sign in or out, from the Dispatch app.',
+    'linear_sign_in_owner_only'
+  );
+}
+
+// GET /api/linear/account — the "Your Linear account" view for this caller.
+async function linearAccount(ctx: ApiContext): Promise<Response> {
+  const signIn = ctx.linearSignIn;
+  if (signIn === undefined) return errorResponse(404, 'not found');
+  return jsonResponse(await signIn.view(linearSignInViewer(ctx)));
+}
+
+// POST /api/linear/sign-in — starts a sign-in and answers Linear's consent
+// URL for the app to open in the system browser.
+async function startLinearSignIn(
+  req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const signIn = ctx.linearSignIn;
+  if (signIn === undefined) return errorResponse(404, 'not found');
+  const refused = linearSignInOwnerOnly(ctx);
+  if (refused !== null) return refused;
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const another = parsed.value.anotherWorkspace;
+  if (another !== undefined && typeof another !== 'boolean')
+    return errorResponse(400, 'anotherWorkspace must be a boolean');
+  const started = await signIn.start({ anotherWorkspace: another === true });
+  if (started.ok)
+    return jsonResponse({ authorizeUrl: started.authorizeUrl }, 202);
+  if ('refusal' in started)
+    return jsonResponse(
+      { error: started.refusal.error, code: started.refusal.code },
+      started.refusal.status
+    );
+  return linearErrorResponse(started.failure);
+}
+
+// DELETE /api/linear/sign-in — cancels a pending sign-in.
+function cancelLinearSignIn(ctx: ApiContext): Response {
+  const signIn = ctx.linearSignIn;
+  if (signIn === undefined) return errorResponse(404, 'not found');
+  const refused = linearSignInOwnerOnly(ctx);
+  if (refused !== null) return refused;
+  signIn.cancel();
+  return new Response(null, { status: 204 });
+}
+
+// POST /api/linear/sign-out `{ workspaceId? }` — deletes the sign-in, then
+// revokes it at Linear. The app names the workspace of the account it shows,
+// so signing out never waits on a Linear lookup; without one, the project
+// connection's workspace.
+async function signOutOfLinear(
+  req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const signIn = ctx.linearSignIn;
+  if (signIn === undefined) return errorResponse(404, 'not found');
+  const refused = linearSignInOwnerOnly(ctx);
+  if (refused !== null) return refused;
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const workspaceId = parsed.value.workspaceId;
+  if (
+    workspaceId !== undefined &&
+    (typeof workspaceId !== 'string' || workspaceId.trim() === '')
+  )
+    return errorResponse(400, 'workspaceId must be a non-empty string');
+  const out = await signIn.signOut(workspaceId);
+  if (!out.ok)
+    return 'refusal' in out
+      ? jsonResponse(
+          { error: out.refusal.error, code: out.refusal.code },
+          out.refusal.status
+        )
+      : linearErrorResponse(out.failure);
+  return jsonResponse({
+    revoked: out.revoked,
+    account: await signIn.view('owner'),
+  });
 }
 
 // GET /api/linear/teams — the team picker's options.
@@ -4598,6 +4712,11 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // forget only holds a local task back, so they stay there too.
   { method: 'POST', segments: ['linear', 'connect'], tier: 'operator' },
   { method: 'POST', segments: ['linear', 'disconnect'], tier: 'operator' },
+  // Signing in stores a person's Linear token on this machine, and its
+  // handlers further require the owner's own app token (D3 in the design).
+  { method: 'POST', segments: ['linear', 'sign-in'], tier: 'operator' },
+  { method: 'DELETE', segments: ['linear', 'sign-in'], tier: 'operator' },
+  { method: 'POST', segments: ['linear', 'sign-out'], tier: 'operator' },
   // Archiving closed issues acts on records teammates made in a shared
   // tracker, not only Dispatch's, so an agent token must not start it. Decide
   // rather than operator: connecting already chose the workspace.
@@ -5434,6 +5553,18 @@ export async function handleApi(
       }
       if (segments[1] === 'disconnect' && method === 'POST') {
         return await disconnectLinear(ctx);
+      }
+      if (segments[1] === 'account' && method === 'GET') {
+        return await linearAccount(ctx);
+      }
+      if (segments[1] === 'sign-in' && method === 'POST') {
+        return await startLinearSignIn(req, ctx);
+      }
+      if (segments[1] === 'sign-in' && method === 'DELETE') {
+        return cancelLinearSignIn(ctx);
+      }
+      if (segments[1] === 'sign-out' && method === 'POST') {
+        return await signOutOfLinear(req, ctx);
       }
       if (segments[1] === 'teams' && method === 'GET') {
         return await linearTeams(ctx);

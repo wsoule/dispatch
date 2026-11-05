@@ -101,7 +101,11 @@ import {
 import { computeChecklist } from './judgments/landingChecklist.js';
 import { DEP_MAP_DEGRADED_TITLE, LedgerStore } from './ledger.js';
 import type { LedgerStorePort } from './ledger.js';
-import type { LinearClient } from './linear/client.js';
+import { LinearAccounts } from './linear/accounts.js';
+import type { LinearAuth, LinearClient } from './linear/client.js';
+import type { OAuthEndpoints } from './linear/oauth.js';
+import { LinearPersonEdits } from './linear/personEdits.js';
+import { LinearSignIn } from './linear/signIn.js';
 import { LinearSync } from './linear/sync.js';
 import { webhookUrlFor } from './linear/webhook.js';
 import type { PreflightResult } from './memory/claudeModes.js';
@@ -350,6 +354,19 @@ export interface StartServerOptions {
   // Replaces credential lookup with a ready-made Linear client, so no sync test
   // ever reaches the network.
   linearClient?: LinearClient;
+  // Builds every other Linear client (a person's sign-in, an API key being
+  // checked), so a test can stand in for Linear per credential.
+  linearCreateClient?: (credential: string | LinearAuth) => LinearClient;
+  // Where Linear's OAuth and GraphQL calls go, and the fetch they use: a
+  // fake Linear in tests, or under DISPATCH_ENABLE_FAKES with
+  // DISPATCH_LINEAR_FAKE_ORIGIN (daemonMain.ts). Production omits both.
+  // `clientSecret` is DISPATCH_LINEAR_CLIENT_SECRET, which daemonMain reads
+  // once and removes from the environment so no child process inherits it.
+  linearOAuth?: {
+    endpoints?: OAuthEndpoints;
+    fetchImpl?: typeof fetch;
+    clientSecret?: string;
+  };
   // Replaces TypeSafe key lookup with a ready-made judgment client (or null
   // to disable judgments outright), so no test ever reaches the API.
   judgments?: JudgmentClient | null;
@@ -2164,6 +2181,37 @@ async function bootServer(
     );
   }
 
+  // "Sign in with Linear": the owner's own token, kept machine-wide in the
+  // credentials file, carries the Linear writes of their own edits. A change
+  // to a sign-in reaches the app as `config.changed`, as connecting does.
+  const linearOAuth = opts.linearOAuth ?? {};
+  const linearPersonEdits = new LinearPersonEdits();
+  // Every task change the daemon hears about (an agent's, the
+  // orchestrator's, a teammate's, board sync's, a file edited on disk) drops
+  // the owner's credit for any part it moved, so a value someone else sets
+  // back later never goes out as the owner. The owner's own routes record
+  // before they broadcast, so their edit survives its own event.
+  events.subscribe((event) => {
+    if (event.type !== 'task.changed') return;
+    // No ids: anything may have changed.
+    for (const id of event.ids ?? linearPersonEdits.tracked()) {
+      if (linearPersonEdits.tracks(id))
+        linearPersonEdits.observe(id, store.get(id));
+    }
+  });
+  const linearAccounts = new LinearAccounts({
+    ...(linearOAuth.endpoints === undefined
+      ? {}
+      : { endpoints: linearOAuth.endpoints }),
+    ...(linearOAuth.fetchImpl === undefined
+      ? {}
+      : { fetchImpl: linearOAuth.fetchImpl }),
+    ...(linearOAuth.clientSecret === undefined
+      ? {}
+      : { clientSecret: linearOAuth.clientSecret }),
+    onChange: () => events.broadcast({ type: 'config.changed' }),
+  });
+
   // Bidirectional Linear sync. The poll timer only starts when the config enables it; the
   // debounced push rides the same `task.changed` signal the UI listens to.
   const linearSync = new LinearSync({
@@ -2172,6 +2220,17 @@ async function bootServer(
     cache,
     events,
     client: opts.linearClient,
+    ...(opts.linearCreateClient === undefined
+      ? {}
+      : { createClient: opts.linearCreateClient }),
+    ...(linearOAuth.endpoints === undefined
+      ? {}
+      : { graphqlUrl: linearOAuth.endpoints.graphql }),
+    ...(linearOAuth.fetchImpl === undefined
+      ? {}
+      : { fetchImpl: linearOAuth.fetchImpl }),
+    accounts: linearAccounts,
+    personEdits: linearPersonEdits,
     localHumanRef: actorContext.humanRef,
     comments: commentStore,
     webhookUrl: webhookUrlFor(opts.publicOrigins ?? []),
@@ -2189,6 +2248,29 @@ async function bootServer(
     }
   });
   linearSync.start();
+  const linearSignIn = new LinearSignIn({
+    linearConfig: () => {
+      try {
+        return loadConfig(rootDir).linear;
+      } catch {
+        return null;
+      }
+    },
+    accounts: linearAccounts,
+    connection: () => linearSync.connection(),
+    lastConnection: () => linearSync.lastConnection(),
+    personClient: (auth) => linearSync.clientFor(auth),
+    ...(linearOAuth.clientSecret === undefined
+      ? {}
+      : { clientSecret: linearOAuth.clientSecret }),
+    ...(linearOAuth.endpoints === undefined
+      ? {}
+      : { endpoints: linearOAuth.endpoints }),
+    ...(linearOAuth.fetchImpl === undefined
+      ? {}
+      : { fetchImpl: linearOAuth.fetchImpl }),
+    onChange: () => events.broadcast({ type: 'config.changed' }),
+  });
 
   // Review dispatched as its own run kind. Built at boot because it subscribes
   // to the terminal hook that ingests a review's findings. `findingStore` is
@@ -2410,6 +2492,8 @@ async function bootServer(
     terminals,
     decisionFeed,
     linearSync,
+    linearSignIn,
+    linearPersonEdits,
     actorContext,
     tokens,
     boardSyncScheduler,
@@ -2853,6 +2937,7 @@ async function bootServer(
       mergeQueue.stop();
       unsubscribeLinear();
       unsubscribeRevokedAsks();
+      linearSignIn.stop();
       await linearSync.stop();
       unsubscribeBoardSync();
       unsubscribeDocPublishes();

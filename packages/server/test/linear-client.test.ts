@@ -60,6 +60,249 @@ describe('HttpLinearClient auth', () => {
   });
 });
 
+// A person's sign-in as the client sees it: a header per request, the
+// tokens to redact, and how many renewals were asked for.
+function fakeAuth(tokens: string[], opts: { renews?: boolean } = {}) {
+  let current = 0;
+  const auth = {
+    renewed: [] as string[],
+    header: () =>
+      Promise.resolve({
+        ok: true as const,
+        value: `Bearer ${tokens[current] ?? ''}`,
+      }),
+    secrets: () => [...tokens, 'lin_oauth_refresh_SECRET'],
+    renew: (failed: string) => {
+      auth.renewed.push(failed);
+      if (opts.renews === false || current + 1 >= tokens.length)
+        return Promise.resolve(false);
+      current += 1;
+      return Promise.resolve(true);
+    },
+  };
+  return auth;
+}
+
+describe('HttpLinearClient sign-in auth', () => {
+  it('sends a sign-in as Bearer', async () => {
+    const seen: { init?: RequestInit } = {};
+    const client = new HttpLinearClient(fakeAuth(['lin_oauth_A']), {
+      fetchImpl: stubFetch(
+        { body: { data: { viewer: { id: 'u', name: 'n', email: 'e' } } } },
+        seen
+      ),
+    });
+    expect((await client.viewer()).ok).toBe(true);
+    const headers = seen.init?.headers as Record<string, string>;
+    expect(headers.authorization).toBe('Bearer lin_oauth_A');
+  });
+
+  it('renews once after an auth failure and retries once with the new token', async () => {
+    const auth = fakeAuth(['lin_oauth_OLD', 'lin_oauth_NEW']);
+    const sent: string[] = [];
+    const fetchImpl = ((_url: string, init: RequestInit) => {
+      const header = (init.headers as Record<string, string>).authorization;
+      sent.push(header);
+      return Promise.resolve(
+        header === 'Bearer lin_oauth_NEW'
+          ? Response.json({
+              data: { viewer: { id: 'u', name: 'n', email: 'e' } },
+            })
+          : Response.json(
+              { errors: [{ message: 'Authentication required' }] },
+              { status: 401 }
+            )
+      );
+    }) as unknown as typeof fetch;
+    const client = new HttpLinearClient(auth, { fetchImpl });
+    expect((await client.viewer()).ok).toBe(true);
+    expect(sent).toEqual(['Bearer lin_oauth_OLD', 'Bearer lin_oauth_NEW']);
+    expect(auth.renewed).toEqual(['Bearer lin_oauth_OLD']);
+  });
+
+  it('does not retry when renewing gives nothing new, nor twice', async () => {
+    const auth = fakeAuth(['lin_oauth_OLD'], { renews: false });
+    let calls = 0;
+    const fetchImpl = (() => {
+      calls += 1;
+      return Promise.resolve(
+        Response.json(
+          { errors: [{ message: 'Authentication required' }] },
+          { status: 401 }
+        )
+      );
+    }) as unknown as typeof fetch;
+    const result = await new HttpLinearClient(auth, { fetchImpl }).viewer();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe('auth');
+    expect(calls).toBe(1);
+  });
+
+  it('refreshes for an AUTHENTICATION_ERROR, but never for a refusal of the write', async () => {
+    for (const [status, body, renews] of [
+      [
+        400,
+        {
+          errors: [
+            {
+              message: 'Authentication required, not authenticated',
+              extensions: { code: 'AUTHENTICATION_ERROR' },
+            },
+          ],
+        },
+        true,
+      ],
+      [
+        403,
+        { errors: [{ message: 'Forbidden: guests cannot do that' }] },
+        false,
+      ],
+      [
+        400,
+        {
+          errors: [
+            {
+              message: 'You do not have permission',
+              extensions: { code: 'FORBIDDEN' },
+            },
+          ],
+        },
+        false,
+      ],
+    ] as const) {
+      const auth = fakeAuth(['lin_oauth_OLD', 'lin_oauth_NEW']);
+      let calls = 0;
+      const fetchImpl = (() => {
+        calls += 1;
+        return Promise.resolve(Response.json(body, { status }));
+      }) as unknown as typeof fetch;
+      const result = await new HttpLinearClient(auth, {
+        fetchImpl,
+      }).updateIssue('i1', { title: 't' });
+      expect(result.ok).toBe(false);
+      expect(auth.renewed).toHaveLength(renews ? 1 : 0);
+      expect(calls).toBe(renews ? 2 : 1);
+    }
+  });
+
+  it('never lets a redirect carry a sign-in token elsewhere; an API key is unchanged', async () => {
+    const seen: { init?: RequestInit } = {};
+    const redirect = { status: 307, body: {} };
+    await new HttpLinearClient(fakeAuth(['lin_oauth_A']), {
+      fetchImpl: stubFetch(redirect, seen),
+    }).viewer();
+    expect(seen.init?.redirect).toBe('manual');
+    await new HttpLinearClient(KEY, {
+      fetchImpl: stubFetch(redirect, seen),
+    }).viewer();
+    expect(seen.init?.redirect).toBeUndefined();
+  });
+
+  it('answers a signed-out header as the failure, sending nothing', async () => {
+    let calls = 0;
+    const fetchImpl = (() => {
+      calls += 1;
+      return Promise.resolve(Response.json({}));
+    }) as unknown as typeof fetch;
+    const auth = {
+      header: () =>
+        Promise.resolve({
+          ok: false as const,
+          kind: 'auth' as const,
+          error: 'Linear ended your sign-in.',
+        }),
+      secrets: () => [],
+      renew: () => Promise.resolve(false),
+    };
+    const result = await new HttpLinearClient(auth, { fetchImpl }).viewer();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe('Linear ended your sign-in.');
+    expect(calls).toBe(0);
+  });
+
+  it('redacts both tokens and anything shaped like an OAuth token', async () => {
+    const client = new HttpLinearClient(fakeAuth(['lin_oauth_A']), {
+      fetchImpl: stubFetch({
+        status: 400,
+        body: {
+          errors: [
+            {
+              message:
+                'bad lin_oauth_A, lin_oauth_refresh_SECRET and lin_oauth_other-9',
+              extensions: { userPresentableMessage: 'see lin_oauth_A' },
+            },
+          ],
+        },
+      }),
+    });
+    const result = await client.viewer();
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(`${result.error} ${result.detail ?? ''}`).not.toContain(
+        'lin_oauth_'
+      );
+      expect(result.error).toBe('bad [redacted], [redacted] and [redacted]');
+    }
+  });
+
+  it('still redacts only the bare key for an API key', async () => {
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: stubFetch({
+        status: 400,
+        body: { errors: [{ message: `bad ${KEY}` }] },
+      }),
+    });
+    const result = await client.viewer();
+    if (!result.ok) expect(result.error).toBe('bad [redacted]');
+  });
+});
+
+describe('HttpLinearClient identity', () => {
+  it('reads the viewer and the workspace in one query', async () => {
+    const seen: { init?: RequestInit } = {};
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: stubFetch(
+        {
+          body: {
+            data: {
+              viewer: {
+                id: 'u-1',
+                name: 'Ada Lovelace',
+                displayName: 'ada',
+                email: 'ada@example.com',
+                active: true,
+                admin: false,
+                guest: true,
+              },
+              organization: { id: 'org-1', name: 'Acme', urlKey: 'acme' },
+            },
+          },
+        },
+        seen
+      ),
+    });
+    const result = await client.identity();
+    expect(result).toEqual({
+      ok: true,
+      data: {
+        viewer: {
+          id: 'u-1',
+          name: 'Ada Lovelace',
+          displayName: 'ada',
+          email: 'ada@example.com',
+          active: true,
+          admin: false,
+          guest: true,
+        },
+        organization: { id: 'org-1', name: 'Acme', urlKey: 'acme' },
+      },
+    });
+    const body = JSON.parse(seen.init?.body as string) as { query: string };
+    expect(body.query).toContain('query Identity');
+    expect(body.query).toContain('organization { id name urlKey }');
+  });
+});
+
 describe('HttpLinearClient rate limiting', () => {
   it('recognises RATELIMITED inside a 400 body, not just an HTTP 429', async () => {
     const resetAt = Date.now() + 42_000;

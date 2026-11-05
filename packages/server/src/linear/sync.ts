@@ -2,10 +2,12 @@ import {
   clearProjectCredential,
   DEFAULT_LINEAR,
   fieldHash,
+  hasLinearAccounts,
   isDoneStatus,
   isOutstanding,
   loadConfig,
   parseLinearExternal,
+  readLinearAccount,
   resolveLinearApiKey,
   statusModelOf,
   statusType,
@@ -30,7 +32,7 @@ import type {
   TaskMeta,
   TaskStorePort,
 } from '@dispatch-foo/core';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 import type { TaskCache } from '../cache.js';
 import { DocsError } from '../docs/errors.js';
@@ -41,12 +43,15 @@ import type {
 } from '../docs/linear.js';
 import type { DocsActor } from '../docs/service.js';
 import type { EventBus } from '../events.js';
+import type { LinearAccounts } from './accounts.js';
 import { TaskChangeBatch } from './batch.js';
 import type {
+  LinearAuth,
   LinearCapacity,
   LinearClient,
   LinearErrorKind,
   LinearFailure,
+  LinearIdentity,
   LinearIssuePage,
   LinearIssueRef,
   LinearPage,
@@ -55,6 +60,7 @@ import type {
   LinearWorkspace,
 } from './client.js';
 import { FREE_PLAN_ISSUE_LIMIT, HttpLinearClient } from './client.js';
+import type { LinearPersonWriter } from './comments.js';
 import { CommentSync } from './comments.js';
 import type {
   LinearCoverage,
@@ -67,6 +73,7 @@ import {
   exportPreview,
   linearCoverage,
 } from './coverage.js';
+import type { LinearPersonEdits } from './personEdits.js';
 import type {
   CreateRemoteResult,
   LinearSyncSummary,
@@ -191,8 +198,21 @@ export interface LinearSyncDeps {
   comments?: CommentStorePort;
   /** A ready-made client, bypassing credential lookup entirely. Tests inject a fake here. */
   client?: LinearClient;
-  /** Overridden in tests that need a real client against a stub endpoint. */
-  createClient?: (apiKey: string) => LinearClient;
+  /** Builds a client for a credential: an API key string (the project
+   *  connection) or a person's LinearAuth. Overridden in tests that need a
+   *  real client against a stub endpoint. */
+  createClient?: (credential: string | LinearAuth) => LinearClient;
+  /** Where the default client sends GraphQL; Linear's own URL unless the
+   *  fakes gate points it at a fake (DISPATCH_LINEAR_FAKE_ORIGIN). */
+  graphqlUrl?: string;
+  /** The default client's fetch; global fetch unless a test stands in. */
+  fetchImpl?: typeof fetch;
+  /** The person's Linear sign-ins; absent, every write uses the project
+   *  connection. */
+  accounts?: LinearAccounts;
+  /** Which task parts the owner last set (linear/personEdits.ts); with
+   *  `accounts`, the owner's own edits go out with their token. */
+  personEdits?: LinearPersonEdits;
   /** Debounce for the push triggered by a local task change. */
   pushDebounceMs?: number;
   /** The local human's person ref; the API key's Linear user maps to it. */
@@ -827,15 +847,88 @@ export class LinearSync {
     if (this.deps.client !== undefined) return this.deps.client;
     const { apiKey } = resolveLinearApiKey(this.deps.rootDir);
     if (apiKey === null) return null;
-    const make =
-      this.deps.createClient ?? ((key: string) => new HttpLinearClient(key));
-    return make(apiKey);
+    return this.clientFor(apiKey);
+  }
+
+  /** A client for one credential: an API key (sent bare, as always) or a
+   *  person's sign-in (sent as `Bearer`). */
+  clientFor(credential: string | LinearAuth): LinearClient {
+    if (this.deps.createClient !== undefined)
+      return this.deps.createClient(credential);
+    const { graphqlUrl, fetchImpl } = this.deps;
+    return new HttpLinearClient(credential, {
+      ...(graphqlUrl === undefined ? {} : { url: graphqlUrl }),
+      ...(fetchImpl === undefined ? {} : { fetchImpl }),
+    });
+  }
+
+  // The project connection's identity, by a digest of the key it was read
+  // with (an injected client is one fixed key). Only successes are kept.
+  private connectionCache: { key: string; identity: LinearIdentity } | null =
+    null;
+
+  /**
+   * Who the project connection acts as, and its Linear workspace: null when
+   * no key resolves, a failure when Linear could not say. Cached per key, so
+   * only the first call after a connect reaches Linear.
+   */
+  async connection(): Promise<LinearResult<LinearIdentity> | null> {
+    let key: string;
+    let client: LinearClient | null;
+    if (this.deps.client !== undefined) {
+      key = 'injected';
+      client = this.deps.client;
+    } else {
+      const { apiKey } = resolveLinearApiKey(this.deps.rootDir);
+      if (apiKey === null) return null;
+      key = createHash('sha256').update(apiKey).digest('hex');
+      client = this.clientFor(apiKey);
+    }
+    const cached = this.connectionCache;
+    if (cached !== null && cached.key === key)
+      return { ok: true, data: cached.identity };
+    const identity = await client.identity();
+    if (identity.ok) this.connectionCache = { key, identity: identity.data };
+    return identity;
+  }
+
+  /**
+   * The identity the project connection last had in this daemon, even when
+   * Linear cannot say now (the key was rotated outside Settings, or Linear
+   * is down), so the person can still see and end their sign-in for that
+   * workspace. Null after a connect or disconnect, and before the first
+   * successful lookup. Never used to choose a writer.
+   */
+  lastConnection(): LinearIdentity | null {
+    return this.connectionCache?.identity ?? null;
+  }
+
+  /**
+   * The signed-in person this daemon writes as, for its owner's own edits:
+   * their client, Linear user and ref, when a sign-in with `write` exists for
+   * the project connection's workspace. Null otherwise. Nothing reaches
+   * Linear when no sign-in is stored on this machine at all.
+   */
+  private async personWriter(): Promise<LinearPersonWriter | null> {
+    const accounts = this.deps.accounts;
+    if (accounts === undefined || !hasLinearAccounts()) return null;
+    const connection = await this.connection();
+    if (connection === null || !connection.ok) return null;
+    const orgId = connection.data.organization.id;
+    const record = readLinearAccount(orgId);
+    if (record === null || !record.scope.includes('write')) return null;
+    return {
+      client: this.clientFor(accounts.authFor(orgId)),
+      userId: record.user.id,
+      ref: this.deps.localHumanRef ?? 'human:me',
+    };
   }
 
   /** Stores an API key for this project only — the daemon's own `rootDir` is the credential's
    *  key. The machine-wide key is never written, staying a read-only fallback. */
   connect(apiKey: string): void {
     this.workspaceCache = null;
+    this.connectionCache = null;
     this.resetCapacity();
     writeProjectCredential(this.deps.rootDir, 'linear', { apiKey });
   }
@@ -854,6 +947,7 @@ export class LinearSync {
       writeLinearState(this.deps.rootDir, state);
     }
     this.workspaceCache = null;
+    this.connectionCache = null;
     this.resetCapacity();
     clearProjectCredential(this.deps.rootDir, 'linear');
   }
@@ -1073,11 +1167,18 @@ export class LinearSync {
    * under the project or issue its task mirrors. The docs side refuses before
    * any Linear call; nothing but this action sends a doc to Linear.
    */
-  async shareDocument(actor: DocsActor, ref: string): Promise<string> {
+  async shareDocument(
+    actor: DocsActor,
+    ref: string,
+    opts: { asOwner?: boolean } = {}
+  ): Promise<string> {
     const binding = this.deps.documents;
     if (binding === undefined)
       throw new DocsError('unavailable', 'Linear documents are off');
-    let client: LinearClient | null = null;
+    // The owner sharing on their own credential shares as themselves when
+    // signed in; anyone else shares through the project connection.
+    const person = opts.asOwner === true ? await this.personWriter() : null;
+    let client: LinearClient | null = person?.client ?? null;
     const adapter = binding.adapter({
       port: this.documentsPort(
         () => {
@@ -1795,6 +1896,14 @@ export class LinearSync {
       localRef,
       session.teams.map((t) => ({ id: t.team.id, states: t.states }))
     );
+    // The owner's own edits go out as them when they are signed in for this
+    // workspace: an issue push sends the fields the ledger says are theirs
+    // with their client and the rest with the project connection.
+    const edits = this.deps.personEdits;
+    const person =
+      mayPush && !archiving && edits !== undefined
+        ? await this.personWriter()
+        : null;
     const pass = new LinearPass({
       store,
       client: session.client,
@@ -1809,6 +1918,25 @@ export class LinearSync {
       note: (failure) => this.note(failure),
       onLabel: (label) => this.cacheLabel(session, label),
       blockedLabels: this.blockedLabels,
+      ...(person === null || edits === undefined
+        ? {}
+        : {
+            person: {
+              client: person.client,
+              owned: (doc: TaskDoc, fields: readonly string[]) =>
+                edits.owned(doc, fields, person.ref),
+            },
+          }),
+      ...(edits === undefined
+        ? {}
+        : {
+            onSettled: (
+              taskId: string,
+              landed: readonly string[],
+              pending: readonly string[]
+            ) => edits.settled(taskId, landed, pending),
+            onLocalWrite: (doc: TaskDoc) => edits.observe(doc.meta.id, doc),
+          }),
     });
     // A color write that did not land keeps its old base, so it retries.
     for (const id of await pass.pushLabelColors(labels.push)) {
@@ -1831,6 +1959,17 @@ export class LinearSync {
           : new CommentSync({
               comments: this.deps.comments,
               client: session.client,
+              person:
+                person === null || edits === undefined
+                  ? null
+                  : {
+                      ...person,
+                      wrote: (id: string, body: string) =>
+                        edits.wroteComment(id, body, person.ref),
+                      deleted: (id: string) =>
+                        edits.deletedComment(id, person.ref),
+                    },
+              onSettled: (id: string) => edits?.commentSettled(id),
               state,
               ctx,
               pass,

@@ -605,7 +605,11 @@ export async function handleDocsRoute(
         case 'share-linear':
           return await write(async () => {
             await body();
-            const documentId = await ctx.linearSync.shareDocument(actor, ref);
+            // Shared on the owner's own credential, it goes out as them when
+            // they are signed in to Linear; otherwise as the connection.
+            const documentId = await ctx.linearSync.shareDocument(actor, ref, {
+              asOwner: ctx.ownerCredential === true,
+            });
             return jsonResponse({ documentId }, 201);
           });
         case 'promote':

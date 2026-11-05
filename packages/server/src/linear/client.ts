@@ -76,6 +76,36 @@ export interface LinearViewer {
   email: string;
 }
 
+/** Who a credential acts as, and the Linear workspace it belongs to. */
+export interface LinearIdentity {
+  viewer: {
+    id: string;
+    name: string;
+    displayName: string;
+    email: string;
+    active: boolean;
+    admin: boolean;
+    guest: boolean;
+  };
+  organization: { id: string; name: string; urlKey: string };
+}
+
+/**
+ * How an OAuth credential authorizes a request; an API key stays a plain
+ * string. The person's token is read per request, refreshed first when due,
+ * and never held by the client between requests.
+ */
+export interface LinearAuth {
+  /** `Bearer <access token>`, refreshed first when due; a failure when the
+   *  person is signed out or Linear could not be reached to refresh. */
+  header(): Promise<{ ok: true; value: string } | LinearFailure>;
+  /** Values to strip from any message: the access and refresh tokens. */
+  secrets(): readonly string[];
+  /** After an auth failure with `failedHeader`: refresh once; true when a
+   *  retry with a new header is worth it. */
+  renew(failedHeader: string): Promise<boolean>;
+}
+
 export interface LinearTeam {
   id: string;
   key: string;
@@ -154,6 +184,8 @@ export interface LinearWebhookInput {
 /** The surface the sync engine talks to. Implemented for real below, faked in tests. */
 export interface LinearClient {
   viewer(): Promise<LinearResult<LinearViewer>>;
+  /** The credential's Linear user and workspace. */
+  identity(): Promise<LinearResult<LinearIdentity>>;
   teams(): Promise<LinearResult<LinearTeam[]>>;
   workflowStates(teamId: string): Promise<LinearResult<LinearWorkflowState[]>>;
   workspace(teamId: string): Promise<LinearResult<LinearWorkspace>>;
@@ -730,34 +762,95 @@ export interface HttpLinearClientOptions {
   timeoutMs?: number;
 }
 
+// Any OAuth access or refresh token Linear issued, wherever it turns up in a
+// message (OAuth tokens start `lin_oauth_`).
+const OAUTH_TOKEN_PATTERN = /lin_oauth_[A-Za-z0-9_-]+/g;
+
 /** Hand-written GraphQL client for Linear. Every method resolves to a discriminated result
- *  rather than throwing, so a failure in one direction never aborts the other. */
+ *  rather than throwing, so a failure in one direction never aborts the other.
+ *  A string credential is a personal API key, sent bare as it always was; a
+ *  LinearAuth is a person's OAuth sign-in, sent as `Bearer`. */
 export class HttpLinearClient implements LinearClient {
   private readonly fetchImpl: typeof fetch;
   private readonly url: string;
   private readonly timeoutMs: number;
+  private readonly apiKey: string;
+  private readonly auth: LinearAuth | null;
 
   constructor(
-    private readonly apiKey: string,
+    credential: string | LinearAuth,
     options: HttpLinearClientOptions = {}
   ) {
+    this.apiKey = typeof credential === 'string' ? credential : '';
+    this.auth = typeof credential === 'string' ? null : credential;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.url = options.url ?? LINEAR_API_URL;
     this.timeoutMs = options.timeoutMs ?? LINEAR_REQUEST_TIMEOUT_MS;
   }
 
   // Strips the key out of anything that would be surfaced to a caller or a log, so an
-  // upstream error message can never carry the credential with it.
+  // upstream error message can never carry the credential with it. A
+  // person's sign-in strips both of its tokens and anything shaped like one.
   private redact(message: string): string {
-    return this.apiKey === ''
-      ? message
-      : message.split(this.apiKey).join('[redacted]');
+    if (this.auth === null) {
+      return this.apiKey === ''
+        ? message
+        : message.split(this.apiKey).join('[redacted]');
+    }
+    let out = message;
+    for (const secret of this.auth.secrets()) {
+      if (secret !== '') out = out.split(secret).join('[redacted]');
+    }
+    return out.replace(OAUTH_TOKEN_PATTERN, '[redacted]');
   }
 
+  // A failure from LinearAuth, with anything secret stripped.
+  private redacted(failure: LinearFailure): LinearFailure {
+    return {
+      ...failure,
+      error: this.redact(failure.error),
+      ...(failure.detail === undefined
+        ? {}
+        : { detail: this.redact(failure.detail) }),
+    };
+  }
+
+  // A sign-in's request: one retry with a fresh header after an auth
+  // failure, when the renewal says a retry is worth it. A renewal that ends
+  // the sign-in answers the sign-in's own failure ("Linear ended your
+  // sign-in"), not Linear's refusal of the old token.
   private async request<T>(
     query: string,
     variables: Record<string, unknown> = {}
   ): Promise<LinearResult<T>> {
+    if (this.auth === null)
+      return (await this.send<T>(this.apiKey, query, variables)).result;
+    const header = await this.auth.header();
+    if (!header.ok) return this.redacted(header);
+    const first = await this.send<T>(header.value, query, variables);
+    // Only a token Linear did not accept is worth a refresh; a refusal of
+    // the write itself (a 403, a guest's permission) would just rotate the
+    // token and send the same write again.
+    if (!first.unauthenticated) return first.result;
+    const renewed = await this.auth.renew(header.value);
+    const again = await this.auth.header();
+    if (!again.ok) return this.redacted(again);
+    if (!renewed) return first.result;
+    return (await this.send<T>(again.value, query, variables)).result;
+  }
+
+  // One GraphQL request. `unauthenticated` is set when Linear did not accept
+  // the credential itself (401, or an AUTHENTICATION_ERROR), as opposed to
+  // refusing what it asked for.
+  private async send<T>(
+    authorization: string,
+    query: string,
+    variables: Record<string, unknown>
+  ): Promise<{ result: LinearResult<T>; unauthenticated: boolean }> {
+    const answer = (result: LinearResult<T>, unauthenticated = false) => ({
+      result,
+      unauthenticated,
+    });
     let res: Response;
     // One signal bounds the request and the body read alike.
     const signal = AbortSignal.timeout(this.timeoutMs);
@@ -767,17 +860,19 @@ export class HttpLinearClient implements LinearClient {
         method: 'POST',
         headers: {
           // A personal API key goes bare — `Bearer` is for OAuth tokens only.
-          authorization: this.apiKey,
+          authorization,
           'content-type': 'application/json',
         },
         body: JSON.stringify({ query, variables }),
+        // A person's token is never re-sent to wherever a redirect points.
+        ...(this.auth === null ? {} : { redirect: 'manual' as const }),
       });
     } catch (err) {
-      return {
+      return answer({
         ok: false,
         kind: 'network',
         error: this.redact(`linear request failed: ${(err as Error).message}`),
-      };
+      });
     }
 
     let body: GraphQLBody<T> | null = null;
@@ -787,21 +882,21 @@ export class HttpLinearClient implements LinearClient {
       body = null;
     }
     if (signal.aborted)
-      return {
+      return answer({
         ok: false,
         kind: 'network',
         error: `linear request timed out after ${this.timeoutMs} ms`,
-      };
+      });
     const errors = body?.errors ?? [];
 
     if (errors.length > 0 || !res.ok) {
       if (isRateLimited(errors)) {
-        return {
+        return answer({
           ok: false,
           kind: 'rate-limit',
           error: 'linear rate limit reached',
           retryAfterMs: backoffFromHeaders(res.headers),
-        };
+        });
       }
       const joined = errors.map((e) => e.message ?? 'unknown error').join('; ');
       const message = joined === '' ? `linear responded ${res.status}` : joined;
@@ -810,31 +905,39 @@ export class HttpLinearClient implements LinearClient {
         .filter((m) => m !== '')
         .join('; ');
       if (isUsageLimited(errors)) {
-        return {
+        return answer({
           ok: false,
           kind: 'usage-limit',
           error: LINEAR_USAGE_LIMIT_MESSAGE,
           detail: this.redact(shown === '' ? message : shown),
-        };
+        });
       }
-      return {
-        ok: false,
-        kind: isAuthError(res.status, errors)
-          ? 'auth'
-          : errors.length > 0
-            ? 'graphql'
-            : 'http',
-        error: this.redact(message),
-        ...(shown === '' || shown === message
-          ? {}
-          : { detail: this.redact(shown) }),
-      };
+      return answer(
+        {
+          ok: false,
+          kind: isAuthError(res.status, errors)
+            ? 'auth'
+            : errors.length > 0
+              ? 'graphql'
+              : 'http',
+          error: this.redact(message),
+          ...(shown === '' || shown === message
+            ? {}
+            : { detail: this.redact(shown) }),
+        },
+        res.status === 401 ||
+          errors.some((e) => e.extensions?.code === 'AUTHENTICATION_ERROR')
+      );
     }
 
     if (body?.data === undefined) {
-      return { ok: false, kind: 'graphql', error: 'linear returned no data' };
+      return answer({
+        ok: false,
+        kind: 'graphql',
+        error: 'linear returned no data',
+      });
     }
-    return { ok: true, data: body.data };
+    return answer({ ok: true, data: body.data });
   }
 
   // Walks Relay-style `first`/`after` pages until `hasNextPage` is false, stopping short
@@ -953,6 +1056,31 @@ export class HttpLinearClient implements LinearClient {
     if (!result.ok) return result;
     const v = result.data.viewer;
     return { ok: true, data: { id: v.id, name: v.name, email: v.email ?? '' } };
+  }
+
+  async identity(): Promise<LinearResult<LinearIdentity>> {
+    const result = await this.request<{
+      viewer: (UserNode & { admin?: boolean; guest?: boolean }) | null;
+      organization: { id: string; name: string; urlKey: string } | null;
+    }>(Q.IDENTITY_QUERY);
+    if (!result.ok) return result;
+    const { viewer: v, organization: org } = result.data;
+    if (v === null || org === null) return rejected('identity');
+    return {
+      ok: true,
+      data: {
+        viewer: {
+          id: v.id,
+          name: v.name,
+          displayName: v.displayName ?? v.name,
+          email: v.email ?? '',
+          active: v.active !== false,
+          admin: v.admin === true,
+          guest: v.guest === true,
+        },
+        organization: { id: org.id, name: org.name, urlKey: org.urlKey },
+      },
+    };
   }
 
   async teams(): Promise<LinearResult<LinearTeam[]>> {
