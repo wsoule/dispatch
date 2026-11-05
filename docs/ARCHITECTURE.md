@@ -101,6 +101,17 @@ Personal memory lives outside every project, in
 `$DISPATCH_HOME/.dispatch/memory/`: `identities.db` (who each handle is) and one
 `<identity>.db` per human.
 
+Secrets live in `$DISPATCH_HOME/.dispatch/credentials.json` (mode 0600, written
+atomically under `credentials.json.lock`, `packages/core/src/credentials.ts`):
+each project's Linear API key and other integration keys, agent API keys, and
+the person's own Linear sign-ins under `linearAccounts`, one record per Linear
+workspace (organization) id, with the access and refresh tokens, the Linear user
+they belong to and the OAuth app that issued them
+(`packages/core/src/linearAccounts.ts`). A sign-in is machine-wide: every
+project on this machine whose Linear connection is in that workspace uses it.
+Nothing in a project's `.dispatch/`, the Linear sync state or `config.yml` ever
+holds a token.
+
 Keying by a hash of the project root means several projects share one
 `DISPATCH_HOME` without colliding (`packages/server/src/orchestrator/paths.ts`).
 
@@ -172,7 +183,21 @@ they're for:
 - **Capture** — `/api/inbox/*`, `/api/notes/*`, `/api/conversations`
 - **Overseer** — `/api/overseer`, `/api/overseer/:id/message`; its action
   confirmations and built-in tool-call approvals are gates on the message bus
-- **Integrations** — `/api/linear/*`
+- **Integrations** — `/api/linear/*`, including "Sign in with Linear":
+  `GET /api/linear/account` (what this caller may see of the sign-in, never a
+  token), `POST`/`DELETE /api/linear/sign-in` (start, cancel) and
+  `POST /api/linear/sign-out` (`{ workspaceId? }`: the app names the sign-in it
+  shows, so signing out needs no Linear lookup). The last three need the
+  operator tier and then the daemon owner's own app token (403
+  `linear_sign_in_owner_only` otherwise). The account view shows a stored
+  sign-in whatever the setup says, and lists every sign-in stored on the machine
+  when the project's workspace cannot be told, so one can always be ended. While
+  a sign-in waits, and only then, the daemon also listens on
+  `127.0.0.1:<linear.oauthCallbackPort>` (default 47823) for Linear's redirect
+  to `GET /linear/callback`; it checks the `Host` header, turns away any request
+  a browser marks as other than a navigation, checks the state (a wrong one
+  never ends the flow), takes one code, and closes after the callback, a cancel,
+  a new start or 10 minutes (`linear/signIn.ts`)
 - **Files** — `/api/files/*`: browse, read, search and preview a checkout or a
   run's worktree, every path held inside it by `api/workspacePaths.ts`. A page
   that authenticates with a bearer header downloads through
@@ -900,7 +925,68 @@ multiplayer needs the run half to cross machines.
 - **GitHub** — PR listing, diffs, comments, review submission, and a poll that
   caches the repo's PR set. Dispatch can synthesize a task to anchor a review of
   someone else's PR (`derivedFrom`).
-- **Linear** — two-way sync, team/state mapping, import (`linear/`).
+- **Linear** — two-way sync, team/state mapping, import (`linear/`). The project
+  connection is an API key (per project in `credentials.json`, or
+  `LINEAR_API_KEY`); background sync, imports, webhooks, labels, projects,
+  milestones, every read, and anything an agent, a run, the CLI's agent token, a
+  teammate or board sync changes go through it.
+  - **Sign in with Linear.** The person running Dispatch can also sign in with
+    their own Linear account (OAuth 2 with PKCE S256, no client secret, scopes
+    `read,write`; `linear/oauth.ts`). The desktop opens Linear's consent page in
+    the system browser; Linear redirects to the daemon's loopback listener,
+    which exchanges the code, checks that the token's workspace is the
+    connection's (a token for another workspace is revoked at once and nothing
+    is stored), and stores the pair in `credentials.json`. Linear needs an OAuth
+    application registered by a workspace admin; its client ID comes from
+    `DISPATCH_LINEAR_CLIENT_ID` or `linear.oauthClientId` in `config.yml`, and
+    its callback URL must be exactly
+    `http://127.0.0.1:<linear.oauthCallbackPort>/linear/callback`.
+  - **Which credential each write uses.** Issue updates and creates (with their
+    relations, links and archive follow-ups), comments and "Share to Linear" go
+    out with the person's token, as `Authorization: Bearer`, when they are
+    signed in for the project's workspace with `write` granted and the value is
+    theirs; everything else uses the connection exactly as before. "Theirs" is
+    decided by an in-memory ledger (`linear/personEdits.ts`): the task routes
+    record, only for requests on the owner's app token, which task parts the
+    owner set and a digest of each value, and every other write the daemon sees
+    (each `task.changed`, and each local write a sync pass makes) drops the
+    entries it moved, so a value someone else sets back later is theirs. A push
+    splits by writer: the fields the owner owns go with their token, the rest
+    with the connection, so neither is credited for the other's values. A new
+    issue is created by whoever wrote its title, and the other side's fields
+    follow on the next push. A comment goes with the person's token only for a
+    body or a delete the owner sent through this daemon's API (the ledger keeps
+    a digest), and an edit or delete only when Linear also says the signed-in
+    user wrote it (the comment link's fourth element); a comment file that
+    arrived by git or board sync, even one authored as the owner, goes through
+    the connection. Edits made with the `dispatch` CLI use the shared agent
+    token, so they are not credited.
+  - **Tokens.** Refresh starts 5 minutes before expiry and runs one at a time
+    across processes (`credentials.json.linear-refresh.lock`, re-read, then a
+    compare-and-set on the old refresh token). A refresh that cannot finish (no
+    answer, a throttle, a 5xx) keeps the record and, while it has not expired,
+    the current token. Any other refusal from the token endpoint
+    (`invalid_grant`, `invalid_client`, another 4xx) deletes the record, revokes
+    it unless the grant is already dead, and the account view names the reason;
+    the next pass uses the connection. A refreshed `scope` Linear leaves out
+    keeps the stored one. Only a token Linear did not accept (401, or
+    `AUTHENTICATION_ERROR`) refreshes once and retries once; a refusal of the
+    write itself (403, a permission) does neither. A write Linear refuses with
+    the person's token is recorded like any failed push, stays theirs, and is
+    retried with their token, never with the project key. Sign-out deletes the
+    record first, then revokes the grant at Linear. Token requests and the
+    person's GraphQL requests never follow a redirect.
+  - **The client secret.** `DISPATCH_LINEAR_CLIENT_SECRET`, the escape hatch for
+    an app that turns out to want one, is read once at boot and removed from the
+    daemon's environment, and `childEnv` drops every `DISPATCH_*SECRET*` as it
+    does `DISPATCH_*TOKEN*`, so no agent run or terminal inherits it.
+  - **Guests** sign in like anyone: Linear lets them act as members in their own
+    teams, and what it refuses is recorded with its reason. Dispatch adds no
+    block of its own.
+  - **Board sync.** Edits that arrive from another machine are never in this
+    daemon's ledger, so they never use this machine's token; with Linear sync on
+    several machines, an edit may reach Linear first through another machine's
+    connection.
 - **Carto** — optional dependency-graph backend that narrows review scope to a
   change's real blast radius. Without it there's a built-in TypeScript-only
   scanner; on a Go, Python or Rust repo that finds nothing and review scope
