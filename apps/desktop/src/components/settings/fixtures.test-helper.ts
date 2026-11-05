@@ -138,6 +138,13 @@ export function dataWith(
         viewer: { name: 'x' },
       }),
     handleDisconnectLinear: () => {},
+    // Not fetched yet: the account group holds its place with a skeleton.
+    linearAccount: null,
+    linearAccountError: null,
+    handleLinearSignIn: () =>
+      Promise.resolve({ authorizeUrl: 'https://linear.app/oauth/authorize?' }),
+    handleCancelLinearSignIn: () => Promise.resolve(),
+    handleLinearSignOut: () => Promise.resolve({ revoked: true }),
     handleSyncLinear: () => Promise.resolve({}),
     handleImportLinear: () => Promise.resolve({}),
     linearCoverage: null,
