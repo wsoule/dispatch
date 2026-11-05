@@ -456,3 +456,55 @@ describe('overseer methods', () => {
     }
   });
 });
+
+describe('Linear sign-in methods', () => {
+  const client = (): ApiClient =>
+    createApiClient('http://127.0.0.1:4771', 'tok');
+
+  it('reads the account view', async () => {
+    const stub = stubFetch({ canSignIn: true });
+    try {
+      await client().fetchLinearAccount();
+      expect(stub.calls[0]?.url).toBe(
+        'http://127.0.0.1:4771/api/linear/account'
+      );
+      expect(stub.calls[0]?.init?.method).toBeUndefined();
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('starts, cancels and signs out with the right verbs', async () => {
+    const stub = stubFetch({
+      authorizeUrl: 'https://linear.app/oauth/authorize?x',
+    });
+    try {
+      const api = client();
+      await api.startLinearSignIn();
+      await api.startLinearSignIn({ anotherWorkspace: true });
+      await api.cancelLinearSignIn();
+      await api.signOutOfLinear();
+      await api.signOutOfLinear({ workspaceId: 'org-1' });
+      expect(
+        stub.calls.map((c) => [
+          c.init?.method,
+          c.url.replace('http://127.0.0.1:4771', ''),
+          c.init?.body ?? null,
+        ])
+      ).toEqual([
+        ['POST', '/api/linear/sign-in', '{}'],
+        ['POST', '/api/linear/sign-in', '{"anotherWorkspace":true}'],
+        ['DELETE', '/api/linear/sign-in', null],
+        ['POST', '/api/linear/sign-out', '{}'],
+        ['POST', '/api/linear/sign-out', '{"workspaceId":"org-1"}'],
+      ]);
+      const headers = new Headers(stub.calls[0]?.init?.headers);
+      expect(headers.get('authorization')).toBe('Bearer tok');
+      // The daemon reads a JSON body only with its content type.
+      const signOut = new Headers(stub.calls[4]?.init?.headers);
+      expect(signOut.get('content-type')).toBe('application/json');
+    } finally {
+      stub.restore();
+    }
+  });
+});

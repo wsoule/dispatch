@@ -194,6 +194,70 @@ pass sends no task that predates the link, so push those yourself:
 Long exports and archives run in the daemon; the command follows them and prints
 progress. Every subcommand takes `--json`.
 
+**Signing in with Linear.** A project's Linear connection is an API key, so
+Linear shows every change Dispatch sends as the key's owner. To have your own
+changes show as you, open **Settings → Linear → Your Linear account** and choose
+**Sign in with Linear**: Linear's sign-in page opens in your browser, you
+approve Dispatch there, and the row then reads "Signed in as …".
+
+What then reaches Linear with your own token:
+
+- Task edits and new tasks you make in the app, field by field. When you and
+  someone else (an agent, a run, the orchestrator, a teammate) both changed an
+  issue before Dispatch sent it, your fields go as you and theirs through the
+  project's connection; a new issue is created by whoever wrote its title. A
+  value someone else set, even one that restores what you once wrote, is theirs.
+- Comments you write, edit or delete in the app, and "Share to Linear".
+
+Sync, imports, agents, the `dispatch` CLI, teammates, and anything that reaches
+this computer through git or board sync (even a comment file that names you)
+keep using the connection, and so does anything of yours while you are signed
+out. If Linear refuses a change as you (a guest outside their teams, say), it
+shows as a failed write and is retried as you; it is never sent through the
+connection instead. Linear lets only a comment's author change it, so once you
+sign out, Dispatch cannot edit or delete the comments it posted as you until you
+sign in again.
+
+The token stays on your own computer, in
+`$DISPATCH_HOME/.dispatch/credentials.json` (mode 0600), and is never written to
+the repo. Like the project's API key in the same file, it is readable by
+anything running as your user, including the agents and terminals Dispatch
+starts. Signing in is offered only to the person running Dispatch, not to
+teammates on someone else's Dispatch. **Sign out** deletes the token and then
+ends the sign-in at Linear; it works even when Linear cannot be reached or the
+project's key stopped working, and if Linear could not confirm, the row says how
+to end it in Linear's own settings.
+
+Sign-in needs a one-time setup by a Linear workspace admin:
+
+1. In Linear, open Settings → Administration → API and create an OAuth
+   application. On an Enterprise plan an owner may have to approve it.
+2. Name it (for example `Dispatch`; Linear does not allow "Linear" in the name),
+   fill in the developer name and URL, and set the callback URL to exactly
+   `http://127.0.0.1:47823/linear/callback`, with no trailing slash. Leave
+   webhooks and client-credentials tokens off.
+3. Turn on **Public** if people in other Linear workspaces will sign in through
+   this app; leave it off to keep it to your workspace.
+4. Save, and copy the client ID. Dispatch does not use the client secret: do not
+   paste it anywhere.
+5. In Dispatch, open **Settings → Linear → Set up sign-in**, paste the client ID
+   and save. This writes it to `.dispatch/config.yml`; commit that, so
+   teammates' own Dispatch has sign-in set up too.
+6. If another app on your machines uses port 47823, pick another port under
+   **Set up sign-in → Callback port** and change the callback URL in Linear to
+   match: Linear requires the exact URL, port included.
+
+What Save writes (47823 is the default port):
+
+    linear:
+      oauthClientId: <client ID>
+      oauthCallbackPort: 47823
+
+`DISPATCH_LINEAR_CLIENT_ID` in the daemon's environment overrides
+`linear.oauthClientId`. Only if Linear refuses the first sign-in for a missing
+secret, set `DISPATCH_LINEAR_CLIENT_SECRET` in that environment too; never
+commit it.
+
 ## Running more than one agent
 
 Dispatch ships native executors for Claude and Codex. Any other coding agent

@@ -24,6 +24,7 @@ import type {
   LinearClient,
   LinearContentHistoryEntry,
   LinearFailure,
+  LinearIdentity,
   LinearIssuePage,
   LinearIssueRef,
   LinearPage,
@@ -228,6 +229,27 @@ export class FakeLinearClient implements LinearClient {
     if (f !== null) return Promise.resolve(f);
     const v = this.viewerUser;
     return ok({ id: v.id, name: v.name, email: v.email ?? '' });
+  }
+
+  /** The workspace identity() reports the viewer in. */
+  organization = { id: 'org-1', name: 'Acme', urlKey: 'acme' };
+
+  identity(): Promise<LinearResult<LinearIdentity>> {
+    const f = this.fail('identity');
+    if (f !== null) return Promise.resolve(f);
+    const v = this.viewerUser;
+    return ok({
+      viewer: {
+        id: v.id,
+        name: v.name,
+        displayName: v.displayName ?? v.name,
+        email: v.email ?? '',
+        active: v.active !== false,
+        admin: false,
+        guest: false,
+      },
+      organization: { ...this.organization },
+    });
   }
 
   teams(): Promise<LinearResult<LinearTeam[]>> {

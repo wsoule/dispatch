@@ -1,0 +1,63 @@
+/* "Your Linear account" (LinearAccount.tsx): the sign-in row and its setup
+   dialog. */
+
+/* A title with a mark before the words: the avatar and check, or the
+   spinner while a sign-in waits. */
+.titleLine {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The signed-in check is a mark: it takes the success hue from its
+   data-tone="success" (--tone), beside the "Signed in" words. */
+.check {
+  flex: none;
+  color: var(--tone);
+}
+
+.actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* The callback URL beside its Edit setup button, across the row. */
+.setupLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+}
+
+.setupLine > :first-child {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+/* The setup dialog's body: prose, the callback URL, then the fields. */
+.setup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.para {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 20px;
+  color: var(--text-2);
+}
+
+/* The client ID is machine-read. */
+.mono {
+  font-family: var(--font-mono);
+}
+
+.port {
+  width: 96px;
+  font-variant-numeric: tabular-nums;
+}

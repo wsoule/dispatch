@@ -818,3 +818,71 @@ describe('POST /api/docs/:ref/share-linear', () => {
     expect(doc.doc.origin).toBe(`linear:${documentId}`);
   });
 });
+
+// Sign-in stores a Linear token on this machine, so its routes need the
+// operator tier and then the owner's own app token; the setup keys choose
+// which OAuth app a consent screen names and where Linear sends the code.
+describe('who may set up and use Linear sign-in', () => {
+  function call(method: string, path: string, token: string, body?: unknown) {
+    return rawFetch(`${baseUrl}/api/${path}`, {
+      method,
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  }
+
+  it('refuses the sign-in setup keys below the operator tier', async () => {
+    const lead = handle.team.teammates.issue('ada', 'decide');
+    for (const linear of [
+      { oauthClientId: 'evil-app' },
+      { oauthCallbackPort: 50000 },
+    ]) {
+      const res = await call('PATCH', 'config', lead, { linear });
+      expect(res.status).toBe(403);
+      expect(((await json(res)) as { error: string }).error).toContain(
+        `linear.${Object.keys(linear)[0]}`
+      );
+    }
+    const owner = await call('PATCH', 'config', handle.tokens.appToken, {
+      linear: { oauthClientId: 'client-1', oauthCallbackPort: 50000 },
+    });
+    expect(owner.status).toBe(200);
+    expect((await json(owner)).linear).toMatchObject({
+      oauthClientId: 'client-1',
+      oauthCallbackPort: 50000,
+    });
+  });
+
+  it('refuses sign-in below operator by tier, and to an operator teammate as not the owner', async () => {
+    const lead = handle.team.teammates.issue('ada', 'decide');
+    const operator = handle.team.teammates.issue('bo', 'operator');
+    for (const [method, path] of [
+      ['POST', 'linear/sign-in'],
+      ['DELETE', 'linear/sign-in'],
+      ['POST', 'linear/sign-out'],
+    ] as const) {
+      const below = await call(method, path, lead);
+      expect(below.status).toBe(403);
+      expect(((await json(below)) as { code: string }).code).toBe(
+        'auth_insufficient_tier'
+      );
+      const notOwner = await call(method, path, operator);
+      expect(notOwner.status).toBe(403);
+      expect(((await json(notOwner)) as { code: string }).code).toBe(
+        'linear_sign_in_owner_only'
+      );
+    }
+    // The account view is on the request tier, and names nobody to them.
+    const view = await call('GET', 'linear/account', lead);
+    expect(view.status).toBe(200);
+    expect(await json(view)).toMatchObject({
+      unavailable: 'teammate',
+      account: null,
+      connection: null,
+    });
+    expect(stub.calls).not.toContain('identity');
+  });
+});

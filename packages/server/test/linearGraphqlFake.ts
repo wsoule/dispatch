@@ -29,6 +29,8 @@ export interface GraphqlWorld {
 export interface GraphqlRequest {
   operation: string;
   variables: Record<string, unknown>;
+  /** The authorization header as sent: a bare API key or `Bearer …`. */
+  authorization: string | null;
 }
 
 // A LinearIssue back in the GraphQL node shape the client parses.
@@ -138,6 +140,11 @@ export function graphqlFetch(world: GraphqlWorld): {
     );
     const team = world.teams?.find((t) => t.id === v.teamId);
     switch (operation) {
+      case 'Identity':
+        return {
+          viewer: { ...world.viewer, admin: false, guest: false },
+          organization: { id: 'org-1', name: 'Acme', urlKey: 'acme' },
+        };
       case 'Workspace':
         return {
           viewer: world.viewer,
@@ -239,6 +246,20 @@ export function graphqlFetch(world: GraphqlWorld): {
           documents: hit(false),
         };
       }
+      case 'IssueUpdate': {
+        // The scalar fields a push sends; enough for a test of who sent it.
+        const issue = world.issues.find((i) => i.id === v.id);
+        if (issue === undefined) throw new Error(`no issue ${String(v.id)}`);
+        const input = v.input as Record<string, unknown>;
+        if (typeof input.title === 'string') issue.title = input.title;
+        if (typeof input.description === 'string')
+          issue.description = input.description;
+        if (typeof input.priority === 'number') issue.priority = input.priority;
+        issue.updatedAt = new Date(
+          Math.max(Date.now(), Date.parse(issue.updatedAt) + 1000)
+        ).toISOString();
+        return { issueUpdate: { success: true, issue: issueNode(issue) } };
+      }
       default:
         throw new Error(`fake Linear has no answer for ${operation}`);
     }
@@ -249,7 +270,12 @@ export function graphqlFetch(world: GraphqlWorld): {
       variables: Record<string, unknown>;
     };
     const operation = /(?:query|mutation)\s+(\w+)/.exec(body.query)?.[1] ?? '';
-    requests.push({ operation, variables: body.variables });
+    const headers = new Headers(init.headers);
+    requests.push({
+      operation,
+      variables: body.variables,
+      authorization: headers.get('authorization'),
+    });
     const data = answer(operation, body.query, body.variables);
     return Promise.resolve(
       new Response(JSON.stringify({ data }), {

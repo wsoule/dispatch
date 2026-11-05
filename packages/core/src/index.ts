@@ -371,6 +371,21 @@ export type {
   ProjectCredentials,
   SigningKeyRead,
 } from './credentials.js';
+export {
+  hasLinearAccounts,
+  listLinearAccounts,
+  linearRefreshLockPath,
+  publicLinearAccount,
+  readLinearAccount,
+  removeLinearAccount,
+  replaceLinearAccountTokens,
+  withLinearRefreshLock,
+  writeLinearAccount,
+} from './linearAccounts.js';
+export type {
+  LinearAccountRecord,
+  PublicLinearAccount,
+} from './linearAccounts.js';
 export * from './linearContainers.js';
 export * from './linearFields.js';
 export * from './linearLabels.js';

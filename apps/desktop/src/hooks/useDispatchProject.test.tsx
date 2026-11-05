@@ -125,6 +125,12 @@ let createRunResult: () => Promise<RunMeta> = () =>
 let linearStatusFixture: object | null = null;
 const linearFetches = { coverage: 0, capacity: 0, preview: 0 };
 
+// The "Your Linear account" view the daemon answers, how often it was read,
+// and every sign-in call the hook made (name, then its argument).
+let linearAccountFixture: dispatchClient.LinearAccountView | null = null;
+let linearAccountFetches = 0;
+const linearSignInCalls: [string, unknown][] = [];
+
 // Only `createApiClient` is replaced — the rest of the module (ApiError, which
 // useOverseerSession's 404 veto instanceof-checks) has to stay real.
 // Lets a test hold the first presence fetch open, so a `hello` can land while
@@ -280,6 +286,29 @@ void mock.module('@dispatch/client', () => ({
     previewLinearExport: () => {
       linearFetches.preview += 1;
       return Promise.resolve({ open: 1, all: 1, allArchiveFinished: 1 });
+    },
+    fetchLinearAccount: () => {
+      linearAccountFetches += 1;
+      return linearAccountFixture === null
+        ? Promise.reject(new Error('no Linear account view in this test'))
+        : Promise.resolve(linearAccountFixture);
+    },
+    startLinearSignIn: (opts?: unknown) => {
+      linearSignInCalls.push(['start', opts]);
+      return Promise.resolve({
+        authorizeUrl: 'https://linear.app/oauth/authorize?state=s',
+      });
+    },
+    cancelLinearSignIn: () => {
+      linearSignInCalls.push(['cancel', undefined]);
+      return Promise.resolve();
+    },
+    signOutOfLinear: (opts?: unknown) => {
+      linearSignInCalls.push(['sign-out', opts]);
+      return Promise.resolve({
+        revoked: false,
+        account: { ...linearAccountFixture, account: null },
+      });
     },
     fetchWhoami: () =>
       whoamiFixture === null
@@ -2181,4 +2210,179 @@ test('a bulk action started elsewhere reads as running from its first progress',
   });
   expect(result.current.linearStatus?.progress?.done).toBe(0);
   linearStatusFixture = null;
+});
+
+// The owner's view with nobody signed in yet, for the account tests below.
+const SIGNED_OUT_VIEW: dispatchClient.LinearAccountView = {
+  canSignIn: true,
+  unavailable: null,
+  callbackUrl: 'http://127.0.0.1:47823/linear/callback',
+  clientIdSource: 'config',
+  pending: false,
+  account: null,
+  stored: [],
+  connection: {
+    userId: 'u-bot',
+    userName: 'Bot User',
+    workspace: { id: 'org-1', name: 'Acme', urlKey: 'acme' },
+  },
+  problem: null,
+};
+
+// The account view rides on the Linear details watch: nothing reads it until
+// Settings shows it; a sign-in, sign-out or ended sign-in (config.changed)
+// and a pass (linear.changed) read it again; a pending sign-in polls it.
+test('the Linear account view is read while watched, on config.changed, and polled while pending', async () => {
+  linearStatusFixture = { connected: true, teamId: null };
+  linearAccountFixture = SIGNED_OUT_VIEW;
+  linearAccountFetches = 0;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(result.current.linearStatus).not.toBeNull();
+  });
+  expect(linearAccountFetches).toBe(0);
+  expect(result.current.linearAccount).toBeNull();
+
+  let release = () => {};
+  act(() => {
+    release = result.current.watchLinearDetails();
+  });
+  await waitFor(() => {
+    expect(result.current.linearAccount).toEqual(SIGNED_OUT_VIEW);
+  });
+  expect(linearAccountFetches).toBe(1);
+
+  // A sign-in elsewhere broadcasts config.changed; the view is read again.
+  linearAccountFixture = { ...SIGNED_OUT_VIEW, pending: true };
+  act(() => {
+    sink?.onEvent({ type: 'config.changed' });
+  });
+  await waitFor(() => {
+    expect(result.current.linearAccount?.pending).toBe(true);
+  });
+  const atPending = linearAccountFetches;
+  // While pending it polls every 1.5 s, with no event at all.
+  await waitFor(
+    () => {
+      expect(linearAccountFetches).toBeGreaterThan(atPending);
+    },
+    { timeout: 3000 }
+  );
+
+  // Once it settles, the polling stops.
+  linearAccountFixture = SIGNED_OUT_VIEW;
+  await waitFor(
+    () => {
+      expect(result.current.linearAccount?.pending).toBe(false);
+    },
+    { timeout: 3000 }
+  );
+  const settled = linearAccountFetches;
+  await new Promise((resolve) => setTimeout(resolve, 1700));
+  expect(linearAccountFetches).toBe(settled);
+
+  act(() => release());
+  linearStatusFixture = null;
+  linearAccountFixture = null;
+});
+
+// A sign-in stored on this computer stays visible after a disconnect, so the
+// view is read while watched whether or not the project is connected.
+test('the Linear account view is read without a connection too', async () => {
+  linearStatusFixture = { connected: false, teamId: null };
+  linearAccountFixture = { ...SIGNED_OUT_VIEW, unavailable: 'not-connected' };
+  linearAccountFetches = 0;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(result.current.linearStatus).not.toBeNull();
+  });
+  expect(linearAccountFetches).toBe(0);
+  let release = () => {};
+  act(() => {
+    release = result.current.watchLinearDetails();
+  });
+  await waitFor(() => {
+    expect(result.current.linearAccount?.unavailable).toBe('not-connected');
+  });
+  act(() => release());
+  linearStatusFixture = null;
+  linearAccountFixture = null;
+});
+
+test('the sign-in handlers call the daemon, and sign-out writes the answered view', async () => {
+  linearStatusFixture = { connected: true, teamId: null };
+  linearAccountFixture = {
+    ...SIGNED_OUT_VIEW,
+    account: {
+      userId: 'u-ada',
+      name: 'Ada Lovelace',
+      displayName: 'ada',
+      email: 'ada@example.com',
+      guest: false,
+      admin: false,
+      canWrite: true,
+      workspace: { id: 'org-1', name: 'Acme', urlKey: 'acme' },
+      signedInAt: '2026-11-05T10:00:00.000Z',
+    },
+  };
+  linearSignInCalls.length = 0;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(result.current.linearStatus).not.toBeNull();
+  });
+  let release = () => {};
+  act(() => {
+    release = result.current.watchLinearDetails();
+  });
+  await waitFor(() => {
+    expect(result.current.linearAccount?.account?.name).toBe('Ada Lovelace');
+  });
+
+  let started: { authorizeUrl: string } | null = null;
+  await act(async () => {
+    started = await result.current.handleLinearSignIn({
+      anotherWorkspace: true,
+    });
+    await result.current.handleCancelLinearSignIn();
+  });
+  expect(started).toEqual({
+    authorizeUrl: 'https://linear.app/oauth/authorize?state=s',
+  });
+
+  let out: { revoked: boolean } | null = null;
+  await act(async () => {
+    out = await result.current.handleLinearSignOut({ workspaceId: 'org-1' });
+  });
+  // Only `revoked` comes back; the token-free view goes straight to the cache.
+  expect(out).toEqual({ revoked: false });
+  await waitFor(() => {
+    expect(result.current.linearAccount?.account).toBeNull();
+  });
+  expect(linearSignInCalls).toEqual([
+    ['start', { anotherWorkspace: true }],
+    ['cancel', undefined],
+    ['sign-out', { workspaceId: 'org-1' }],
+  ]);
+
+  act(() => release());
+  linearStatusFixture = null;
+  linearAccountFixture = null;
 });

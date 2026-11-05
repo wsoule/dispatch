@@ -2780,6 +2780,63 @@ export interface LinearIssueLink {
   url: string;
 }
 
+/** Why the last sign-in attempt, or the sign-in itself, ended. */
+export type LinearSignInProblemCode =
+  | 'denied'
+  | 'wrong-workspace'
+  | 'expired'
+  | 'ended'
+  | 'failed';
+
+// Mirrors PublicLinearAccount in packages/core/src/linearAccounts.ts: a
+// person's Linear sign-in as the API shows it, never with a token.
+export interface LinearSignedInAccount {
+  userId: string;
+  name: string;
+  displayName: string;
+  email: string;
+  guest: boolean;
+  admin: boolean;
+  /** Linear granted `write`; without it changes still use the connection. */
+  canWrite: boolean;
+  workspace: { id: string; name: string; urlKey: string };
+  signedInAt: string;
+}
+
+// Mirrors LinearAccountView in packages/server/src/linear/signIn.ts: the
+// "Your Linear account" group's state for this caller. Never a token; only
+// the daemon's owner on their app token sees who is signed in.
+export interface LinearAccountView {
+  /** True only for the owner's own credential, configured and connected. */
+  canSignIn: boolean;
+  unavailable:
+    | 'teammate'
+    | 'attached'
+    | 'not-configured'
+    | 'not-connected'
+    | null;
+  /** The exact callback URL to register in Linear; not a secret. */
+  callbackUrl: string;
+  clientIdSource: 'env' | 'config' | null;
+  /** A sign-in is waiting for Linear's redirect (owner only). */
+  pending: boolean;
+  /** The signed-in person for this project's workspace (owner only),
+   *  shown whatever the setup says so a sign-in can always be ended. */
+  account: LinearSignedInAccount | null;
+  /** Every sign-in stored on this computer, when this project's workspace
+   *  cannot be told now (no connection, or Linear could not say); empty
+   *  otherwise. Owner only; each can be signed out of by its workspace. */
+  stored: LinearSignedInAccount[];
+  /** The project connection's Linear user and workspace (owner only). */
+  connection: {
+    /** The Linear user the project's API key acts as. */
+    userId: string;
+    userName: string;
+    workspace: { id: string; name: string; urlKey: string };
+  } | null;
+  problem: { code: LinearSignInProblemCode; message: string } | null;
+}
+
 // Mirrors LinearStatus in packages/server/src/linear/sync.ts. Carries no API key
 // — `keySource` says where the daemon found one, never what it is.
 export interface LinearStatus {
@@ -3907,6 +3964,20 @@ export interface ApiClient {
     viewer: LinearViewer;
   }>;
   disconnectLinear(): Promise<LinearStatus>;
+  // "Sign in with Linear", for the daemon's owner on their own app token: the
+  // account view, a start that answers Linear's consent URL to open in the
+  // system browser, cancelling a pending start, and signing out (which
+  // deletes the token, then revokes it at Linear).
+  fetchLinearAccount(): Promise<LinearAccountView>;
+  startLinearSignIn(opts?: {
+    anotherWorkspace?: boolean;
+  }): Promise<{ authorizeUrl: string }>;
+  cancelLinearSignIn(): Promise<void>;
+  // `workspaceId` names the sign-in to end (the app passes the workspace of
+  // the account it shows), so signing out needs no Linear lookup first.
+  signOutOfLinear(opts?: {
+    workspaceId?: string;
+  }): Promise<{ revoked: boolean; account: LinearAccountView }>;
   fetchLinearTeams(): Promise<LinearTeam[]>;
   fetchLinearStates(teamId: string): Promise<LinearWorkflowState[]>;
   // Runs a pass now. `taskIds` pushes exactly those tasks, bypassing the gate
@@ -4874,6 +4945,26 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       }),
     disconnectLinear: () =>
       request(target, '/api/linear/disconnect', { method: 'POST' }),
+    fetchLinearAccount: () => request(target, '/api/linear/account'),
+    startLinearSignIn: (opts) =>
+      request(target, '/api/linear/sign-in', {
+        method: 'POST',
+        ...jsonBody(
+          opts?.anotherWorkspace === true ? { anotherWorkspace: true } : {}
+        ),
+      }),
+    cancelLinearSignIn: async () => {
+      await send(target, '/api/linear/sign-in', { method: 'DELETE' });
+    },
+    signOutOfLinear: (opts) =>
+      request(target, '/api/linear/sign-out', {
+        method: 'POST',
+        ...jsonBody(
+          opts?.workspaceId === undefined
+            ? {}
+            : { workspaceId: opts.workspaceId }
+        ),
+      }),
     fetchLinearTeams: () => request(target, '/api/linear/teams'),
     fetchLinearStates: (teamId) =>
       request(

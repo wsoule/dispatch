@@ -30,6 +30,7 @@ import type {
   FixLoopState,
   HealthPayload,
   LandingSnapshot,
+  LinearAccountView,
   LinearBulkStart,
   LinearCapacity,
   LinearCoverage,
@@ -594,6 +595,8 @@ export interface DispatchProjectData {
       direction?: 'both' | 'pull' | 'push';
       includeAcceptanceCriteria?: boolean;
       archiveFinished?: boolean;
+      oauthClientId?: string | null;
+      oauthCallbackPort?: number;
     };
     statusRoles?: StatusRoles | null;
     maxTurns?: number | null;
@@ -627,6 +630,28 @@ export interface DispatchProjectData {
     apiKey: string
   ) => Promise<{ connected: boolean; viewer: LinearViewer }>;
   handleDisconnectLinear: () => Promise<void>;
+  /** "Your Linear account": who is signed in with Linear for this project's
+   *  workspace, as this window's credential may see it. Never a token. Null
+   *  until fetched, and fetched only while something holds
+   *  `watchLinearDetails`; polled every 1.5 s while a sign-in waits. */
+  linearAccount: LinearAccountView | null;
+  /** Why the account view could not be fetched (an older daemon has no
+   *  route), or null. */
+  linearAccountError: unknown;
+  /** Starts a sign-in and answers Linear's consent URL, for the caller to
+   *  open in the system browser. `anotherWorkspace` asks Linear to show its
+   *  workspace choice again. */
+  handleLinearSignIn: (opts?: {
+    anotherWorkspace?: boolean;
+  }) => Promise<{ authorizeUrl: string }>;
+  /** Stops waiting for a pending sign-in. */
+  handleCancelLinearSignIn: () => Promise<void>;
+  /** Signs out of the sign-in for `workspaceId` (the workspace of the
+   *  account the row shows): the daemon deletes the token, then revokes it
+   *  at Linear. `revoked` is false when Linear could not be reached. */
+  handleLinearSignOut: (opts?: {
+    workspaceId?: string;
+  }) => Promise<{ revoked: boolean }>;
   /** Runs a sync pass now, returning its summary. With `taskIds`, pushes exactly those tasks
    * regardless of the cursor filter — the task dialog's "Push to Linear" action. */
   handleSyncLinear: (taskIds?: string[]) => Promise<LinearSyncSummary>;
@@ -998,6 +1023,10 @@ export function useDispatchProject(
     () => ['dispatch-linear-details', port],
     [port]
   );
+  const linearAccountQueryKey = useMemo(
+    () => ['dispatch-linear-account', port],
+    [port]
+  );
   const syncStatusQueryKey = useMemo(() => syncStatusKey(port), [port]);
 
   // One archived-inclusive, body-less list; `tasks` (active only) and
@@ -1149,6 +1178,23 @@ export function useDispatchProject(
     // The daemon caches a measurement for a minute; asking sooner is wasted.
     staleTime: 60_000,
     // A refused key or a throttle is a settled answer the row explains.
+    retry: false,
+  });
+  // The sign-in row's state. Shown beside coverage and capacity, so it shares
+  // their watch; polled while a sign-in waits for Linear's redirect, since
+  // the daemon's `config.changed` is the only other signal that it ended.
+  // Unlike coverage it is read without a connection too: a sign-in stored on
+  // this computer stays visible, so it can be ended, after a disconnect.
+  const { data: linearAccount, error: linearAccountError } = useQuery({
+    queryKey: linearAccountQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchLinearAccount();
+    },
+    enabled: client !== null && linearDetailWatchers > 0,
+    refetchInterval: (query) =>
+      query.state.data?.pending === true ? 1500 : false,
+    // An older daemon has no route: a settled answer, and the group hides.
     retry: false,
   });
   const refreshLinearCapacity = useCallback(async (): Promise<void> => {
@@ -1972,8 +2018,12 @@ export function useDispatchProject(
           ]);
         } else if (event.type === 'config.changed') {
           // Settings in another window, the CLI, and Linear connect/disconnect
-          // all write config; without this branch they sit stale here.
+          // all write config; without this branch they sit stale here. A
+          // Linear sign-in, sign-out, or a sign-in Linear ended sends it too.
           refetchConfig();
+          void queryClient.invalidateQueries({
+            queryKey: linearAccountQueryKey,
+          });
         } else if (event.type === 'run.survey') {
           // Same cache-read reason as message.new above. This is the
           // only signal that a terminal run left uncommitted work behind.
@@ -2052,6 +2102,10 @@ export function useDispatchProject(
           // the queries a watching view enabled refetch.
           void queryClient.invalidateQueries({
             queryKey: linearDetailsQueryKey,
+          });
+          // A pass can end a sign-in (Linear refused its refresh).
+          void queryClient.invalidateQueries({
+            queryKey: linearAccountQueryKey,
           });
         } else if (event.type === 'queue.drained') {
           // The drain reviewed runs (tasks/runs move to done) and may have
@@ -2146,6 +2200,7 @@ export function useDispatchProject(
     linearStatusQueryKey,
     linearLinksQueryKey,
     linearDetailsQueryKey,
+    linearAccountQueryKey,
     syncStatusQueryKey,
     port,
     onRecordInbox,
@@ -2923,6 +2978,8 @@ export function useDispatchProject(
         direction?: 'both' | 'pull' | 'push';
         includeAcceptanceCriteria?: boolean;
         archiveFinished?: boolean;
+        oauthClientId?: string | null;
+        oauthCallbackPort?: number;
       };
       statusRoles?: StatusRoles | null;
       maxTurns?: number | null;
@@ -2965,6 +3022,50 @@ export function useDispatchProject(
     void queryClient.invalidateQueries({ queryKey: linearStatusQueryKey });
     void queryClient.invalidateQueries({ queryKey: linearTeamsQueryKey });
   }, [client, queryClient, linearStatusQueryKey, linearTeamsQueryKey]);
+
+  // Sign-in is the owner's own: the daemon answers Linear's consent URL and
+  // waits on its loopback listener; the caller opens the URL. The account
+  // view then reads as pending and polls until the redirect lands.
+  const handleLinearSignIn = useCallback(
+    async (opts?: {
+      anotherWorkspace?: boolean;
+    }): Promise<{ authorizeUrl: string }> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      try {
+        return await client.startLinearSignIn(opts);
+      } finally {
+        // A refused start can still have ended an earlier pending flow.
+        void queryClient.invalidateQueries({
+          queryKey: linearAccountQueryKey,
+        });
+      }
+    },
+    [client, queryClient, linearAccountQueryKey]
+  );
+
+  const handleCancelLinearSignIn = useCallback(async (): Promise<void> => {
+    if (client === null) return;
+    await client.cancelLinearSignIn();
+    void queryClient.invalidateQueries({ queryKey: linearAccountQueryKey });
+  }, [client, queryClient, linearAccountQueryKey]);
+
+  // The answer carries the view after sign-out, so the row changes without a
+  // second request. A read already in flight began before the sign-out and
+  // would put the account back, so it is cancelled first.
+  const handleLinearSignOut = useCallback(
+    async (opts?: {
+      workspaceId?: string;
+    }): Promise<{
+      revoked: boolean;
+    }> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      const result = await client.signOutOfLinear(opts);
+      await queryClient.cancelQueries({ queryKey: linearAccountQueryKey });
+      queryClient.setQueryData(linearAccountQueryKey, result.account);
+      return { revoked: result.revoked };
+    },
+    [client, queryClient, linearAccountQueryKey]
+  );
 
   const handleSyncLinear = useCallback(
     async (taskIds?: string[]): Promise<LinearSyncSummary> => {
@@ -3220,6 +3321,11 @@ export function useDispatchProject(
       linearLinks: linearLinks ?? {},
       handleConnectLinear,
       handleDisconnectLinear,
+      linearAccount: linearAccount ?? null,
+      linearAccountError,
+      handleLinearSignIn,
+      handleCancelLinearSignIn,
+      handleLinearSignOut,
       handleSyncLinear,
       handleImportLinear,
       linearCoverage: linearCoverage ?? null,
@@ -3354,6 +3460,11 @@ export function useDispatchProject(
       linearLinks,
       handleConnectLinear,
       handleDisconnectLinear,
+      linearAccount,
+      linearAccountError,
+      handleLinearSignIn,
+      handleCancelLinearSignIn,
+      handleLinearSignOut,
       handleSyncLinear,
       handleImportLinear,
       linearCoverage,

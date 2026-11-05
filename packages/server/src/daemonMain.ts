@@ -20,6 +20,7 @@ import {
   resolveStoreBackend,
   startServer,
 } from './index.js';
+import { fakeOAuthEndpoints } from './linear/oauth.js';
 import {
   registerCodexOverseer,
   registerCodexPlanner,
@@ -480,6 +481,44 @@ if (args.includes('--init')) {
 
 const enableFakes = process.env.DISPATCH_ENABLE_FAKES === '1';
 
+// DISPATCH_LINEAR_FAKE_ORIGIN sends every Linear OAuth and GraphQL call to a
+// fake Linear (the browser smoke). Honoured only behind the fakes gate and
+// only on a loopback host, so no setting can send a token anywhere else.
+function linearFakeOrigin(): string | null {
+  const raw = process.env.DISPATCH_LINEAR_FAKE_ORIGIN?.trim();
+  if (raw === undefined || raw === '') return null;
+  let url: URL | null = null;
+  try {
+    url = new URL(raw);
+  } catch {
+    url = null;
+  }
+  const loopback =
+    url !== null &&
+    url.protocol === 'http:' &&
+    (url.hostname === '127.0.0.1' || url.hostname === 'localhost');
+  if (!enableFakes || !loopback) {
+    console.warn(
+      'dispatchd: ignoring DISPATCH_LINEAR_FAKE_ORIGIN: it needs DISPATCH_ENABLE_FAKES=1 and a loopback http origin'
+    );
+    return null;
+  }
+  return url?.origin ?? null;
+}
+const linearFake = linearFakeOrigin();
+
+// DISPATCH_LINEAR_CLIENT_SECRET, the escape hatch for a Linear OAuth app that
+// turns out to want its secret: read once and gone, like the app token
+// below, so no agent run or terminal this daemon starts can read it.
+const linearClientSecret = process.env.DISPATCH_LINEAR_CLIENT_SECRET?.trim();
+delete process.env.DISPATCH_LINEAR_CLIENT_SECRET;
+const linearOAuth = {
+  ...(linearFake === null ? {} : { endpoints: fakeOAuthEndpoints(linearFake) }),
+  ...(linearClientSecret === undefined || linearClientSecret === ''
+    ? {}
+    : { clientSecret: linearClientSecret }),
+};
+
 // A test harness that cannot read this process's stdout (Playwright's
 // webServer, the browser-dev URL) may preset the decide-tier token instead;
 // whoever launches the daemon with it is as trusted as whoever reads the
@@ -555,6 +594,7 @@ const serverOpts: Parameters<typeof startServer>[0] = {
         },
       }),
   ...(Object.keys(a2aOverrides).length === 0 ? {} : { a2a: a2aOverrides }),
+  ...(Object.keys(linearOAuth).length === 0 ? {} : { linearOAuth }),
   // `--init` is the desktop's add-project spawn, which stops whatever daemon
   // predates the project's tracker; `--replace` is the explicit override.
   // Either way this boot waits for the old pid to exit, never runs beside it.

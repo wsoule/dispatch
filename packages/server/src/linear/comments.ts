@@ -23,9 +23,36 @@ function remoteIdOf(comment: TaskComment): string | null {
     : null;
 }
 
+/** The person signed in with Linear on this daemon. */
+export interface LinearPersonWriter {
+  client: LinearClient;
+  /** Their Linear user id. */
+  userId: string;
+  /** The daemon owner's person ref, a local comment's `author`. */
+  ref: string;
+}
+
+/**
+ * The signed-in person, for the comment writes that are theirs: a comment
+ * goes out with their client only when its body (or its delete) is one the
+ * owner sent through this daemon's API (linear/personEdits.ts). A comment
+ * file that arrived by git or board sync, even one authored as the owner,
+ * goes through the project connection.
+ */
+interface CommentPerson extends LinearPersonWriter {
+  /** Whether the owner wrote this comment's current body here. */
+  wrote: (commentId: string, body: string) => boolean;
+  /** Whether the owner deleted this comment here. */
+  deleted: (commentId: string) => boolean;
+}
+
 export interface CommentSyncDeps {
   comments: CommentStorePort;
   client: LinearClient;
+  /** The signed-in person; absent, every comment write uses `client`. */
+  person?: CommentPerson | null;
+  /** Hears each comment whose write or delete reached Linear. */
+  onSettled?: (commentId: string) => void;
   state: LinearSyncState;
   ctx: PassContext;
   pass: LinearPass;
@@ -50,14 +77,37 @@ export class CommentSync {
     this.d.changed.set(taskId, ids);
   }
 
+  // Records a twin. `author` is the remote comment's Linear user when known;
+  // undefined keeps what the link already held.
   private link(
     localId: string,
     remoteId: string,
     taskId: string,
-    body: string
+    body: string,
+    author?: string | null
   ): void {
-    this.d.state.comments[localId] = [remoteId, taskId, fieldHash(body)];
+    const known =
+      author === undefined ? this.d.state.comments[localId]?.[3] : author;
+    this.d.state.comments[localId] =
+      known === undefined || known === null
+        ? [remoteId, taskId, fieldHash(body)]
+        : [remoteId, taskId, fieldHash(body), known];
     this.byRemote.set(remoteId, localId);
+  }
+
+  // The client an edit or delete of a linked comment goes out with: the
+  // person's when Linear says they wrote it and the owner made this change
+  // here (`mine`), else the project connection. Linear lets only a
+  // comment's author change it, so anything else stays as it is today.
+  private editorFor(localId: string, mine: boolean): LinearClient {
+    const person = this.d.person;
+    const author = this.d.state.comments[localId]?.[3];
+    return person !== undefined &&
+      person !== null &&
+      mine &&
+      author === person.userId
+      ? person.client
+      : this.d.client;
   }
 
   private unlink(localId: string): void {
@@ -93,7 +143,8 @@ export class CommentSync {
       seen.add(c.id);
       const taskId = this.taskFor(c.issueId);
       if (taskId === null || pass.isEcho(c.id, c.updatedAt)) continue;
-      let localId = this.byRemote.get(c.id) ?? this.adopt(taskId, c.id);
+      let localId =
+        this.byRemote.get(c.id) ?? this.adopt(taskId, c.id, c.userId);
       if (c.archivedAt !== null) {
         if (localId !== undefined) {
           for (const id of comments.remove(taskId, localId)) {
@@ -121,7 +172,7 @@ export class CommentSync {
           c.updatedAt
         );
         localId = added.id;
-        this.link(localId, c.id, taskId, c.body);
+        this.link(localId, c.id, taskId, c.body, c.userId);
         this.note(taskId, localId);
         continue;
       }
@@ -132,12 +183,16 @@ export class CommentSync {
 
   // A local comment already carrying this remote id (state lost, or written
   // by an import on another machine) is its twin.
-  private adopt(taskId: string, remoteId: string): string | undefined {
+  private adopt(
+    taskId: string,
+    remoteId: string,
+    author: string | null
+  ): string | undefined {
     const twin = this.d.comments
       .list(taskId)
       .find((c) => remoteIdOf(c) === remoteId);
     if (twin === undefined) return undefined;
-    this.link(twin.id, remoteId, taskId, twin.body);
+    this.link(twin.id, remoteId, taskId, twin.body, author);
     return twin.id;
   }
 
@@ -158,7 +213,7 @@ export class CommentSync {
       !localChanged || Date.parse(c.updatedAt) >= Date.parse(local.updated);
     if (remoteWins) {
       this.d.comments.update(taskId, localId, { body: c.body }, c.updatedAt);
-      this.link(localId, c.id, taskId, c.body);
+      this.link(localId, c.id, taskId, c.body, c.userId);
       this.note(taskId, localId);
       return;
     }
@@ -227,9 +282,13 @@ export class CommentSync {
   private async sendDelete(localId: string): Promise<boolean> {
     const link = this.d.state.comments[localId];
     if (link === undefined) return true;
-    const done = this.d.pass.take(await this.d.client.deleteComment(link[0]));
+    const mine = this.d.person?.deleted(localId) === true;
+    const done = this.d.pass.take(
+      await this.editorFor(localId, mine).deleteComment(link[0])
+    );
     if (done === null) return false;
     this.unlink(localId);
+    this.d.onSettled?.(localId);
     return true;
   }
 
@@ -240,16 +299,18 @@ export class CommentSync {
       this.d.comments.list(taskId).map((c) => [c.id, c])
     )
   ): Promise<boolean> {
-    const { client, pass, state } = this.d;
+    const { pass, state } = this.d;
     const link = state.comments[local.id];
     if (link !== undefined) {
       if (fieldHash(local.body) === link[2]) return true;
+      const mine = this.d.person?.wrote(local.id, local.body) === true;
       const updated = pass.take(
-        await client.updateComment(link[0], local.body)
+        await this.editorFor(local.id, mine).updateComment(link[0], local.body)
       );
       if (updated === null) return false;
       pass.recordEcho(updated.id, updated.updatedAt);
       this.link(local.id, updated.id, taskId, local.body);
+      this.d.onSettled?.(local.id);
       return true;
     }
     const known = remoteIdOf(local);
@@ -278,8 +339,19 @@ export class CommentSync {
       }
       parentId = state.comments[root.id]?.[0];
     }
+    // A comment the owner wrote here goes out as them when they are signed
+    // in; one that only claims them as author (a file from git or board
+    // sync) goes through the project connection.
+    const person = this.d.person;
+    const writer =
+      person !== undefined &&
+      person !== null &&
+      local.author === person.ref &&
+      person.wrote(local.id, local.body)
+        ? person.client
+        : this.d.client;
     const created = pass.take(
-      await client.createComment({
+      await writer.createComment({
         issueId,
         body: local.body,
         ...(parentId === undefined ? {} : { parentId }),
@@ -287,7 +359,8 @@ export class CommentSync {
     );
     if (created === null) return false;
     pass.recordEcho(created.id, created.updatedAt);
-    this.link(local.id, created.id, taskId, local.body);
+    this.link(local.id, created.id, taskId, local.body, created.userId);
+    this.d.onSettled?.(local.id);
     // Bookkeeping: the comment keeps its own `updated`.
     this.d.comments.update(
       taskId,

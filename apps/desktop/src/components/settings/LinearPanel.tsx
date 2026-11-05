@@ -27,6 +27,7 @@ import {
 } from '../../lib/linearSettings';
 import { useSettingsAccess } from './access';
 import { SettingsSwitch } from './fields';
+import { LinearAccountGroup } from './LinearAccount';
 import { LinearCapacityGroup } from './LinearCapacityGroup';
 import { LinearCoverageGroup } from './LinearCoverageGroup';
 import { LinearExportDialog } from './LinearExportDialog';
@@ -212,8 +213,9 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
   const [apiKey, setApiKey] = useState('');
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
-  // Populated only by a fresh connect response — the status endpoint deliberately reports no
-  // identity, just where a key was found, so this is the one place a viewer name can come from.
+  // Populated by a fresh connect response — the status endpoint deliberately reports no
+  // identity, just where a key was found. The owner's account view names the connection's
+  // user too, so after a reload "Connected as" comes from there.
   const [viewer, setViewer] = useState<LinearViewer | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
@@ -290,6 +292,8 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
   }
 
   const configured = isLinearConfigured(linearStatus);
+  const connectedAs =
+    viewer?.name ?? data.linearAccount?.connection?.userName ?? null;
   const linkedTeams = linkedTeamIds(config.linear);
   const teamChosen = linkedTeams.length > 0;
   // A linked team the picker has not loaded (a failed fetch) still shows.
@@ -413,7 +417,8 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
                   data-tone="success"
                   className={styles.connectedIcon}
                 />
-                Connected{viewer !== null ? ` as ${viewer.name}` : ''}
+                Connected
+                {connectedAs !== null ? ` as ${connectedAs}` : ''}
               </span>
             }
             locked={linearStatus.keySource === 'project' && !canOperate}
@@ -438,6 +443,13 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
           </SettingsRow>
         )}
       </SettingsGroup>
+
+      {/* Also shown without a connection while a sign-in is stored, so it
+          can still be ended. */}
+      {(linearStatus.connected ||
+        (data.linearAccount?.stored.length ?? 0) > 0) && (
+        <LinearAccountGroup data={data} />
+      )}
 
       {linearStatus.connected && (
         <SettingsGroup

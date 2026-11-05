@@ -105,3 +105,53 @@ describe('linear.archiveFinished', () => {
     expect(loadConfig(dir).linear.archiveFinished).toBe(false);
   });
 });
+
+describe('linear sign-in keys', () => {
+  it('defaults to no client ID and the 47823 callback port', () => {
+    const { linear } = loadConfig(writeConfig(''));
+    expect(linear.oauthClientId).toBeNull();
+    expect(linear.oauthCallbackPort).toBe(47823);
+  });
+
+  it('reads oauthClientId and oauthCallbackPort from config.yml', () => {
+    const { linear } = loadConfig(
+      writeConfig(
+        'linear:\n  oauthClientId: " abc123 "\n  oauthCallbackPort: 50123\n'
+      )
+    );
+    expect(linear.oauthClientId).toBe('abc123');
+    expect(linear.oauthCallbackPort).toBe(50123);
+  });
+
+  it('refuses a client ID with spaces or over 200 characters, and a bad port', () => {
+    for (const body of [
+      'linear:\n  oauthClientId: "two words"\n',
+      `linear:\n  oauthClientId: ${'a'.repeat(201)}\n`,
+      'linear:\n  oauthClientId: 7\n',
+      'linear:\n  oauthCallbackPort: 80\n',
+      'linear:\n  oauthCallbackPort: 70000\n',
+      'linear:\n  oauthCallbackPort: 5000.5\n',
+    ]) {
+      expect(() => loadConfig(writeConfig(body))).toThrow(ConfigError);
+    }
+  });
+
+  it('round-trips both keys through updateConfig and clears the client ID', () => {
+    const dir = writeConfig('linear:\n  enabled: true\n');
+    updateConfig(dir, {
+      linear: { oauthClientId: 'client-xyz', oauthCallbackPort: 49000 },
+    });
+    const file = readFileSync(join(dir, '.dispatch/config.yml'), 'utf8');
+    expect(file).toContain('oauthClientId: client-xyz');
+    expect(file).toContain('oauthCallbackPort: 49000');
+    expect(loadConfig(dir).linear.enabled).toBe(true);
+    updateConfig(dir, { linear: { oauthClientId: null } });
+    expect(loadConfig(dir).linear.oauthClientId).toBeNull();
+    expect(() =>
+      updateConfig(dir, { linear: { oauthCallbackPort: 22 } })
+    ).toThrow(ConfigError);
+    expect(() =>
+      updateConfig(dir, { linear: { oauthClientId: 'has space' } })
+    ).toThrow(ConfigError);
+  });
+});

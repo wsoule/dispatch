@@ -9,12 +9,14 @@ import { experimentOptions } from '../src/orchestrator/executors/claude.js';
 import { TerminalRegistry } from '../src/terminals.js';
 import type { SpawnTerminalOptions } from '../src/terminals.js';
 
-// The decide-tier token, and any other DISPATCH_*TOKEN* the daemon was handed,
-// must never reach a shell or an agent it starts.
+// The decide-tier token, any other DISPATCH_*TOKEN* the daemon was handed,
+// and any DISPATCH_*SECRET* (the Linear OAuth client secret) must never
+// reach a shell or an agent it starts.
 const SECRETS = {
   DISPATCH_APP_TOKEN: 'decide-tier',
   DISPATCH_AGENT_TOKEN: 'agent',
   DISPATCH_TEAM_TOKEN_X: 'team',
+  DISPATCH_LINEAR_CLIENT_SECRET: 'oauth-secret',
 };
 const saved = { ...process.env };
 afterEach(() => {
@@ -24,12 +26,17 @@ afterEach(() => {
 });
 
 describe('childEnv', () => {
-  it('drops the app token and every DISPATCH_*TOKEN* but keeps the rest', () => {
-    Object.assign(process.env, SECRETS, { DISPATCH_HOME: '/h', PATH: '/bin' });
+  it('drops the app token, every DISPATCH_*TOKEN* and DISPATCH_*SECRET* but keeps the rest', () => {
+    Object.assign(process.env, SECRETS, {
+      DISPATCH_HOME: '/h',
+      DISPATCH_LINEAR_CLIENT_ID: 'public-id',
+      PATH: '/bin',
+    });
     const env = childEnv({ EXTRA: '1' });
     for (const key of Object.keys(SECRETS)) expect(env[key]).toBeUndefined();
     expect(env).toMatchObject({
       DISPATCH_HOME: '/h',
+      DISPATCH_LINEAR_CLIENT_ID: 'public-id',
       PATH: '/bin',
       EXTRA: '1',
     });
@@ -78,6 +85,7 @@ describe('childEnv', () => {
       expect(out).toContain('PATH=');
       expect(out).not.toContain('DISPATCH_APP_TOKEN');
       expect(out).not.toContain('DISPATCH_AGENT_TOKEN');
+      expect(out).not.toContain('DISPATCH_LINEAR_CLIENT_SECRET');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -1358,6 +1358,24 @@ function parseLinearConfig(raw: unknown): LinearConfig {
     );
   }
 
+  const { oauthClientId } = obj;
+  if (
+    oauthClientId !== undefined &&
+    oauthClientId !== null &&
+    !isOAuthClientId(oauthClientId)
+  ) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: linear.oauthClientId must be a client ID (no spaces, at most 200 characters) or null'
+    );
+  }
+
+  const { oauthCallbackPort } = obj;
+  if (oauthCallbackPort !== undefined && !isCallbackPort(oauthCallbackPort)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: linear.oauthCallbackPort must be a whole number from 1024 to 65535'
+    );
+  }
+
   const { statusMap } = obj;
   const mergedStatusMap = { ...defaults.statusMap };
   if (statusMap !== undefined) {
@@ -1390,7 +1408,30 @@ function parseLinearConfig(raw: unknown): LinearConfig {
     includeAcceptanceCriteria:
       includeAcceptanceCriteria ?? defaults.includeAcceptanceCriteria,
     archiveFinished: archiveFinished ?? defaults.archiveFinished,
+    oauthClientId:
+      typeof oauthClientId === 'string' ? oauthClientId.trim() : null,
+    oauthCallbackPort: isCallbackPort(oauthCallbackPort)
+      ? oauthCallbackPort
+      : defaults.oauthCallbackPort,
   };
+}
+
+// A Linear OAuth client ID as config may hold it: printable, no whitespace
+// inside, at most 200 characters. It is not a secret, only an app's name.
+function isOAuthClientId(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  return trimmed !== '' && trimmed.length <= 200 && !/\s/.test(trimmed);
+}
+
+// The sign-in callback listener's port: an unprivileged TCP port.
+function isCallbackPort(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= 1024 &&
+    value <= 65535
+  );
 }
 
 // Validates one escalation row. `label` names it in the error so a bad row in
@@ -2049,6 +2090,26 @@ function applyLinearPatch(
       );
     }
     setIn(doc, ['linear', 'archiveFinished'], patch.archiveFinished);
+  }
+  if (patch.oauthClientId !== undefined) {
+    if (patch.oauthClientId !== null && !isOAuthClientId(patch.oauthClientId)) {
+      throw new ConfigError(
+        'invalid linear.oauthClientId: must be a client ID (no spaces, at most 200 characters) or null'
+      );
+    }
+    setIn(
+      doc,
+      ['linear', 'oauthClientId'],
+      patch.oauthClientId === null ? null : patch.oauthClientId.trim()
+    );
+  }
+  if (patch.oauthCallbackPort !== undefined) {
+    if (!isCallbackPort(patch.oauthCallbackPort)) {
+      throw new ConfigError(
+        'invalid linear.oauthCallbackPort: must be a whole number from 1024 to 65535'
+      );
+    }
+    setIn(doc, ['linear', 'oauthCallbackPort'], patch.oauthCallbackPort);
   }
   if (patch.statusMap !== undefined) {
     if (
