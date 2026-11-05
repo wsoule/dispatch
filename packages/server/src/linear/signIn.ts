@@ -36,6 +36,12 @@ import {
 /** The callback port when config names none. */
 const DEFAULT_CALLBACK_PORT = 47823;
 
+/** Dispatch's own public Linear OAuth app, used when neither the env var
+ *  nor the project config names one, so every project can sign in with no
+ *  setup. Not a secret: sign-in is PKCE. Its registered callback is
+ *  http://127.0.0.1:47823/linear/callback. */
+export const BUILT_IN_LINEAR_CLIENT_ID: string | null = null;
+
 /** How long a started sign-in waits for Linear's redirect. */
 const SIGN_IN_TTL_MS = 10 * 60_000;
 
@@ -44,7 +50,7 @@ const CALLBACK_PATH = '/linear/callback';
 /** Where sign-in's settings come from, read on every start and view. */
 export interface LinearSignInConfig {
   clientId: string | null;
-  clientIdSource: 'env' | 'config' | null;
+  clientIdSource: 'env' | 'config' | 'builtin' | null;
   port: number;
   /** The exact URL to register in Linear; not a secret. */
   redirectUri: string;
@@ -56,21 +62,37 @@ function nonBlank(value: string | null | undefined): string | null {
   return trimmed === undefined || trimmed === '' ? null : trimmed;
 }
 
-/** The client ID (DISPATCH_LINEAR_CLIENT_ID, then linear.oauthClientId), the
- *  callback port and the redirect URI derived from it. The client secret is
- *  not here: the daemon reads it once at boot and removes it from its
- *  environment (daemonMain.ts), so no child process inherits it. */
+/** The client ID (DISPATCH_LINEAR_CLIENT_ID, then linear.oauthClientId, then
+ *  Dispatch's built-in app), the callback port and the redirect URI derived
+ *  from it. The built-in app always uses the default port, the only callback
+ *  registered for it. The client secret is not here: the daemon reads it
+ *  once at boot and removes it from its environment (daemonMain.ts), so no
+ *  child process inherits it. */
 export function resolveLinearSignInConfig(
   linear: Pick<LinearConfig, 'oauthClientId' | 'oauthCallbackPort'> | null,
-  env: Record<string, string | undefined> = process.env
+  env: Record<string, string | undefined> = process.env,
+  builtIn: string | null = BUILT_IN_LINEAR_CLIENT_ID
 ): LinearSignInConfig {
   const fromEnv = nonBlank(env.DISPATCH_LINEAR_CLIENT_ID);
   const fromConfig = nonBlank(linear?.oauthClientId);
-  const port = linear?.oauthCallbackPort ?? DEFAULT_CALLBACK_PORT;
+  const fromBuiltIn = nonBlank(builtIn);
+  const own = fromEnv ?? fromConfig;
+  const clientId = own ?? fromBuiltIn;
+  const clientIdSource =
+    fromEnv !== null
+      ? 'env'
+      : fromConfig !== null
+        ? 'config'
+        : fromBuiltIn !== null
+          ? 'builtin'
+          : null;
+  const port =
+    clientIdSource === 'builtin'
+      ? DEFAULT_CALLBACK_PORT
+      : (linear?.oauthCallbackPort ?? DEFAULT_CALLBACK_PORT);
   return {
-    clientId: fromEnv ?? fromConfig,
-    clientIdSource:
-      fromEnv !== null ? 'env' : fromConfig !== null ? 'config' : null,
+    clientId,
+    clientIdSource,
     port,
     redirectUri: `http://127.0.0.1:${port}${CALLBACK_PATH}`,
   };
@@ -95,7 +117,7 @@ export interface LinearAccountView {
     | null;
   /** The exact URL to register in Linear; not a secret. */
   callbackUrl: string;
-  clientIdSource: 'env' | 'config' | null;
+  clientIdSource: 'env' | 'config' | 'builtin' | null;
   /** Owner only; false for everyone else. */
   pending: boolean;
   /** The signed-in person for this project's workspace; owner only. Shown
@@ -148,6 +170,8 @@ export interface LinearSignInDeps {
   fetchImpl?: typeof fetch;
   now?: () => number;
   env?: Record<string, string | undefined>;
+  /** Replaces BUILT_IN_LINEAR_CLIENT_ID; null turns the built-in app off. */
+  builtInClientId?: string | null;
   /** DISPATCH_LINEAR_CLIENT_SECRET as the daemon read it once at boot;
    *  never stored or shown. */
   clientSecret?: string;
@@ -230,7 +254,13 @@ export class LinearSignIn {
   constructor(private readonly deps: LinearSignInDeps) {}
 
   private config(): LinearSignInConfig {
-    return resolveLinearSignInConfig(this.deps.linearConfig(), this.deps.env);
+    return resolveLinearSignInConfig(
+      this.deps.linearConfig(),
+      this.deps.env,
+      this.deps.builtInClientId === undefined
+        ? BUILT_IN_LINEAR_CLIENT_ID
+        : this.deps.builtInClientId
+    );
   }
 
   private now(): number {

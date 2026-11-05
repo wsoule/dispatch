@@ -88,7 +88,7 @@ beforeEach(async () => {
     port: 0,
     webDistDir: null,
     writeDaemonFile: false,
-    linearOAuth: { endpoints, fetchImpl: fake.fetch },
+    linearOAuth: { endpoints, fetchImpl: fake.fetch, builtInClientId: null },
   });
   useTestAuth(handle);
   baseUrl = `http://127.0.0.1:${handle.port}`;
@@ -398,7 +398,7 @@ describe('a sign-in can always be ended', () => {
       port: 0,
       webDistDir: null,
       writeDaemonFile: false,
-      linearOAuth: { endpoints, fetchImpl: fake.fetch },
+      linearOAuth: { endpoints, fetchImpl: fake.fetch, builtInClientId: null },
     });
     useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
@@ -489,6 +489,7 @@ describe('the client secret', () => {
         endpoints,
         fetchImpl: fake.fetch,
         clientSecret: 'handed',
+        builtInClientId: null,
       },
     });
     useTestAuth(handle);
@@ -589,6 +590,7 @@ describe('LinearSignIn', () => {
         }),
       endpoints,
       fetchImpl: fake.fetch,
+      builtInClientId: null,
       ttlMs,
     });
   }
@@ -651,12 +653,41 @@ describe('resolveLinearSignInConfig', () => {
     ).toMatchObject({ clientId: 'from-config', clientIdSource: 'config' });
     // The secret is never read here: the daemon took it at boot.
     expect(
-      resolveLinearSignInConfig(null, { DISPATCH_LINEAR_CLIENT_SECRET: 's' })
+      resolveLinearSignInConfig(
+        null,
+        { DISPATCH_LINEAR_CLIENT_SECRET: 's' },
+        null
+      )
     ).toEqual({
       clientId: null,
       clientIdSource: null,
       port: 47823,
       redirectUri: 'http://127.0.0.1:47823/linear/callback',
     });
+  });
+
+  it('falls back to the built-in client ID on its own fixed port', () => {
+    const custom = { oauthClientId: null, oauthCallbackPort: 50000 };
+    expect(resolveLinearSignInConfig(custom, {}, 'builtin-1')).toEqual({
+      clientId: 'builtin-1',
+      clientIdSource: 'builtin',
+      port: 47823,
+      redirectUri: 'http://127.0.0.1:47823/linear/callback',
+    });
+    // A project's own app, with its own port, still wins.
+    expect(
+      resolveLinearSignInConfig(
+        { oauthClientId: 'own', oauthCallbackPort: 50000 },
+        {},
+        'builtin-1'
+      )
+    ).toMatchObject({ clientId: 'own', clientIdSource: 'config', port: 50000 });
+    expect(
+      resolveLinearSignInConfig(
+        null,
+        { DISPATCH_LINEAR_CLIENT_ID: 'env-id' },
+        'builtin-1'
+      )
+    ).toMatchObject({ clientId: 'env-id', clientIdSource: 'env' });
   });
 });

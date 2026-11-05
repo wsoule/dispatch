@@ -107,10 +107,11 @@ function cleanPort(draft: string): number | null {
 }
 
 /**
- * The one-time setup a Linear workspace admin does: register an OAuth app in
- * Linear with the callback URL shown here, then paste its client ID. Saving
- * writes `linear.oauthClientId` and `linear.oauthCallbackPort` to the
- * project's config, which only the person running Dispatch may change.
+ * The optional setup a Linear workspace admin does to use their own OAuth app
+ * instead of Dispatch's built-in one: register it in Linear with the callback
+ * URL shown here, then paste its client ID. Saving writes
+ * `linear.oauthClientId` and `linear.oauthCallbackPort` to the project's
+ * config; an empty client ID clears the override.
  */
 function LinearSignInSetupDialog({
   open,
@@ -131,6 +132,9 @@ function LinearSignInSetupDialog({
 }) {
   const { canOperate, operateReason } = useSettingsAccess();
   const fromEnv = clientIdSource === 'env';
+  // An empty field is valid when it clears a saved ID or the built-in app
+  // takes over.
+  const mayClear = clientId !== null || clientIdSource === 'builtin';
   const [idDraft, setIdDraft] = useState(clientId ?? '');
   const [portDraft, setPortDraft] = useState(String(port));
   const [portOpen, setPortOpen] = useState(
@@ -152,12 +156,17 @@ function LinearSignInSetupDialog({
   const nextId = cleanClientId(idDraft);
   const nextPort = cleanPort(portDraft);
   const idError =
-    !fromEnv && touched && nextId === null
+    !fromEnv &&
+    touched &&
+    nextId === null &&
+    !(mayClear && idDraft.trim() === '')
       ? 'Paste the client ID from Linear: no spaces, at most 200 characters.'
       : undefined;
   const portError =
     nextPort === null ? 'Use a whole number from 1024 to 65535.' : undefined;
-  const valid = nextPort !== null && (fromEnv || nextId !== null);
+  const valid =
+    nextPort !== null &&
+    (fromEnv || nextId !== null || (mayClear && idDraft.trim() === ''));
 
   async function save() {
     setTouched(true);
@@ -185,7 +194,11 @@ function LinearSignInSetupDialog({
       open={open}
       onClose={onClose}
       title="Set up Linear sign-in"
-      description="A Linear workspace admin does this once per OAuth application."
+      description={
+        clientIdSource === 'builtin'
+          ? 'Optional: Dispatch already signs in through its own Linear app.'
+          : 'A Linear workspace admin does this once per OAuth application.'
+      }
       dismissible={!saving}
       data-testid="linear-sign-in-setup"
       actions={
@@ -222,6 +235,7 @@ function LinearSignInSetupDialog({
         <p className={styles.para}>
           Turn on Public if people in other Linear workspaces will sign in.
           Dispatch does not use the client secret; do not paste it anywhere.
+          {mayClear && ' Leave the client ID empty to use Dispatch’s own app.'}
         </p>
         <Field
           label="Client ID"
@@ -601,7 +615,9 @@ export function LinearAccountGroup({ data }: { data: DispatchProjectData }) {
           subtitle={
             view.clientIdSource === 'env'
               ? 'The client ID comes from DISPATCH_LINEAR_CLIENT_ID. Linear sends you back to the callback URL below.'
-              : 'The client ID is saved in .dispatch/config.yml. Linear sends you back to the callback URL below.'
+              : view.clientIdSource === 'builtin'
+                ? 'Sign-in uses Dispatch’s own Linear app. To use your workspace’s own OAuth application, edit the setup.'
+                : 'The client ID is saved in .dispatch/config.yml. Linear sends you back to the callback URL below.'
           }
           keywords="client id callback port oauth application"
           stacked
