@@ -1,0 +1,24 @@
+/* MarkdownMath: a `$$…$$` formula. A display one is its own block, spaced like a
+   paragraph, scrolling sideways when wider than the message; an inline one sits on the
+   line and scrolls inside the line's width. Until KaTeX has typeset it (or when the TeX
+   does not parse), the source shows in Geist Mono a little smaller than the line. */
+
+.display {
+  display: block;
+  margin: 0.4em 0;
+  padding: var(--s-1) 0;
+  overflow: auto hidden;
+}
+
+.inline {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  vertical-align: middle;
+}
+
+.source {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  white-space: pre-wrap;
+}

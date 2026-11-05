@@ -1,23 +1,10 @@
 export default {
   extends: ['stylelint-config-standard'],
   rules: {
-    // For Tailwind
-    'at-rule-no-unknown': [
+    // For CSS modules, which scope selectors with :global and :local
+    'selector-pseudo-class-no-unknown': [
       true,
-      {
-        ignoreAtRules: [
-          'tailwind',
-          'apply',
-          'layer',
-          'config',
-          'plugin',
-          'variants',
-          'responsive',
-          'screen',
-          'theme',
-          'custom-variant',
-        ],
-      },
+      { ignorePseudoClasses: ['global', 'local'] },
     ],
     'selector-class-pattern': null,
     'no-descending-specificity': null,

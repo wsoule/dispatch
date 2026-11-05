@@ -1,0 +1,14 @@
+/* A milestone lane's header extras (MilestoneLaneHeader): the milestone
+   glyph of a lane with no rollup yet, and the id button in mono. */
+.noRollup {
+  flex: none;
+  color: var(--text-3);
+}
+
+/* The milestone id is a machine-read string: Geist Mono at the small
+   size, in the secondary ink. */
+.idButton {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}

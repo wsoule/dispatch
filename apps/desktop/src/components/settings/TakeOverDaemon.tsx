@@ -1,8 +1,9 @@
+import { Button } from '@dispatch/ui';
 import { RotateCw } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DaemonTakeover } from '../../lib/daemonAuth';
-import { Button } from '@/ui/button';
+import styles from './TakeOverDaemon.module.css';
 
 /** Items the attached window cannot list, and what a takeover does for them. */
 export function takeoverWaitingNotice(waiting: number): string {
@@ -55,9 +56,9 @@ export function TakeOverDaemon({
   }
 
   return (
-    <div className="flex flex-col items-start gap-1.5">
+    <div className={styles.takeover}>
       {takeover.waiting > 0 && (
-        <span className="text-foreground">
+        <span className={styles.strong}>
           {takeoverWaitingNotice(takeover.waiting)}
         </span>
       )}
@@ -65,13 +66,12 @@ export function TakeOverDaemon({
         <span>{takeoverBusyReason(takeover.busy ?? [])}</span>
       ) : confirming ? (
         <>
-          <span className="text-foreground">
+          <span className={styles.strong}>
             {takeoverParkedConfirm(takeover.parked)}
           </span>
-          <div className="flex items-center gap-2">
+          <div className={styles.actions}>
             <Button
               size="sm"
-              variant="outline"
               data-testid="daemon-takeover-confirm"
               onClick={() => void restart()}
             >
@@ -79,7 +79,7 @@ export function TakeOverDaemon({
             </Button>
             <Button
               size="sm"
-              variant="ghost"
+              variant="quiet"
               onClick={() => setConfirming(false)}
             >
               Cancel
@@ -89,19 +89,18 @@ export function TakeOverDaemon({
       ) : (
         <Button
           size="sm"
-          variant="outline"
           data-testid="daemon-takeover"
+          icon={<RotateCw size={12} strokeWidth={1.8} />}
           disabled={restarting}
           onClick={() =>
             takeover.parked > 0 ? setConfirming(true) : void restart()
           }
         >
-          <RotateCw aria-hidden className="size-3" />
           {restarting ? 'Restarting…' : 'Restart Dispatch from this app'}
         </Button>
       )}
       {error !== null && (
-        <span role="alert" className="text-state-failed">
+        <span role="alert" className="toneText" data-tone="danger">
           {error}
         </span>
       )}

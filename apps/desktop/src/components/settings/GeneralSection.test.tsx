@@ -2,11 +2,11 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import { OPERATOR_ONLY } from './fields';
-import { testConfig as config } from './fixtures.test-helper';
+import { testConfig as config, visibleText } from './fixtures.test-helper';
 import { GeneralSection } from './GeneralSection';
 
-// Every group is a 13px/600 sentence-case heading over its card; no uppercase labels.
-test('the section headings are 13px semibold sentence case', () => {
+// Every group is a sentence-case heading over its card; no uppercase labels.
+test('the section headings are sentence-case group headings', () => {
   render(
     <GeneralSection
       config={config}
@@ -20,9 +20,9 @@ test('the section headings are 13px semibold sentence case', () => {
     'Pull requests',
   ]);
   for (const heading of headings) {
-    expect(heading.className).toContain('text-[13px]');
-    expect(heading.className).toContain('font-semibold');
-    expect(heading.className).not.toContain('uppercase');
+    expect(heading.closest('[data-settings-group]')).not.toBeNull();
+    const text = heading.textContent ?? '';
+    expect(text.slice(1)).toBe(text.slice(1).toLowerCase());
   }
 });
 
@@ -63,5 +63,5 @@ test('below the operator tier the checkout folder is read-only behind a lock', (
   );
   expect(screen.queryByRole('textbox', { name: 'Checkout folder' })).toBeNull();
   expect(screen.getAllByLabelText(OPERATOR_ONLY).length).toBeGreaterThan(0);
-  expect(screen.queryByText(OPERATOR_ONLY)).toBeNull();
+  expect(visibleText(OPERATOR_ONLY)).toEqual([]);
 });

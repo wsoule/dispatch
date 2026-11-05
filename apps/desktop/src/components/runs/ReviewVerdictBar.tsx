@@ -1,21 +1,17 @@
 import type { ReviewComment, ReviewVerdict } from '@dispatch/client';
-import { Bot, Check, GitPullRequest, MessageSquare, Undo2 } from 'lucide-react';
+import type { RadioOption } from '@dispatch/ui';
+import {
+  Button,
+  Checkbox,
+  ChipButton,
+  cx,
+  RadioGroup,
+  SectionHeader,
+} from '@dispatch/ui';
+import { Bot, Check, MessageSquare, Undo2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
-import { cn } from '@/lib/utils';
-import { PillButton } from '@/ui/ai/pill';
-import { Button } from '@/ui/button';
-import { SectionLabel } from '@/ui/chrome/SectionLabel';
-import { Input } from '@/ui/input';
-import { Label } from '@/ui/label';
-import { RadioGroup, RadioGroupItem } from '@/ui/radio-group';
-import { Textarea } from '@/ui/textarea';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/ui/tooltip';
+import styles from './ReviewVerdictBar.module.css';
 
 interface ReviewVerdictBarProps {
   /** 'stacked' is the card the in-Runs review shows in its column; 'bar' is the footer the
@@ -70,6 +66,32 @@ const VERDICTS: {
     icon: Check,
   },
 ];
+
+// The verdicts as radio options: each label is its icon and words, and its hint (what the
+// verdict will actually do) is the radio's description, a visible line or a tooltip by layout.
+const VERDICT_OPTIONS: readonly RadioOption[] = VERDICTS.map((v) => {
+  const Icon = v.icon;
+  return {
+    value: v.value,
+    label: (
+      <span className={styles.verdictLabel}>
+        <Icon
+          className={styles.verdictIcon}
+          size={14}
+          strokeWidth={1.8}
+          aria-hidden="true"
+        />
+        {v.label}
+      </span>
+    ),
+    hint: v.hint,
+  };
+});
+
+// Narrows a radio's value back to a verdict; the group only ever reports one of VERDICTS.
+function isVerdict(value: string): value is ReviewVerdict {
+  return VERDICTS.some((v) => v.value === value);
+}
 
 /**
  * Finishing the review: the overall note, the verdict, and what submitting would do.
@@ -174,237 +196,170 @@ export function ReviewVerdictBar({
         ? `${open.length} already sent`
         : 'no comments';
 
+  const pickVerdict = (value: string) => {
+    if (isVerdict(value)) setVerdict(value);
+  };
+
+  const count = <span className={cx(styles.count, 'num')}>{countText}</span>;
+
   const warnings =
     extraWarnings.length > 0 ? (
-      <span className="text-state-waiting font-book text-[12px]">
+      <span className={cx(styles.message, 'toneText')} data-tone="warning">
         {extraWarnings.join(' · ')}
       </span>
     ) : null;
 
   const aiReviewButton =
     onStartAiReview === undefined ? null : (
-      <PillButton
+      <ChipButton
         disabled={reviewAgentLive || aiReview.status === 'starting'}
         onClick={() => void startAiReview()}
-        className="self-start"
       >
-        <Bot />
+        <Bot size={14} strokeWidth={1.8} aria-hidden="true" />
         {reviewAgentLive
           ? 'Agent reviewing…'
           : aiReview.status === 'starting'
             ? 'Starting…'
             : 'Ask an agent to review'}
-      </PillButton>
+      </ChipButton>
     );
 
+  // A review agent at work is in progress (the info tone); a failed start is danger.
   const aiReviewStatus = reviewAgentLive ? (
-    <p className="text-state-review font-book text-[12px]">
+    <p className={cx(styles.message, 'toneText')} data-tone="info">
       An agent is reviewing this run — its findings land here once it finishes.
     </p>
   ) : aiReview.status === 'started' ? (
-    <p className="text-state-review font-book text-[12px]">
+    <p className={cx(styles.message, 'toneText')} data-tone="info">
       Review started — its findings land here once it finishes.
     </p>
   ) : aiReview.status === 'error' ? (
-    <p className="text-state-failed font-book text-[12px]">
+    <p className={cx(styles.message, 'toneText')} data-tone="danger">
       Couldn&rsquo;t start the review: {aiReview.message}
     </p>
   ) : null;
 
-  // Shown only for a run whose work is on a PR. The explanation sits inside
-  // the label, in both layouts: leaving the box off is not "skip the review",
-  // it is "keep the review off GitHub", and a hover `title` says that to
-  // nobody using a keyboard or a screen reader.
-  //
-  // A real `<input type="checkbox">`, not the shadcn `Checkbox` wrapper —
-  // same device AgentsSection.tsx uses for its radios. It is styled as a
-  // native control anyway, and a genuine native checkbox is what keeps
-  // `getByLabelText(...).checked` meaningful in ReviewVerdictBar.test.tsx
-  // and ReviewCommentsPanel.test.tsx.
+  const errorLine =
+    error === null ? null : (
+      <p className={cx(styles.message, 'toneText')} data-tone="danger">
+        {error}
+      </p>
+    );
+
+  const sentLine =
+    sent === null ? null : (
+      <p className={cx(styles.message, 'toneText')} data-tone="success">
+        {sent}
+      </p>
+    );
+
+  // Shown only for a run whose work is on a PR. The explanation is the checkbox's note,
+  // inside its label, in both layouts: leaving the box off is not "skip the review", it is
+  // "keep the review off GitHub", and a hover `title` says that to nobody using a keyboard
+  // or a screen reader. The library Checkbox is a native input, so its `checked` is what
+  // ReviewVerdictBar.test.tsx and ReviewCommentsPanel.test.tsx read.
   const githubCheckbox = !canPostToGitHub ? null : (
-    <label className="font-book flex min-w-0 cursor-pointer flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[12px]">
-      <input
-        type="checkbox"
-        checked={postToGitHub}
-        onChange={(event) => setPostToGitHub(event.target.checked)}
-        className="accent-accent size-3 shrink-0"
-      />
-      <GitPullRequest className="size-3 shrink-0" />
-      Also post to GitHub
-      <span className="text-muted-foreground text-[12px] leading-snug">
-        Off, the review still goes back to the agent — only the pull request is
-        left alone.
-      </span>
-    </label>
+    <Checkbox
+      label="Also post to GitHub"
+      note="Off, the review still goes back to the agent — only the pull request is left alone."
+      checked={postToGitHub}
+      onChange={setPostToGitHub}
+    />
   );
 
   const submitButton = (
     <Button
-      disabled={busy || !canSubmit}
+      variant="primary"
+      size="sm"
+      busy={busy}
+      busyLabel="Submitting…"
+      disabled={!canSubmit}
       onClick={() => void submit()}
-      className="shrink-0"
     >
-      {busy ? 'Submitting…' : 'Submit review'}
+      Submit review
     </Button>
   );
 
   // The footer form: one row, so the diff above it keeps the height. Verdict hints move to
-  // a Tooltip on each radio — there is no room for three lines of explanation on a single row,
-  // and unlike a hover `title` a Tooltip actually reaches keyboard/screen-reader users.
+  // a Tooltip on each radio (shown on hover and keyboard focus, and kept as the radio's
+  // description) — there is no room for three lines of explanation on a single row.
   if (layout === 'bar') {
     return (
-      <div className="shadow-hairline-top flex shrink-0 flex-col gap-1.5 px-4 pt-3 pb-3">
-        <div className="flex items-center gap-3">
-          <Input
-            variant="borderless"
+      <div className={styles.bar}>
+        <div className={styles.barRow}>
+          <input
+            type="text"
+            className={cx('input', styles.summaryInput)}
             value={summary}
             onChange={(e) => setSummary(e.target.value)}
             aria-label="Review summary"
             placeholder="Anything the agent should know overall…"
-            className="min-w-0 flex-1 text-[13px]"
           />
-          {/* RadioGroup's own base is `grid gap-3` (a vertical stack) — `flex-row` alone
-              can't dedupe against that `display: grid` via twMerge (different utility
-              group), so `flex` has to be spelled out too or the grid layout survives
-              underneath it, same trap as shadow-hairline-strong vs shadow-lg.
-              A local TooltipProvider, not just App's root one: this component renders
-              standalone in its own tests, with no ambient provider above it. */}
-          <TooltipProvider>
+          <div className={styles.verdicts}>
             <RadioGroup
+              label="Verdict"
+              options={VERDICT_OPTIONS}
               value={verdict}
-              onValueChange={(value) => setVerdict(value as ReviewVerdict)}
-              className="flex shrink-0 flex-row items-center gap-2"
-            >
-              {VERDICTS.map((v) => {
-                const Icon = v.icon;
-                const active = verdict === v.value;
-                return (
-                  <Label
-                    key={v.value}
-                    className={cn(
-                      'flex h-7 cursor-pointer items-center gap-1.5 rounded-control px-2 text-[12px] font-medium transition-colors duration-100',
-                      active
-                        ? 'bg-surface-active text-foreground'
-                        : 'text-muted-foreground hover:bg-surface-hover'
-                    )}
-                  >
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <RadioGroupItem value={v.value} className="size-3" />
-                        }
-                      />
-                      <TooltipContent>{v.hint}</TooltipContent>
-                    </Tooltip>
-                    <Icon className="size-3" />
-                    {v.label}
-                  </Label>
-                );
-              })}
-            </RadioGroup>
-          </TooltipProvider>
-          <div className="flex shrink-0 items-center gap-2">
+              onChange={pickVerdict}
+              orientation="horizontal"
+              size="sm"
+              hintAs="tooltip"
+            />
+          </div>
+          <div className={styles.actions}>
             {aiReviewButton}
             {submitButton}
           </div>
         </div>
-        {/* Wraps: the GitHub label carries a full sentence, which on a narrow
-            window would otherwise squeeze the status text beside it. */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="text-muted-foreground font-book shrink-0 text-[12px] tabular-nums">
-            {countText}
-          </span>
+        <div className={styles.status}>
+          {count}
           {githubCheckbox}
           {warnings}
-          <span className="flex-1" />
+          <span className={styles.spacer} />
           {aiReviewStatus}
-          {error !== null && (
-            <span className="text-state-failed font-book text-[12px]">
-              {error}
-            </span>
-          )}
-          {sent !== null && (
-            <span className="text-state-review font-book text-[12px]">
-              {sent}
-            </span>
-          )}
+          {errorLine}
+          {sentLine}
         </div>
       </div>
     );
   }
 
-  // The stacked card is the comment-card composer: quaternary surface, half-pixel strong
-  // ring, the heading, a borderless textarea, the verdict rows and the actions.
+  // The stacked card: the heading, the agent-review button, the summary, the verdicts with
+  // their hints as visible lines, the GitHub choice, then the count and the submit button.
   return (
-    <div className="bg-surface-quaternary rounded-card border-border-strong border-[0.5px] p-3">
-      <SectionLabel>Finish the review</SectionLabel>
+    <div className={styles.card}>
+      <SectionHeader name="Finish the review" />
 
-      {/* A row of its own rather than riding beside the label — this column is narrow enough
-          that a button sharing the label's row wraps "Finish the review" onto three lines. */}
       {aiReviewButton !== null && (
-        <div className="mt-2 flex flex-col gap-1">
+        <div className={styles.aiReview}>
           {aiReviewButton}
           {aiReviewStatus}
         </div>
       )}
 
-      <Textarea
-        variant="borderless"
+      <textarea
+        className={cx('textarea', styles.summaryArea)}
         value={summary}
         onChange={(e) => setSummary(e.target.value)}
         aria-label="Review summary"
         placeholder="Anything the agent should know overall…"
-        className="mt-2 min-h-[64px] w-full resize-y text-[13px]"
       />
 
-      {/* Hints stay visible text here (unlike the bar layout's Tooltip) — there's room for
-          them on their own line under each option. */}
+      {/* Each verdict states what it will actually do — that "approve" means "queues a
+          merge" is not guessable from the word alone — so the hints stay visible here. */}
       <RadioGroup
+        label="Verdict"
+        options={VERDICT_OPTIONS}
         value={verdict}
-        onValueChange={(value) => setVerdict(value as ReviewVerdict)}
-        className="mt-2 gap-1"
-      >
-        {VERDICTS.map((v) => {
-          const Icon = v.icon;
-          const active = verdict === v.value;
-          return (
-            <Label
-              key={v.value}
-              className={cn(
-                'flex cursor-pointer items-start gap-2 rounded-control px-2 py-1.5 font-normal transition-colors duration-100',
-                active ? 'bg-surface-active' : 'hover:bg-surface-hover'
-              )}
-            >
-              <RadioGroupItem value={v.value} className="mt-0.5 size-3.5" />
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center gap-1.5 text-[13px] font-medium">
-                  <Icon className="size-3" />
-                  {v.label}
-                </span>
-                {/* Each verdict states what it will actually do — that "approve" means
-                    "queues a merge" is not guessable from the word alone. */}
-                <span className="text-muted-foreground font-book block text-[12px] leading-snug">
-                  {v.hint}
-                </span>
-              </span>
-            </Label>
-          );
-        })}
-      </RadioGroup>
+        onChange={pickVerdict}
+      />
 
-      {githubCheckbox !== null && <div className="mt-2">{githubCheckbox}</div>}
+      {githubCheckbox}
+      {errorLine}
+      {sentLine}
 
-      {error !== null && (
-        <p className="text-state-failed font-book mt-2 text-[12px]">{error}</p>
-      )}
-      {sent !== null && (
-        <p className="text-state-review font-book mt-2 text-[12px]">{sent}</p>
-      )}
-
-      <div className="mt-2 flex items-center gap-2">
-        <span className="text-muted-foreground font-book flex-1 text-[12px] tabular-nums">
-          {countText}
-        </span>
+      <div className={styles.foot}>
+        <span className={styles.footCount}>{count}</span>
         {warnings}
         {submitButton}
       </div>

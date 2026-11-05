@@ -1,0 +1,6 @@
+/* Memory's typed link code: a short mono field (element and class, so the width wins
+   over the field's own 100%). The issued code is a CopyValue. */
+input.linkCode {
+  width: 128px;
+  font-family: var(--font-mono);
+}

@@ -19,7 +19,8 @@ test('More options carries the model, effort and files it may change', async () 
     />
   );
   fireEvent.click(screen.getByRole('button', { name: 'More options' }));
-  fireEvent.change(await screen.findByLabelText('Model'), {
+  // The popover's fields mount on the click that opens it.
+  fireEvent.change(screen.getByLabelText('Model'), {
     target: { value: 'claude-sonnet-5-5' },
   });
   fireEvent.change(screen.getByLabelText('Effort'), {
@@ -38,7 +39,7 @@ test('More options carries the model, effort and files it may change', async () 
   );
 });
 
-test("another agent gets no model or effort picker (they are Claude's lists)", async () => {
+test("another agent gets no model or effort picker (they are Claude's lists)", () => {
   render(
     <SendToAgent
       options={{ modelChoice: false }}
@@ -46,8 +47,29 @@ test("another agent gets no model or effort picker (they are Claude's lists)", a
     />
   );
   fireEvent.click(screen.getByRole('button', { name: 'More options' }));
-  expect(await screen.findByLabelText('Files it may change')).toBeTruthy();
+  expect(screen.getByLabelText('Files it may change')).toBeTruthy();
   expect(screen.queryByLabelText('Model')).toBeNull();
+  expect(screen.queryByLabelText('Effort')).toBeNull();
+});
+
+test('Escape closes More options and hands focus back to its button', () => {
+  render(
+    <SendToAgent
+      options={{ modelChoice: true }}
+      onSend={() => Promise.resolve()}
+    />
+  );
+  const trigger = screen.getByRole('button', { name: 'More options' });
+  fireEvent.click(trigger);
+  expect(trigger.getAttribute('aria-expanded')).toBe('true');
+  const popover = screen.getByRole('dialog', { name: 'More options' });
+  // Focus lands on the first field inside on open.
+  expect(popover.contains(document.activeElement)).toBe(true);
+  fireEvent.keyDown(screen.getByLabelText('Effort'), { key: 'Escape' });
+  expect(screen.queryByRole('dialog', { name: 'More options' })).toBeNull();
+  expect(screen.queryByLabelText('Files it may change')).toBeNull();
+  expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  expect(document.activeElement).toBe(trigger);
 });
 
 test('a refused send explains itself', async () => {
@@ -78,4 +100,22 @@ test('two quick clicks send once', () => {
   fireEvent.click(button);
   fireEvent.click(button);
   expect(onSend).toHaveBeenCalledTimes(1);
+});
+
+test('sending is said in words while the Spinner turns', async () => {
+  let finish = () => {};
+  const onSend = mock(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      })
+  );
+  render(<SendToAgent options={{ modelChoice: false }} onSend={onSend} />);
+  // Mounted empty before the click, so the words are announced.
+  const status = screen.getByRole('status');
+  expect(status.textContent).toBe('');
+  fireEvent.click(screen.getByRole('button', { name: 'Send to agent' }));
+  await waitFor(() => expect(status.textContent).toBe('Sending to the agent…'));
+  finish();
+  await waitFor(() => expect(status.textContent).toBe(''));
 });

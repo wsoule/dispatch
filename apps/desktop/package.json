@@ -18,15 +18,15 @@
   },
   "dependencies": {
     "@dispatch/client": "workspace:*",
-    "@dispatch/tokens": "workspace:*",
+    "@dispatch/planning": "workspace:*",
+    "@dispatch/ui": "workspace:*",
     "@dnd-kit/core": "catalog:",
     "@dnd-kit/utilities": "catalog:",
-    "@fontsource-variable/inter": "catalog:",
-    "@fontsource/jetbrains-mono": "catalog:",
+    "@fontsource-variable/geist": "catalog:",
+    "@fontsource/geist-mono": "catalog:",
     "@pierre/diffs": "catalog:",
     "@pierre/trees": "catalog:",
     "@tanstack/react-query": "catalog:",
-    "@tanstack/react-virtual": "catalog:",
     "@tauri-apps/api": "catalog:",
     "@tauri-apps/plugin-deep-link": "catalog:",
     "@tauri-apps/plugin-dialog": "catalog:",
@@ -34,7 +34,6 @@
     "@tauri-apps/plugin-process": "catalog:",
     "@tauri-apps/plugin-updater": "catalog:",
     "dompurify": "catalog:",
-    "elkjs": "catalog:",
     "katex": "catalog:",
     "lucide-react": "catalog:",
     "pele": "catalog:",
@@ -43,14 +42,12 @@
     "react-markdown": "catalog:",
     "remark-gfm": "catalog:",
     "remark-math": "catalog:",
-    "shiki": "catalog:",
-    "sonner": "catalog:"
+    "shiki": "catalog:"
   },
   "devDependencies": {
     "@dispatch-foo/core": "workspace:*",
     "@happy-dom/global-registrator": "catalog:",
     "@playwright/test": "catalog:",
-    "@tailwindcss/vite": "catalog:",
     "@tauri-apps/cli": "catalog:",
     "@testing-library/dom": "catalog:",
     "@testing-library/react": "catalog:",
@@ -60,8 +57,6 @@
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
     "acorn": "catalog:",
-    "tailwindcss": "catalog:",
-    "tw-animate-css": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:"
   }

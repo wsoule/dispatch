@@ -1,0 +1,272 @@
+/* A task draft's review page (views/DraftView.tsx): the crumb bar, the
+   writing column (the prompt with its menu trigger, the title as the page
+   heading, the description as prose, the acceptance criteria checklist),
+   the Properties rail of pickers, and the foot with Discard and Create.
+   Colours and type come from the tokens; controls are @dispatch/ui's. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.bar {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex-shrink: 0;
+  min-height: 44px;
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--divider);
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  padding: var(--s-6) var(--s-10);
+  overflow-y: auto;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+/* Quiet notes: "No proposed task yet.", the prompt menu's notice, the
+   other proposed tasks. */
+.quiet {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.flush {
+  margin: 0;
+}
+
+.dropped {
+  margin: var(--s-1) 0 0;
+  padding-left: var(--s-4);
+}
+
+/* The original prompt, led by the prompt menu's trigger. */
+.prompt {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-1);
+  margin-left: -6px;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.promptText {
+  flex: 1;
+  min-width: 0;
+  padding-top: 5px;
+  overflow-wrap: anywhere;
+}
+
+/* The title and description: borderless fields that read as the page's
+   heading and prose, a soft wash under the pointer and the focus ring. */
+.titleInput,
+.description,
+.criterionInput {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+
+.titleInput,
+.description {
+  width: calc(100% + 2 * var(--s-2));
+  margin: 0 calc(-1 * var(--s-2));
+  padding: var(--s-1) var(--s-2);
+}
+
+.titleInput {
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-semibold);
+  line-height: 1.35;
+  letter-spacing: var(--ls-heading);
+}
+
+.description {
+  min-height: 96px;
+  font-size: var(--fs-md);
+  line-height: var(--lh-long);
+  resize: vertical;
+}
+
+.titleInput::placeholder,
+.description::placeholder,
+.criterionInput::placeholder {
+  color: var(--text-3);
+}
+
+.titleInput:focus-visible,
+.description:focus-visible,
+.criterionInput:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 0;
+}
+
+@media (hover: hover) {
+  .titleInput:hover,
+  .description:hover {
+    background: var(--surface-2);
+  }
+}
+
+.criteria {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+
+/* One criterion: an unchecked box, its text, and the remove button that
+   shows under the pointer or focus (always on a touch screen). */
+.criterion {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 32px;
+  margin: 0 calc(-1 * var(--s-2));
+  padding: 0 var(--s-2);
+  border-radius: var(--r-sm);
+}
+
+.criterionBox {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--r-xs);
+  background: var(--surface);
+}
+
+.criterionInput {
+  flex: 1;
+  padding: 2px var(--s-1);
+  font-size: var(--fs-md);
+  line-height: var(--lh-long);
+}
+
+@media (hover: hover) {
+  .criterion:hover {
+    background: var(--surface-2);
+  }
+
+  .criterion .removeCriterion {
+    opacity: 0;
+  }
+
+  .criterion:hover .removeCriterion,
+  .criterion .removeCriterion:focus-visible {
+    opacity: 1;
+  }
+}
+
+.addCriterion {
+  align-self: flex-start;
+  margin-left: -6px;
+}
+
+/* A container's glyph in the Parent picker's rows and trigger. */
+.containerMark {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+}
+
+/* The Properties rail: 280px beside the column, ruled off on its left. */
+.rail {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: var(--s-2);
+  width: 280px;
+  padding: var(--s-6) var(--s-4);
+  border-left: 1px solid var(--divider);
+  overflow-y: auto;
+}
+
+.railTitle {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+
+/* The foot: the save error at the left, Discard and Create at the right. */
+.foot {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  min-height: 48px;
+  padding: var(--s-2) var(--s-6);
+  border-top: 1px solid var(--divider);
+}
+
+.error {
+  margin: 0 auto 0 0;
+  font-size: var(--fs-sm);
+  color: var(--tone-ink);
+}
+
+/* Forced colours: the borderless fields keep an edge, so they still read
+   as fields with the system's colours. */
+@media (forced-colors: active) {
+  .titleInput,
+  .description,
+  .criterionInput {
+    border: 1px solid CanvasText;
+  }
+}
+
+/* A phone: the rail goes under the column, full width. */
+@media (width <= 640px) {
+  .body {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .main {
+    flex: none;
+    padding: var(--s-4);
+    overflow: visible;
+  }
+
+  .rail {
+    width: auto;
+    padding: var(--s-4);
+    border-top: 1px solid var(--divider);
+    border-left: 0;
+    overflow: visible;
+  }
+}

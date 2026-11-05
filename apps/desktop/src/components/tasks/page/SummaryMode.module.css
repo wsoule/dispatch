@@ -1,0 +1,93 @@
+/* Summary mode (SummaryMode.tsx): how the task ended, top to bottom — the outcome (the
+   OutcomeCard, or the status line and where the work landed), the run figures as a stats
+   strip, the files the landing run touched, the sub-issues or runs as registers, the detail
+   sections and the timeline. Tokens only; statuses keep their own components' tones. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-6);
+  padding: 0 var(--s-4) 40px;
+}
+
+.outcome {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+/* A task with no outcome card: its status glyph, the status's name and the day it moved. */
+.statusLine {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.status {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+}
+
+.date {
+  color: var(--text-3);
+  font-size: var(--fs);
+}
+
+.outcomeLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--text-2);
+  font-size: var(--fs);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+/* A section's quiet heading ("Sub-issues", "Runs", "Timeline"). */
+.heading {
+  display: flex;
+  align-items: center;
+  min-height: var(--h-xs);
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+}
+
+/* A register row's subject: its glyph, the id in mono, then the title that truncates. */
+.subject {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.id {
+  flex: none;
+  color: var(--text-3);
+}
+
+.title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.executor {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

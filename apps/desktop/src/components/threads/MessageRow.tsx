@@ -1,9 +1,10 @@
 import type { Message, RemoteDeliveryRow, Settlement } from '@dispatch/client';
+import { Chip, ChipButton, cx, InitialsAvatar } from '@dispatch/ui';
 import { memo, useState } from 'react';
 
 import { isFromA2A } from '../../lib/a2a';
 import type { DecideAvailability, MessageAccess } from '../../lib/daemonAuth';
-import { isSystemMarker, taskProposalOf } from '../../lib/gates';
+import { taskProposalOf } from '../../lib/gates';
 import { formatShortDate } from '../../lib/taskDates';
 import type {
   ParkedCall,
@@ -13,7 +14,8 @@ import type {
 import {
   addressAction,
   answersWithText,
-  kindLabel,
+  messageBadge,
+  messageBadgeTone,
   participantLabel,
   refAction,
   rowControl,
@@ -23,10 +25,7 @@ import { GateCard } from '../gates/GateCard';
 import { QuestionAnswerForm } from '../gates/QuestionAnswerForm';
 import { Markdown } from '../runs/Markdown';
 import { A2ADeclineAction } from './A2ADeclineAction';
-import { cn } from '@/lib/utils';
-import { ChatMessage } from '@/ui/ai/chat';
-import { InitialsAvatar } from '@/ui/ai/initials-avatar';
-import { Pill, PillButton } from '@/ui/ai/pill';
+import styles from './MessageRow.module.css';
 
 type Reply = GateReply;
 
@@ -120,11 +119,9 @@ export const MessageRow = memo(function MessageRow({
   const senderAction = addressAction(message.from, lookups);
   const status = lookups.agentStatus(message.from);
   // Only the daemon's own close or breaker marker earns its badge.
-  const badge = isSystemMarker(message, 'x-closed')
-    ? 'Closed'
-    : isSystemMarker(message, 'x-breaker')
-      ? 'Breaker'
-      : kindLabel(message.kind);
+  const badge = messageBadge(message);
+  const silenced =
+    status === null ? null : status === 'revoked' ? 'Revoked' : 'Muted';
   const answer = async (reply: Reply): Promise<void> => {
     setError(null);
     try {
@@ -137,137 +134,139 @@ export const MessageRow = memo(function MessageRow({
     <article
       data-message-id={message.id}
       data-linked={linked ? 'true' : undefined}
-      className={cn(
-        'rounded-card transition-colors duration-700',
-        linked && 'bg-surface-hover'
-      )}
+      data-mine={mine ? 'true' : undefined}
+      className={styles.row}
     >
-      <ChatMessage
-        role={mine ? 'user' : 'agent'}
-        avatar={mine ? undefined : <InitialsAvatar name={sender} />}
-      >
-        <div className="flex flex-col gap-1.5">
-          <header className="text-muted-foreground flex flex-wrap items-center gap-1.5 text-[12px]">
-            {senderAction === null ? (
-              <span className="text-foreground font-medium">{sender}</span>
-            ) : (
-              <button
-                type="button"
-                className="text-foreground font-medium hover:underline"
-                onClick={() => onOpen(senderAction)}
-              >
-                {sender}
-              </button>
-            )}
-            {isFromA2A(message) && (
-              <Pill title="Sent from outside this machine over A2A">A2A</Pill>
-            )}
-            {badge !== undefined && <Pill>{badge}</Pill>}
-            {draftedBy !== null && (
-              <Pill title="An agent wrote this; the sender approved and sent it">
-                {`drafted by ${participantLabel(draftedBy, lookups)}`}
-              </Pill>
-            )}
-            {message.remoteLabel !== undefined && (
-              <Pill>{`remote: ${message.remoteLabel}`}</Pill>
-            )}
-            {message.urgent && <Pill>Urgent</Pill>}
-            {status !== null && (
-              <Pill>{status === 'revoked' ? 'Revoked' : 'Muted'}</Pill>
-            )}
-            <time dateTime={message.createdAt}>
-              {formatShortDate(message.createdAt)}
-            </time>
-          </header>
+      <InitialsAvatar name={sender} />
+      <div className={styles.main}>
+        <header className={styles.head}>
+          {senderAction === null ? (
+            <span className={styles.sender}>{sender}</span>
+          ) : (
+            <button
+              type="button"
+              className={styles.senderButton}
+              onClick={() => onOpen(senderAction)}
+            >
+              {sender}
+            </button>
+          )}
+          {isFromA2A(message) && (
+            <Chip title="Sent from outside this machine over A2A">A2A</Chip>
+          )}
+          {badge !== undefined && (
+            <Chip tone={messageBadgeTone(badge)}>{badge}</Chip>
+          )}
+          {draftedBy !== null && (
+            <Chip title="An agent wrote this; the sender approved and sent it">
+              {`drafted by ${participantLabel(draftedBy, lookups)}`}
+            </Chip>
+          )}
+          {message.remoteLabel !== undefined && (
+            <Chip>
+              {'remote: '}
+              <span className={styles.mono}>{message.remoteLabel}</span>
+            </Chip>
+          )}
+          {message.urgent && (
+            <Chip tone={messageBadgeTone('Urgent')}>Urgent</Chip>
+          )}
+          {silenced !== null && (
+            <Chip tone={messageBadgeTone(silenced)}>{silenced}</Chip>
+          )}
+          <time className={styles.time} dateTime={message.createdAt}>
+            {formatShortDate(message.createdAt)}
+          </time>
+        </header>
+        <div className={styles.bubble}>
           {/* Text an A2A sender wrote, or a proposal quoting it, never renders as markdown. */}
           {taskProposalOf(message) === null && !isFromA2A(message) ? (
-            <Markdown
-              content={message.body}
-              className="font-book text-[13px]"
-            />
+            <Markdown content={message.body} className={styles.markdown} />
           ) : (
-            <p className="font-book text-[13px] break-words whitespace-pre-wrap">
-              {message.body}
-            </p>
-          )}
-          {message.choice !== undefined && (
-            <p className="text-muted-foreground text-[12px]">
-              Chose {message.choice}
-            </p>
-          )}
-          {message.refs.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {message.refs.map((ref, i) => {
-                const action = refAction(ref, lookups);
-                const text = `${ref.type}:${ref.id}${refAt(ref)}`;
-                const key = `${text}:${i}`;
-                return action === null ? (
-                  <Pill key={key}>{text}</Pill>
-                ) : (
-                  <PillButton key={key} onClick={() => onOpen(action)}>
-                    {text}
-                  </PillButton>
-                );
-              })}
-            </div>
-          )}
-          {remoteDeliveries.length > 0 && (
-            <ul className="text-muted-foreground flex flex-wrap gap-x-3 text-[12px]">
-              {remoteDeliveries.map((d) => (
-                <li
-                  key={d.recipient}
-                >{`${d.recipient}: ${REMOTE_STATE[d.state]}`}</li>
-              ))}
-            </ul>
-          )}
-          {settlement === 'pending' && message.kind === 'answer' && (
-            <p className="text-muted-foreground text-[12px]">
-              {`answered here, waiting for ${settlerLabel ?? 'the asker'}'s machine`}
-            </p>
-          )}
-          {settlement === 'superseded' && (
-            <p className="text-muted-foreground text-[12px]">superseded</p>
-          )}
-          {observer !== null && message.origin !== undefined && (
-            <p className="text-muted-foreground text-[12px]">
-              {`an observer (${observer}) reads this thread`}
-            </p>
-          )}
-          <GateCard
-            message={message}
-            control={rowControl(message, { me, open, access })}
-            lookups={lookups}
-            onOpen={onOpen}
-            availability={availability}
-            onRestartDaemon={onRestartDaemon}
-            answer={answer}
-            loadApprovalInput={loadApprovalInput}
-            client={client ?? null}
-            port={port}
-          />
-          {open &&
-            inlineAnswer &&
-            access.canMessage &&
-            answersWithText(message, me) && (
-              <QuestionAnswerForm
-                asker={sender}
-                onAnswer={(body) => onAnswer(message, { body })}
-              />
-            )}
-          {open && (
-            <A2ADeclineAction
-              message={message}
-              client={client}
-              canDecide={access.canDecide}
-            />
-          )}
-          {error !== null && (
-            <p role="alert" className="text-destructive text-[12px]">
-              {error}
-            </p>
+            <p className={styles.plain}>{message.body}</p>
           )}
         </div>
-      </ChatMessage>
+        {message.choice !== undefined && (
+          <p className={styles.note}>Chose {message.choice}</p>
+        )}
+        {message.refs.length > 0 && (
+          <div className={styles.refs}>
+            {message.refs.map((ref, i) => {
+              const action = refAction(ref, lookups);
+              const text = `${ref.type}:${ref.id}${refAt(ref)}`;
+              const key = `${text}:${i}`;
+              return action === null ? (
+                <Chip key={key}>
+                  <span className={styles.mono}>{text}</span>
+                </Chip>
+              ) : (
+                <ChipButton key={key} onClick={() => onOpen(action)}>
+                  <span className={styles.mono}>{text}</span>
+                </ChipButton>
+              );
+            })}
+          </div>
+        )}
+        {remoteDeliveries.length > 0 && (
+          <ul className={styles.deliveries}>
+            {remoteDeliveries.map((d) => (
+              <li
+                key={d.recipient}
+              >{`${d.recipient}: ${REMOTE_STATE[d.state]}`}</li>
+            ))}
+          </ul>
+        )}
+        {settlement === 'pending' && message.kind === 'answer' && (
+          <p className={styles.note}>
+            {`answered here, waiting for ${settlerLabel ?? 'the asker'}'s machine`}
+          </p>
+        )}
+        {settlement === 'superseded' && (
+          <p className={styles.note}>superseded</p>
+        )}
+        {observer !== null && message.origin !== undefined && (
+          <p className={styles.note}>
+            {`an observer (${observer}) reads this thread`}
+          </p>
+        )}
+        <GateCard
+          message={message}
+          control={rowControl(message, { me, open, access })}
+          lookups={lookups}
+          onOpen={onOpen}
+          availability={availability}
+          onRestartDaemon={onRestartDaemon}
+          answer={answer}
+          loadApprovalInput={loadApprovalInput}
+          client={client ?? null}
+          port={port}
+        />
+        {open &&
+          inlineAnswer &&
+          access.canMessage &&
+          answersWithText(message, me) && (
+            <QuestionAnswerForm
+              asker={sender}
+              onAnswer={(body) => onAnswer(message, { body })}
+            />
+          )}
+        {open && (
+          <A2ADeclineAction
+            message={message}
+            client={client}
+            canDecide={access.canDecide}
+          />
+        )}
+        {error !== null && (
+          <p
+            role="alert"
+            className={cx('toneText', styles.note)}
+            data-tone="danger"
+          >
+            {error}
+          </p>
+        )}
+      </div>
     </article>
   );
 });

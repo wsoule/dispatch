@@ -1,0 +1,25 @@
+/* The note a decide card shows when this window cannot decide
+   (DecideUnavailableNotice.tsx): the explanation in --text, a blocked
+   restart's reason as quiet text, and a failed restart in the danger
+   tone's ink (set by .toneText). The Notice draws the box and lead-in. */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.line {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.quiet {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}

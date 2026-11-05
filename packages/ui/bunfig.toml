@@ -1,2 +1,3 @@
 [test]
-preload = ["./test-setup.ts"]
+# Registers a happy-dom window/document before any test file loads.
+preload = ["./test/setup.ts"]

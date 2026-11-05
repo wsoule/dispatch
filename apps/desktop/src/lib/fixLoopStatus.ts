@@ -1,5 +1,6 @@
 import type { EscalationStep } from '@dispatch-foo/core/browser';
 import type { FixLoopState } from '@dispatch/client';
+import type { UiTone } from '@dispatch/ui';
 
 // `@dispatch/client` exports the state but not its stop-reason union, so name
 // it off the state rather than restating the members here.
@@ -66,14 +67,15 @@ export function fixLoopTone(state: FixLoopState): FixLoopTone {
   return reason === 'rounds-exhausted' ? 'waiting' : 'neutral';
 }
 
-/** The colour the fix-loop bar's left edge picks up (the `GroupHeader` tint): amber while
- *  it waits on a ruling, red after a failure, none when there is nothing to flag. */
-export function fixLoopTint(tone: FixLoopTone): string | undefined {
+/** The status tone the fix-loop bar carries (its diamond and left edge, through
+ *  `data-tone`): warning while it waits on a ruling, danger after a failure, and
+ *  none when there is nothing to flag. The status line's words say the state too. */
+export function fixLoopUiTone(tone: FixLoopTone): UiTone | undefined {
   switch (tone) {
     case 'waiting':
-      return 'var(--amber)';
+      return 'warning';
     case 'failed':
-      return 'var(--red)';
+      return 'danger';
     case 'neutral':
       return undefined;
   }

@@ -1,0 +1,65 @@
+/* Settings → Members → Machines (MachinesGroup.tsx): fingerprints, inline forms and
+   the notes on the team of machines. Status words (a problem, a refusal) take
+   the global toneText class. */
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.who {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fingerprint {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+/* A one-time code (CopyValue) taking the room beside its Done button. */
+.copyLine {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.copyLine > :first-child {
+  flex: 1 1 auto;
+}
+
+.waiting {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Two classes, so the widths win over the field's own 100%. */
+.line .handleInput {
+  width: 144px;
+}
+
+.line .hostsInput {
+  width: 288px;
+}
+
+.line .fingerprintInput {
+  width: 224px;
+  font-family: var(--font-mono);
+}
+
+.line .relayInput {
+  width: 224px;
+}
+
+.line .tokenInput {
+  width: 192px;
+}
+
+/* A hint set straight into the card, padded like a row. */
+.note {
+  padding: var(--s-2) var(--s-3);
+}

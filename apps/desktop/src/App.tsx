@@ -1,22 +1,34 @@
 import {
   type CreateInput,
+  fanoutScope,
   providerById,
   type TaskListItem,
 } from '@dispatch-foo/core/browser';
 import type { DraftRecord } from '@dispatch/client';
+import {
+  BlockBar,
+  Button,
+  EmptyState,
+  ShortcutSheet,
+  Spinner,
+  toggleShellCollapsed,
+  useModKeyLabel,
+} from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bot, Coins, TriangleAlert } from 'lucide-react';
 import {
   type ReactNode,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
   useState,
 } from 'react';
 
+import { PALETTE_DOCS_LIMIT } from './adapters/palette';
+import { buildProjectsSection, planningProjectMark } from './adapters/shell';
+import styles from './App.module.css';
 import { AwayDigest, useNarratorSince } from './components/chat/AwayDigest';
 import { CapturedNotes } from './components/chat/CapturedNotes';
 import { ForYouPosts } from './components/chat/ForYouPosts';
@@ -47,7 +59,7 @@ import { ThreadPeek } from './components/peek/ThreadPeek';
 import { PeopleProvider } from './components/people/PeopleContext';
 import { OverseerGrantsGroup } from './components/settings/OverseerGrantsGroup';
 import { AgentStep } from './components/setup/AgentStep';
-import { SetupBanner } from './components/setup/SetupBanner';
+import { SetupBanner, setupProblem } from './components/setup/SetupBanner';
 import { AddProjectDialog } from './components/shell/AddProjectDialog';
 import { CommandPalette } from './components/shell/CommandPalette';
 import { DaemonUnavailable } from './components/shell/DaemonUnavailable';
@@ -55,33 +67,36 @@ import {
   DeepLinkProvider,
   useCopyTaskLink,
 } from './components/shell/DeepLinkContext';
+import {
+  DispatchShell,
+  SHELL_STORAGE_KEY,
+} from './components/shell/DispatchShell';
+import { GateFrame } from './components/shell/GateFrame';
+import { PageHead, RUNS_BACK } from './components/shell/PageHead';
 import { PresenceStack } from './components/shell/PresenceStack';
-import { ProjectSwitcher } from './components/shell/ProjectSwitcher';
-import { QuickCaptureDialog } from './components/shell/QuickCaptureDialog';
+import { projectWorkspaceSwitcher } from './components/shell/projectWorkspaces';
 import { SavedViewsProvider } from './components/shell/SavedViewsContext';
-import { SettingsPanel } from './components/shell/SettingsPanel';
 import {
   type CreateTaskPreset,
   type ShellActions,
   ShellActionsProvider,
 } from './components/shell/ShellActionsContext';
-import { ShortcutsDialog } from './components/shell/ShortcutsDialog';
 import {
   taskToastDescription,
   viewTaskLink,
 } from './components/shell/toastContract';
 import { useToasts } from './components/shell/Toasts';
-import { TwoViewShell } from './components/shell/TwoViewShell';
-import { AiTaskComposer } from './components/tasks/AiTaskComposer';
-import { CreateTaskModal } from './components/tasks/CreateTaskModal';
+import { TaskDrawer } from './components/tasks/detail/TaskDrawer';
 import { NeedsYouBlock } from './components/tasks/NeedsYouBlock';
-import { TaskPage } from './components/tasks/page/TaskPage';
 import {
   type TaskPageHost,
   TaskPageHostContext,
 } from './components/tasks/page/TaskPageHost';
-import { TaskPeekDialog } from './components/tasks/TaskPeekDialog';
-import { TasksBackButton } from './components/tasks/TasksPageHeader';
+import { TaskPageView } from './components/tasks/page/TaskPageView';
+import {
+  type ComposerMode,
+  TaskComposerSlideOver,
+} from './components/tasks/TaskComposerSlideOver';
 import { useAdminItems } from './hooks/useAdminItems';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
 import { useDeepLinkRouter } from './hooks/useDeepLinkRouter';
@@ -91,10 +106,18 @@ import {
   useFreshEmptyProject,
 } from './hooks/useFirstTaskGuide';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
+import { useHashRoute } from './hooks/useHashRoute';
+import { useOnOpening } from './hooks/useOnOpening';
 import { useOverseerSession } from './hooks/useOverseerSession';
+import {
+  type Planning,
+  PlanningContext,
+  usePlanning,
+} from './hooks/usePlanning';
 import { useSavedViews } from './hooks/useSavedViews';
 import { useSidePanelNotifications } from './hooks/useSidePanelNotifications';
 import { tasksKey } from './hooks/useTaskDoc';
+import { setThemeChoice } from './hooks/useThemeChoice';
 import {
   threadListsKey,
   useA2APeers,
@@ -115,8 +138,14 @@ import {
 } from './lib/agentPresence';
 import { overseerOf } from './lib/agentRoster';
 import {
+  escapeLeavesNav,
   type GlobalView,
   HOST_VIEWS,
+  type HostedPage,
+  initialNavState,
+  keyAction,
+  type NavAction,
+  navReducer,
   type ProjectView,
   type SettingsPage,
   type TaskTab,
@@ -125,6 +154,7 @@ import { hideArchivedRuns } from './lib/archiveFilter';
 import { hasDispatchKey, launchRootKey } from './lib/bootWarm';
 import { openCaptures } from './lib/capturedNotes';
 import { dispatchConfigKey } from './lib/configEvents';
+import { containerStatus } from './lib/containerStatus';
 import { mentions, subjectOf } from './lib/conversationScope';
 import { type DecisionItem, decisionTarget } from './lib/decisionFeed';
 import { draftTrayViewModel } from './lib/draftTray';
@@ -148,7 +178,6 @@ import {
   buildPaletteEntries,
   docHitEntries,
 } from './lib/paletteEntries';
-import { PALETTE_SECTION_CAPS } from './lib/paletteSections';
 import { buildPosts, type Post, questionToAnswer } from './lib/posts';
 import { basename } from './lib/projectName';
 import { prNumberFromUrl } from './lib/reviewTarget';
@@ -160,6 +189,11 @@ import {
   setupReportKey,
   writeSetupComplete,
 } from './lib/setupState';
+import {
+  currentShellDestination,
+  currentShellPageTitle,
+} from './lib/shellRoutes';
+import { buildShortcutGroups } from './lib/shortcutGroups';
 import { useStatusModelOf } from './lib/statusModel';
 import { computeBlockedIds } from './lib/taskGraph';
 import { itemBucket, queuedTaskIds, taskStatusCounts } from './lib/taskStatus';
@@ -168,6 +202,7 @@ import {
   currentProjectRoot,
   ensureDispatchd,
   hasDispatch,
+  isTauri,
   listProjects,
   listRegisteredProjects,
   touchProjectOpened,
@@ -178,12 +213,6 @@ import {
   signOutOfTeam,
 } from './lib/teamLocal';
 import { openRefWith, type RefAction } from './lib/threadSources';
-import {
-  appNavReducer,
-  type HostedView,
-  initialAppNavState,
-  twoViewsKeyAction,
-} from './lib/twoViews';
 import { checkForUpdate, installUpdateAndRelaunch } from './lib/updater';
 import { applyZoomFactor, loadZoomFactor, stepZoomFactor } from './lib/zoom';
 import { AllAgentsView } from './views/AllAgentsView';
@@ -191,65 +220,61 @@ import { DocsView } from './views/DocsView';
 import { DraftView } from './views/DraftView';
 import { FilesView } from './views/FilesView';
 import { FirstRunView } from './views/FirstRunView';
+import { GraphView } from './views/GraphView';
+import { IssuesView, type TasksSidePage } from './views/IssuesView';
+import { LiveView } from './views/LiveView';
 import { OverseerFocusView } from './views/OverseerFocusView';
+import { type OverseerFocus, OverseerView } from './views/OverseerView';
+import { ProjectsView } from './views/ProjectsView';
 import { PrReviewView } from './views/PrReviewView';
 import { SessionsHubView } from './views/SessionsHubView';
-import type { HostedSettingsPage } from './views/SettingsView';
+import { type HostedSettingsPage, SettingsView } from './views/SettingsView';
 import { SetupView } from './views/SetupView';
-import { type TasksSidePage, TasksView } from './views/TasksView';
 import { TerminalsView } from './views/TerminalsView';
 import { ThreadsView } from './views/ThreadsView';
-import { type OverseerFocus, TwoViewOverseer } from './views/TwoViewOverseer';
-import { PageHeaderShellContext } from '@/ui/ai/page-header';
-import { EmptyState, SectionLabel } from '@/ui/chrome';
-import { Spinner } from '@/ui/spinner';
-import { TooltipProvider } from '@/ui/tooltip';
+import { TimelineView } from './views/TimelineView';
 
 // The hosts a task page and a Flight Plan draw from, provided together so the shell's
 // provider stack stays one level deep.
 function SurfaceHosts({
   taskPage,
   flightPlan,
+  planning,
   children,
 }: {
   taskPage: TaskPageHost | null;
   flightPlan: FlightPlanHost;
+  /** The planning over the open project, computed once for the timeline,
+   * the sidebar's project marks and the drawer's Milestone section. */
+  planning: Planning;
   children: ReactNode;
 }) {
   return (
     <TaskPageHostContext.Provider value={taskPage}>
       <FlightPlanHostContext.Provider value={flightPlan}>
-        {children}
+        <PlanningContext.Provider value={planning}>
+          {children}
+        </PlanningContext.Provider>
       </FlightPlanHostContext.Provider>
     </TaskPageHostContext.Provider>
   );
 }
 
-// There is no sidebar to toggle, and the top bar owns the drag region.
-const TWO_VIEWS_PAGE_HEADER = {
-  sidebarHidden: false,
-  onToggleSidebar: () => {},
-  trafficLightInset: false,
-  dragRegion: false,
-};
-
 function App() {
   const queryClient = useQueryClient();
-  const [{ nav: navState, twoViews: twoViewsState }, dispatchNav] = useReducer(
-    appNavReducer,
-    initialAppNavState
+  const [navState, dispatchNav] = useReducer(navReducer, initialNavState);
+  // What a side column of the Overseer opened in its middle (declared here,
+  // before the global keyboard's Escape reads it).
+  const [overseerFocus, setOverseerFocus] = useState<OverseerFocus | null>(
+    null
   );
   const [showCreate, setShowCreate] = useState(false);
-  // What a board column's or list group's "+" pre-fills into the creator (status today;
-  // milestone/milestone once the creator reads them); `null` leaves every field to its default.
+  // What a board column's or list group's "+" pre-fills into the creator (its status, kind
+  // and parent container); `null` leaves every field to its default.
   const [createPreset, setCreatePreset] = useState<CreateTaskPreset | null>(
     null
   );
-  // The AI task composer, a dialog rather than a screen — open state lives here (not in
-  // `navState`) so it renders on top of whatever view is underneath instead of replacing it.
-  const [aiComposerOpen, setAiComposerOpen] = useState(false);
-
-  // Whether the top bar clears the macOS traffic lights.
+  // Whether the shell's brand row clears the macOS traffic lights.
   const trafficLightInset = useTrafficLightInset();
 
   const toasts = useToasts();
@@ -287,14 +312,6 @@ function App() {
   }, []);
 
   useDataChangedEvents();
-
-  // Reaching `new-task` only opens the AI composer dialog and hands the view back to
-  // `newTaskReturnView` — `useLayoutEffect` so this happens before paint, with no blank frame.
-  useLayoutEffect(() => {
-    if (navState.projectView !== 'new-task') return;
-    setAiComposerOpen(true);
-    dispatchNav({ type: 'closeNewTask' });
-  }, [navState.projectView]);
 
   // The app is scoped to a single project — the one it was launched from (see
   // `commands::current_project_root`'s doc comment for the `tauri dev`-vs-packaged-app
@@ -381,9 +398,9 @@ function App() {
 
   const selectSwitchProject = useCallback((path: string) => {
     setOverrideRoot(path);
-    setSwitcherOpen(false);
-    // Stamp `lastOpenedAt` so this project becomes the registry's "most recent" — both for the
-    // switcher's ordering and for `current_project_root`'s reopen-last chain on next launch.
+    // Stamp `lastOpenedAt` so this project becomes the registry's "most recent", which
+    // `current_project_root`'s reopen-last chain follows on next launch (the switcher
+    // itself lists projects by name).
     // Fire-and-forget: a registry write failure must not block switching the window.
     void touchProjectOpened(path);
     // Drop the current project's nav context so the new project opens clean on
@@ -445,8 +462,8 @@ function App() {
     dispatchNav({ type: 'setProjectView', view });
   }, []);
 
-  // `page` lands Settings on one of its pages; `g s` and the switcher's gear leave it to
-  // the last page.
+  // `page` lands Settings on one of its pages; `g s` and the sidebar's Settings link
+  // leave it to the last page.
   const setGlobalView = useCallback(
     (view: GlobalView, options?: { page?: SettingsPage }) => {
       dispatchNav({ type: 'setGlobalView', view, page: options?.page });
@@ -458,8 +475,8 @@ function App() {
   // task"/"+" affordance (a board column's or list group's hover "+", the palette action,
   // the global `c` shortcut) calls through, so the creator's preset is
   // always explicit rather than a leftover from whichever column's "+" was clicked last.
-  // Describing the task in natural language is the primary path; the structured modal
-  // below is the quick-add fallback.
+  // Describing the task in natural language is the primary path; the composer's Quick add
+  // mode is the structured fallback.
   const openCreateTask = useCallback((preset?: CreateTaskPreset) => {
     setCreatePreset(preset ?? null);
     // The AI composer drafts issues only; a project or milestone opens the form.
@@ -471,29 +488,28 @@ function App() {
   }, []);
 
   const closeCreateTask = useCallback(() => {
-    setAiComposerOpen(false);
     setShowCreate(false);
     dispatchNav({ type: 'closeNewTask' });
   }, []);
 
-  // The structured quick-add fallback: `CreateTaskModal`, unchanged, for when you already know
+  // The structured quick-add fallback: the composer's Quick add mode, for when you already know
   // the exact fields and don't want to spend an agent round-trip describing them. Reachable
-  // from the palette and from the full-page creator's own "Quick add…" button.
+  // from the palette; the composer's own Mode control switches to the same mode.
   const openQuickAddTask = useCallback((preset?: CreateTaskPreset) => {
     setCreatePreset(preset ?? null);
     setShowCreate(true);
   }, []);
 
-  // Moves nav state to the newly (re-)dispatched run. The task view is the only run surface
-  // now, and a run that has just been created is live, so it opens on Run.
-  // Two views' page right now; read by callbacks made before it is computed below.
-  const twoViewsPageRef = useRef<{ on: boolean; taskId: string | null }>({
+  // The Tasks side page right now; read by callbacks made before it is computed below.
+  const taskPageRef = useRef<{ on: boolean; taskId: string | null }>({
     on: false,
     taskId: null,
   });
+  // Moves nav state to the newly (re-)dispatched run. The task view is the only run surface
+  // now, and a run that has just been created is live, so it opens on Run.
   const onRunDispatched = useCallback((runId: string, taskId: string) => {
-    // A run started from a task already open (split or full) stays on that page.
-    const page = twoViewsPageRef.current;
+    // A run started from the task page already open stays on that page.
+    const page = taskPageRef.current;
     if (page.on && page.taskId === taskId) {
       dispatchNav({ type: 'setTaskTab', tab: 'run' });
       dispatchNav({ type: 'openRun', runId });
@@ -502,8 +518,11 @@ function App() {
     dispatchNav({ type: 'openTask', taskId, tab: 'run', runId });
   }, []);
 
+  // The run the task page is pinned to: the only surface that shows one.
+  const selectedRunId =
+    navState.tasksPage.kind === 'task' ? navState.tasksPage.runId : null;
   const rawData = useDispatchProject(activeProject?.path ?? null, {
-    selectedRunId: navState.activeRunId,
+    selectedRunId,
     onRunDispatched,
   });
 
@@ -517,26 +536,25 @@ function App() {
   }, []);
 
   // Tells whoever else is on this daemon which task this window has open —
-  // the full view or the peek, whichever is showing. Best effort: a failed
-  // report costs a teammate one stale "viewing", never an error here.
-  const twoViewsTaskId =
-    twoViewsState.tasksPage.kind === 'task'
-      ? twoViewsState.tasksPage.taskId
-      : twoViewsState.peek?.kind === 'task'
-        ? twoViewsState.peek.taskId
+  // the full page or the quick-look drawer, whichever is showing. Best effort:
+  // a failed report costs a teammate one stale "viewing", never an error here.
+  const shownTaskId =
+    navState.tasksPage.kind === 'task'
+      ? navState.tasksPage.taskId
+      : navState.peek?.kind === 'task'
+        ? navState.peek.taskId
         : null;
-  const twoViewsOpenTaskId =
-    twoViewsState.mainView === 'tasks' &&
-    twoViewsState.tasksPage.kind === 'task'
-      ? twoViewsState.tasksPage.taskId
+  const openTaskPageId =
+    navState.mainView === 'tasks' && navState.tasksPage.kind === 'task'
+      ? navState.tasksPage.taskId
       : null;
   useEffect(() => {
-    twoViewsPageRef.current = {
-      on: twoViewsOpenTaskId !== null,
-      taskId: twoViewsOpenTaskId,
+    taskPageRef.current = {
+      on: openTaskPageId !== null,
+      taskId: openTaskPageId,
     };
-  }, [twoViewsOpenTaskId]);
-  const focusedTaskId = twoViewsTaskId;
+  }, [openTaskPageId]);
+  const focusedTaskId = shownTaskId;
   const presenceClient = rawData.client;
   useEffect(() => {
     if (presenceClient === null) return;
@@ -640,8 +658,28 @@ function App() {
     [rawData.latestRunByTaskId]
   );
 
-  // A Tasks-page row or card open: a phase drill from the milestones layout names
-  // its tab; a plain click keeps the peek. Stable, so memo'd rows can skip renders.
+  // A route's actions, as the shell's links, the graph's links and the hash
+  // deliver them. An `openTask` naming no run gets the task's latest, as
+  // `openTaskView` does for every other way in, so Run and Review have
+  // something to show and the hash then names the run.
+  const navigate = useCallback(
+    (action: NavAction) => {
+      if (action.type === 'openTask' && (action.runId ?? null) === null) {
+        openTaskView(action.taskId, action.tab);
+        return;
+      }
+      dispatchNav(action);
+    },
+    [openTaskView]
+  );
+  // `location.hash` mirrors the place, and a hash the window opens on (or a
+  // link the browser followed itself) is applied as a route.
+  useHashRoute({ state: navState, dispatch: navigate });
+
+  // A Tasks-page row or card click: a phase drill from the milestones layout names
+  // its tab and opens the full page; a plain click is the quick-look drawer
+  // (owner decision: click and Space peek, Enter and o open). Stable, so memo'd
+  // rows can skip renders.
   const selectBoardTask = useCallback(
     (taskId: string, tab?: TaskTab, runId?: string) => {
       if (tab !== undefined) openTaskView(taskId, tab, runId);
@@ -664,7 +702,7 @@ function App() {
         openTask: (taskId, tab, runId) => openTaskView(taskId, tab, runId),
         openThread: (messageId) =>
           dispatchNav({ type: 'openThread', messageId }),
-        openFile: (path) => dispatchNav({ type: 'tv/openFile', path }),
+        openFile: (path) => dispatchNav({ type: 'openFile', path }),
         openDoc,
       }),
     [openTaskView, openDoc]
@@ -853,6 +891,48 @@ function App() {
     () => ({ bucketOf, starred: starredTaskIds, me: data.me }),
     [bucketOf, starredTaskIds, data.me]
   );
+  // The planning chain over the open project (milestone assessments, the
+  // timeline, the connectors), once for every surface that reads it.
+  const planning = usePlanning(data);
+  const { snapshot: planningSnapshot, assessments: planningAssessments } =
+    planning;
+  // The project whose lane the Timeline is focused on, marked current in the
+  // sidebar's Projects section while that page shows.
+  const focusedProjectId =
+    navState.tasksPage.kind === 'view' && navState.tasksPage.view === 'timeline'
+      ? navState.tasksPage.project
+      : null;
+  // The sidebar's Projects section: every project marked by the planning's
+  // reading of its next milestone, else the rolled-up status of the issues
+  // under it, in the top bar's old units (asks, failures).
+  const projectsSection = useMemo(() => {
+    const childrenOf = new Map<string, TaskListItem[]>();
+    for (const doc of data.tasks) {
+      if (doc.meta.parent === null) continue;
+      const siblings = childrenOf.get(doc.meta.parent);
+      if (siblings === undefined) childrenOf.set(doc.meta.parent, [doc]);
+      else siblings.push(doc);
+    }
+    return buildProjectsSection({
+      tasks: data.tasks,
+      containerStatusOf: (id) =>
+        containerStatus(
+          fanoutScope(id, (parent) => childrenOf.get(parent) ?? []),
+          { bucketOf, asksByTask: needs.byTask, model: statusModel }
+        ),
+      statusOf: (projectId) =>
+        planningProjectMark(planningSnapshot, planningAssessments, projectId),
+      currentId: focusedProjectId,
+    });
+  }, [
+    data.tasks,
+    bucketOf,
+    needs.byTask,
+    statusModel,
+    planningSnapshot,
+    planningAssessments,
+    focusedProjectId,
+  ]);
   const admin = useAdminItems(data.client, data.port);
   const daemonDown = data.portLoading || data.portError || data.client === null;
   const orb = orbState({
@@ -876,29 +956,112 @@ function App() {
   // dialog. Gates ⌘D and the palette's "Drop a thought" alike.
   const quickCaptureAvailable = activeProject !== null && data.client !== null;
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
+  // Capture is preset-free like every other entry: the composer's Mode control can move on to
+  // Quick add or Describe, which must not inherit the last "+"'s status, kind and parent.
   const openQuickCapture = useCallback(() => {
-    if (quickCaptureAvailable) setQuickCaptureOpen(true);
+    if (!quickCaptureAvailable) return;
+    setCreatePreset(null);
+    setQuickCaptureOpen(true);
   }, [quickCaptureAvailable]);
+
+  // The one task composer stays mounted while any of its three entry states is open, and
+  // shows the mode that state asks for: the structured form (`openQuickAddTask`, or a
+  // non-task preset), the quick capture (⌘D, "Drop a thought"), or Describe (`c`, "New
+  // task"). `null` means the composer is closed.
+  const composerMode: ComposerMode | null = showCreate
+    ? 'quick'
+    : quickCaptureOpen
+      ? 'capture'
+      : navState.composerOpen
+        ? 'describe'
+        : null;
+  // The composer's Mode control: moves to one entry state and clears the other two, so
+  // exactly one is open. Quick add keeps `createPreset`; capture opens only when a capture
+  // can land (see `quickCaptureAvailable`).
+  const changeComposerMode = useCallback(
+    (mode: ComposerMode) => {
+      switch (mode) {
+        case 'describe':
+          setShowCreate(false);
+          setQuickCaptureOpen(false);
+          dispatchNav({ type: 'openNewTask' });
+          break;
+        case 'quick':
+          dispatchNav({ type: 'closeNewTask' });
+          setQuickCaptureOpen(false);
+          setShowCreate(true);
+          break;
+        case 'capture':
+          if (!quickCaptureAvailable) return;
+          dispatchNav({ type: 'closeNewTask' });
+          setShowCreate(false);
+          setQuickCaptureOpen(true);
+          break;
+      }
+    },
+    [quickCaptureAvailable]
+  );
+  // Closing the composer (Escape, the scrim, a submit) clears every entry state and the
+  // preset, so nothing carries over into the next open.
+  const closeComposer = useCallback(() => {
+    dispatchNav({ type: 'closeNewTask' });
+    setShowCreate(false);
+    setQuickCaptureOpen(false);
+    setCreatePreset(null);
+  }, []);
+  // Settings (⌘, works while typing, or the palette and the sidebar) is a page in the shell's
+  // main column, under the browser's top layer, so the composer's modal SlideOver (z-index 50)
+  // would cover it: opening Settings closes the composer, in the same render, so the composer
+  // hands focus back to its opener before Settings shows (see useOnOpening).
+  useOnOpening(navState.settings !== null, closeComposer);
 
   const openShortcuts = useCallback(
     () => dispatchNav({ type: 'openShortcuts' }),
     []
   );
+  // The "?" sheet's rows, with the platform's modifier label in every
+  // modified shortcut (⌘ on a Mac, Ctrl elsewhere).
+  const modLabel = useModKeyLabel();
+  const shortcutGroups = useMemo(
+    () => buildShortcutGroups(modLabel),
+    [modLabel]
+  );
+
+  // Quick open over the project Files page and over a task page's run Files
+  // tab lives in the nav state, so ⌘P (the `quick-open` command, through
+  // `keyAction`) opens it from any destination and Escape peels it like the
+  // other overlays. Only the run Files embedded in the Overseer's column keeps
+  // its own local quick-open state.
+  const onQuickOpenChange = useCallback((open: boolean) => {
+    dispatchNav({ type: open ? 'openQuickOpen' : 'closeQuickOpen' });
+  }, []);
 
   useGlobalKeyboard({
-    // `modalOpen` is computed inside the hook itself, via a live DOM check for any open
-    // dialog — so SessionDetailModal/DiffModal mounted deep inside the Sessions hub also
-    // suppress the global commands while open, the same as CreateTaskModal always did.
+    // `modalOpen` is computed inside the hook itself, via a live DOM check for
+    // any open `aria-modal` dialog. SessionDetailModal (@dispatch/ui's modal
+    // SlideOver) and DiffModal (its Dialog) set aria-modal through the
+    // library, so while either is open inside Settings › Usage the global
+    // commands stay suppressed, the same as TaskComposerSlideOver does.
     onCommand: (command) => {
-      // The `goto-*` keys and `[` resolve through `twoViewsKeyAction`.
-      const action = twoViewsKeyAction(command);
+      // The `goto-*` keys and `quick-open` (⌘P) resolve through `keyAction`.
+      const action = keyAction(command);
       if (action !== null) {
         if (action !== 'swallow') dispatchNav(action);
         return;
       }
       if (command === 'open-palette') dispatchNav({ type: 'togglePalette' });
-      else if (command === 'escape') dispatchNav({ type: 'escape' });
-      else if (command === 'nav-back') dispatchNav({ type: 'back' });
+      else if (command === 'escape') {
+        // This window listener runs before the Overseer's own Escape and
+        // claims the key, so it hands a focus back to the talk itself once
+        // nothing of the app's (a peek, Settings, the palette) sits above it.
+        if (
+          navState.mainView === 'overseer' &&
+          overseerFocus !== null &&
+          escapeLeavesNav(navState)
+        ) {
+          setOverseerFocus(null);
+        } else dispatchNav({ type: 'escape' });
+      } else if (command === 'nav-back') dispatchNav({ type: 'back' });
       else if (command === 'nav-forward') dispatchNav({ type: 'forward' });
       else if (
         command === 'zoom-in' ||
@@ -912,15 +1075,19 @@ function App() {
           )
         );
       } else if (command === 'brain-dump') openQuickCapture();
-      else if (command === 'new-task') {
+      // `[` and ⌘B: the shell leaves the key to the app (`sidebarShortcut` off).
+      else if (command === 'toggle-sidebar') {
+        toggleShellCollapsed(SHELL_STORAGE_KEY);
+      } else if (command === 'new-task') {
         if (activeProject !== null) openCreateTask();
       } else if (command === 'open-shortcuts') openShortcuts();
     },
   });
 
-  // What every task page — the split pane, the peek, the full page — draws a
+  // What every task surface — the quick-look drawer and the full page — draws a
   // task with: the project and where its links go. Absent until the config has loaded.
   const rawHandleDispatch = rawData.handleDispatch;
+  const rawHandleUpdate = rawData.handleUpdate;
   const projectRuns = data.runs;
   const taskPageHost: TaskPageHost | null =
     data.config === null
@@ -937,6 +1104,9 @@ function App() {
               batch: stayInPlace,
               effort,
             }),
+          // Raw too: the drawer's edit controls print a refusal beside themselves.
+          updateTask: rawHandleUpdate,
+          moveTaskStatus: rawMoveTaskStatus,
           openPr: (runId) => {
             const number = prNumberFromUrl(
               projectRuns.find((r) => r.id === runId)?.prUrl
@@ -958,8 +1128,20 @@ function App() {
           // The repo-wide Files and Terminals live on each run's page.
           showLessons: true,
           planOpensPages: true,
-          compactPage: true,
-          filesView: (runId: string) => <FilesView data={data} runId={runId} />,
+          // The Tasks page's run Files tab is a Files page to the nav state, so
+          // ⌘P opens quick open over the run's worktree in place; embedded in
+          // the Overseer's column, the tab keeps quick open to itself.
+          filesView: (runId: string, embedded: boolean) =>
+            embedded ? (
+              <FilesView data={data} runId={runId} />
+            ) : (
+              <FilesView
+                data={data}
+                runId={runId}
+                quickOpen={navState.quickOpen}
+                onQuickOpenChange={onQuickOpenChange}
+              />
+            ),
           terminalView: (runId: string) => (
             <TerminalsView data={data} runId={runId} />
           ),
@@ -1045,7 +1227,7 @@ function App() {
         return;
       }
       if (target.kind === 'plan') {
-        dispatchNav({ type: 'tv/showOverseer' });
+        dispatchNav({ type: 'showOverseer' });
         markNotificationInboxRead();
         return;
       }
@@ -1164,7 +1346,7 @@ function App() {
         ? undefined
         : (query: string) =>
             docsClient
-              .searchDocs(query, { limit: PALETTE_SECTION_CAPS.docs })
+              .searchDocs(query, { limit: PALETTE_DOCS_LIMIT })
               .then((r) => docHitEntries(r.hits, openDoc)),
     [docsClient, openDoc]
   );
@@ -1187,23 +1369,24 @@ function App() {
         tasks: paletteTasks,
         readyIds: paletteReadyIds,
         savedViews: savedViews.views,
-        currentTaskId: twoViewsTaskId,
+        currentTaskId: shownTaskId,
         hideHostViews,
         actions: {
           openCreateTask: () => openCreateTask(),
           openQuickAddTask: () => openQuickAddTask(),
           setProjectView: selectProjectView,
           setGlobalView,
-          peekTask: (taskId) => {
-            selectProjectView('board');
-            peekTask(taskId);
-          },
+          // The quick-look drawer opens over whichever view is showing (the
+          // old peek switched to the list first, where it was a pane).
+          peekTask,
           dispatchTask: (taskId) => void handleDispatch(taskId),
           openQuickCapture,
           openShortcuts,
           openSavedView,
           copyTaskLink,
           restartGuide: () => restartGuideRef.current(),
+          // The palette shows this row only while a choice is stored.
+          followSystemTheme: () => setThemeChoice('system'),
         },
       }),
       ...addressEntries({
@@ -1211,7 +1394,7 @@ function App() {
         rooms: paletteRooms.map((room) => room.name),
         peers: palettePeers,
         me: data.me,
-        open: (address) => dispatchNav({ type: 'tv/openAddress', address }),
+        open: (address) => dispatchNav({ type: 'openAddress', address }),
       }),
     ],
     [
@@ -1227,7 +1410,7 @@ function App() {
       openQuickCapture,
       openShortcuts,
       savedViews.views,
-      twoViewsTaskId,
+      shownTaskId,
       openSavedView,
       copyTaskLink,
       hideHostViews,
@@ -1271,7 +1454,7 @@ function App() {
   const [firstRunSetAsideFor, setFirstRunSetAsideFor] = useState<string | null>(
     null
   );
-  const twoViewsFirstRun =
+  const emptyProjectFirstRun =
     activeProject !== null &&
     firstRunSetAsideFor !== activeProject.path &&
     data.tasksReady &&
@@ -1280,9 +1463,20 @@ function App() {
   // Resolution, first-project and get-started screens take precedence over any view.
   const gateScreen: ReactNode =
     resolutionError !== null ? (
-      <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-        <TriangleAlert className="text-destructive size-5" />
-        <EmptyState message={resolutionError} className="p-0" />
+      <div className={styles.centred} role="alert">
+        <EmptyState
+          icon={
+            <TriangleAlert
+              className={styles.alertIcon}
+              data-tone="danger"
+              aria-hidden="true"
+              size={20}
+              strokeWidth={1.8}
+            />
+          }
+        >
+          {resolutionError}
+        </EmptyState>
       </div>
     ) : noProjectYet || showGetStarted ? (
       <SetupView
@@ -1296,9 +1490,12 @@ function App() {
         }}
       />
     ) : stillResolving ? (
-      <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-        <Spinner className="text-muted-foreground size-5" />
-        <EmptyState message="Loading project…" className="p-0" />
+      // The region announces the sentence; the Spinner (label="") stays hidden from assistive
+      // tech so it is read once.
+      <div className={styles.centred} role="status">
+        <EmptyState icon={<Spinner size="lg" label="" />}>
+          Loading project…
+        </EmptyState>
       </div>
     ) : null;
 
@@ -1510,7 +1707,7 @@ function App() {
   };
   const showFirstRunBox = () => {
     setFirstRunSetAsideFor(null);
-    dispatchNav({ type: 'tv/showOverseer' });
+    dispatchNav({ type: 'showOverseer' });
   };
   const restartGuide = () => {
     guide.restart();
@@ -1523,7 +1720,7 @@ function App() {
   });
   // The first-run box also shows while the guide waits at Describe it (after a Restart).
   const showFirstRun =
-    twoViewsFirstRun ||
+    emptyProjectFirstRun ||
     (guide.view?.stage === 'describe' &&
       activeProject !== null &&
       firstRunSetAsideFor !== activeProject.path);
@@ -1568,11 +1765,11 @@ function App() {
           closeCompletion: guide.closeCompletion,
           openBoard: () => {
             guide.closeCompletion();
-            dispatchNav({ type: 'tv/showTasks' });
+            dispatchNav({ type: 'showTasks' });
           },
           openOverseer: () => {
             guide.closeCompletion();
-            dispatchNav({ type: 'tv/showOverseer' });
+            dispatchNav({ type: 'showOverseer' });
           },
           inviteTeammate: () => {
             guide.closeCompletion();
@@ -1582,37 +1779,39 @@ function App() {
       />
     );
 
-  const projectSwitcher = (
-    <ProjectSwitcher
-      teamSession={teamSession}
-      projectName={activeProject?.name ?? null}
-      projectPath={activeProject?.path ?? null}
-      noProjectYet={noProjectYet}
-      open={switcherOpen}
-      onOpenChange={setSwitcherOpen}
-      switchProjects={switchProjects ?? []}
-      onSelectProject={selectSwitchProject}
-      onAddProject={() => {
-        setSwitcherOpen(false);
-        setAddProjectOpen(true);
-      }}
-      onOpenSettings={() => setGlobalView('settings')}
-      onRestartGuide={activeProject === null ? undefined : restartGuide}
-    />
-  );
+  // The brand row's project switcher. Opening it is what loads the other
+  // projects (the lazy 'switcher-projects' query above follows switcherOpen).
+  const workspaceSwitcher = projectWorkspaceSwitcher({
+    active:
+      activeProject === null
+        ? null
+        : { name: activeProject.name, path: activeProject.path },
+    projects: switchProjects ?? [],
+    onSelectProject: selectSwitchProject,
+    onAddProject: () => setAddProjectOpen(true),
+    onOpenChange: setSwitcherOpen,
+  });
 
   const peekTaskId =
-    twoViewsState.peek?.kind === 'task' ? twoViewsState.peek.taskId : null;
+    navState.peek?.kind === 'task' ? navState.peek.taskId : null;
 
-  const closeTwoViewsPage = () => dispatchNav({ type: 'tv/closePage' });
+  const closeSidePage = () => dispatchNav({ type: 'closePage' });
 
   // A project view shown as a page under Tasks, its own header leading back.
-  const renderHostedView = (view: HostedView): ReactNode => {
+  const renderHostedView = (page: HostedPage): ReactNode => {
+    const { view } = page;
     if (data.portLoading || data.portError || data.client === null) {
       return (
-        <div className="flex h-full min-h-0 flex-col">
-          <div className="px-4 pt-2">
-            <TasksBackButton onBack={closeTwoViewsPage} />
+        <div className={styles.hostedPage}>
+          <div className={styles.hostedHead}>
+            {/* Live closes back to Runs, so its chip says so. */}
+            <PageHead
+              back={
+                view === 'live'
+                  ? { ...RUNS_BACK, onBack: closeSidePage }
+                  : { onBack: closeSidePage }
+              }
+            />
           </div>
           <DaemonUnavailable
             starting={data.portLoading}
@@ -1624,23 +1823,30 @@ function App() {
     }
     if (hideHostViews && HOST_VIEWS.has(view)) {
       return (
-        <div className="flex h-full min-h-0 flex-col">
-          <div className="px-4 pt-2">
-            <TasksBackButton onBack={closeTwoViewsPage} />
+        <div className={styles.hostedPage}>
+          <div className={styles.hostedHead}>
+            <PageHead onBack={closeSidePage} />
           </div>
-          <EmptyState
-            className="flex-1"
-            heading="Only the operator can open this"
-            description="Terminals act on the host machine as the person running Dispatch."
-          />
+          <div className={styles.centred}>
+            <EmptyState label="Only the operator can open this">
+              Terminals act on the host machine as the person running Dispatch.
+            </EmptyState>
+          </div>
         </div>
       );
     }
-    switch (view) {
+    switch (page.view) {
       case 'files':
-        return <FilesView data={data} onBack={closeTwoViewsPage} />;
+        return (
+          <FilesView
+            data={data}
+            onBack={closeSidePage}
+            quickOpen={navState.quickOpen}
+            onQuickOpenChange={onQuickOpenChange}
+          />
+        );
       case 'terminals':
-        return <TerminalsView data={data} onBack={closeTwoViewsPage} />;
+        return <TerminalsView data={data} onBack={closeSidePage} />;
       case 'threads':
         return (
           <ThreadsView
@@ -1655,28 +1861,73 @@ function App() {
               submit: overseer.reply,
               open: openOverseer,
             }}
-            onBack={closeTwoViewsPage}
+            onBack={closeSidePage}
+          />
+        );
+      case 'timeline':
+        return (
+          <TimelineView
+            // A request-tier token cannot write: no re-date handles.
+            readOnly={data.myTier === 'request'}
+            selectedId={peekTaskId}
+            focusProjectId={page.project}
+            // Raw, so a refusal reaches the chart, which announces it and
+            // rolls the bar back (the toasting wrapper never rejects).
+            onRedate={(milestoneId, dueDate) =>
+              rawHandleUpdate(milestoneId, { dueDate })
+            }
+          />
+        );
+      case 'graph':
+        // Every box is a task; the peeked one is the graph's selection. The
+        // scope is the page's route; the view's links dispatch through `navigate`.
+        return (
+          <GraphView
+            data={data}
+            bucketOf={bucketOf}
+            selectedId={peekTaskId}
+            scope={page.scope}
+            nodeId={page.nodeId}
+            onNavigate={navigate}
+          />
+        );
+      case 'projects':
+        // The projects register: every open project with its status, next
+        // milestone, lead and allocation, grouped by initiative. Its rows and
+        // cells are real hrefs the shell's link provider resolves.
+        return <ProjectsView data={data} onBack={closeSidePage} />;
+      case 'live':
+        // Every container with work moving: dispatches in place, a node's
+        // page on `o`, its quick look on Enter and Space. It reads as
+        // Runs › Live, so its back chip (`closePage`) returns to the Runs
+        // page, as Escape does (lib/appNav.ts `leavePage`).
+        return (
+          <LiveView
+            data={data}
+            dispatchTask={cockpitDispatch}
+            onDispatchFailed={onCockpitDispatchFailed}
+            onOpenTask={openTaskView}
+            onPeekTask={peekTask}
+            onBack={closeSidePage}
           />
         );
     }
   };
 
-  // What Tasks shows beside or instead of its list.
-  const renderTwoViewsPage = (page: TasksSidePage): ReactNode => {
+  // What Tasks shows instead of its list. A task here is always the full page;
+  // the quick look is the drawer in the peek slot below.
+  const renderSidePage = (page: TasksSidePage): ReactNode => {
     switch (page.kind) {
       case 'task':
         return data.config === null ? null : (
-          <TaskPage
+          <TaskPageView
             key={page.taskId}
-            layout={page.full ? 'full' : 'split'}
             taskId={page.taskId}
             mode={page.tab}
             onModeChange={(tab) => dispatchNav({ type: 'setTaskTab', tab })}
             runId={page.runId}
             onSelectRun={(runId) => dispatchNav({ type: 'openRun', runId })}
-            onClose={closeTwoViewsPage}
-            onExpand={() => dispatchNav({ type: 'tv/expandTask' })}
-            onBack={closeTwoViewsPage}
+            onBack={closeSidePage}
             conversationCount={speechByTask.get(page.taskId)?.count ?? 0}
           />
         );
@@ -1690,7 +1941,7 @@ function App() {
             onSelectDoc={(docId) => openDoc(docId, null)}
             onOpenRef={openRef}
             tasksPage={{
-              onBack: closeTwoViewsPage,
+              onBack: closeSidePage,
               onOpenAllDocs: () =>
                 dispatchNav({ type: 'setProjectView', view: 'docs' }),
             }}
@@ -1702,7 +1953,7 @@ function App() {
                 composerTo={null}
                 composerLabel=""
                 onOpenRef={openRef}
-                header={<SectionLabel>Discussion</SectionLabel>}
+                header={<BlockBar title="Discussion" />}
                 emptyText="No discussion yet. Messages that reference this doc show here."
               />
             )}
@@ -1715,17 +1966,16 @@ function App() {
             key={page.number}
             data={data}
             prNumber={page.number}
-            onBack={closeTwoViewsPage}
+            onBack={closeSidePage}
             tasksPage
           />
         );
       case 'draft': {
         const draft = data.drafts.find((d) => d.id === page.draftId);
         return draft === undefined || data.config === null ? (
-          <EmptyState
-            className="h-full"
-            message="That draft is no longer available."
-          />
+          <div className={styles.centred}>
+            <EmptyState>That draft is no longer available.</EmptyState>
+          </div>
         ) : (
           <DraftView
             projectName={activeProject?.name}
@@ -1746,7 +1996,7 @@ function App() {
               return doc;
             }}
             draft={draft}
-            onDone={closeTwoViewsPage}
+            onDone={closeSidePage}
             onRetry={() => retryDraft(draft)}
             send={
               guide.active && guide.draftId === draft.id
@@ -1766,18 +2016,20 @@ function App() {
             data={data}
             room={page.room}
             onOpenRef={openRef}
-            onBack={closeTwoViewsPage}
+            onBack={closeSidePage}
           />
         );
       case 'view':
-        return renderHostedView(page.view);
+        return renderHostedView(page);
       case 'file':
         return (
           <FilesView
             key={page.path}
             data={data}
             initialPath={page.path}
-            onBack={closeTwoViewsPage}
+            onBack={closeSidePage}
+            quickOpen={navState.quickOpen}
+            onQuickOpenChange={onQuickOpenChange}
           />
         );
     }
@@ -1795,7 +2047,9 @@ function App() {
     }
   };
 
-  const tasksPage = twoViewsState.tasksPage;
+  const tasksPage = navState.tasksPage;
+  // Which sidebar row is current, read off the same state the views render from.
+  const shellDestination = currentShellDestination(navState);
   const aboutTask =
     tasksPage.kind === 'task'
       ? {
@@ -1807,13 +2061,15 @@ function App() {
         }
       : null;
 
-  // Sessions and All agents as Settings pages in Two views.
+  // Usage and Runs as hosted Settings pages (SessionsHubView, AllAgentsView).
   const hostedSettingsPages: HostedSettingsPage[] = [
     {
       id: 'usage',
       label: 'Usage',
       icon: Coins,
       intro: 'Every agent session and what it cost.',
+      // The hosted view draws no page header of its own: Settings' title sits
+      // above it, and the view starts at its own toolbar row.
       render: () => <SessionsHubView />,
     },
     {
@@ -1837,6 +2093,11 @@ function App() {
           client={data.client}
           onRetry={data.retryEnsureDispatchd}
           onJumpToRun={jumpToRun}
+          // The Live page (Runs › Live), shown in the Tasks view's place;
+          // any navigation closes Settings, and leaving Live reopens Runs.
+          onOpenLive={() =>
+            dispatchNav({ type: 'setProjectView', view: 'live' })
+          }
         />
       ),
     },
@@ -1844,23 +2105,26 @@ function App() {
 
   // A link inside a peek closes it, so the peek never sits over where it led.
   const openRefFromPeek = (action: RefAction) => {
-    dispatchNav({ type: 'tv/closePeek' });
+    dispatchNav({ type: 'closePeek' });
     openRef(action);
   };
-  const closePeek = () => dispatchNav({ type: 'tv/closePeek' });
-  const peek = twoViewsState.peek;
+  const closePeek = () => dispatchNav({ type: 'closePeek' });
+  const peek = navState.peek;
   const peekView: ReactNode =
-    peek?.kind === 'thread' ? (
+    peek?.kind === 'task' ? (
+      // The quick-look slide-over, remounted per task so per-task state (an
+      // open comment box, an in-flight dispatch) never leaks across a drawer
+      // re-pointed at another task.
+      <TaskDrawer key={peek.taskId} taskId={peek.taskId} onClose={closePeek} />
+    ) : peek?.kind === 'thread' ? (
       <ThreadPeek
         key={peek.messageId}
         data={data}
         overseer={overseer}
         messageId={peek.messageId}
         onOpenRef={openRefFromPeek}
-        onOpenHome={(address) =>
-          dispatchNav({ type: 'tv/openAddress', address })
-        }
-        onShowOverseer={() => dispatchNav({ type: 'tv/showOverseer' })}
+        onOpenHome={(address) => dispatchNav({ type: 'openAddress', address })}
+        onShowOverseer={() => dispatchNav({ type: 'showOverseer' })}
         onClose={closePeek}
       />
     ) : peek?.kind === 'person' ? (
@@ -1878,7 +2142,7 @@ function App() {
         address={peek.address}
         onOpenRef={openRefFromPeek}
         onOpenA2ASettings={() =>
-          dispatchNav({ type: 'tv/openSettings', page: 'a2a' })
+          dispatchNav({ type: 'openSettings', page: 'a2a' })
         }
         onClose={closePeek}
       />
@@ -1951,15 +2215,11 @@ function App() {
     dispatchNav(
       taskId !== undefined
         ? { type: 'openTask', taskId }
-        : { type: 'tv/showTasks', preset: door.preset }
+        : { type: 'showTasks', preset: door.preset }
     );
   };
   // The thread open on the Threads page.
   const [threadsFocus, setThreadsFocus] = useState<string | null>(null);
-  // What a side column of the Overseer opened in its middle.
-  const [overseerFocus, setOverseerFocus] = useState<OverseerFocus | null>(
-    null
-  );
   // A run address names its task, so a run's post reads as the work it is on.
   const addressName = (address: string) =>
     data.people.find((p) => p.ref === address)?.name ??
@@ -2037,415 +2297,409 @@ function App() {
     });
   };
 
-  const twoViewsFrame = (
-    <>
-      <TwoViewShell
-        view={twoViewsState.mainView}
-        gate={gateScreen ?? agentSetupScreen}
-        guide={guideCard}
-        banner={
-          setupComplete ? (
-            <SetupBanner
-              report={setupBannerReport}
-              onOpen={() =>
-                dispatchNav({ type: 'tv/openSettings', page: 'setup' })
-              }
+  // A setup gate (first launch, a folder without .dispatch/, the agent check)
+  // takes the whole window in the signed-out frame instead of the app shell,
+  // so the screen has one <main>. The resolution error and "Loading project…"
+  // stay in the shell's gate slot.
+  const setupGate =
+    resolutionError === null &&
+    (noProjectYet || showGetStarted || agentSetupScreen !== null);
+  const settingsOpen = navState.settings !== null;
+
+  const shell = (
+    <DispatchShell
+      projectName={activeProject?.name ?? null}
+      view={navState.mainView}
+      destination={shellDestination}
+      taskTitle={currentShellPageTitle(navState, aboutTask?.title ?? null)}
+      overseerBadge={{ count: orb.count, tone: orb.tone, label: orbTitle }}
+      needsYou={needs.count}
+      threadsUnread={unreadToMe}
+      adminItems={admin}
+      projects={projectsSection}
+      tier={data.myTier}
+      teamSession={teamSession}
+      windowChrome={{ dragRegion: isTauri(), trafficLightInset }}
+      onNavigate={navigate}
+      onSearch={() => dispatchNav({ type: 'openPalette' })}
+      workspaceSwitcher={workspaceSwitcher}
+      topbarActions={
+        activeProject !== null && (
+          <PresenceStack
+            presence={data.presence}
+            onOpenPerson={(ref) =>
+              dispatchNav({ type: 'openAddress', address: ref })
+            }
+            taskTitle={(id) =>
+              data.tasksIncludingArchived.find((t) => t.meta.id === id)?.meta
+                .title
+            }
+          />
+        )
+      }
+      // Over a setup gate the shell shows only Settings: a gate it never
+      // draws keeps Overseer and Tasks from mounting under it.
+      gate={setupGate ? false : (gateScreen ?? agentSetupScreen)}
+      guide={guideCard}
+      // Only while a step wants a person: the shell's banner slot is a styled
+      // strip, and an empty SetupBanner inside it would still draw a band.
+      banner={
+        setupComplete && setupProblem(setupBannerReport) !== undefined ? (
+          <SetupBanner
+            report={setupBannerReport}
+            onOpen={() => dispatchNav({ type: 'openSettings', page: 'setup' })}
+          />
+        ) : undefined
+      }
+      overseer={
+        <OverseerView
+          data={data}
+          overseer={overseer}
+          projectPath={activeProject?.path ?? null}
+          asks={needs.count}
+          postsCount={posts.length + captures.length}
+          runs={data.runs}
+          merges={data.mergeQueue?.entries ?? []}
+          drafts={
+            <DraftsSection
+              drafts={data.drafts}
+              onOpen={(draftId) => dispatchNav({ type: 'openDraft', draftId })}
+              onDismiss={(id) => void data.handleDismissDraft(id)}
             />
-          ) : undefined
-        }
-        topBar={{
-          view: twoViewsState.mainView,
-          orb,
-          orbLabel: orbTitle,
-          postsDot: posts.some((post) => post.unread),
-          onShowOverseer: () => dispatchNav({ type: 'tv/showOverseer' }),
-          onShowTasks: () => dispatchNav({ type: 'tv/showTasks' }),
-          onCount: (count) =>
-            dispatchNav(
-              count === 'asks'
-                ? { type: 'tv/showTasks' }
-                : {
-                    type: 'tv/showTasks',
-                    preset: count === 'working' ? 'moving' : count,
-                  }
-            ),
-          counts: {
-            asks: needs.count,
-            review: statusCounts.buckets.review,
-            failed: statusCounts.buckets.failed,
-            working: statusCounts.buckets.working,
-          },
-          settingsCount: admin.reduce((n, item) => n + item.count, 0),
-          settingsTitle:
-            admin.length === 0
-              ? undefined
-              : admin.map((item) => item.label).join(' · '),
-          onOpenSettings: () =>
-            dispatchNav({ type: 'tv/openSettings', page: admin[0]?.page }),
-          settingsOpen: twoViewsState.settings !== null,
-          onOpenDocs: () =>
-            dispatchNav({ type: 'setProjectView', view: 'docs' }),
-          onOpenThreads: () =>
-            dispatchNav({ type: 'setProjectView', view: 'threads' }),
-          threadsUnread: unreadToMe,
-          page:
-            twoViewsState.mainView !== 'tasks'
-              ? null
-              : tasksPage.kind === 'docs'
-                ? 'docs'
-                : tasksPage.kind === 'view' && tasksPage.view === 'threads'
-                  ? 'threads'
-                  : null,
-          projectMenu: (
-            <div className="flex items-center gap-1">
-              {projectSwitcher}
-              {activeProject !== null && (
-                <PresenceStack
-                  presence={data.presence}
-                  onOpenPerson={(ref) =>
-                    dispatchNav({ type: 'tv/openAddress', address: ref })
-                  }
-                  taskTitle={(id) =>
-                    data.tasksIncludingArchived.find((t) => t.meta.id === id)
-                      ?.meta.title
-                  }
-                />
-              )}
-            </div>
-          ),
-          trafficLightInset,
-        }}
-        overseer={
-          <TwoViewOverseer
-            data={data}
-            overseer={overseer}
-            projectPath={activeProject?.path ?? null}
-            asks={needs.count}
-            postsCount={posts.length + captures.length}
-            runs={data.runs}
-            merges={data.mergeQueue?.entries ?? []}
-            drafts={
-              <DraftsSection
-                drafts={data.drafts}
-                onOpen={(draftId) =>
-                  dispatchNav({ type: 'openDraft', draftId })
-                }
-                onDismiss={(id) => void data.handleDismissDraft(id)}
+          }
+          draftsCount={draftTrayViewModel(data.drafts).badgeCount}
+          notifications={
+            sidePanelNotifications && (
+              <NotificationsSection
+                entries={notificationInbox.entries}
+                unreadCount={unreadCount(notificationInbox)}
+                onMarkAllRead={markNotificationInboxRead}
+                onOpen={openNotification}
+                onDismiss={dismissNotification}
+                onClearAll={clearNotifications}
+                onHide={() => setSidePanelNotifications(false)}
               />
-            }
-            draftsCount={draftTrayViewModel(data.drafts).badgeCount}
-            notifications={
-              sidePanelNotifications && (
-                <NotificationsSection
-                  entries={notificationInbox.entries}
-                  unreadCount={unreadCount(notificationInbox)}
-                  onMarkAllRead={markNotificationInboxRead}
-                  onOpen={openNotification}
-                  onDismiss={dismissNotification}
-                  onClearAll={clearNotifications}
-                  onHide={() => setSidePanelNotifications(false)}
-                />
-              )
-            }
-            outflow={{
-              sessions: data.liveMilestoneSessions,
-              milestoneTitle: (id) =>
-                data.milestones.find((e) => e.meta.id === id)?.meta.title ?? id,
-              mergeReady: mergeReadyCount,
-              onMergeAll: data.handleMergeAllReady,
-              spendToday: todaySpend,
-              ceilings: liveCeilings,
-            }}
-            focus={overseerFocus}
-            onFocus={setOverseerFocus}
-            renderFocus={(focus, onClose) => (
-              <OverseerFocusView
-                focus={focus}
-                data={data}
-                name={addressName}
-                conversationCount={(taskId) =>
-                  speechByTask.get(taskId)?.count ?? 0
-                }
-                onOpenRef={openRef}
-                onOpenInTasks={(taskId) => {
-                  onClose();
-                  openTaskView(taskId, 'auto');
-                }}
-                onClose={onClose}
-              />
-            )}
-            needsBlock={
-              <NeedsYouBlock
-                data={data}
-                needs={needs}
-                decided={recentlyDecided}
-                // Beside the talk, a task opens in the middle instead of in Tasks.
-                onOpenRef={(action) =>
-                  action.kind === 'task' || action.kind === 'run'
-                    ? setOverseerFocus({ kind: 'task', taskId: action.taskId })
-                    : openRef(action)
-                }
-                onOpenDecision={(item) => {
-                  const target = decisionTarget(item);
-                  if (target?.kind === 'task') {
-                    setOverseerFocus({ kind: 'task', taskId: target.taskId });
-                  } else {
-                    onOpenDecision(item);
-                  }
-                }}
-                flush
-              />
-            }
-            revoked={overseer.revoked}
-            onShowAsks={() => dispatchNav({ type: 'tv/showTasks' })}
-            onOpenDoor={openDoor}
-            firstRun={
-              showFirstRun ? (
-                <FirstRunView
-                  projectName={activeProject?.name ?? null}
-                  planner={guideAgent === null || guideAgent.plans}
-                  // The draft opens under Tasks: Two views has no drafts tray.
-                  onStartDraft={async (prompt) => {
-                    // A new draft replaces the last one's failure.
-                    setFirstRunDraftId(null);
-                    const path = guidePath;
-                    const draft = await rawData.handleStartDraft(prompt);
-                    const latest = guideFor(path);
-                    if (latest === null) return draft;
-                    setFirstRunDraftId(draft.id);
-                    if (latest.active) latest.linkDraft(draft.id);
-                    dispatchNav({ type: 'openDraft', draftId: draft.id });
-                    return draft;
-                  }}
-                  onCreateTask={async ({ what, done }) => {
-                    const path = guidePath;
-                    const doc = await rawData.handleCreate(
-                      formTaskInput(
-                        what,
-                        done,
-                        data.config?.statuses[0] ?? 'backlog'
-                      )
-                    );
-                    if (doc === null) {
-                      throw new Error(
-                        'The project is still starting. Try again in a moment.'
-                      );
-                    }
-                    const latest = guideFor(path);
-                    if (latest === null) return;
-                    if (latest.active) latest.linkTask(doc.meta.id);
-                    openTaskView(doc.meta.id, 'spec');
-                  }}
-                  failure={
-                    failedFirstRun === undefined
-                      ? undefined
-                      : {
-                          error:
-                            failedFirstRun.error ?? 'Drafting the task failed.',
-                          providerId: providerById(failedFirstRun.plannerName)
-                            ?.id,
-                          onRetry: () => retryDraft(failedFirstRun),
-                        }
-                  }
-                  onBrowseBoard={() => dispatchNav({ type: 'tv/showTasks' })}
-                  onTalkToAgent={() =>
-                    setFirstRunSetAsideFor(activeProject?.path ?? null)
-                  }
-                />
-              ) : undefined
-            }
-            onOpenConnectedAgents={() =>
-              dispatchNav({
-                type: 'tv/openSettings',
-                page: 'connected-agents',
-              })
-            }
-            posts={
-              <>
-                <AwayDigest
-                  lines={digest}
-                  since={narrator.since}
-                  onDismiss={narrator.dismiss}
-                  onOpenDoor={openDoor}
-                />
-                <ForYouPosts
-                  posts={posts}
-                  label={addressName}
-                  onOpen={openPost}
-                  onReply={replyToPost}
-                  onDismiss={(post) => dismissForYou([post])}
-                  onClearAll={dismissForYou}
-                  holding={overseerTurnLive(overseer)}
-                />
-                <CapturedNotes
-                  items={captures}
-                  onMakeTask={rawData.handleConvertInbox}
-                  onDismiss={rawData.handleDismissInbox}
-                />
-              </>
-            }
-          />
-        }
-        tasks={
-          <TasksView
-            data={data}
-            needs={needs}
-            decided={recentlyDecided}
-            counts={statusCounts}
-            page={tasksPage}
-            mode={twoViewsState.tasksMode}
-            onModeChange={(mode) =>
-              dispatchNav({ type: 'tv/setTasksMode', mode })
-            }
-            preset={twoViewsState.tasksPreset}
-            onPreset={(preset) =>
-              dispatchNav({ type: 'tv/setTasksPreset', preset })
-            }
-            presetContext={presetContext}
-            onSelectTask={selectBoardTask}
-            onNewTask={() => openCreateTask()}
-            onNewProject={() => openCreateTask({ kind: 'project' })}
-            onDispatchTask={cockpitDispatch}
-            onDispatchFailed={onCockpitDispatchFailed}
-            onPeekTask={peekTask}
-            onOpenRef={openRef}
-            onOpenDecision={onOpenDecision}
-            onClosePage={closeTwoViewsPage}
-            projectKey={activeProject?.path ?? ''}
-            speechByTask={speechByTask}
-            onOpenPr={(number) => dispatchNav({ type: 'openPr', number })}
-            onOpenDoc={(docId) => openDoc(docId, null)}
-            onOpenAllDocs={() =>
-              dispatchNav({ type: 'setProjectView', view: 'docs' })
-            }
-            renderPage={renderTwoViewsPage}
-            composer={
-              <TasksComposer
-                overseer={overseer}
-                about={aboutTask}
-                onOpenOverseer={() => dispatchNav({ type: 'tv/showOverseer' })}
-                disabled={revokedLocksComposer(overseer)}
-                project={activeProject?.path ?? ''}
-              />
-            }
-          />
-        }
-        peek={peekView}
-      />
-      {twoViewsState.settings !== null && (
-        <SettingsPanel
-          activeProject={activeProject}
-          data={settingsData}
-          initialPage={twoViewsState.settings}
-          onOpenTask={(taskId) => openTaskView(taskId, 'auto')}
-          hostedPages={hostedSettingsPages}
-          pageExtras={{
-            autonomy:
-              data.client === null ? null : (
-                <OverseerGrantsGroup
-                  client={data.client}
-                  port={data.port}
-                  conversationId={overseer.conversationId}
-                />
-              ),
-            memory:
-              data.client === null ? null : (
-                <MemoryRecent client={data.client} port={data.port} />
-              ),
+            )
+          }
+          outflow={{
+            sessions: data.liveMilestoneSessions,
+            milestoneTitle: (id) =>
+              data.milestones.find((e) => e.meta.id === id)?.meta.title ?? id,
+            mergeReady: mergeReadyCount,
+            onMergeAll: data.handleMergeAllReady,
+            spendToday: todaySpend,
+            ceilings: liveCeilings,
           }}
-          onClose={() => dispatchNav({ type: 'tv/closeSettings' })}
+          focus={overseerFocus}
+          onFocus={setOverseerFocus}
+          renderFocus={(focus, onClose) => (
+            <OverseerFocusView
+              focus={focus}
+              data={data}
+              name={addressName}
+              conversationCount={(taskId) =>
+                speechByTask.get(taskId)?.count ?? 0
+              }
+              onOpenRef={openRef}
+              onOpenInTasks={(taskId) => {
+                onClose();
+                openTaskView(taskId, 'auto');
+              }}
+              onClose={onClose}
+            />
+          )}
+          needsBlock={
+            <NeedsYouBlock
+              data={data}
+              needs={needs}
+              decided={recentlyDecided}
+              // Beside the talk, a task opens in the middle instead of in Tasks.
+              onOpenRef={(action) =>
+                action.kind === 'task' || action.kind === 'run'
+                  ? setOverseerFocus({ kind: 'task', taskId: action.taskId })
+                  : openRef(action)
+              }
+              onOpenDecision={(item) => {
+                const target = decisionTarget(item);
+                if (target?.kind === 'task') {
+                  setOverseerFocus({ kind: 'task', taskId: target.taskId });
+                } else {
+                  onOpenDecision(item);
+                }
+              }}
+              flush
+            />
+          }
+          revoked={overseer.revoked}
+          onShowAsks={() => dispatchNav({ type: 'showTasks' })}
+          onOpenDoor={openDoor}
+          firstRun={
+            showFirstRun ? (
+              <FirstRunView
+                projectName={activeProject?.name ?? null}
+                planner={guideAgent === null || guideAgent.plans}
+                // The draft opens under Tasks: Overseer has no drafts tray.
+                onStartDraft={async (prompt) => {
+                  // A new draft replaces the last one's failure.
+                  setFirstRunDraftId(null);
+                  const path = guidePath;
+                  const draft = await rawData.handleStartDraft(prompt);
+                  const latest = guideFor(path);
+                  if (latest === null) return draft;
+                  setFirstRunDraftId(draft.id);
+                  if (latest.active) latest.linkDraft(draft.id);
+                  dispatchNav({ type: 'openDraft', draftId: draft.id });
+                  return draft;
+                }}
+                onCreateTask={async ({ what, done }) => {
+                  const path = guidePath;
+                  const doc = await rawData.handleCreate(
+                    formTaskInput(
+                      what,
+                      done,
+                      data.config?.statuses[0] ?? 'backlog'
+                    )
+                  );
+                  if (doc === null) {
+                    throw new Error(
+                      'The project is still starting. Try again in a moment.'
+                    );
+                  }
+                  const latest = guideFor(path);
+                  if (latest === null) return;
+                  if (latest.active) latest.linkTask(doc.meta.id);
+                  openTaskView(doc.meta.id, 'spec');
+                }}
+                failure={
+                  failedFirstRun === undefined
+                    ? undefined
+                    : {
+                        error:
+                          failedFirstRun.error ?? 'Drafting the task failed.',
+                        providerId: providerById(failedFirstRun.plannerName)
+                          ?.id,
+                        onRetry: () => retryDraft(failedFirstRun),
+                      }
+                }
+                onBrowseBoard={() => dispatchNav({ type: 'showTasks' })}
+                onTalkToAgent={() =>
+                  setFirstRunSetAsideFor(activeProject?.path ?? null)
+                }
+              />
+            ) : undefined
+          }
+          onOpenConnectedAgents={() =>
+            dispatchNav({
+              type: 'openSettings',
+              page: 'connected-agents',
+            })
+          }
+          posts={
+            <>
+              <AwayDigest
+                lines={digest}
+                since={narrator.since}
+                onDismiss={narrator.dismiss}
+                onOpenDoor={openDoor}
+              />
+              <ForYouPosts
+                posts={posts}
+                label={addressName}
+                onOpen={openPost}
+                onReply={replyToPost}
+                onDismiss={(post) => dismissForYou([post])}
+                onClearAll={dismissForYou}
+                holding={overseerTurnLive(overseer)}
+              />
+              <CapturedNotes
+                items={captures}
+                onMakeTask={rawData.handleConvertInbox}
+                onDismiss={rawData.handleDismissInbox}
+              />
+            </>
+          }
         />
+      }
+      tasks={
+        <IssuesView
+          data={data}
+          needs={needs}
+          decided={recentlyDecided}
+          counts={statusCounts}
+          page={tasksPage}
+          mode={navState.tasksMode}
+          onModeChange={(mode) => dispatchNav({ type: 'setTasksMode', mode })}
+          preset={navState.tasksPreset}
+          onPreset={(preset) => dispatchNav({ type: 'setTasksPreset', preset })}
+          project={navState.tasksProject}
+          onClearProject={() =>
+            dispatchNav({ type: 'setTasksProject', project: null })
+          }
+          presetContext={presetContext}
+          onSelectTask={selectBoardTask}
+          onOpenTask={(taskId) => openTaskView(taskId)}
+          peekTaskId={peekTaskId}
+          onNewTask={() => openCreateTask()}
+          onOpenRef={openRef}
+          onOpenDecision={onOpenDecision}
+          onClosePage={closeSidePage}
+          speechByTask={speechByTask}
+          onOpenPr={(number) => dispatchNav({ type: 'openPr', number })}
+          onOpenDoc={(docId) => openDoc(docId, null)}
+          onOpenAllDocs={() =>
+            dispatchNav({ type: 'setProjectView', view: 'docs' })
+          }
+          renderPage={renderSidePage}
+          composer={
+            <TasksComposer
+              overseer={overseer}
+              about={aboutTask}
+              onOpenOverseer={() => dispatchNav({ type: 'showOverseer' })}
+              disabled={revokedLocksComposer(overseer)}
+              project={activeProject?.path ?? ''}
+            />
+          }
+        />
+      }
+      settings={
+        navState.settings === null ? null : (
+          <SettingsView
+            activeProject={activeProject}
+            data={settingsData}
+            initialPage={navState.settings}
+            onSelectPage={(page) => dispatchNav({ type: 'openSettings', page })}
+            onOpenTask={(taskId) => openTaskView(taskId, 'auto')}
+            hostedPages={hostedSettingsPages}
+            pageExtras={{
+              autonomy:
+                data.client === null ? null : (
+                  <OverseerGrantsGroup
+                    client={data.client}
+                    port={data.port}
+                    conversationId={overseer.conversationId}
+                  />
+                ),
+              memory:
+                data.client === null ? null : (
+                  <MemoryRecent client={data.client} port={data.port} />
+                ),
+            }}
+          />
+        )
+      }
+      settingsPage={navState.settings}
+      peek={peekView}
+    />
+  );
+
+  // Two fixed slots, so neither remounts when the other comes or goes. Settings
+  // opened over a setup gate (the palette, G S, the gate's own Settings button)
+  // is an overlay place there too: the shell mounts in the second slot for
+  // Settings alone while the gate stays mounted, hidden, in the first (typed
+  // values, the chosen agent and a running install or sign-in kept), and
+  // closing Settings shows the gate again with focus back where it was.
+  const appFrame = (
+    <>
+      {setupGate && (
+        <GateFrame
+          hidden={settingsOpen}
+          windowChrome={{ dragRegion: isTauri(), trafficLightInset }}
+          errorLabel="the setup"
+          actions={
+            // The agent check runs in a project, whose Settings can be opened
+            // over the gate; first launch has no project yet.
+            activeProject !== null && (
+              <Button
+                variant="quiet"
+                size="sm"
+                onClick={() => dispatchNav({ type: 'openSettings' })}
+              >
+                Settings
+              </Button>
+            )
+          }
+        >
+          {gateScreen ?? agentSetupScreen}
+        </GateFrame>
       )}
+      {(!setupGate || settingsOpen) && shell}
     </>
   );
 
   return (
-    <TooltipProvider>
-      <ShellActionsProvider value={shellActions}>
-        <DeepLinkProvider value={deepLinkActions}>
-          <SavedViewsProvider value={savedViews}>
-            <PageHeaderShellContext.Provider value={TWO_VIEWS_PAGE_HEADER}>
-              <PeopleProvider people={data.people} me={data.me}>
-                <SurfaceHosts
-                  taskPage={taskPageHost}
-                  flightPlan={flightPlanHost}
-                >
-                  <div className="bg-frame relative flex h-screen flex-col overflow-hidden">
-                    {twoViewsFrame}
+    <ShellActionsProvider value={shellActions}>
+      <DeepLinkProvider value={deepLinkActions}>
+        <SavedViewsProvider value={savedViews}>
+          <PeopleProvider people={data.people} me={data.me}>
+            <SurfaceHosts
+              taskPage={taskPageHost}
+              flightPlan={flightPlanHost}
+              planning={planning}
+            >
+              <div className={styles.frame}>
+                {appFrame}
 
-                    <QuickCaptureDialog
-                      open={quickCaptureOpen}
-                      onOpenChange={setQuickCaptureOpen}
-                      onCapture={rawData.handleCaptureInbox}
-                    />
+                <TaskComposerSlideOver
+                  open={composerMode !== null}
+                  mode={composerMode ?? 'describe'}
+                  onModeChange={changeComposerMode}
+                  projectName={activeProject?.name}
+                  statuses={data.config?.statuses ?? []}
+                  milestones={data.milestones}
+                  initialStatus={createPreset?.status}
+                  labels={labelCatalogue}
+                  labelDefinitions={data.config?.labels}
+                  onCreate={(input) => data.handleCreate(input)}
+                  onDraft={startDraftAndOpen}
+                  onCapture={
+                    quickCaptureAvailable
+                      ? rawData.handleCaptureInbox
+                      : undefined
+                  }
+                  onUploadAttachments={data.handleUploadAttachments}
+                  daemon={
+                    daemonDown
+                      ? {
+                          starting: data.portLoading,
+                          errorDetail: data.portErrorDetail,
+                          onRetry: data.retryEnsureDispatchd,
+                        }
+                      : null
+                  }
+                  onClose={closeComposer}
+                />
 
-                    <ShortcutsDialog
-                      open={navState.shortcutsOpen}
-                      onOpenChange={(open) => {
-                        if (!open) dispatchNav({ type: 'closeShortcuts' });
-                      }}
-                    />
+                {addProjectOpen && (
+                  <AddProjectDialog
+                    onAdd={async (path) => {
+                      await handleAddProject(path);
+                    }}
+                    onClose={() => setAddProjectOpen(false)}
+                  />
+                )}
 
-                    {peekTaskId !== null && (
-                      // Remount per task so per-task state (a picked run, an in-flight
-                      // dispatch) never leaks across a peek re-pointed at another task.
-                      <TaskPeekDialog
-                        key={peekTaskId}
-                        taskId={peekTaskId}
-                        onClose={() => dispatchNav({ type: 'closePeek' })}
-                        onExpand={(taskId) => openTaskView(taskId)}
-                      />
-                    )}
+                <CommandPalette
+                  isOpen={navState.paletteOpen}
+                  entries={paletteEntries}
+                  timeline={activeProject === null ? null : planning.timeline}
+                  onNavigate={navigate}
+                  searchDocs={searchDocs}
+                />
 
-                    {showCreate && data.config !== null && (
-                      <CreateTaskModal
-                        projectName={activeProject?.name}
-                        statuses={data.config.statuses}
-                        milestones={data.milestones}
-                        initialStatus={createPreset?.status}
-                        labels={labelCatalogue}
-                        onCreate={(input) => data.handleCreate(input)}
-                        onUploadAttachments={data.handleUploadAttachments}
-                        onClose={() => setShowCreate(false)}
-                      />
-                    )}
-
-                    {aiComposerOpen && (
-                      <AiTaskComposer
-                        projectName={activeProject?.name}
-                        data={data}
-                        onStartDraft={startDraftAndOpen}
-                        onQuickAdd={(preset) => {
-                          setAiComposerOpen(false);
-                          openQuickAddTask(preset);
-                        }}
-                        onClose={() => setAiComposerOpen(false)}
-                      />
-                    )}
-
-                    {addProjectOpen && (
-                      <AddProjectDialog
-                        onAdd={async (path) => {
-                          await handleAddProject(path);
-                        }}
-                        onClose={() => setAddProjectOpen(false)}
-                      />
-                    )}
-
-                    <CommandPalette
-                      isOpen={navState.paletteOpen}
-                      entries={paletteEntries}
-                      onClose={() => dispatchNav({ type: 'closePalette' })}
-                      searchDocs={searchDocs}
-                    />
-                  </div>
-                </SurfaceHosts>
-              </PeopleProvider>
-            </PageHeaderShellContext.Provider>
-          </SavedViewsProvider>
-        </DeepLinkProvider>
-      </ShellActionsProvider>
-    </TooltipProvider>
+                {/* After the palette in the tree, so the sheet the
+                      reducer stacks over it draws on top. */}
+                {navState.shortcutsOpen && (
+                  <ShortcutSheet
+                    groups={shortcutGroups}
+                    onClose={() => dispatchNav({ type: 'closeShortcuts' })}
+                  />
+                )}
+              </div>
+            </SurfaceHosts>
+          </PeopleProvider>
+        </SavedViewsProvider>
+      </DeepLinkProvider>
+    </ShellActionsProvider>
   );
 }
 

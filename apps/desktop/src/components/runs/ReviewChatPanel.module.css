@@ -1,0 +1,87 @@
+/* The review's chat dock (ReviewChatPanel.tsx): collapsed, one full-width
+   library Button row ("Ask about this diff…" and its count); open, a
+   library Panel capped at 45% of the review column whose body scrolls the
+   stored messages above the SnippetComposer and the "nothing is dispatched"
+   note. Tokens only. */
+.dock {
+  margin-top: var(--s-2);
+}
+
+/* The library Button laid out as a row: words at the start, the count at
+   the end. Two-part selectors so they outweigh the button's own centring. */
+.dock .openRow {
+  justify-content: flex-start;
+  font-weight: var(--fw-regular);
+}
+
+.dock .openRow > :nth-child(2) {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-align: start;
+  text-overflow: ellipsis;
+}
+
+.count {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel {
+  flex: none;
+  max-height: 45%;
+  margin-top: var(--s-2);
+}
+
+/* The Panel's body takes the space left under the heading row, so the
+   message list inside it can scroll. */
+.panel > [data-part='body'] {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.messages {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.author {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+}
+
+/* The code a message pointed at: file paths and line ranges, Geist Mono. */
+.snippets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.body {
+  margin: 0;
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.note {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}

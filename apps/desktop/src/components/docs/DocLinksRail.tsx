@@ -1,7 +1,10 @@
 import type { DocLink } from '@dispatch/client';
+import { Chip, ChipButton } from '@dispatch/ui';
+import { useId } from 'react';
 
 import type { RefAction } from '../../lib/threadSources';
 import { refAction } from '../../lib/threadSources';
+import styles from './DocLinksRail.module.css';
 
 /** Where a doc link leads: a thread to its root message, a task, run or doc
  *  as a ref chip would; null for memory or a run no longer listed. */
@@ -20,7 +23,9 @@ export function docLinkAction(
 }
 
 // What the doc links to (tasks, runs, threads, memory, docs), one row per
-// target as `type:id` with its rel; a target with a page opens through `onOpen`.
+// target as `type:id` with its rel; a target with a page is a chip button
+// that opens it through `onOpen`, one without stays a plain chip. The rail
+// and its list are both named by the visible "Links" heading.
 export function DocLinksRail({
   links,
   onOpen,
@@ -30,20 +35,16 @@ export function DocLinksRail({
   onOpen?: (action: RefAction) => void;
   taskIdOfRun?: (runId: string) => string | null;
 }) {
+  const headingId = useId();
   return (
-    <aside
-      aria-label="Links"
-      className="w-56 shrink-0 overflow-auto border-l border-[var(--color-border)] p-3"
-    >
-      <h3 className="mb-2 text-xs font-medium text-[var(--color-muted-foreground)]">
+    <aside aria-labelledby={headingId} className={styles.rail}>
+      <h3 id={headingId} className={styles.heading}>
         Links
       </h3>
       {links.length === 0 ? (
-        <p className="text-xs text-[var(--color-muted-foreground)]">
-          No links yet.
-        </p>
+        <p className={styles.empty}>No links yet.</p>
       ) : (
-        <ul className="flex flex-col gap-1 text-xs">
+        <ul aria-labelledby={headingId} className={styles.list}>
           {links.map((l) => {
             const text = `${l.target.type}:${l.target.id}`;
             const action =
@@ -51,23 +52,20 @@ export function DocLinksRail({
                 ? null
                 : docLinkAction(l.target, taskIdOfRun);
             return (
-              <li
-                key={`${text}:${l.rel}:${l.source}`}
-                className="flex items-center gap-1.5"
-              >
+              <li key={`${text}:${l.rel}:${l.source}`} className={styles.row}>
                 {action === null ? (
-                  <span className="truncate font-mono">{text}</span>
+                  <Chip tone="muted">
+                    <span className="mono">{text}</span>
+                  </Chip>
                 ) : (
-                  <button
-                    type="button"
+                  <ChipButton
                     data-testid="doc-link"
-                    className="truncate text-left font-mono hover:underline"
                     onClick={() => onOpen?.(action)}
                   >
-                    {text}
-                  </button>
+                    <span className="mono">{text}</span>
+                  </ChipButton>
                 )}
-                <span className="text-[var(--color-muted-foreground)]">
+                <span className={styles.rel}>
                   {l.source === 'mention' ? 'mention' : l.rel}
                 </span>
               </li>

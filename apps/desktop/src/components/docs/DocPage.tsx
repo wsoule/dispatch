@@ -1,4 +1,5 @@
 import type { ApiClient, DocRevisionInfo } from '@dispatch/client';
+import { Button, Chip, cx, Notice, SkeletonText } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -27,6 +28,7 @@ import {
 import {
   anchorLine,
   docBadges,
+  docBadgeTone,
   docDiffPatch,
   docStatusActions,
   docStatusLine,
@@ -45,8 +47,8 @@ import { DocGateCard } from './DocGateCard';
 import { DocHistory } from './DocHistory';
 import { DocLinksRail } from './DocLinksRail';
 import { DocMergeView } from './DocMergeView';
+import styles from './DocPage.module.css';
 import { PublishDialog } from './PublishDialog';
-import { Button } from '@/ui/button';
 
 interface DocPageProps {
   client: ApiClient;
@@ -69,8 +71,6 @@ interface DocPageProps {
     availability: DecideAvailability;
     onRestartDaemon: () => Promise<void>;
   };
-  /** The page header's crumb already names the doc (Two views), so the toolbar omits it. */
-  titleInCrumb?: boolean;
 }
 
 // The reject reason when a conflict was resolved in the doc itself.
@@ -90,6 +90,7 @@ interface ReviewCover {
 
 // One doc: badges and actions, the links rail, and a markdown source editor
 // autosaving with its base revision and hash, or history or merge in its place.
+// The host's page head names the doc (the Docs crumb), so the toolbar does not.
 export function DocPage({
   client,
   port,
@@ -101,7 +102,6 @@ export function DocPage({
   onOpenRef,
   taskIdOfRun,
   gates,
-  titleInCrumb = false,
 }: DocPageProps) {
   const queryClient = useQueryClient();
   const { read, error } = useDoc(client, port, refId);
@@ -397,11 +397,11 @@ export function DocPage({
 
   if (read === null || buf === null) {
     return error === null ? (
-      <p className="p-4 text-xs text-[var(--color-muted-foreground)]">
-        Loading the doc…
-      </p>
+      <div className={styles.loading}>
+        <SkeletonText lines={4} label="Loading the doc…" />
+      </div>
     ) : (
-      <p className="p-4 text-xs text-[var(--color-destructive)]">
+      <p className={cx(styles.strip, 'toneText')} data-tone="danger">
         {error.message}
       </p>
     );
@@ -426,179 +426,178 @@ export function DocPage({
     !(doc.origin ?? '').startsWith('linear:');
   const togglePanel = (to: 'history' | 'merge'): void =>
     setPanel((p) => (p === to ? 'editor' : to));
+  const saveFailed = buf.buffer.status === 'error';
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <header
-        className={`flex items-center gap-2 border-b border-[var(--color-border)] ${
-          titleInCrumb ? 'px-4 py-1.5' : 'px-3 py-2'
-        }`}
-      >
-        {!titleInCrumb && (
-          <h2 className="truncate text-sm font-medium">{doc.title}</h2>
-        )}
-        <span className="text-xs text-[var(--color-muted-foreground)]">
-          {doc.handle}
-        </span>
+    <div className={styles.page}>
+      <header className={styles.toolbar}>
+        <span className={styles.slug}>{doc.handle}</span>
         {docBadges(doc).map((b) => (
-          <span
-            key={b}
-            className="rounded bg-[var(--color-muted)] px-1 text-[10px]"
-          >
+          <Chip key={b} tone={docBadgeTone(b)}>
             {b}
-          </span>
+          </Chip>
         ))}
         <span
-          className={`ml-auto text-xs ${
-            buf.buffer.status === 'error'
-              ? 'text-[var(--color-destructive)]'
-              : 'text-[var(--color-muted-foreground)]'
-          }`}
+          className={cx(styles.saveLine, saveFailed && 'toneText')}
+          data-tone={saveFailed ? 'danger' : undefined}
         >
           {docStatusLine(buf)}
         </span>
-        {panel === 'editor' && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setPreviewing((p) => !p)}
-          >
-            {previewing ? 'Source' : 'Preview'}
-          </Button>
-        )}
-        <Button
-          size="sm"
-          variant="ghost"
-          aria-pressed={panel === 'history'}
-          onClick={() => togglePanel('history')}
-        >
-          History
-        </Button>
-        {!archived && (marked || mergeText !== null || panel === 'merge') && (
-          <Button
-            size="sm"
-            variant="ghost"
-            aria-pressed={panel === 'merge'}
-            onClick={() => togglePanel('merge')}
-          >
-            Merge
-          </Button>
-        )}
-        {!archived && !doc.head.sealed && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() =>
-              act(async () => {
-                await flushForSeal();
-                await client.sealDoc(refId);
-              })
-            }
-          >
-            Save version
-          </Button>
-        )}
-        {decides && doc.unreviewed && (
-          <Button
-            size="sm"
-            onClick={() =>
-              act(async () => {
-                const revisions = await unreviewedRevisions(doc.reviewedRev);
-                setConfirming(
-                  await reviewCover(doc.reviewedRev, revisions, fileName)
-                );
-              })
-            }
-          >
-            Mark reviewed
-          </Button>
-        )}
-        {doc.scope === 'personal' && !archived && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() =>
-              act(async () => {
-                await flush();
-                const out = await client.promoteDoc(refId);
-                onOpenDoc?.(out.doc.id);
-              })
-            }
-          >
-            Promote to team
-          </Button>
-        )}
-        {publishable && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setPublishOpen(true)}
-          >
-            Publish to repo
-          </Button>
-        )}
-        {shareable && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() =>
-              act(async () => {
-                await flush();
-                const out = await client.shareDocToLinear(refId);
-                setPublishNote(
-                  `Shared to Linear as document ${out.documentId}`
-                );
-              })
-            }
-          >
-            Share to Linear
-          </Button>
-        )}
-        {decides &&
-          docStatusActions(doc).map(({ label, status }) => (
+        <div className={styles.actions}>
+          {panel === 'editor' && (
             <Button
-              key={label}
               size="sm"
-              variant={status === 'accepted' ? 'default' : 'ghost'}
+              variant="quiet"
+              onClick={() => setPreviewing((p) => !p)}
+            >
+              {previewing ? 'Source' : 'Preview'}
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="quiet"
+            aria-pressed={panel === 'history'}
+            onClick={() => togglePanel('history')}
+          >
+            History
+          </Button>
+          {!archived && (marked || mergeText !== null || panel === 'merge') && (
+            <Button
+              size="sm"
+              variant="quiet"
+              aria-pressed={panel === 'merge'}
+              onClick={() => togglePanel('merge')}
+            >
+              Merge
+            </Button>
+          )}
+          {!archived && !doc.head.sealed && (
+            <Button
+              size="sm"
+              variant="quiet"
               onClick={() =>
                 act(async () => {
-                  // Every status change seals the head, so the typed text goes out first.
-                  await flush();
-                  if (status === 'accepted') {
-                    const problem = acceptProblem(doc.conflicted);
-                    if (problem !== null) throw new Error(problem);
-                  }
-                  await client.setDocStatus(refId, status);
+                  await flushForSeal();
+                  await client.sealDoc(refId);
                 })
               }
             >
-              {label}
+              Save version
             </Button>
-          ))}
+          )}
+          {decides && doc.unreviewed && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() =>
+                act(async () => {
+                  const revisions = await unreviewedRevisions(doc.reviewedRev);
+                  setConfirming(
+                    await reviewCover(doc.reviewedRev, revisions, fileName)
+                  );
+                })
+              }
+            >
+              Mark reviewed
+            </Button>
+          )}
+          {doc.scope === 'personal' && !archived && (
+            <Button
+              size="sm"
+              variant="quiet"
+              onClick={() =>
+                act(async () => {
+                  await flush();
+                  const out = await client.promoteDoc(refId);
+                  onOpenDoc?.(out.doc.id);
+                })
+              }
+            >
+              Promote to team
+            </Button>
+          )}
+          {publishable && (
+            <Button
+              size="sm"
+              variant="quiet"
+              onClick={() => setPublishOpen(true)}
+            >
+              Publish to repo
+            </Button>
+          )}
+          {shareable && (
+            <Button
+              size="sm"
+              variant="quiet"
+              onClick={() =>
+                act(async () => {
+                  await flush();
+                  const out = await client.shareDocToLinear(refId);
+                  setPublishNote(
+                    `Shared to Linear as document ${out.documentId}`
+                  );
+                })
+              }
+            >
+              Share to Linear
+            </Button>
+          )}
+          {decides &&
+            docStatusActions(doc).map(({ label, status }) => (
+              <Button
+                key={label}
+                size="sm"
+                variant={status === 'accepted' ? 'primary' : 'quiet'}
+                onClick={() =>
+                  act(async () => {
+                    // Every status change seals the head, so the typed text goes out first.
+                    await flush();
+                    if (status === 'accepted') {
+                      const problem = acceptProblem(doc.conflicted);
+                      if (problem !== null) throw new Error(problem);
+                    }
+                    await client.setDocStatus(refId, status);
+                  })
+                }
+              >
+                {label}
+              </Button>
+            ))}
+        </div>
       </header>
       {doc.status === 'accepted' && proposals.length > 0 && (
-        <div
-          data-testid="doc-proposals"
-          className="flex max-h-[50vh] flex-col gap-0.5 overflow-auto border-b border-[var(--color-border)] px-3 py-1 text-xs"
-        >
-          <p>Open proposals, each waiting on its gate in Needs you:</p>
-          <ul className="flex flex-col gap-2">
+        <div data-testid="doc-proposals" className={styles.proposals}>
+          <p className={styles.proposalsLead}>
+            Open proposals, each waiting on its gate in Needs you:
+          </p>
+          <ul className={styles.proposalList}>
             {proposals.map((p) => {
               const gate = canDecide ? p.gate : null;
               return (
-                <li key={p.rev} className="flex flex-col gap-1">
-                  <span>{`${p.rev} · ${p.author} · ${relativeTime(p.createdAt, Date.now())}`}</span>
+                <li key={p.rev} className={styles.proposal}>
+                  {/* The rev id and author address are machine-read (Geist
+                      Mono); the age stays in sans with tabular figures. */}
+                  <span className={styles.proposalLine}>
+                    <span className={styles.proposalId}>{p.rev}</span>
+                    {' · '}
+                    <span className={styles.proposalId}>{p.author}</span>
+                    {' · '}
+                    <span className="num">
+                      {relativeTime(p.createdAt, Date.now())}
+                    </span>
+                  </span>
                   {gate !== null && p.rev === resolved && (
-                    <Button
-                      size="xs"
-                      variant="secondary"
-                      className="self-start"
-                      data-testid="reject-as-resolved"
-                      onClick={() =>
-                        answerGate(gate, 'reject', RESOLVED_IN_DOC)
-                      }
-                    >
-                      Reject as resolved
-                    </Button>
+                    <span>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        data-testid="reject-as-resolved"
+                        onClick={() =>
+                          answerGate(gate, 'reject', RESOLVED_IN_DOC)
+                        }
+                      >
+                        Reject as resolved
+                      </Button>
+                    </span>
                   )}
                   {gate !== null && gates !== undefined && (
                     <DocGateCard
@@ -630,20 +629,19 @@ export function DocPage({
         </div>
       )}
       {published !== null && published.rev !== doc.head.id && (
-        <p className="border-b border-[var(--color-border)] px-3 py-1 text-xs text-[var(--color-muted-foreground)]">
-          {`published rev ${published.n ?? '-'} to ${published.path}; head is rev ${doc.head.n}`}
+        <p className={cx(styles.strip, styles.quiet)}>
+          published rev {published.n ?? '-'} to{' '}
+          <span className={styles.path}>{published.path}</span>; head is rev{' '}
+          {doc.head.n}
         </p>
       )}
       {doc.problem !== undefined && (
-        <p className="border-b border-[var(--color-border)] px-3 py-1 text-xs text-[var(--color-destructive)]">
+        <p className={cx(styles.strip, 'toneText')} data-tone="danger">
           {doc.problem}
         </p>
       )}
       {publishNote !== null && (
-        <p
-          role="status"
-          className="border-b border-[var(--color-border)] px-3 py-1 text-xs"
-        >
+        <p role="status" className={styles.strip}>
           {publishNote}
         </p>
       )}
@@ -667,25 +665,23 @@ export function DocPage({
         />
       )}
       {mergeNote !== null && (
-        <p
-          role="status"
-          className="border-b border-[var(--color-border)] px-3 py-1 text-xs"
-        >
+        <p role="status" className={styles.strip}>
           {mergeNote}
         </p>
       )}
       {actionError !== null && (
         <p
           role="alert"
-          className="border-b border-[var(--color-border)] px-3 py-1 text-xs text-[var(--color-destructive)]"
+          className={cx(styles.strip, 'toneText')}
+          data-tone="danger"
         >
           {actionError}
         </p>
       )}
       {confirming !== null && (
-        <div className="flex flex-col gap-1 border-b border-[var(--color-border)] px-3 py-2 text-xs">
-          <p>Marking reviewed covers:</p>
-          <ul>
+        <div className={styles.confirm}>
+          <p className={styles.confirmLead}>Marking reviewed covers:</p>
+          <ul className={styles.confirmList}>
             {confirming.revisions.map((r) => (
               <li
                 key={r.id}
@@ -693,12 +689,12 @@ export function DocPage({
             ))}
           </ul>
           {confirming.diffError !== null && (
-            <p className="text-[var(--color-destructive)]">
+            <p className="toneText" data-tone="danger">
               {`The diff since the last review did not load: ${confirming.diffError}`}
             </p>
           )}
           {confirming.patch !== null && (
-            <div className="rounded-control flex h-64 flex-col overflow-hidden border border-[var(--color-border)]">
+            <div className={styles.confirmDiff}>
               <DiffSurface
                 patch={confirming.patch}
                 cacheKeyPrefix={`doc-review:${refId}:${doc.reviewedRev}:${confirming.revisions.at(0)?.hash}`}
@@ -706,9 +702,10 @@ export function DocPage({
               />
             </div>
           )}
-          <div className="flex gap-1">
+          <div className={styles.confirmActions}>
             <Button
               size="sm"
+              variant="primary"
               onClick={() =>
                 act(async () => {
                   // POST /reviewed reviews whatever the head is now, so a list
@@ -732,7 +729,7 @@ export function DocPage({
             </Button>
             <Button
               size="sm"
-              variant="ghost"
+              variant="quiet"
               onClick={() => setConfirming(null)}
             >
               Cancel
@@ -741,25 +738,28 @@ export function DocPage({
         </div>
       )}
       {buf.conflict !== null && (
-        <p
-          role="alert"
-          className="bg-state-waiting-surface text-state-waiting border-b border-[var(--color-border)] px-3 py-1 text-xs"
-        >
-          {`Rev ${buf.conflict.headN} by ${buf.conflict.headAuthor} changed the same lines. Resolve the marked blocks, then save.`}
-          {panel !== 'merge' && (
-            <Button
-              size="xs"
-              variant="secondary"
-              className="ml-2"
-              onClick={() => setPanel('merge')}
-            >
-              Open merge view
-            </Button>
-          )}
-        </p>
+        <div className={styles.notice}>
+          <Notice
+            tone="warning"
+            role="alert"
+            action={
+              panel === 'merge' ? undefined : (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setPanel('merge')}
+                >
+                  Open merge view
+                </Button>
+              )
+            }
+          >
+            {`Rev ${buf.conflict.headN} by ${buf.conflict.headAuthor} changed the same lines. Resolve the marked blocks, then save.`}
+          </Notice>
+        </div>
       )}
-      <div className="flex min-h-0 flex-1">
-        <main className="min-w-0 flex-1">
+      <div className={styles.body}>
+        <main className={styles.main}>
           {panel === 'history' && (
             <DocHistory
               client={client}
@@ -785,7 +785,7 @@ export function DocPage({
           )}
           {/* Hidden, not unmounted, under the other panels: the textarea keeps
               its undo history and caret. */}
-          <div className={panel === 'editor' ? 'h-full' : 'hidden'}>
+          <div className={styles.editor} hidden={panel !== 'editor'}>
             <DocEditor
               text={buf.buffer.text}
               label={`Editing ${doc.handle}`}

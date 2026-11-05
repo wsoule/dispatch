@@ -1,0 +1,210 @@
+/* A Board card (components/tasks/TaskCardTile.tsx): a 322px tile on
+   --surface with a soft --border and --r-lg corners, no shadow (it is not
+   floating). Four rows: id › crumb with the assignee picker, the status
+   picker and a two-line title, the priority picker and the pills, the
+   Created line with Dispatch. The title's button is stretched over the
+   whole tile (it opens the card and carries the drag handle); every other
+   control sits above it. The keyboard cursor and hover are neutral; the
+   focus ring is drawn on the card while its open button has focus.
+   Space comes from the --s-* steps; the 6px gaps between rows and pills
+   sit between --s-1 and --s-2 (Linear's card rhythm), and the negative
+   margins are optical: they pull a 24px picker target or the quiet
+   button's padding back onto the text edge, so no token fits them. */
+
+.card {
+  position: relative;
+  display: flex;
+  box-sizing: border-box;
+  width: 322px;
+  max-width: 100%;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+@media (hover: hover) {
+  .card:not([data-archived]):hover {
+    background: var(--surface-2);
+  }
+}
+
+/* The roving cursor (j/k): a neutral stronger edge, never the accent. */
+.card[data-focused='true'] {
+  border-color: var(--border-strong);
+}
+
+/* Keyboard focus on the open button rings the whole card. */
+.card:has([data-task-card-open]:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.card[data-dragging='true'] {
+  opacity: 0.4;
+}
+
+.card[data-archived] {
+  cursor: default;
+  opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .card {
+    transition: background-color var(--dur) var(--ease);
+  }
+}
+
+.meta {
+  display: flex;
+  min-width: 0;
+  min-height: 18px;
+  align-items: center;
+  gap: var(--s-1);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+}
+
+.id {
+  flex: none;
+  font-family: var(--font-mono);
+}
+
+.separator {
+  flex: none;
+}
+
+.crumb {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Every control rides above the stretched open button. A picker takes
+   this class on its own root (the library's column of trigger and note),
+   so the card's selector is one step more specific than the library's. */
+.card .control {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+/* The 24px picker target sits in the 18px meta row, pushed right. */
+.assignee {
+  margin: -3px -4px -3px auto;
+}
+
+.titleRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-1);
+}
+
+.titleRow > .control {
+  margin: -2px 0 -2px -6px;
+}
+
+/* The open button: plain text, stretched over the card by its ::after.
+   Its own ring is transparent (forced colours still draw it); the card
+   draws the visible one. */
+.open {
+  min-width: 0;
+  flex: 1;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.open::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--r-lg);
+}
+
+.open:focus-visible {
+  outline: 2px solid transparent;
+}
+
+.title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--text);
+  font-size: var(--fs);
+  font-weight: var(--fw-medium);
+  line-height: 20px;
+  white-space: normal;
+}
+
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.pills > .control:first-child {
+  margin-left: -6px;
+}
+
+/* A status row's glyph in the status picker's menu: the card's own
+   StatusIcon, centred in the row's mark slot. */
+.optionGlyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+/* The labels picker's face (the library's face span inside its mark
+   trigger) lays the label chips out as the pills row does. */
+.labels [data-appearance='mark'] > span {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.footer {
+  display: flex;
+  min-height: 24px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+}
+
+.created {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dispatch {
+  position: relative;
+  z-index: 1;
+  margin: calc(-1 * var(--s-1)) -6px calc(-1 * var(--s-1)) 0;
+}
+
+/* The hovered card already takes --surface-2, the quiet button's own hover
+   fill: one step deeper so the button still shows it is under the pointer
+   (the library's mark pickers do the same with --surface-3). */
+@media (hover: hover) and (width >= 901px) {
+  .card .dispatch:not(:disabled):hover {
+    background: var(--surface-3);
+  }
+}

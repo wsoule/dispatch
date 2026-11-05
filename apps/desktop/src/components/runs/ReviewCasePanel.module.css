@@ -1,0 +1,252 @@
+/* The review case panel (ReviewCasePanel.tsx): a self-scrolling column of
+   sections, each under a library SectionHeader: the agent's evidence rows,
+   the Impact panel, mutation-tested guards, the agent review's finding rows
+   (library Checkbox, clamped detail), the checks as Disclosure rows and the
+   escalated decisions. Status glyphs and words take their tone's ink through
+   the global .toneText. Tokens only. */
+.root {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+  padding: var(--s-1);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+/* One evidence, guard or finding line: glyph, words, then quiet metadata. */
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  min-width: 0;
+  font-size: var(--fs);
+}
+
+.glyph {
+  display: inline-flex;
+  flex: none;
+  align-self: center;
+}
+
+.lead {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs);
+}
+
+/* A command the agent ran: machine-read, so Geist Mono, clipped to one line. */
+.command {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Row metadata (a summary, a duration, a count, a kind): small, quiet,
+   tabular. */
+.meta {
+  flex: none;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.path {
+  flex: none;
+  max-width: 50%;
+  overflow: hidden;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-2);
+}
+
+.chipBody {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+.groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.finding {
+  min-width: 0;
+}
+
+.select {
+  display: inline-flex;
+  flex: none;
+  align-self: center;
+}
+
+.findingTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: var(--fw-medium);
+  overflow-wrap: anywhere;
+}
+
+/* A finding's or decision's detail, indented under its title. */
+.detail {
+  margin: 2px 0 0;
+  padding-left: 20px;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-long);
+  overflow-wrap: anywhere;
+}
+
+/* A long detail clamped to two lines until More opens it. */
+.clamped {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.indent {
+  display: inline-flex;
+  padding-left: 14px;
+}
+
+.fix {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* A check's row: a full-width button (chevron, rule, file count) that opens
+   the paths under it; the chevron turns down while open. */
+.checkTrigger {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 2px 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs);
+  text-align: start;
+  cursor: pointer;
+}
+
+.chevron {
+  flex: none;
+  align-self: center;
+  color: var(--text-3);
+}
+
+.checkTrigger[aria-expanded='true'] .chevron {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .chevron {
+    transition: transform var(--dur) var(--ease);
+  }
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .checkTrigger:hover {
+    background: var(--surface-2);
+  }
+}
+
+.paths {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: var(--s-1) 0 0;
+  padding: 0 0 0 20px;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  list-style: none;
+}
+
+.pathItem {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.decisions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.decision {
+  min-width: 0;
+  font-size: var(--fs);
+}
+
+.decisionHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.decisionTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

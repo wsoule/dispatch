@@ -3,7 +3,6 @@ import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   cpSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -16,7 +15,14 @@ import {
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 
-import { APP_TOKEN, HOME, REPO, ROOT, VITE_PORT } from './paths';
+import {
+  APP_TOKEN,
+  DAEMON_GIT_ENV,
+  HOME,
+  REPO,
+  ROOT,
+  VITE_PORT,
+} from './paths';
 
 /** A daemon of the spec's own, on a copy of the storefront fixture. */
 export interface IsolatedDaemon {
@@ -85,6 +91,26 @@ function dropSharedMemoryFiles(dir: string): void {
   }
 }
 
+// The agent token in a daemon file, or null while there is none to read. The
+// daemon writes the file in place, so a poll can land mid-write and read a
+// truncated document; that counts as "not yet", and the next poll reads the
+// whole file.
+function readAgentToken(daemonFile: string): string | null {
+  let text: string;
+  try {
+    text = readFileSync(daemonFile, 'utf8');
+  } catch {
+    return null;
+  }
+  try {
+    const info = JSON.parse(text) as { agentToken?: string };
+    return info.agentToken || null;
+  } catch (err) {
+    if (err instanceof SyntaxError) return null;
+    throw err;
+  }
+}
+
 // Waits for the daemon's own daemon file, which it writes once it serves.
 async function waitForAgentToken(
   child: ChildProcess,
@@ -96,12 +122,8 @@ async function waitForAgentToken(
     if (child.exitCode !== null) {
       throw new Error(`isolated daemon exited early:\n${logs()}`);
     }
-    if (existsSync(daemonFile)) {
-      const info = JSON.parse(readFileSync(daemonFile, 'utf8')) as {
-        agentToken?: string;
-      };
-      if (info.agentToken) return info.agentToken;
-    }
+    const token = readAgentToken(daemonFile);
+    if (token !== null) return token;
     await new Promise((r) => setTimeout(r, POLL_MS));
   }
   throw new Error(`isolated daemon never wrote ${daemonFile}:\n${logs()}`);
@@ -142,6 +164,7 @@ export async function startIsolatedDaemon(
     {
       env: {
         ...process.env,
+        ...DAEMON_GIT_ENV,
         DISPATCH_HOME: home,
         DISPATCH_ENABLE_FAKES: '1',
         DISPATCH_APP_TOKEN: APP_TOKEN,

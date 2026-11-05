@@ -8,11 +8,9 @@ import type { RunMeta } from '@dispatch/client';
 
 import type { ActivityEntry } from '../../../lib/activityFeed';
 import type { DispatchReadiness } from '../../../lib/dispatchReadiness';
+import { isTerminalRunState } from '../../../lib/runState';
 import type { TaskPageMode } from '../../../lib/taskPageMode';
 import type { TaskPageHost, TaskPageProject } from './TaskPageHost';
-
-/** Where the page is mounted: beside a list, in a dialog, or as the whole window. */
-export type TaskPageLayout = 'split' | 'peek' | 'full';
 
 /**
  * Everything a mode of the task page draws from, resolved once by the page: the task's
@@ -22,7 +20,10 @@ export type TaskPageLayout = 'split' | 'peek' | 'full';
 export interface TaskPageModel {
   host: TaskPageHost;
   project: TaskPageProject;
-  layout: TaskPageLayout;
+  /** Mounted inside another view (the Overseer's focus column) rather than as the Tasks
+   * page: a dispatch stays in place instead of opening the run, and the plan does not
+   * take keyboard focus when it mounts. */
+  embedded: boolean;
   item: TaskListItem;
   /** False until the task's body has loaded. */
   bodyLoaded: boolean;
@@ -63,4 +64,32 @@ export interface TaskPageModel {
     effort?: EffortLevel
   ) => Promise<void>;
   dispatching: boolean;
+}
+
+/**
+ * The task id to read the task's verify result with, or `undefined` (no read) until
+ * one of its verify runs has ended. The daemon keeps a result only for a finished
+ * verify run and answers 404 otherwise, and the browser logs every 404 as a console
+ * error, so Review and Summary ask only once a result can exist. The run's end and
+ * `verification.changed` both refresh the read.
+ */
+export function verificationTaskId(
+  page: Pick<TaskPageModel, 'item' | 'allRuns'>
+): string | undefined {
+  return page.allRuns.some(
+    (run) => run.kind === 'verify' && isTerminalRunState(run.state)
+  )
+    ? page.item.meta.id
+    : undefined;
+}
+
+/**
+ * The task id to read the task's fix loop with, or `undefined` (no read) while the task
+ * has no execute run: a loop opens off the task's latest implementer run, so before one
+ * there is none, and the daemon's 404 would only log a console error.
+ */
+export function fixLoopTaskId(
+  page: Pick<TaskPageModel, 'item' | 'runs'>
+): string | undefined {
+  return page.runs.length > 0 ? page.item.meta.id : undefined;
 }

@@ -104,3 +104,18 @@ test('promotes your own personal entry to project or team memory', async () => {
     expect(client.promoteMemory).toHaveBeenCalledWith('mem-000001', 'team')
   );
 });
+
+test('says why an action failed, in the danger tone', async () => {
+  const client = mount(entry({ trust: 'agent' }), {
+    canDecide: true,
+    me: 'human:wyat',
+  });
+  client.pinMemory.mockImplementation(() =>
+    Promise.reject(new Error('the entry moved on'))
+  );
+  fireEvent.click(await screen.findByRole('button', { name: 'Pin' }));
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toBe('the entry moved on');
+  expect(alert.getAttribute('data-tone')).toBe('danger');
+  expect(screen.getByRole('list', { name: 'Revisions' })).toBeTruthy();
+});

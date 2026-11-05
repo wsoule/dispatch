@@ -1,0 +1,21 @@
+/* Layout of the quick-look drawer's own sections (components/tasks/detail/TaskDrawer.tsx):
+   the Work block's stack and the Dispatch blocks it hosts. Colours and type come from
+   @dispatch/ui's components and tokens; this sheet only places them. */
+
+/* The Work section: the dispatch card, the latest run's strip and the attachments, stacked. */
+.work {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+/* The sub-issues block in the Work section, kept to the column's width. */
+.subtasks {
+  min-width: 0;
+}
+
+/* The sentence a missing task's drawer shows under its title. */
+.gone {
+  padding: var(--s-4) 0;
+  color: var(--text-2);
+}

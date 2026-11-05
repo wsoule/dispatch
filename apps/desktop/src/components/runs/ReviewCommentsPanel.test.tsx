@@ -6,7 +6,7 @@ import { ReviewCommentsPanel } from './ReviewCommentsPanel';
 const noop = () => Promise.resolve();
 const submit = () => Promise.resolve({ published: 0 });
 
-// `RunReviewView` renders this panel and is deliberately not edited alongside the full-page
+// `ReviewMode` renders this panel and is deliberately not edited alongside the full-page
 // review's rework, so the split into thread index + verdict bar has to leave both halves
 // rendering together in one column. These pin that.
 test('the panel renders threads and the verdict together', () => {
@@ -58,7 +58,9 @@ test('the GitHub checkbox appears only for a run whose work is on a PR', () => {
       onSubmit={submit}
     />
   );
-  expect(screen.queryByLabelText(/also post to github/i)).toBeNull();
+  expect(
+    screen.queryByRole('checkbox', { name: /also post to github/i })
+  ).toBeNull();
 
   rerender(
     <ReviewCommentsPanel
@@ -69,7 +71,9 @@ test('the GitHub checkbox appears only for a run whose work is on a PR', () => {
       canPostToGitHub
     />
   );
-  const box = screen.getByLabelText<HTMLInputElement>(/also post to github/i);
+  const box = screen.getByRole<HTMLInputElement>('checkbox', {
+    name: /also post to github/i,
+  });
   expect(box.checked).toBe(false);
 });
 
@@ -95,7 +99,9 @@ test('submitting posts to GitHub only once the box is ticked', async () => {
   fireEvent.click(screen.getByRole('button', { name: /submit review/i }));
   await waitFor(() => expect(calls).toEqual([false]));
 
-  fireEvent.click(screen.getByLabelText(/also post to github/i));
+  fireEvent.click(
+    screen.getByRole('checkbox', { name: /also post to github/i })
+  );
   fireEvent.click(screen.getByRole('button', { name: /submit review/i }));
   await waitFor(() => expect(calls).toEqual([false, true]));
 });

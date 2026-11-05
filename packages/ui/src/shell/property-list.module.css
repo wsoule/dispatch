@@ -1,0 +1,74 @@
+/* Gr8r's drawer property sheet (.kv): a 112px label column of --text-2
+   labels with --text-4 icons beside the values, 30px rows, no rules.
+   Each label sits on its value's first text baseline, so beside a tall
+   value (a field with a note under it, a two-line status) it stays level
+   with the value's first line instead of floating to the middle, and
+   beside a 30px field it lines up with the field's text rather than the
+   field's top edge; a one-line value is 30px tall either way.
+   --property-align overrides it (center is Gr8r's own .kv, whose values
+   are all one 26px pill); --property-label-width lets a narrow container
+   (the task view's rail) give the values more room. */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: var(--property-label-width, 112px) minmax(0, 1fr);
+  column-gap: 12px;
+  align-items: var(--property-align, baseline);
+  min-height: var(--h-md);
+}
+
+.term {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: var(--h-md);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
+  line-height: 1.3;
+  color: var(--text-2);
+}
+
+.icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  color: var(--text-4);
+}
+
+.icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.value {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+  min-height: var(--h-md);
+  margin: 0;
+  padding: 4px 0;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  font-weight: var(--fw-regular);
+  color: var(--text);
+}
+
+@media (width <= 640px) {
+  .row {
+    grid-template-columns:
+      min(var(--property-label-width, 96px), 96px)
+      minmax(0, 1fr);
+    column-gap: 10px;
+  }
+}

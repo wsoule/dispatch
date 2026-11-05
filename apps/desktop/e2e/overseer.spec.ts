@@ -2,6 +2,7 @@ import type { APIRequestContext } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 
 import { type IsolatedDaemon, startIsolatedDaemon } from './isolatedDaemon';
+import { openSettings } from './shell';
 
 // This spec's own daemon on a copy of the fixture, so the run it dispatches
 // never shifts the counts and rows views.spec.ts screenshots.
@@ -55,10 +56,10 @@ async function getRun(
  * path (nothing changes), and the approve path (a fake-dispatched run really
  * appears).
  *
- * Unlike `edit-diff.spec.ts`, this spec HAS been executed and debugged green
- * against the real app (2026-08-10, storefront fixture seeded locally): it
- * passed twice back-to-back, and the fixture counts views.spec.ts pins
- * ('1 Failed' / '5 Needs review') were re-verified intact afterward. It also
+ * This spec was first executed and debugged green against the real app on
+ * 2026-08-10 (storefront fixture seeded locally): it passed twice
+ * back-to-back, and the fixture counts views.spec.ts pins ('1 Failed' /
+ * '5 Needs review') were re-verified intact afterward. It also
  * caught a real race on its first run — a turn settling before the start
  * response landed left the transcript on the pending spinner forever — fixed
  * in useOverseerSession by invalidating the record query after each mutation
@@ -199,10 +200,10 @@ test.describe('overseer chat end to end', () => {
     // count there is the number of runs it has.
     const settings = page.getByTestId('settings-panel');
     const openRuns = async (): Promise<void> => {
-      await page.getByTestId('two-views-settings').click();
+      await openSettings(page);
       await settings
         .getByRole('navigation', { name: 'Settings' })
-        .getByRole('button', { name: 'Runs', exact: true })
+        .getByRole('link', { name: 'Runs', exact: true })
         .click();
     };
     const runRows = settings.getByText(titlePattern);

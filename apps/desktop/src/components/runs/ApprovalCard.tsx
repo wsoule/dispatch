@@ -1,13 +1,14 @@
+import { Button, cx, Notice } from '@dispatch/ui';
 import { useEffect, useRef, useState } from 'react';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';
-import { DecideUnavailableNotice } from './DecideUnavailableNotice';
-import { formatRelativeTimeFromIso } from '@/lib/format';
 import {
   ToolApprovalCard,
   type ToolApprovalDecision,
-} from '@/ui/ai/tool-approval-card';
-import { Button } from '@/ui/button';
+} from '../gates/ToolApprovalCard';
+import styles from './ApprovalCard.module.css';
+import { DecideUnavailableNotice } from './DecideUnavailableNotice';
+import { formatRelativeTimeFromIso } from '@/lib/format';
 
 interface ApprovalCardProps {
   toolName: string;
@@ -168,31 +169,41 @@ export function ApprovalCard({
       disabled={!availability.enabled}
     >
       {showsPreview && (
-        <div
+        // A warning, not a footnote: the part of the call that is not shown is
+        // still part of what an approval allows.
+        <Notice
           data-slot="approval-input-truncated"
-          className="text-state-waiting font-book text-[12px]"
-        >
-          Preview truncated: the full call is longer than shown.
-          {fullInputError !== null && (
-            <>
-              {` The full call could not be loaded (${fullInputError}). `}
-              <Button
-                variant="link"
-                size="xs"
-                className="h-auto px-0 text-[12px]"
-                onClick={retryFullInput}
-              >
+          tone="warning"
+          label="Preview truncated"
+          action={
+            fullInputError === null ? undefined : (
+              <Button variant="quiet" size="sm" onClick={retryFullInput}>
                 Load the full call
               </Button>
-            </>
-          )}
-        </div>
+            )
+          }
+        >
+          <p className={styles.line}>
+            The full call is longer than shown.
+            {fullInputError === null
+              ? null
+              : ` It could not be loaded (${fullInputError}).`}
+          </p>
+        </Notice>
       )}
       <DecideUnavailableNotice
         availability={availability}
         onRestartDaemon={onRestartDaemon}
       />
-      {error !== null && <div className="text-red text-[12px]">{error}</div>}
+      {error !== null && (
+        <p
+          role="alert"
+          className={cx('toneText', styles.line)}
+          data-tone="danger"
+        >
+          {error}
+        </p>
+      )}
     </ToolApprovalCard>
   );
 }

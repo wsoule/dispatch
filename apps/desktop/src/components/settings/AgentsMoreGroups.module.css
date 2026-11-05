@@ -1,0 +1,14 @@
+/* The add-an-agent form (AgentsMoreGroups.tsx): name, argv lines, model, then Add. */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.form .argv {
+  font-family: var(--font-mono);
+}
+
+.add {
+  align-self: flex-start;
+}

@@ -1,0 +1,137 @@
+/* Linear's connection, sync and status-role groups (LinearPanel.tsx). */
+.intervalBox {
+  display: inline-flex;
+  width: 80px;
+}
+
+.intervalBox .interval {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The API key field, kept from stretching across the whole row. */
+.keyBox {
+  display: inline-flex;
+  flex: 1 1 auto;
+  max-width: 320px;
+}
+
+.select {
+  width: 180px;
+}
+
+.direction {
+  width: 200px;
+}
+
+.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.connected {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The connected check is a mark: it takes the success hue from its
+   data-tone="success" (--tone), beside the "Connected" words. */
+.connectedIcon {
+  flex: none;
+  color: var(--tone);
+}
+
+/* A failed teams fetch: the reason (toneText, danger), then Retry. */
+.failureRow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border-bottom: 1px solid var(--divider);
+}
+
+.failureText {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-xs);
+}
+
+/* A bordered note inside a card: no review state, or tasks still to export. */
+.calloutRow {
+  padding: 10px var(--s-3);
+  border-bottom: 1px solid var(--divider);
+}
+
+.callout {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+
+.calloutIcon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-3);
+}
+
+.calloutText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.calloutTitle {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+.calloutBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.calloutBody p {
+  margin: 0;
+}
+
+.calloutAction {
+  align-self: flex-start;
+}
+
+.summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+/* A refusal or failure line; its colour comes from the global toneText class
+   with data-tone="danger" where it is used. */
+.error {
+  font-size: var(--fs-xs);
+}
+
+/* The Sync now icon turns while a sync runs, only when motion is welcome;
+   otherwise it stays still beside its "Syncing" words. */
+@media (prefers-reduced-motion: no-preference) {
+  .spin {
+    animation: spin 1s linear infinite;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

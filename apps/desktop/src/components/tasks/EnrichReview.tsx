@@ -1,4 +1,6 @@
-import { Button } from '@/ui/button';
+import { Button, Notice } from '@dispatch/ui';
+
+import styles from './EnrichReview.module.css';
 
 /** The sections an "Add detail" pass proposes — structurally `EnrichDraft`, but
  * inline here so this component depends on neither caller's module. */
@@ -9,7 +11,8 @@ interface EnrichReviewDraft {
 
 /**
  * A drafted "Add detail" proposal, shown read-only for a yes/no before anything
- * is written, as a comment card (§8): 12px sentence-case headings over 15px prose.
+ * is written: a neutral library Notice led by "Suggested", 12px sentence-case
+ * sub-headings over the drafted prose, then Apply (primary) and Discard (quiet).
  * Used by the task detail dialog — the brain dump row's own "Add detail" is a plain
  * inline edit now, with nothing to review.
  */
@@ -31,49 +34,48 @@ export function EnrichReview({
   note?: string;
 }) {
   return (
-    <div
-      data-slot="enrich-review"
-      className="bg-surface-quaternary rounded-card border-border-strong flex flex-col gap-3 border-[0.5px] p-3"
-    >
-      <div className="flex flex-wrap items-baseline gap-2 text-[12px]">
-        <span className="text-muted-foreground font-medium">
-          Proposed detail
-        </span>
-        <span className="font-book text-muted-foreground">{note}</span>
-      </div>
+    <Notice data-slot="enrich-review" tone="default" label="Suggested">
+      <div className={styles.body}>
+        <p className={styles.note}>{note}</p>
 
-      {draft.description !== '' && (
-        <div className="flex flex-col gap-1">
-          <h4 className="text-muted-foreground text-[12px] font-medium">
-            Description
-          </h4>
-          <p className="font-book text-[15px] leading-6 whitespace-pre-wrap text-(--text-secondary)">
-            {draft.description}
-          </p>
+        {draft.description !== '' && (
+          <div className={styles.part}>
+            <h4 className={styles.heading}>Description</h4>
+            <p className={styles.prose}>{draft.description}</p>
+          </div>
+        )}
+
+        {draft.acceptanceCriteria.length > 0 && (
+          <div className={styles.part}>
+            <h4 className={styles.heading}>Acceptance criteria</h4>
+            <ul className={styles.criteria}>
+              {draft.acceptanceCriteria.map((criterion, i) => (
+                <li key={`${i}-${criterion}`}>{criterion}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className={styles.actions}>
+          <Button
+            variant="primary"
+            size="sm"
+            busy={applying}
+            busyLabel="Applying…"
+            onClick={onApply}
+          >
+            {applyLabel}
+          </Button>
+          <Button
+            variant="quiet"
+            size="sm"
+            disabled={applying}
+            onClick={onDiscard}
+          >
+            {discardLabel}
+          </Button>
         </div>
-      )}
-
-      {draft.acceptanceCriteria.length > 0 && (
-        <div className="flex flex-col gap-1">
-          <h4 className="text-muted-foreground text-[12px] font-medium">
-            Acceptance criteria
-          </h4>
-          <ul className="font-book flex list-disc flex-col gap-1 pl-4 text-[15px] leading-6 text-(--text-secondary)">
-            {draft.acceptanceCriteria.map((criterion, i) => (
-              <li key={`${i}-${criterion}`}>{criterion}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div className="flex items-center gap-2">
-        <Button disabled={applying} onClick={onApply}>
-          {applying ? 'Applying…' : applyLabel}
-        </Button>
-        <Button variant="ghost" disabled={applying} onClick={onDiscard}>
-          {discardLabel}
-        </Button>
       </div>
-    </div>
+    </Notice>
   );
 }

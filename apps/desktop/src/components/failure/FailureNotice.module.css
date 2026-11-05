@@ -1,0 +1,52 @@
+/* A failure (FailureNotice.tsx) inside the library's danger Notice, which draws the
+   tint and the box: one sentence, the fix that applies, why a fix failed, and the raw
+   error behind Details. Tokens only. */
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.sentence {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin: 0;
+  color: var(--text);
+}
+
+/* The alert glyph in the tone's ink, beside the words in --text: on the soft tint both
+   hold their contrast, and the glyph is a second cue beside the role and the words. */
+.icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--tone-ink);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.actions:empty {
+  display: none;
+}
+
+/* Why a fix failed, in the danger ink (.toneText) at the meta size. */
+.actionError {
+  margin: 0;
+  font-size: var(--fs-xs);
+}
+
+/* The Details trigger in --text: words on the tint are --text or the tone's ink. */
+.details button[aria-expanded] {
+  color: var(--text);
+}
+
+/* The raw error under Details: a little air between the button and the well. */
+.raw {
+  margin-top: var(--s-1);
+}

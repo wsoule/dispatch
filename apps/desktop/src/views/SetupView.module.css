@@ -1,0 +1,47 @@
+/* First-launch setup (SetupView): a centred reading column inside App's signed-out
+   frame, which owns the page and its scrolling. Tokens only. */
+
+.column {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  width: 100%;
+  max-width: 576px;
+  margin: 0 auto;
+  padding: var(--s-12) var(--s-6);
+}
+
+.intro {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-heading);
+  line-height: 1.25;
+  color: var(--text);
+}
+
+.lede {
+  margin: 0;
+  font-size: var(--fs);
+  line-height: var(--lh);
+  color: var(--text-2);
+}
+
+.steps {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+@media (width <= 640px) {
+  .column {
+    padding: var(--s-8) var(--s-4);
+  }
+}

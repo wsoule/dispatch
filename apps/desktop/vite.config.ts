@@ -1,8 +1,10 @@
-import tailwindcss from '@tailwindcss/vite';
+import { themeScript } from '@dispatch/ui/lib/theme.ts';
 import react from '@vitejs/plugin-react';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
+
+import { THEME_STORAGE_KEY } from './src/lib/theme.ts';
 
 // The oldest WebKit this app supports, as a Vite/esbuild target. The Tauri
 // webview is the *host's* WebKit rather than a bundled engine, so the oldest
@@ -20,15 +22,33 @@ const polyfills = readFileSync(
   'utf8'
 );
 
+// Applies the stored theme before first paint: a classic inline script, the
+// first thing in <body> (before #root), reads 'dispatch:theme' and writes a
+// stored 'light' or 'dark' to html[data-theme], else leaves 'system' so
+// tokens.css follows the OS live. transformIndexHtml runs for the dev server
+// and the build alike, so the daemon-served dist and Tauri get it too. An
+// inline script is allowed in both hosts: Tauri's CSP sets only img-src and
+// leaves script-src unmodified (src-tauri/tauri.conf.json:28-31), and the
+// daemon sets no CSP on index.html (serveIndexHtml in
+// packages/server/src/index.ts injects its own inline token script). A
+// script-src policy added later would need this script's hash.
+const themeBeforePaint: Plugin = {
+  name: 'dispatch-theme',
+  transformIndexHtml: () => [
+    {
+      tag: 'script',
+      children: themeScript(THEME_STORAGE_KEY, { fallback: 'system' }),
+      injectTo: 'body-prepend',
+    },
+  ],
+};
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), themeBeforePaint],
   resolve: {
     alias: {
-      // The component library lives in packages/ui (@dispatch/ui) but keeps its historical
-      // `@/ui/…` import path; this must precede the bare `@` alias so it wins the match.
-      '@/ui': fileURLToPath(new URL('../../packages/ui/src', import.meta.url)),
-      // shadcn/ui components import from `@/…`; map it to src/.
+      // App modules import from `@/…`; map it to src/.
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },

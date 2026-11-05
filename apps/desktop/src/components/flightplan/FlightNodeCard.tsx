@@ -1,4 +1,5 @@
 import type { MergeQueueEntryState } from '@dispatch/client';
+import { cx, type UiTone } from '@dispatch/ui';
 import { CircleDashed, Hourglass } from 'lucide-react';
 import { memo } from 'react';
 
@@ -10,10 +11,10 @@ import { AssigneeAvatar } from '../tasks/AssigneeAvatar';
 import { LandingBadge } from '../tasks/LandingBadge';
 import { StatusIcon } from '../tasks/StatusIcon';
 import { NODE_HEIGHT, NODE_WIDTH } from './flightLayout';
+import styles from './FlightNodeCard.module.css';
 import type { FlightNodeState } from './flightPlan';
 import type { SentenceTone } from './flightSentences';
-import { cn } from '@/lib/utils';
-import { useElapsed } from '@/ui/ai/use-elapsed';
+import { useElapsed } from '@/hooks/useElapsed';
 
 /** A node's DOM id, for the canvas's `aria-activedescendant` and scrolling it into view. */
 export function flightNodeDomId(id: string): string {
@@ -47,25 +48,33 @@ export interface FlightNodeView {
   y: number;
 }
 
-const STATE_CLASS: Record<FlightNodeState, string> = {
-  done: 'bg-surface-secondary shadow-hairline',
-  running:
-    'bg-surface-quaternary shadow-[inset_0_0_0_1px_var(--state-working-edge),var(--shadow-card)]',
-  teammate: 'bg-surface-quaternary shadow-card',
-  review:
-    'bg-surface-quaternary shadow-[inset_0_0_0_1px_var(--state-review-edge),var(--shadow-card)]',
-  queued: 'bg-surface-quaternary shadow-card',
-  blocked: 'bg-(--surface-page) border border-dashed border-border-strong',
+/**
+ * The status tone a card's edge takes (its `data-tone`, read as `--tone-line`): a running
+ * node is in progress (info), a node in review is green (success). Every other state is
+ * neutral and drawn by `data-state` alone.
+ */
+const STATE_TONE: Record<FlightNodeState, UiTone | null> = {
+  done: null,
+  running: 'info',
+  teammate: null,
+  review: 'success',
+  queued: null,
+  blocked: null,
 };
 
-const TONE_CLASS: Record<SentenceTone, string> = {
-  done: 'text-status-done',
-  working: 'text-state-working',
-  waiting: 'text-state-waiting',
-  review: 'text-state-review',
-  failed: 'text-state-failed',
-  ready: 'text-text-secondary',
-  muted: 'text-(--text-muted)',
+/**
+ * The tone a sentence's words take through the global `toneText` class: working is in
+ * progress, waiting needs input, review is green, failed is red; done and ready stay in
+ * the secondary ink (null), and muted takes the faint grey.
+ */
+const SENTENCE_TONE: Record<SentenceTone, UiTone | null> = {
+  done: null,
+  working: 'info',
+  waiting: 'warning',
+  review: 'success',
+  failed: 'danger',
+  ready: null,
+  muted: 'muted',
 };
 
 // ✓ landed, ◐ running and the teammate's and reviewer's own status glyphs come from the
@@ -81,8 +90,9 @@ function NodeGlyph({
     return (
       <Hourglass
         aria-hidden
-        strokeWidth={1.75}
-        className="text-state-ready size-3.5 shrink-0"
+        size={14}
+        strokeWidth={1.8}
+        className={styles.glyphQueued}
       />
     );
   }
@@ -90,15 +100,16 @@ function NodeGlyph({
     return (
       <CircleDashed
         aria-hidden
-        strokeWidth={1.75}
-        className="size-3.5 shrink-0 text-(--text-ghost)"
+        size={14}
+        strokeWidth={1.8}
+        className={styles.glyphBlocked}
       />
     );
   }
   return (
     <StatusIcon
       status={state === 'running' ? 'working' : status}
-      className="size-3.5 shrink-0"
+      className={styles.glyph}
     />
   );
 }
@@ -108,15 +119,20 @@ function NodeGlyph({
 function Sentence({
   text,
   runId,
-  className,
+  tone,
 }: {
   text: string;
   runId: string | null;
-  className: string;
+  tone: UiTone | null;
 }) {
   const shown = withLiveStep(text, useRunStep(runId));
   return (
-    <span data-slot="flight-node-sentence" title={shown} className={className}>
+    <span
+      data-slot="flight-node-sentence"
+      title={shown}
+      data-tone={tone ?? undefined}
+      className={cx(styles.sentence, tone !== null && 'toneText')}
+    >
       {shown}
     </span>
   );
@@ -124,20 +140,16 @@ function Sentence({
 
 // A live clock. Its own component so only it re-renders each second.
 function Elapsed({ since }: { since: number }) {
-  return (
-    <span className="font-book shrink-0 text-[12px] text-(--text-muted) tabular-nums">
-      {useElapsed(since)}
-    </span>
-  );
+  return <span className={cx(styles.meta, 'num')}>{useElapsed(since)}</span>;
 }
 
 /**
  * One Flight Plan node, 240×68 at its layout position, on the board card's anatomy: the
  * glyph, id, cost and the owner's avatar (or a live run's clock) on top, the title, then
- * the node's sentence. The state tints the card in place — running and review carry their
- * hue's hairline, blocked goes to a dashed outline — and a critical-path node carries an
- * accent rail. Colour and shadow ease between states, so a landing reads as the card
- * settling, not a re-render.
+ * the node's sentence. The state tints the card in place — done fills neutral, running and
+ * review carry their hue's edge, blocked goes to a dashed outline — and a critical-path
+ * node carries an accent rail. Fill and edge ease between states (when motion is welcome),
+ * so a landing reads as the card settling, not a re-render.
  */
 export const FlightNodeCard = memo(function FlightNodeCard({
   id,
@@ -166,8 +178,8 @@ export const FlightNodeCard = memo(function FlightNodeCard({
   const landingSentence =
     landing !== null && state === 'review' ? landingBadgeTitle(landing) : null;
   const text = landingSentence ?? sentence;
-  // Its own compositing layer: in WebKit a card culled in or out as the plan pans would
-  // otherwise repaint the canvas under every other card.
+  // Its own compositing layer (`will-change` in the module): in WebKit a card culled in or
+  // out as the plan pans would otherwise repaint the canvas under every other card.
   return (
     <button
       type="button"
@@ -177,36 +189,25 @@ export const FlightNodeCard = memo(function FlightNodeCard({
       data-slot="flight-node"
       data-node-id={id}
       data-state={state}
+      data-tone={STATE_TONE[state] ?? undefined}
       data-critical={critical || undefined}
       data-focused={focused || undefined}
       onClick={() => onActivate(id)}
-      className={cn(
-        'rounded-card absolute top-0 left-0 flex cursor-pointer scroll-mt-10 scroll-ml-5 flex-col justify-center gap-0.5 overflow-hidden px-2.5 text-left will-change-transform',
-        'transition-[background-color,box-shadow,border-color] duration-300 ease-(--ease-out-expo)',
-        'hover:bg-surface-active',
-        STATE_CLASS[state],
-        critical &&
-          'before:absolute before:inset-y-2.5 before:left-0 before:w-[2px] before:rounded-r-full before:bg-(--accent)',
-        focused && 'outline-focus-ring outline-2 outline-offset-1'
-      )}
+      className={styles.card}
       style={{
         width: NODE_WIDTH,
         height: NODE_HEIGHT,
         transform: `translate(${x}px, ${y}px)`,
       }}
     >
-      <span className="flex h-4 min-w-0 items-center gap-1.5 text-[12px] leading-4">
+      <span className={styles.head}>
         <NodeGlyph state={state} status={glyphStatus} />
-        <span className="font-book min-w-0 flex-1 truncate tracking-(--id-tracking) text-(--text-muted) tabular-nums">
-          {refLabel}
-        </span>
+        <span className={styles.ref}>{refLabel}</span>
         {landing !== null && landingSentence === null && (
           <LandingBadge state={landing} variant="inline" />
         )}
         {costUsd !== null && costUsd > 0 && (
-          <span className="font-book shrink-0 text-(--text-muted) tabular-nums">
-            {formatUsd(costUsd)}
-          </span>
+          <span className={cx(styles.meta, 'num')}>{formatUsd(costUsd)}</span>
         )}
         {state === 'running' && startedAt !== null ? (
           <Elapsed since={startedAt} />
@@ -214,23 +215,11 @@ export const FlightNodeCard = memo(function FlightNodeCard({
           <AssigneeAvatar assignee={owner} size={16} />
         ) : null}
       </span>
-      <span
-        className={cn(
-          'truncate text-[13px] leading-[18px] font-medium',
-          state === 'done' || state === 'blocked'
-            ? 'text-(--text-muted)'
-            : 'text-foreground'
-        )}
-      >
-        {title}
-      </span>
+      <span className={styles.title}>{title}</span>
       <Sentence
         text={text}
         runId={state === 'running' ? runId : null}
-        className={cn(
-          'truncate text-[12px] leading-4',
-          landingSentence === null ? TONE_CLASS[tone] : 'text-state-landing'
-        )}
+        tone={landingSentence === null ? SENTENCE_TONE[tone] : 'info'}
       />
     </button>
   );

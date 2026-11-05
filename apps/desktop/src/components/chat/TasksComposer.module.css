@@ -1,0 +1,54 @@
+/* "say something" at the foot of Tasks (TasksComposer.tsx): the reply tray
+   over either the one-line collapsed field or the full composer, both in a
+   760px lane centred under a divider. Tokens only. */
+.root {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-4);
+  border-top: 1px solid var(--divider);
+}
+
+.lane {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 760px;
+}
+
+/* The reply (or the failure): at most three lines. */
+.trayText {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.trayActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Folded to one line until used: the "about" chip, then a read-only field
+   whose press or focus opens the composer. */
+.collapsed {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  cursor: text;
+}
+
+.collapsed[data-disabled] {
+  cursor: not-allowed;
+}
+
+.collapsedInput {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  cursor: inherit;
+}

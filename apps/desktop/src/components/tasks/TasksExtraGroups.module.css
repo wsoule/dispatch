@@ -1,0 +1,53 @@
+/* The groups under the task list (TasksExtraGroups.tsx): notes to
+   convert, pull requests no task claims and docs no task links, each a
+   folding group header over a Register of rows. */
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding-top: 8px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding: 0 14px;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding-bottom: 4px;
+}
+
+/* A note, PR or doc title on one line, cut with an ellipsis. */
+.line {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* "All docs →": a quiet button in the link's accent ink (it goes to a
+   place, the Docs page). Doubled so it wins over the Button's own quiet
+   ink whatever the stylesheet order. */
+.link.link {
+  color: var(--accent-ink);
+}
+
+.personal {
+  margin: 0;
+  padding: 2px 0;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}

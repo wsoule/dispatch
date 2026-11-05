@@ -1,0 +1,7 @@
+/* MarkdownCodeFence: the library CodeBlock draws the fence itself. The one thing of its
+   own is the line saying why a ```mermaid fence could not be drawn: danger ink (through
+   .toneText and data-tone) at the small size, above the source it falls back to. */
+
+.error {
+  font-size: var(--fs-xs);
+}

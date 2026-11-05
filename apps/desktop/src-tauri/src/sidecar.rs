@@ -155,6 +155,47 @@ fn read_daemon_file(root_dir: &str) -> Option<DaemonFileInfo> {
     read_daemon_file_at(&daemon_file_path(root_dir))
 }
 
+/// Every readable daemon file in `dir` (a `~/.dispatch/daemons` directory) that names `port`.
+/// A file that does not parse is skipped, as discovery skips one. Split out from
+/// `agent_token_for_port` so a test can point it at a fixture directory.
+fn daemon_files_on_port(dir: &Path, port: u16) -> Vec<DaemonFileInfo> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .filter_map(|path| read_daemon_file_at(&path))
+        .filter(|info| info.port == port)
+        .collect()
+}
+
+/// The request-tier agent token of the dispatchd answering on `port`, for a native call this
+/// app makes on the page's behalf (`downloads::download_workspace_file`). The page names only
+/// the port; the daemon is found by its own discovery file and verified the way attach verifies
+/// one (`inspect_discovery`: a live pid, and a health answer naming the same root and
+/// generation), so the token is only ever sent back to the daemon that wrote it, never to
+/// whatever else might be listening on a port the page chose.
+pub(crate) async fn agent_token_for_port(
+    client: &reqwest::Client,
+    port: u16,
+) -> Result<String, String> {
+    let dir = daemon_home().join(".dispatch").join("daemons");
+    for info in daemon_files_on_port(&dir, port) {
+        if let DiscoveryState::Ready(ready) = inspect_discovery(client, &info.root_dir, &[]).await {
+            if ready.port == port {
+                return ready.agent_token.ok_or_else(|| {
+                    "The Dispatch daemon on this port has no request credential.".to_string()
+                });
+            }
+        }
+    }
+    Err(format!(
+        "No running Dispatch daemon answers on port {port}."
+    ))
+}
+
 /// Parses dispatchd's `/api/health` response body — just its `ok` flag.
 /// Split out from the actual HTTP call so it's unit-testable without a
 /// network.
@@ -853,7 +894,8 @@ pub async fn ensure_dispatchd(
 ) -> Result<DaemonConnection, String> {
     let root = normalize_root(root)?;
     let root = root.as_str();
-    let client = reqwest::Client::new();
+    // Loopback only: no environment proxy may see the daemon's tokens (`loopback`).
+    let client = crate::loopback::client()?;
 
     // Onboarding still needs a fresh --init daemon. Validate any existing
     // generation first, then use the same guarded shutdown as explicit restart.
@@ -1433,6 +1475,36 @@ mod tests {
     }
 
     #[test]
+    fn daemon_files_on_port_keeps_only_parsable_json_files_naming_that_port() {
+        let dir =
+            std::env::temp_dir().join(format!("dispatch-sidecar-on-port-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let file = |port: u16, root: &str| {
+            format!(
+                r#"{{"port":{port},"pid":123,"rootDir":"{root}","startedAt":"2026-07-20T00:00:00.000Z","agentToken":"t"}}"#
+            )
+        };
+        fs::write(dir.join("a.json"), file(4771, "/tmp/a")).unwrap();
+        fs::write(dir.join("b.json"), file(4772, "/tmp/b")).unwrap();
+        // Not a daemon file: the wrong extension, or JSON of another shape.
+        fs::write(dir.join("c.txt"), file(4771, "/tmp/c")).unwrap();
+        fs::write(dir.join("d.json"), "{\"port\":4771}").unwrap();
+
+        let found = daemon_files_on_port(&dir, 4771);
+        assert_eq!(
+            found
+                .iter()
+                .map(|info| info.root_dir.as_str())
+                .collect::<Vec<_>>(),
+            vec!["/tmp/a"]
+        );
+        assert!(daemon_files_on_port(&dir, 9999).is_empty());
+        assert!(daemon_files_on_port(&dir.join("missing"), 4771).is_empty());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn normalize_root_strips_a_trailing_slash() {
         assert_eq!(
             normalize_root("/tmp/dispatch-fixture-root/"),
@@ -1680,7 +1752,7 @@ mod tests {
     async fn wait_for_spawned_daemon_sees_a_boot_that_died() {
         let mut child = Command::new("true").spawn().unwrap();
         let outcome = wait_for_spawned_daemon(
-            &reqwest::Client::new(),
+            &crate::loopback::client().unwrap(),
             "/tmp/dispatch-fixture-root-that-never-boots",
             &mut child,
             None,
@@ -2153,7 +2225,7 @@ mod tests {
         assert!(leaked.is_empty(), "app token found at rest in {leaked:?}");
 
         // --- a decide-tier action, with each credential ---
-        let http = reqwest::Client::new();
+        let http = crate::loopback::client().unwrap();
         let base = format!("http://127.0.0.1:{}", spawned.port);
 
         // A pending agent registration: approving it is a decide-tier action.
@@ -2279,7 +2351,7 @@ mod tests {
             .status()
             .expect("sh runs");
         assert!(started.success());
-        let client = reqwest::Client::new();
+        let client = crate::loopback::client().unwrap();
         let old_port = poll_for_healthy_daemon(&client, &root, Duration::from_secs(30))
             .await
             .expect("the external daemon comes up");

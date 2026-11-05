@@ -1,6 +1,9 @@
 import type { ApiClient } from '@dispatch/client';
+import { Button, cx, Disclosure, TextArea } from '@dispatch/ui';
 import type { FileContents, FileDiffOptions } from '@pierre/diffs';
 import { MultiFileDiff } from '@pierre/diffs/react';
+import { Check } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useMemo, useState } from 'react';
 
 import { useDiffDisplaySettings } from '../../hooks/useDiffDisplaySettings';
@@ -10,8 +13,7 @@ import type { HunkChoice, MergePart } from '../../lib/mergeLayout';
 import { labelFor, parseMarked, resolveMarked } from '../../lib/mergeLayout';
 import { PierreWorkerPool } from '../runs/PierreWorkerPool';
 import { ErrorBoundary } from '../shell/ErrorBoundary';
-import { Button } from '@/ui/button';
-import { Textarea } from '@/ui/textarea';
+import styles from './DocMergeView.module.css';
 
 interface DocMergeViewProps {
   client: ApiClient;
@@ -49,6 +51,32 @@ interface HunkProps {
   onChoose: (choice: HunkChoice) => void;
 }
 
+// One side pick of a conflict (Take head, Take yours, Edit): a bordered
+// toggle whose chosen state is the library's pressed look (the accent tint in
+// a 3:1 accent edge) and leads with a check as well, so the side taken is a
+// shape too, not colour alone (the check is drawn in the text's ink).
+function PickButton({
+  chosen,
+  onClick,
+  children,
+}: {
+  chosen: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Button
+      size="sm"
+      variant="secondary"
+      aria-pressed={chosen}
+      icon={chosen ? <Check size={14} strokeWidth={1.8} /> : undefined}
+      onClick={onClick}
+    >
+      {children}
+    </Button>
+  );
+}
+
 // One conflict: its base, then head beside yours as a diff, resolved by
 // Take head, Take yours or Edit.
 function MergeHunk({
@@ -76,33 +104,24 @@ function MergeHunk({
   const take = choice?.take ?? null;
   const title = `Conflict ${index + 1} of ${count}`;
   return (
-    <section
-      aria-label={title}
-      className="flex flex-col gap-2 border-b border-[var(--color-border)] p-3"
-    >
-      <header className="flex items-center gap-2 text-xs">
-        <span className="font-medium">{title}</span>
-        <div className="ml-auto flex gap-1">
-          <Button
-            size="xs"
-            variant={take === 'head' ? 'default' : 'secondary'}
-            aria-pressed={take === 'head'}
+    <section aria-label={title} className={styles.hunk}>
+      <header className={styles.hunkHead}>
+        <span className={styles.hunkTitle}>{title}</span>
+        <div className={styles.picks}>
+          <PickButton
+            chosen={take === 'head'}
             onClick={() => onChoose({ take: 'head' })}
           >
             Take head
-          </Button>
-          <Button
-            size="xs"
-            variant={take === 'mine' ? 'default' : 'secondary'}
-            aria-pressed={take === 'mine'}
+          </PickButton>
+          <PickButton
+            chosen={take === 'mine'}
             onClick={() => onChoose({ take: 'mine' })}
           >
             Take yours
-          </Button>
-          <Button
-            size="xs"
-            variant={take === 'edit' ? 'default' : 'secondary'}
-            aria-pressed={take === 'edit'}
+          </PickButton>
+          <PickButton
+            chosen={take === 'edit'}
             onClick={() =>
               onChoose({
                 take: 'edit',
@@ -111,32 +130,27 @@ function MergeHunk({
             }
           >
             Edit
-          </Button>
+          </PickButton>
         </div>
       </header>
       {base !== '' && (
-        <details className="text-xs">
-          <summary className="cursor-pointer text-[var(--color-muted-foreground)]">
-            Base
-          </summary>
-          <pre className="rounded-control mt-1 overflow-auto bg-[var(--color-muted)] p-2 font-mono text-[11px]">
-            {base}
-          </pre>
-        </details>
+        <Disclosure summary="Base">
+          <pre className={cx('mono', styles.base)}>{base}</pre>
+        </Disclosure>
       )}
-      <div className="grid grid-cols-2 gap-2 text-[11px] text-[var(--color-muted-foreground)]">
-        <span className="truncate">{`head · ${headLabel}`}</span>
-        <span className="truncate">{`yours · ${mineLabel}`}</span>
+      <div className={styles.sides}>
+        <span className={styles.side}>{`head · ${headLabel}`}</span>
+        <span className={styles.side}>{`yours · ${mineLabel}`}</span>
       </div>
       <ErrorBoundary label={`the diff for ${title.toLowerCase()}`}>
         <MultiFileDiff oldFile={oldFile} newFile={newFile} options={options} />
       </ErrorBoundary>
       {choice?.take === 'edit' && (
-        <Textarea
+        <TextArea
           aria-label={`Resolution for ${title.toLowerCase()}`}
           value={choice.text}
           onChange={(e) => onChoose({ take: 'edit', text: e.target.value })}
-          className="font-mono text-xs"
+          className={styles.resolution}
         />
       )}
     </section>
@@ -182,29 +196,30 @@ export function DocMergeView({
   const done = choices.filter((c) => c !== null);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <header className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2 text-xs">
-        <span className="font-medium">Merge</span>
-        <span className="text-[var(--color-muted-foreground)]">
+    <div className={styles.merge}>
+      <header className={styles.head}>
+        <span className={styles.headTitle}>Merge</span>
+        <span className={cx('num', styles.progress)}>
           {conflicts.length === 0
             ? 'No marked blocks are left.'
             : `${done.length} of ${conflicts.length} resolved`}
         </span>
-        <div className="ml-auto flex gap-1">
+        <div className={styles.actions}>
           <Button
             size="sm"
+            variant="primary"
             disabled={conflicts.length === 0 || done.length < conflicts.length}
             onClick={() => onSave(resolveMarked(parts, done))}
           >
             Save resolution
           </Button>
-          <Button size="sm" variant="ghost" onClick={onClose}>
+          <Button size="sm" variant="quiet" onClick={onClose}>
             Close
           </Button>
         </div>
       </header>
       <PierreWorkerPool lineDiffType={options.lineDiffType}>
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div className={styles.hunks}>
           {conflicts.map((conflict, i) => (
             <MergeHunk
               // Choices are kept by position, so a block is its position too.

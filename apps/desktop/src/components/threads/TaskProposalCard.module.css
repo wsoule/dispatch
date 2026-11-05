@@ -1,0 +1,75 @@
+/* An A2A task proposal (TaskProposalCard.tsx) inside its DecisionCard: the
+   proposer's id and an A2A chip, the client's draft as typed in a mono well
+   that scrolls past 240px, the paths it declares, and the answer error. */
+.proposer {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Agent ids and paths are machine-read: Geist Mono, wrapped anywhere so a
+   long one reads in full. */
+.id {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+.note {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.draft {
+  max-height: 240px;
+  margin: 0;
+  padding: var(--s-2) 10px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The well scrolls with the keyboard; its ring sits inside its edge. */
+.draft:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.writes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.label {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.paths {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.error {
+  margin: 0;
+  font-size: var(--fs-xs);
+}

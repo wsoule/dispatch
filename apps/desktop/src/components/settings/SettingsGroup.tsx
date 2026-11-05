@@ -1,3 +1,4 @@
+import { cx, Tooltip, type UiTone } from '@dispatch/ui';
 import { LockIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { createContext, useContext } from 'react';
@@ -10,9 +11,7 @@ import {
   useSearching,
   useSearchVisible,
 } from './search';
-import { cn } from '@/lib/utils';
-import { Panel, PanelRow } from '@/ui/chrome';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
+import styles from './settings.module.css';
 
 export { OPERATOR_ONLY };
 
@@ -20,8 +19,8 @@ export { OPERATOR_ONLY };
 // that would say the same thing is left off.
 const GroupLockContext = createContext<string | null>(null);
 
-/** Whether the enclosing group is locked. A disabled fieldset does not reach
- *  Base UI's Switch (a span), so every switch in a group reads this too. */
+/** Whether the enclosing group is locked, for controls that keep their own disabled
+ *  state rather than reading the disabled fieldset around them. */
 export function useGroupLocked(): boolean {
   return useContext(GroupLockContext) !== null;
 }
@@ -62,29 +61,24 @@ export function SettingsGroup({
     <SearchScopeProvider text={`${title} ${keywords ?? ''}`}>
       <section
         data-settings-group=""
-        className={cn(
-          'flex flex-col gap-2',
-          searching && '[&:not(:has([data-settings-row]))]:hidden',
-          className
-        )}
+        data-searching={searching ? '' : undefined}
+        className={cx(styles.group, className)}
       >
-        <div className="flex flex-col gap-0.5 px-0.5">
-          <div className="flex items-center gap-1.5">
-            <h2 className="text-foreground text-[13px] font-semibold">
-              {title}
-            </h2>
+        <div className={styles.groupHead}>
+          <div className={styles.titleLine}>
+            <h2 className={styles.groupTitle}>{title}</h2>
             {locked && <LockedMark reason={access.decideReason} />}
           </div>
           {hint !== undefined && <SettingsHint>{hint}</SettingsHint>}
         </div>
         {/* A disabled fieldset disables the native controls inside it
-            (inputs, buttons, the Select trigger). Switches render a span it
-            cannot reach, so they read useGroupLocked() instead. */}
-        <fieldset disabled={locked} className="m-0 min-w-0 border-0 p-0">
+            (inputs, buttons, switches, the Select trigger). Custom controls
+            and segmented choices read useGroupLocked() too. */}
+        <fieldset disabled={locked} className={styles.fieldset}>
           <GroupLockContext.Provider
             value={locked ? access.decideReason : null}
           >
-            <Panel>{children}</Panel>
+            <div className={styles.card}>{children}</div>
           </GroupLockContext.Provider>
         </fieldset>
         <GroupMatchMarker />
@@ -99,20 +93,26 @@ function GroupMatchMarker() {
   return useScopeMatched() ? <span data-settings-row="" hidden /> : null;
 }
 
-/** Explanatory prose beside a settings control: 12px muted. */
+/** Explanatory prose beside a settings control: small and muted. With a
+ *  `tone` it is a status line in that tone's text colour (`.toneText`, for
+ *  example danger for a refusal); its words still say the status. */
 export function SettingsHint({
   children,
   className,
+  tone,
 }: {
   children: ReactNode;
   className?: string;
+  tone?: UiTone;
 }) {
   return (
     <p
-      className={cn(
-        'font-book text-muted-foreground text-[12px] leading-[17px]',
+      className={cx(
+        styles.hint,
+        tone === undefined ? undefined : 'toneText',
         className
       )}
+      data-tone={tone}
     >
       {children}
     </p>
@@ -122,18 +122,10 @@ export function SettingsHint({
 /** A lock beside a setting the viewer may read but not change. */
 function LockedMark({ reason }: { reason: string }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            aria-label={reason}
-            className="text-muted-foreground inline-flex shrink-0"
-          />
-        }
-      >
-        <LockIcon aria-hidden className="size-3" />
-      </TooltipTrigger>
-      <TooltipContent className="max-w-64">{reason}</TooltipContent>
+    <Tooltip content={reason}>
+      <span role="img" aria-label={reason} className={styles.lock}>
+        <LockIcon aria-hidden size={12} strokeWidth={1.8} />
+      </span>
     </Tooltip>
   );
 }
@@ -180,10 +172,10 @@ export function SettingsRow({
   if (!visible) return null;
   const reason =
     typeof locked === 'string' ? locked : locked ? access.operateReason : null;
-  const titleClass = 'text-foreground text-[13px] font-medium';
+  const titleClass = styles.rowTitle;
   const text = (
-    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-      <div className="flex items-center gap-1.5">
+    <div className={styles.rowText}>
+      <div className={styles.titleLine}>
         {htmlFor !== undefined ? (
           <label htmlFor={htmlFor} className={titleClass}>
             {title}
@@ -199,29 +191,14 @@ export function SettingsRow({
     </div>
   );
   return (
-    <PanelRow
-      data-settings-row=""
-      className={cn('min-h-11 flex-col items-stretch gap-2 py-2.5', className)}
-    >
-      <div
-        className={cn(
-          'flex gap-4',
-          stacked ? 'flex-col gap-2' : 'items-center justify-between'
-        )}
-      >
+    <div data-settings-row="" className={cx(styles.row, className)}>
+      <div className={styles.rowLine} data-stacked={stacked ? '' : undefined}>
         {text}
         {control !== undefined && (
-          <div
-            className={cn(
-              'flex shrink-0 items-center gap-2',
-              stacked && 'w-full'
-            )}
-          >
-            {control}
-          </div>
+          <div className={styles.rowControl}>{control}</div>
         )}
       </div>
       {children}
-    </PanelRow>
+    </div>
   );
 }

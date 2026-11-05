@@ -329,7 +329,7 @@ test('an Assistant conversation this pane cannot reply to is read-only, with a w
   expect(screen.queryByLabelText('Reply')).toBeNull();
 });
 
-test('in Two views the reply box names your agent, never the Assistant', () => {
+test('in the agent voice (the thread peek) the reply box names your agent, never the Assistant', () => {
   renderPane({ route: 'overseer', overseerVoice: 'agent' });
   expect(screen.getByText('To your agent')).toBeTruthy();
   expect(replyBox().placeholder).toBe('Reply to your agent…');

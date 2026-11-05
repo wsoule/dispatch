@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 
 import {
   addSavedView,
@@ -133,13 +133,43 @@ describe('loadSavedViews / saveSavedViews', () => {
     expect(bare?.display).toEqual(DEFAULT_TASKS_DISPLAY);
   });
 
-  test('a throwing setItem is swallowed', () => {
+  test('a view saved with an epic filter clause keeps it as a milestone clause', () => {
+    const storage = memoryStorage();
+    storage.setItem(
+      'dispatch:saved-views:/a',
+      JSON.stringify([
+        {
+          id: 'v-1',
+          name: 'Payments',
+          filters: {
+            clauses: [{ facet: 'epic', op: 'is', values: ['e-1'] }],
+            join: 'and',
+          },
+        },
+      ])
+    );
+    expect(loadSavedViews('/a', storage)[0]?.filters).toEqual({
+      clauses: [{ facet: 'milestone', op: 'is', values: ['e-1'] }],
+      join: 'and',
+    });
+  });
+
+  test('a throwing setItem is swallowed, with a warning', () => {
     const storage = {
       setItem: () => {
         throw new Error('quota');
       },
     };
-    expect(() => saveSavedViews('/a', [view('v-1')], storage)).not.toThrow();
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(() => saveSavedViews('/a', [view('v-1')], storage)).not.toThrow();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain(
+        'failed to persist saved views'
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

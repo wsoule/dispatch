@@ -7,7 +7,7 @@ import {
   mergeLadderLabel,
   mergeLadderPillLabel,
   mergeLadderState,
-  mergeLadderTint,
+  mergeLadderTone,
   releaseLabel,
 } from './mergeLadder';
 
@@ -112,9 +112,9 @@ describe('mergeLadderLabel', () => {
   test('a PR landing names the PR rather than printing "undefined"', () => {
     expect(
       mergeLadderLabel(
-        run({ reviewAction: 'pr', prUrl: 'https://github.com/o/r/pull/123' })
+        run({ reviewAction: 'pr', prUrl: 'https://github.com/o/r/pull/42' })
       )
-    ).toBe('Landed via PR #123');
+    ).toBe('Landed via PR #42');
     expect(mergeLadderLabel(run({ reviewAction: 'pr' }))).toBe('Landed via PR');
   });
 });
@@ -169,12 +169,12 @@ describe('landedCommitUrl', () => {
   });
 });
 
-describe('mergeLadderTint', () => {
-  test('paints each rung with a --state-* role, never a raw hue', () => {
-    expect(mergeLadderTint('unmerged')).toBe('var(--state-ready-fg)');
-    expect(mergeLadderTint('merged-local')).toBe('var(--state-waiting-fg)');
-    expect(mergeLadderTint('local-only')).toBe('var(--state-landing-fg)');
-    expect(mergeLadderTint('on-origin')).toBe('var(--state-landing-fg)');
+describe('mergeLadderTone', () => {
+  test('gives each rung a status tone, never the accent', () => {
+    expect(mergeLadderTone('unmerged')).toBe('muted');
+    expect(mergeLadderTone('merged-local')).toBe('warning');
+    expect(mergeLadderTone('local-only')).toBe('success');
+    expect(mergeLadderTone('on-origin')).toBe('success');
   });
 });
 

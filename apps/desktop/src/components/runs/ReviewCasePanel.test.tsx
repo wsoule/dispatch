@@ -57,7 +57,20 @@ test('a failed command is distinguishable from a passing one', () => {
     />
   );
   expect(screen.getByText('bun run lint')).toBeDefined();
-  expect(container.innerHTML).toContain('text-state-failed');
+  // The glyph takes the danger tone and says "Failed" beside it, so colour
+  // and shape are never the only cue.
+  const glyph = container.querySelector('[data-tone="danger"]');
+  expect(glyph?.textContent).toBe('Failed');
+  expect(container.querySelector('[data-tone="success"]')).toBeNull();
+});
+
+test('a passing command carries the success tone and its word', () => {
+  const { container } = render(
+    <ReviewCasePanel {...empty} evidence={[cmd()]} />
+  );
+  expect(container.querySelector('[data-tone="success"]')?.textContent).toBe(
+    'Passed'
+  );
 });
 
 // The single highest-signal red flag in reviewing agent work, and it was invisible before.
@@ -138,8 +151,9 @@ test('a check never counts toward the agent review section', () => {
       ]}
     />
   );
-  const heading = screen.getByText('Agent review').closest('div');
-  expect(heading?.textContent).toBe('Agent review1');
+  // The section header's heading holds the name and its count.
+  const heading = screen.getByRole('heading', { name: /^Agent review/ });
+  expect(heading.textContent).toBe('Agent review 1');
 });
 
 // Once per group, not once per row — the severity was repeated down every

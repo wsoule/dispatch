@@ -19,7 +19,7 @@ import {
   QueryObserver,
 } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { expect, mock, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import type { ReactNode } from 'react';
 
 const PORT = 4321;
@@ -303,6 +303,31 @@ void mock.module('@dispatch/client', () => ({
     },
   }),
 }));
+
+// The decision feed is the one read the hook makes with `fetch` itself
+// (lib/decisionFeed.ts) rather than through the client mocked above. The
+// daemon this file plays has nothing awaiting a human. Any other request goes
+// on to the fetch this spy replaced, the shared test setup's, which refuses it
+// and fails the test that sent it: a new plain-fetch read the hook swallows
+// still cannot pass unnoticed.
+let fetchSpy: ReturnType<typeof spyOn<typeof globalThis, 'fetch'>> | null =
+  null;
+beforeEach(() => {
+  const guardedFetch = globalThis.fetch;
+  fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(((
+    input: RequestInfo | URL,
+    init?: RequestInit
+  ) => {
+    const url = String(input instanceof Request ? input.url : input);
+    return url === `http://127.0.0.1:${PORT}/api/decisions?resolved=1`
+      ? Promise.resolve(Response.json({ items: [] }))
+      : guardedFetch(input, init);
+  }) as typeof fetch);
+});
+afterEach(() => {
+  fetchSpy?.mockRestore();
+  fetchSpy = null;
+});
 
 // Imported after the mocks above so the hook closes over them.
 const { useDispatchProject } = await import('./useDispatchProject');
@@ -1594,9 +1619,12 @@ test('the card handlers answer their gates with the matching choice', async () =
     { to: ['run:r-1'], kind: 'message', body: 'keep going' },
   ]);
   expect(sentOptions).toEqual([{ continueThread: true }]);
-  const stale = await result.current.handleApprove('r-1', 'req-9', true).then(
-    () => 'resolved',
-    (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
+  // The refusal refetches the open gates, which re-renders the hook: inside act.
+  const stale = await act(() =>
+    result.current.handleApprove('r-1', 'req-9', true).then(
+      () => 'resolved',
+      (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
+    )
   );
   expect(stale).toBe('This approval is no longer waiting for you.');
   resetGateFixtures();

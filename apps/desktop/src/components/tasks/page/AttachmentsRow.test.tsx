@@ -35,8 +35,8 @@ function clientWith(log: Log): ApiClient {
   } as unknown as ApiClient;
 }
 
-// The row as the page mounts it: the upload hook lives in the parent so a
-// paste anywhere on the page shares its `uploading` flag.
+// The row as the page mounts it: the upload hook lives in the parent (the
+// rail, the drawer), which keeps its `uploading` flag.
 function Harness({
   client,
   attachments,

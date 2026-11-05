@@ -34,24 +34,31 @@ describe('MergeLadderPill', () => {
     const el = pill(container);
     expect(el?.dataset['mergeLadder']).toBe('unmerged');
     expect(el?.textContent).toBe('Not merged');
+    // The resting rung is grey: the muted tone drawn as a pill with a grey dot.
+    expect(el?.dataset['tone']).toBe('muted');
+    expect(el?.querySelector('[aria-hidden="true"]')).not.toBeNull();
   });
 
-  test('a squash that never reached the remote is a label pill with the waiting tint', () => {
+  test('a squash that never reached the remote is a warning chip', () => {
     const { container } = render(
       <MergeLadderPill
         meta={run({ reviewAction: 'merge', mergeCommit: 'abcdef1234567' })}
       />
     );
     const el = pill(container);
-    expect(el?.dataset['slot']).toBe('label-pill');
+    expect(el?.tagName).toBe('SPAN');
     expect(el?.dataset['mergeLadder']).toBe('merged-local');
+    // The status pill: the tone through data-tone, the hue in its aria-hidden dot, no inline
+    // colour of its own.
+    expect(el?.dataset['tone']).toBe('warning');
+    expect(el?.hasAttribute('data-filled')).toBe(false);
+    expect(el?.querySelector('[aria-hidden="true"]')).not.toBeNull();
+    expect(el?.querySelector('[style]')).toBeNull();
     expect(el?.textContent).toBe('Not on GitHub');
     expect(el?.title).toBe('Merged locally — not on GitHub yet');
-    const dot = el?.querySelector<HTMLElement>('[aria-hidden]');
-    expect(dot?.style.backgroundColor).toBe('var(--state-waiting-fg)');
   });
 
-  test('a merge that reached origin takes the landing tint', () => {
+  test('a merge that reached origin is a success chip', () => {
     const { container } = render(
       <MergeLadderPill
         meta={run({
@@ -65,8 +72,6 @@ describe('MergeLadderPill', () => {
     expect(el?.dataset['mergeLadder']).toBe('on-origin');
     expect(el?.textContent).toBe('On origin');
     expect(el?.title).toBe('Landed on origin/main · abcdef1');
-    expect(
-      el?.querySelector<HTMLElement>('[aria-hidden]')?.style.backgroundColor
-    ).toBe('var(--state-landing-fg)');
+    expect(el?.dataset['tone']).toBe('success');
   });
 });

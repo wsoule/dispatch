@@ -1,0 +1,23 @@
+/* RunStatePill (RunStatePill.tsx): the run's state chip (StateMark glyph and words) and the
+   quiet disposition beside it, or the compact dot alone. Tokens only; the hue comes from
+   StateMark's data-tone. */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+/* The state chip's inside: the 14px glyph before the words. */
+.chipBody {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+/* The compact variant: the dot alone, never shrunk by a crowded row. */
+.mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}

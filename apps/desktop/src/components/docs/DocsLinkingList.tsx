@@ -1,6 +1,8 @@
 import type { ApiClient } from '@dispatch/client';
+import { ChipButton } from '@dispatch/ui';
 
 import { useDocsLinking } from '../../hooks/useDocs';
+import styles from './DocsLinkingList.module.css';
 
 interface DocsLinkingListProps {
   client: ApiClient | null;
@@ -10,8 +12,10 @@ interface DocsLinkingListProps {
   onOpenDoc: (id: string) => void;
 }
 
-/** The docs that link one target, each a button that opens it; nothing when
- *  none does. The route answers only docs the caller may see. */
+/** The docs that link one target, each a chip button that opens it, in a
+ *  region named "Linked docs" (a landmark, as before the restyle) holding
+ *  their list; nothing when none does. The route answers only docs the
+ *  caller may see. */
 export function DocsLinkingList({
   client,
   port,
@@ -21,24 +25,20 @@ export function DocsLinkingList({
   const { docs } = useDocsLinking(client, port, target);
   if (docs.length === 0) return null;
   return (
-    <section
-      aria-label="Linked docs"
-      className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] px-3 py-1.5 text-xs"
-    >
-      <span className="text-[var(--color-muted-foreground)]">Docs</span>
-      {docs.map((d) => (
-        <button
-          key={d.doc.id}
-          type="button"
-          className="rounded px-1 hover:bg-[var(--color-muted)]"
-          onClick={() => onOpenDoc(d.doc.id)}
-        >
-          {d.doc.title}
-          <span className="ml-1 text-[var(--color-muted-foreground)]">
-            {d.rel}
-          </span>
-        </button>
-      ))}
+    <section aria-label="Linked docs" className={styles.strip}>
+      <span className={styles.label} aria-hidden="true">
+        Docs
+      </span>
+      <ul className={styles.list}>
+        {docs.map((d) => (
+          <li key={d.doc.id}>
+            <ChipButton onClick={() => onOpenDoc(d.doc.id)}>
+              {d.doc.title}
+              <span className={styles.rel}>{d.rel}</span>
+            </ChipButton>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

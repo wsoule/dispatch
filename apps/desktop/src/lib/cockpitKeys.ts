@@ -1,5 +1,4 @@
 import { COCKPIT_LANES, type CockpitLaneId } from './cockpit';
-import { stepKey } from './virtualRows';
 
 // The Cockpit's keyboard model, pure so every key is testable without a DOM: which command
 // a keystroke is, and where the cursor lands after a move.
@@ -78,6 +77,20 @@ export function resolveCockpitKey(
   }
   if (input.key === 'g') return { command: null, gArmedAt: input.at };
   return { command: KEYS[input.key] ?? null, gArmedAt: null };
+}
+
+/** The key `delta` steps from `current` along `keys`, clamped to the ends; the first key
+ * when nothing is focused yet, `null` for an empty list. */
+export function stepKey(
+  keys: readonly string[],
+  current: string | null,
+  delta: number
+): string | null {
+  if (keys.length === 0) return null;
+  const at = current === null ? -1 : keys.indexOf(current);
+  if (at === -1) return keys[0] ?? null;
+  const next = Math.min(Math.max(at + delta, 0), keys.length - 1);
+  return keys[next] ?? null;
 }
 
 export interface CockpitCursor {

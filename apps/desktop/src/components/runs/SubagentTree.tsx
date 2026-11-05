@@ -3,21 +3,20 @@ import type {
   SubagentTreeNode,
 } from '@dispatch-foo/core/browser';
 import { flattenSubagentTree, nestSubagents } from '@dispatch-foo/core/browser';
-import { Bot, ChevronDown, ChevronRight } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { cx, Disclosure } from '@dispatch/ui';
+import { Bot, ChevronRight } from 'lucide-react';
+import { type ComponentProps, useMemo, useState } from 'react';
 
-import { cn } from '@/lib/utils';
-import { formatElapsed } from '@/ui/ai/use-elapsed';
-import { StateDot } from '@/ui/chrome/StateDot';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/ui/collapsible';
-import type { FeedState } from '@/ui/lib/feedState';
+import { formatElapsed } from '../../hooks/useElapsed';
+import { StateMark } from '../status/StateMark';
+import styles from './SubagentTree.module.css';
 
-/** How a sub-agent's status reads as a feed state, so its dot matches every other run's. */
-function dotState(status: SubagentNode['status']): FeedState {
+/** How a sub-agent's status reads as a state mark, so its dot matches every other run's:
+ * running is in flight, failed or stopped is the failure mark, and a finished one is the
+ * filled neutral "done" disc (never green beside a red failure). */
+function dotState(
+  status: SubagentNode['status']
+): ComponentProps<typeof StateMark>['state'] {
   switch (status) {
     case 'running':
       return 'working';
@@ -25,7 +24,7 @@ function dotState(status: SubagentNode['status']): FeedState {
     case 'stopped':
       return 'failed';
     default:
-      return 'ready';
+      return 'done';
   }
 }
 
@@ -90,54 +89,50 @@ export function SubagentTree({
   const anyRunning = nodes.some((n) => n.status === 'running');
 
   return (
-    <Collapsible
-      open={open}
-      onOpenChange={setOpen}
-      className={cn(
-        'bg-surface-quaternary flex flex-col rounded-card border-[0.5px] border-border',
-        className
-      )}
-      data-testid="subagent-tree"
-    >
-      <CollapsibleTrigger
-        render={
+    <div className={cx(styles.tree, className)}>
+      <Disclosure
+        variant="plain"
+        open={open}
+        onOpenChange={setOpen}
+        data-testid="subagent-tree"
+        trigger={({ open: shown, props }) => (
           <button
-            type="button"
-            className="hover:bg-surface-hover rounded-card flex h-9 w-full items-center gap-2 px-2.5 text-left transition-colors duration-100"
+            {...props}
+            className={styles.header}
             aria-label={`Sub-agents: ${subagentHeadline(nodes)}`}
-          />
-        }
-      >
-        {open ? (
-          <ChevronDown className="text-muted-foreground size-3.5 shrink-0" />
-        ) : (
-          <ChevronRight className="text-muted-foreground size-3.5 shrink-0" />
+          >
+            <ChevronRight
+              className={cx(styles.icon, shown ? styles.open : undefined)}
+              size={14}
+              strokeWidth={1.8}
+              aria-hidden
+            />
+            <Bot
+              className={styles.icon}
+              size={14}
+              strokeWidth={1.8}
+              aria-hidden
+            />
+            <span className={styles.title}>Sub-agents · {nodes.length}</span>
+            <span
+              className={cx(
+                styles.headline,
+                'num',
+                anyRunning ? styles.headlineLive : undefined
+              )}
+            >
+              {subagentHeadline(nodes)}
+            </span>
+          </button>
         )}
-        <Bot className="text-muted-foreground size-3.5 shrink-0" />
-        <span className="text-[13px] font-medium text-(--text-secondary)">
-          Sub-agents · {nodes.length}
-        </span>
-        <span
-          className={cn(
-            'text-muted-foreground ml-auto shrink-0 text-[12px] font-book tabular-nums',
-            anyRunning && 'text-foreground'
-          )}
-        >
-          {subagentHeadline(nodes)}
-        </span>
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <ul
-          role="tree"
-          aria-label="Sub-agents"
-          className="shadow-hairline-top flex max-h-56 flex-col overflow-y-auto py-1"
-        >
+      >
+        <ul role="tree" aria-label="Sub-agents" className={styles.list}>
           {rows.map((row) => (
             <SubagentRow key={row.id} node={row} now={now} />
           ))}
         </ul>
-      </CollapsibleContent>
-    </Collapsible>
+      </Disclosure>
+    </div>
   );
 }
 
@@ -151,45 +146,43 @@ function SubagentRow({ node, now }: { node: SubagentTreeNode; now: number }) {
       ? (node.summary ??
         (node.lastTool !== undefined ? `using ${node.lastTool}` : null))
       : node.summary;
+  const broken = node.status === 'failed' || node.status === 'stopped';
   return (
     <li
       role="treeitem"
       aria-level={node.depth + 1}
       aria-label={`${node.label}, ${statusWord(node.status)}`}
-      className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 px-2.5 py-1 text-[13px]"
-      style={{ paddingLeft: `${10 + node.depth * 16}px` }}
+      className={styles.row}
+      // Each level of nesting steps the row in by 16px past the 10px edge.
+      style={{ paddingInlineStart: `${10 + node.depth * 16}px` }}
     >
-      <span className="flex min-w-0 items-center gap-2">
-        <StateDot state={state} pulse={node.status === 'running'} />
-        <span className="min-w-0 truncate" title={node.label}>
+      <span className={styles.lead}>
+        <StateMark
+          state={state}
+          variant="dot"
+          pulse={node.status === 'running'}
+        />
+        <span className={styles.label} title={node.label}>
           {node.label}
         </span>
         {node.type !== undefined && (
-          <span className="text-muted-foreground font-book shrink-0 text-[12px]">
-            {node.type}
-          </span>
+          <span className={styles.type}>{node.type}</span>
         )}
       </span>
-      <span className="text-muted-foreground font-book flex shrink-0 items-center gap-2 text-[12px] tabular-nums">
+      <span className={cx(styles.facts, 'num')}>
         <span>
           {node.toolUses} {node.toolUses === 1 ? 'call' : 'calls'}
         </span>
         {elapsed !== null && <span>{elapsed}</span>}
         <span
-          className={cn(
-            'w-14 text-right',
-            (node.status === 'failed' || node.status === 'stopped') &&
-              'text-state-failed'
-          )}
+          className={cx(styles.status, broken ? 'toneText' : undefined)}
+          data-tone={broken ? 'danger' : undefined}
         >
           {statusWord(node.status)}
         </span>
       </span>
       {tail !== undefined && tail !== null && tail !== '' && (
-        <span
-          className="text-muted-foreground font-book col-span-2 truncate pl-5 text-[12px]"
-          title={tail}
-        >
+        <span className={styles.tail} title={tail}>
           {tail}
         </span>
       )}

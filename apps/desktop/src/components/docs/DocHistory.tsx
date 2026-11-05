@@ -1,4 +1,5 @@
 import type { ApiClient, DocRevisionInfo } from '@dispatch/client';
+import { Button, Checkbox, cx } from '@dispatch/ui';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 
@@ -7,8 +8,7 @@ import { describeError } from '../../lib/actionFeedback';
 import { docDiffCacheKey, docDiffPatch, revisionAuthor } from '../../lib/docs';
 import { relativeTime } from '../../lib/landingView';
 import { DiffSurface } from '../code/DiffSurface';
-import { Button } from '@/ui/button';
-import { Checkbox } from '@/ui/checkbox';
+import styles from './DocHistory.module.css';
 
 interface DocHistoryProps {
   client: ApiClient;
@@ -69,48 +69,41 @@ export function DocHistory({
 
   const now = Date.now();
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className={styles.history}>
       {error !== null && (
-        <p className="p-3 text-xs text-[var(--color-destructive)]">
+        <p className={cx('toneText', styles.message)} data-tone="danger">
           {error.message}
         </p>
       )}
       {restoreError !== null && (
         <p
           role="alert"
-          className="border-b border-[var(--color-border)] px-3 py-1 text-xs text-[var(--color-destructive)]"
+          className={cx('toneText', styles.alert)}
+          data-tone="danger"
         >
           {restoreError}
         </p>
       )}
-      <ul
-        aria-label="History"
-        className="max-h-[40%] shrink-0 overflow-auto border-b border-[var(--color-border)] p-1 text-xs"
-      >
+      <ul aria-label="History" className={styles.list}>
         {revisions.map((r) => (
-          <li
-            key={r.id}
-            className="rounded-control hover:bg-surface-control flex items-center gap-2 px-2 py-1"
-          >
+          <li key={r.id} className={styles.row}>
             <Checkbox
+              label={`Compare rev ${r.n ?? '-'}`}
+              hideLabel
               checked={picked.includes(r.id)}
-              onCheckedChange={(on) => pick(r.id, on)}
-              aria-label={`Compare rev ${r.n ?? '-'}`}
+              onChange={(on) => pick(r.id, on)}
             />
-            <span className="shrink-0 font-medium">{`rev ${r.n ?? '-'}`}</span>
-            <span className="shrink-0 font-mono">{revisionAuthor(r)}</span>
-            <span className="shrink-0 text-[var(--color-muted-foreground)]">
-              {r.cause}
+            <span className={cx('num', styles.rev)}>{`rev ${r.n ?? '-'}`}</span>
+            <span className={cx('mono', styles.author)}>
+              {revisionAuthor(r)}
             </span>
-            <span className="min-w-0 flex-1 truncate">{r.summary}</span>
-            <time
-              dateTime={r.createdAt}
-              className="shrink-0 text-[var(--color-muted-foreground)]"
-            >
+            <span className={styles.cause}>{r.cause}</span>
+            <span className={styles.summary}>{r.summary}</span>
+            <time dateTime={r.createdAt} className={cx('num', styles.time)}>
               {relativeTime(r.createdAt, now)}
             </time>
             {canWrite && (
-              <Button size="sm" variant="ghost" onClick={() => restore(r)}>
+              <Button size="sm" variant="quiet" onClick={() => restore(r)}>
                 Restore
               </Button>
             )}
@@ -118,20 +111,20 @@ export function DocHistory({
         ))}
       </ul>
       {range === null ? (
-        <p className="p-3 text-xs text-[var(--color-muted-foreground)]">
+        <p className={styles.message}>
           {pair.length === 1
             ? 'Pick another revision to compare.'
             : 'Pick two revisions to compare them.'}
         </p>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className={styles.diff}>
           {diffError !== null && (
-            <p className="p-3 text-xs text-[var(--color-destructive)]">
+            <p className={cx('toneText', styles.message)} data-tone="danger">
               {diffError.message}
             </p>
           )}
           {diff?.spent === true && (
-            <p className="px-3 py-1 text-xs text-[var(--color-muted-foreground)]">
+            <p className={styles.note}>
               The diff hit its work limit, so some blocks show as replaced
               whole.
             </p>

@@ -11,6 +11,7 @@ import {
   waitFor,
 } from '@testing-library/react';
 import { expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import { useState } from 'react';
 
 import type { OverseerSession } from '../../hooks/useOverseerSession';
@@ -617,8 +618,11 @@ test('a settled turn shows its narration and its reply once each', () => {
   expect(screen.getAllByText('Both wait on review.')).toHaveLength(1);
 });
 
-// Narration is the agent's own voice, so it sits in the reply's column, but
-// muted: the answer stays what the eye lands on.
+// Narration is the agent's own voice, so it sits in the reply's column as
+// Markdown, but in its own quieter row: the answer stays what the eye lands on.
+// The hooks are the rows' data-speaker (narration beside the reply's
+// assistant), the Markdown inside each, and the module's quieter ink, which
+// only the narration class takes.
 test('narration reads as the agent’s quieter voice beside its reply', () => {
   render(
     <OverseerChat
@@ -642,12 +646,25 @@ test('narration reads as the agent’s quieter voice beside its reply', () => {
     />
   );
   const narration = screen.getByTestId('overseer-narration');
-  const reply = screen.getByText('Both wait on review.').closest('div');
-  expect(narration.className).toContain('self-stretch');
-  expect(
-    narration.querySelector('[data-slot="markdown"]')?.className
-  ).toContain('text-muted-foreground');
-  expect(reply?.className ?? '').not.toContain('text-muted-foreground');
+  const narrationMd = narration.querySelector('[data-slot="markdown"]');
+  expect(narrationMd?.textContent).toBe('Checking the queue.');
+  const reply = screen.getByText('Both wait on review.');
+  expect(narration.contains(reply)).toBe(false);
+  const replyMd = reply.closest('[data-slot="markdown"]');
+  expect(replyMd).not.toBeNull();
+  expect(replyMd).not.toBe(narrationMd);
+  expect(narration.getAttribute('data-speaker')).toBe('narration');
+  expect(reply.closest('[data-speaker]')?.getAttribute('data-speaker')).toBe(
+    'assistant'
+  );
+  // CSS-module classes render as '' under bun test, so the quieter voice is
+  // read from the module: narration takes the secondary ink, the reply none.
+  const css = readFileSync(
+    new URL('./OverseerChat.module.css', import.meta.url),
+    'utf8'
+  );
+  expect(css).toMatch(/\.narration\s*\{[^}]*color:\s*var\(--text-2\)/);
+  expect(css).not.toMatch(/\.reply\s*\{[^}]*color:/);
 });
 
 // Live text grows inside one row, which moves neither the row count nor the
@@ -935,11 +952,18 @@ test('the opening composer offers the model picker and an open conversation name
     },
   });
   const first = render(<ChatWithDraft overseer={fresh} />);
-  const picker = screen.getByRole('combobox', { name: 'Choose model' });
-  expect(picker.textContent).toContain('Opus 5.5');
-  expect(
-    screen.getByRole('combobox', { name: 'Choose effort' }).textContent
-  ).toContain('Default');
+  // A native select's textContent holds every option, so the shown choice is
+  // read from its value and its selected option.
+  const picker = screen.getByRole<HTMLSelectElement>('combobox', {
+    name: 'Choose model',
+  });
+  expect(picker.value).toBe('claude-opus-5-5');
+  expect(picker.selectedOptions[0]?.textContent).toContain('Opus 5.5');
+  const effort = screen.getByRole<HTMLSelectElement>('combobox', {
+    name: 'Choose effort',
+  });
+  expect(effort.value).toBe('default');
+  expect(effort.selectedOptions[0]?.textContent).toContain('Default');
   first.unmount();
 
   render(
@@ -951,26 +975,69 @@ test('the opening composer offers the model picker and an open conversation name
     />
   );
   // An open conversation's picker shows its own model; a change applies from its next turn.
-  expect(
-    screen.getByRole('combobox', { name: 'Choose model' }).textContent
-  ).toContain('Fable 5.1');
+  const open = screen.getByRole<HTMLSelectElement>('combobox', {
+    name: 'Choose model',
+  });
+  expect(open.value).toBe('claude-fable-5-1');
+  expect(open.selectedOptions[0]?.textContent).toContain('Fable 5.1');
 });
 
-// Card headings are 12px/500 sentence case, never uppercase tracked labels, and the
-// tool id beside them is book-weight sans.
-test('the confirm card heading is 12px sentence case and its tool id is sans', () => {
+// The confirm card is a warning-toned DecisionCard: its heading is the card's
+// question in sentence case (never uppercase tracked capitals), and the tool id
+// beside it is shown in the mono face, being a machine-read name (Q5).
+test('the confirm card heading is sentence case and its tool id is shown', () => {
   const overseer = overseerSession({
     conversationId: 'w-1',
     record: overseerRecord({ pendingActions: [overseerAction()] }),
   });
   render(<OverseerChat overseer={overseer} />);
   const heading = screen.getByText('Needs your approval');
-  expect(heading.className).toContain('text-[12px]');
-  expect(heading.className).toContain('font-medium');
-  expect(heading.className).not.toContain('uppercase');
+  expect(heading.closest('[data-tone="warning"]')).not.toBeNull();
+  // Sentence case lives in the words themselves: neither the card's module
+  // nor this chat's turns them to capitals.
+  for (const file of [
+    '../gates/DecisionCard.module.css',
+    './OverseerChat.module.css',
+  ]) {
+    const css = readFileSync(new URL(file, import.meta.url), 'utf8');
+    expect(css).not.toMatch(/text-transform:\s*uppercase/);
+  }
   const toolId = screen.getByText('cancel_run');
-  expect(toolId.className).toContain('font-book');
-  expect(toolId.className).not.toContain('font-mono');
+  expect(toolId.classList.contains('mono')).toBe(true);
+  expect(heading.closest('[data-slot="overseer-confirm"]')).toBe(
+    toolId.closest('[data-slot="overseer-confirm"]')
+  );
+});
+
+// The approve and deny pair are plain buttons in the card's actions, named
+// after the action ("Approve: …", "Deny: …", which e2e clicks), not radio
+// answers.
+test('Approve and Deny are buttons inside the confirm card', async () => {
+  const decisions: unknown[] = [];
+  render(
+    <OverseerChat
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: overseerRecord({ pendingActions: [overseerAction()] }),
+        confirmAction: (actionId: string, approve: boolean) => {
+          decisions.push([actionId, approve]);
+          return Promise.resolve();
+        },
+      })}
+    />
+  );
+  const approve = screen.getByRole('button', {
+    name: 'Approve: Cancel run r-1',
+  });
+  const deny = screen.getByRole('button', { name: 'Deny: Cancel run r-1' });
+  const card = approve.closest<HTMLElement>('[data-slot="overseer-confirm"]');
+  expect(card).not.toBeNull();
+  expect(card?.contains(deny)).toBe(true);
+  expect(card?.textContent).toContain('Needs your approval');
+  expect(card?.textContent).toContain('Cancel run r-1');
+  expect(card?.querySelector('[role="radio"]')).toBeNull();
+  await clickAndSettle(approve);
+  expect(decisions).toEqual([['act-1', true]]);
 });
 
 test('a conversation takes a message mid-turn and offers Stop', () => {
@@ -1011,12 +1078,16 @@ test('an open conversation shows its own model and effort in the pickers', () =>
       })}
     />
   );
-  expect(
-    screen.getByRole('combobox', { name: 'Choose model' }).textContent
-  ).toContain('Opus 5.5');
-  expect(
-    screen.getByRole('combobox', { name: 'Choose effort' }).textContent
-  ).toContain('High');
+  const model = screen.getByRole<HTMLSelectElement>('combobox', {
+    name: 'Choose model',
+  });
+  expect(model.value).toBe('claude-opus-5-5');
+  expect(model.selectedOptions[0]?.textContent).toContain('Opus 5.5');
+  const effort = screen.getByRole<HTMLSelectElement>('combobox', {
+    name: 'Choose effort',
+  });
+  expect(effort.value).toBe('high');
+  expect(effort.selectedOptions[0]?.textContent).toContain('High');
 });
 
 test('typing a slash suggests the session’s commands and a pick fills the draft', () => {
@@ -1043,10 +1114,11 @@ test('typing a slash suggests the session’s commands and a pick fills the draf
   );
   const box = screen.getByRole('textbox', { name: 'Follow-up message' });
   fireEvent.change(box, { target: { value: '/co' } });
-  expect(screen.queryByRole('button', { name: /^review/ })).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: /^compact/ }));
+  // The '/' list is an inline listbox of options; the caret stays in the box.
+  expect(screen.queryByRole('option', { name: /^review/ })).toBeNull();
+  fireEvent.click(screen.getByRole('option', { name: /^compact/ }));
   expect((box as HTMLTextAreaElement).value).toBe('/compact ');
-  expect(screen.queryByRole('button', { name: /^compact/ })).toBeNull();
+  expect(screen.queryByRole('option', { name: /^compact/ })).toBeNull();
 });
 
 test('actions queued together share one card, and Approve both decides each in turn', async () => {
@@ -1325,15 +1397,16 @@ test('a pasted screenshot alone can be sent, and the sent line shows it', async 
   );
 });
 
-// A tool chip's state as ToolChip draws it: a failed chip washes red, a
-// running one shimmers its label (the same reading RunLogView.test.tsx makes).
-function chipState(label: string): 'running' | 'done' | 'failed' {
-  const chip = screen.getByText(label).closest('[class*="rounded-chip"]');
+// A tool chip's state as ToolChip draws it, read off its stable hooks: the
+// chip's data-state, and a running one shimmers its label (data-shimmer).
+function chipState(label: string): string | undefined {
+  const chip = screen
+    .getByText(label)
+    .closest<HTMLElement>('[data-slot="tool-chip"]');
   if (chip === null) throw new Error(`no chip shows ${label}`);
-  if (chip.className.includes('text-red')) return 'failed';
-  return chip.querySelector('[class*="shimmer-text"]') === null
-    ? 'done'
-    : 'running';
+  const shimmers = chip.querySelector('[data-shimmer]') !== null;
+  expect(shimmers).toBe(chip.dataset.state === 'running');
+  return chip.dataset.state;
 }
 
 test('tool chips say how each call went, and a call left running ends with its turn', () => {
@@ -1412,4 +1485,177 @@ test('the status line says how full the context is', () => {
   expect(screen.queryByTestId('overseer-context')).toBeNull();
   rerender(chat({ contextLimit: 150_000 }));
   expect(screen.queryByTestId('overseer-context')).toBeNull();
+});
+
+// ⌘F opens the find bar only while the chat has a layout box; happy-dom has no
+// layout, so the test gives the chat's root an offsetParent by hand.
+function openFind(): HTMLInputElement {
+  const root = screen.getByRole('log').parentElement;
+  if (root === null) throw new Error('no chat root');
+  Object.defineProperty(root, 'offsetParent', {
+    value: document.body,
+    configurable: true,
+  });
+  act(() => {
+    fireEvent.keyDown(window, { key: 'f', metaKey: true });
+  });
+  return screen.getByRole<HTMLInputElement>('searchbox', {
+    name: 'Find in this conversation',
+  });
+}
+
+function findSession(): OverseerSession {
+  return overseerSession({
+    conversationId: 'w-1',
+    record: overseerRecord({
+      messages: [
+        { role: 'user', text: 'status?', at: '2026-08-10T00:00:01Z' },
+        {
+          role: 'assistant',
+          text: 'Two runs wait on review.',
+          at: '2026-08-10T00:00:02Z',
+        },
+      ],
+    }),
+  });
+}
+
+test('⌘F stays with the page while the chat has no layout box', () => {
+  render(<OverseerChat overseer={findSession()} />);
+  const root = screen.getByRole('log').parentElement;
+  if (root === null) throw new Error('no chat root');
+  Object.defineProperty(root, 'offsetParent', {
+    value: null,
+    configurable: true,
+  });
+  fireEvent.keyDown(window, { key: 'f', metaKey: true });
+  expect(screen.queryByRole('searchbox')).toBeNull();
+});
+
+// Escape closes the find bar at once, with text in it or not (the legacy
+// behaviour: SearchField's own clear-first Escape is caught before it), and
+// goes no further, so a focus or the app's keyboard never takes it too.
+test('the find bar filters, and one Escape closes it and shows everything', () => {
+  render(<OverseerChat overseer={findSession()} />);
+  const field = openFind();
+  fireEvent.change(field, { target: { value: 'review' } });
+  expect(screen.getByText('1 match')).toBeDefined();
+  expect(screen.queryByText('status?')).toBeNull();
+
+  let reachedPage = 0;
+  const onPage = () => {
+    reachedPage += 1;
+  };
+  window.addEventListener('keydown', onPage);
+  try {
+    fireEvent.keyDown(field, { key: 'Escape' });
+    expect(screen.queryByRole('searchbox')).toBeNull();
+    expect(screen.getByText('status?')).toBeDefined();
+    expect(reachedPage).toBe(0);
+  } finally {
+    window.removeEventListener('keydown', onPage);
+  }
+});
+
+test('Close find shuts the bar and shows the whole conversation', () => {
+  render(<OverseerChat overseer={findSession()} />);
+  const field = openFind();
+  fireEvent.change(field, { target: { value: 'review' } });
+  const done = screen.getByRole('button', { name: 'Close find' });
+  expect(done.textContent).toBe('Done');
+  fireEvent.click(done);
+  expect(screen.queryByRole('searchbox')).toBeNull();
+  expect(screen.getByText('status?')).toBeDefined();
+});
+
+// A tool run's raw results wait behind a Disclosure: its trigger says what it
+// does and carries aria-expanded, and the details hold every call's text.
+test('a tool run opens its details through the Disclosure', () => {
+  const at = '2026-08-10T00:00:01Z';
+  render(
+    <OverseerChat
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: overseerRecord({
+          messages: [
+            { role: 'user', text: 'look around', at },
+            {
+              role: 'tool',
+              tool: 'list_runs',
+              text: '{"runs":[]}',
+              status: 'done',
+              at,
+            },
+          ],
+        }),
+      })}
+    />
+  );
+  const tools = screen.getByTestId('overseer-tools');
+  const toggle = screen.getByRole('button', { name: 'Details' });
+  expect(tools.contains(toggle)).toBe(true);
+  expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  expect(screen.queryByText('{"runs":[]}')).toBeNull();
+
+  fireEvent.click(toggle);
+  const open = screen.getByRole('button', { name: 'Hide details' });
+  expect(open.getAttribute('aria-expanded')).toBe('true');
+  const panelId = open.getAttribute('aria-controls');
+  expect(panelId).not.toBeNull();
+  const panel = document.getElementById(panelId ?? '');
+  expect(panel?.textContent).toContain('list_runs');
+  expect(panel?.textContent).toContain('{"runs":[]}');
+
+  fireEvent.click(open);
+  expect(
+    screen
+      .getByRole('button', { name: 'Details' })
+      .getAttribute('aria-expanded')
+  ).toBe('false');
+});
+
+// Starters and doors are chip buttons; a door opens through onOpenDoor.
+test('the starters are chip buttons', () => {
+  render(<ChatWithDraft overseer={overseerSession()} />);
+  const group = screen.getByRole('group', { name: 'Starter questions' });
+  const starters = group.querySelectorAll('button[data-chip-button]');
+  expect(starters).toHaveLength(4);
+});
+
+// Each decided action keeps an audit line in its outcome's tone, with the
+// words that say it, so the colour is never the only cue.
+test('outcome lines are toned by what happened', () => {
+  render(
+    <OverseerChat
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: overseerRecord({
+          messages: [
+            {
+              role: 'action',
+              actionId: 'act-1',
+              outcome: 'applied',
+              text: 'Applied: Dispatch t-1',
+              at: '2026-08-10T00:00:02Z',
+            },
+            {
+              role: 'action',
+              actionId: 'act-2',
+              outcome: 'denied',
+              text: 'Denied: Dispatch t-2',
+              at: '2026-08-10T00:00:03Z',
+            },
+          ],
+        }),
+      })}
+    />
+  );
+  const applied = screen.getByText(/^Applied: Dispatch /);
+  const denied = screen.getByText(/^Denied: Dispatch /);
+  expect(applied.closest('[data-tone]')?.getAttribute('data-tone')).toBe(
+    'success'
+  );
+  expect(denied.closest('[data-tone]')?.getAttribute('data-tone')).toBe(
+    'muted'
+  );
 });

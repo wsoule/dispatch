@@ -29,7 +29,8 @@ export interface ShellActions {
   openTask: (taskId: string, tab?: TaskTab, runId?: string) => void;
   /** The Threads view; `messageId` opens the thread holding that message. */
   openThread: (messageId: string | null) => void;
-  /** The task peek dialog over the current view. */
+  /** The quick look: the task in the 620px slide-over (TaskDrawer) over the current view,
+   * never a page change. Enter / o / "Open" go to `openTask` instead. */
   peekTask: (taskId: string) => void;
   /** Opens the creator, pre-filled from `preset` (see `createPreset`). */
   openCreateTask: (preset?: CreateTaskPreset) => void;

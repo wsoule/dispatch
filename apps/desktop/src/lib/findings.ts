@@ -1,4 +1,5 @@
 import type { Finding, FindingSeverity } from '@dispatch-foo/core/browser';
+import type { UiTone } from '@dispatch/ui';
 
 // Rendering order for the findings panel — most severe first, so a critical
 // finding is never scrolled past a page of minor ones.
@@ -24,17 +25,19 @@ export function severityLabel(severity: FindingSeverity): string {
   return SEVERITY_LABEL[severity];
 }
 
-// The pill's 8px dot: red for a critical finding, amber for an important one, and the muted
-// text colour for a minor one so it reads as a label rather than a warning.
-const SEVERITY_COLOR: Record<FindingSeverity, string> = {
-  critical: 'var(--red)',
-  important: 'var(--amber)',
-  minor: 'var(--text-muted)',
-};
-
-/** The CSS colour a severity's `LabelPill` dot paints in. */
-export function severityColor(severity: FindingSeverity): string {
-  return SEVERITY_COLOR[severity];
+/** The status tone a severity's chip carries: danger for a critical finding,
+ *  warning for an important one, and muted for a minor one so it reads as a
+ *  label rather than a warning. The chip's words (`severityLabel`) always say
+ *  the severity too, so the hue is never the only cue. */
+export function findingTone(severity: FindingSeverity): UiTone {
+  switch (severity) {
+    case 'critical':
+      return 'danger';
+    case 'important':
+      return 'warning';
+    case 'minor':
+      return 'muted';
+  }
 }
 
 /** Open findings only, bucketed by severity in `SEVERITY_ORDER`; a severity

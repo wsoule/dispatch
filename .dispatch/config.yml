@@ -64,8 +64,6 @@ verifySteps:
     command: moon run root:lint-md
   - name: lint-types
     command: moon run root:lint-types
-  - name: lint-chrome
-    command: moon run root:lint-chrome
   - name: check-licenses
     command: moon run root:check-licenses
   - name: check-ci-targets

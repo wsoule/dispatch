@@ -1,0 +1,51 @@
+/* What agents wrote to your personal memory (MemoryActivityList.tsx): one
+   row per change, its summary over when it happened and any undo error,
+   with the Undo button at the end. */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border-bottom: 1px solid var(--divider);
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.summary {
+  font-size: var(--fs);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.time {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.error {
+  font-size: var(--fs-xs);
+}
+
+.undo {
+  flex: none;
+}

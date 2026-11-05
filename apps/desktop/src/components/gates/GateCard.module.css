@@ -1,0 +1,18 @@
+/* A message's answer affordance (GateCard.tsx): quiet notes, rows of
+   choice buttons, and the wake and registration Notices' copy. */
+.note {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* The registration's agent, client and asker: ids that may be long. */
+.who {
+  overflow-wrap: anywhere;
+}

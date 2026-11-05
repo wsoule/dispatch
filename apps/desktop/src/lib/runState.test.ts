@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 
 import type { RunDisposition } from './runState';
 import {
+  closedOutMark,
   CONTINUE_PROMPT,
   continueMessage,
   deriveRunDisposition,
@@ -11,6 +12,7 @@ import {
   liveReviewAgentFor,
   postFailWorkLabel,
   runDispositionLabel,
+  runStateLabel,
   runSurveyNotice,
   tasksWithFinishedRun,
 } from './runState';
@@ -45,6 +47,23 @@ function run(over: Partial<RunMeta> = {}): RunMeta {
     ...over,
   } as RunMeta;
 }
+
+// The whose-move words: an approval gate reads as the ask, a finished run as the review it
+// is waiting for, and a dependency-blocked task borrows the same vocabulary.
+describe('runStateLabel', () => {
+  test.each([
+    ['provisioning', 'Provisioning'],
+    ['running', 'Working'],
+    ['awaiting-approval', 'Approve'],
+    ['failed', 'Failed'],
+    ['interrupted-dirty', 'Interrupted'],
+    ['blocked', 'Blocked'],
+    ['finished', 'Review'],
+    ['cancelled', 'Cancelled'],
+  ] as [RunState | 'blocked', string][])('%s -> %s', (state, expected) => {
+    expect(runStateLabel(state)).toBe(expected);
+  });
+});
 
 describe('deriveRunDisposition', () => {
   test.each([
@@ -113,6 +132,29 @@ describe('deriveRunDisposition', () => {
       )
     ).toBe('closed');
   });
+});
+
+describe('closedOutMark', () => {
+  // Landed work (merged, or handed on as a PR) draws the check; anything else closed out
+  // draws the bar, so a discarded run never claims its work is in.
+  test.each([
+    ['merge', 'done'],
+    ['pr', 'done'],
+    ['discard', 'closed'],
+    [undefined, 'closed'],
+  ] as [RunMeta['reviewAction'], 'done' | 'closed'][])(
+    '%s -> %s',
+    (reviewAction, expected) => {
+      expect(
+        closedOutMark(
+          run({
+            reviewedAt: '2026-11-02T10:00:00.000Z',
+            ...(reviewAction === undefined ? {} : { reviewAction }),
+          })
+        )
+      ).toBe(expected);
+    }
+  );
 });
 
 describe('continueMessage', () => {

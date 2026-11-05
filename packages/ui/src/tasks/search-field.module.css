@@ -1,0 +1,116 @@
+/* Gr8r's search field: a --control-border edge (3:1), --r-sm, the
+   surface fill, a leading magnifier in --text-4 and the placeholder in
+   --text-3. sm is a toolbar's 26px field in 12.5px type (ViewToolbar's
+   look), md a form's 30px field in body type. While it holds text a quiet
+   22px (sm 20px) clear button sits inside the right edge; the field pads
+   its text clear of it. The wrapper takes its container's width. */
+
+.field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.icon {
+  position: absolute;
+  left: 9px;
+  color: var(--text-4);
+  pointer-events: none;
+}
+
+.md .icon {
+  left: 10px;
+}
+
+.input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--control-border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-weight: var(--fw-regular);
+}
+
+.sm .input {
+  height: var(--h-sm);
+  padding: 0 8px 0 28px;
+  font-size: var(--fs-sm);
+}
+
+.md .input {
+  height: var(--h-md);
+  padding: 0 10px 0 31px;
+  font-size: var(--fs);
+}
+
+/* Room for the clear button, which replaces the browser's own. */
+.clearable .input {
+  padding-right: 30px;
+}
+
+.clearable .input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.input::placeholder {
+  color: var(--text-3);
+}
+
+/* Focus is the fields' ring (primitives.css): an accent border, a 1px
+   accent shadow and a soft halo, over a transparent outline so forced
+   colours still draw one. */
+.input:focus-visible {
+  border-color: var(--accent);
+  outline: 2px solid transparent;
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 0 4px var(--accent-soft);
+}
+
+/* The quiet icon button sized down to sit inside the field: Button reads
+   --h-sm for its square, so the slot redefines it. */
+.clear {
+  --h-sm: var(--h-xs);
+
+  position: absolute;
+  right: 4px;
+  display: flex;
+  align-items: center;
+}
+
+.sm .clear {
+  --h-sm: 20px;
+
+  right: 3px;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .input:hover:not(:focus-visible) {
+    border-color: var(--text-3);
+  }
+}
+
+/* 16px keeps iOS from zooming into the field; the toolbar's field grows
+   to the touch height with it. */
+@media (width <= 640px), (pointer: coarse) {
+  .sm .input,
+  .md .input {
+    font-size: 16px;
+  }
+
+  .sm .input {
+    height: var(--h-md);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .input {
+    transition:
+      border-color var(--dur) ease,
+      box-shadow var(--dur) ease;
+  }
+}

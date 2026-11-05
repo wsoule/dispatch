@@ -3,7 +3,6 @@ import {
   DEFAULT_STATUS_MODEL,
   fanoutCoverers,
   fanoutScope,
-  isCompletedStatus,
   isDoneStatus,
   isUnstartedStatus,
   statusModelOf,
@@ -13,7 +12,17 @@ import type {
   MilestoneProgress,
   MilestoneProgressChild,
 } from '@dispatch/client';
-import { Waypoints } from 'lucide-react';
+import {
+  Button,
+  cx,
+  EmptyState,
+  Menu,
+  type MenuEntry,
+  Skeleton,
+  SkeletonRows,
+  Tooltip,
+} from '@dispatch/ui';
+import { ChevronDown, Waypoints } from 'lucide-react';
 import {
   type ReactNode,
   useCallback,
@@ -34,7 +43,11 @@ import {
   concurrencyLabel,
 } from '../../lib/milestoneConcurrency';
 import { rollupMilestoneStatus } from '../../lib/milestoneRollup';
-import type { WorkMilestoneOptions } from '../../lib/milestoneSession';
+import {
+  spendCellWords,
+  waveSteps,
+  type WorkMilestoneOptions,
+} from '../../lib/milestoneSession';
 import { pendingStarts } from '../../lib/optimisticDispatch';
 import { tasksWithFinishedRun } from '../../lib/runState';
 import { assigneeRef } from '../../lib/taskDisplay';
@@ -53,6 +66,7 @@ import {
   viewerHolderOf,
 } from './flightPlan';
 import { type FlightHeaderStats, FlightPlanHeader } from './FlightPlanHeader';
+import styles from './FlightPlanView.module.css';
 import {
   childrenByParent,
   DIRECT_BAND,
@@ -67,17 +81,6 @@ import {
   flightWaveViews,
   queuePositions,
 } from './flightViews';
-import { cn } from '@/lib/utils';
-import { SelectPill } from '@/ui/ai/pill';
-import { EmptyState } from '@/ui/chrome';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from '@/ui/dropdown-menu';
-import { Spinner } from '@/ui/spinner';
 
 export interface FlightPlanProps {
   containerId: string;
@@ -92,7 +95,7 @@ export interface FlightPlanProps {
   onPeekTask?: (taskId: string) => void;
   /** Where a node opens on click or Enter: a split pane beside the plan (the default), or
    * the full task page — for a host that is itself a pane. */
-  openIn?: 'pane' | 'page';
+  openIn?: 'peek' | 'page';
   /** The branch lane beneath the plan; on by default. */
   showBranches?: boolean;
   /** Take keyboard focus once the plan is on screen. */
@@ -103,6 +106,14 @@ export interface FlightPlanProps {
   /** Called once the ask above opened the dialog, so it is not replayed. */
   onSendAgentsServed?: (nonce: number) => void;
   className?: string;
+}
+
+const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
+
+/** A fan-out's agent slots as the slots picker's name and hint say them: "1 slot",
+ * "3 slots". */
+function slotsText(slots: number): string {
+  return `${slots} ${slots === 1 ? 'slot' : 'slots'}`;
 }
 
 // A clock for estimates that age: remaining time on a running node shrinks with it.
@@ -165,7 +176,7 @@ export function FlightPlan({
   onDispatchFailed,
   onOpenTask,
   onPeekTask,
-  openIn = 'pane',
+  openIn = 'peek',
   showBranches = true,
   focusOnMount = false,
   sendAgentsRequest = null,
@@ -621,75 +632,83 @@ export function FlightPlan({
   );
 
   // One container's fan-out verbs — the header's for the plan's own container, a band's
-  // for its milestone — over the same session API the Milestones page uses.
+  // for its milestone — over the same session API the Milestones page uses. The header
+  // (`band` false) shows the spend and the waves as strip cells instead, so its controls
+  // are only the verbs (Pause and Stop while running; the paused pill, Resume, Raise
+  // ceiling… and Stop while paused), icon-only so the strip keeps the room (owner
+  // decisions 2026-11-04); a band keeps its spend pill, its wave strip, its worded verbs
+  // and its Open button.
   const fanoutFor = useCallback(
-    (milestone: TaskListItem, band: boolean): ReactNode => {
-      const milestoneId = milestone.meta.id;
-      const progress = data.milestoneProgressById.get(milestoneId);
-      const session = progress?.session ?? null;
-      const progressChildren = progress?.children ?? [];
-      const landable =
-        session?.state !== 'active' &&
-        session?.state !== 'paused' &&
-        progressChildren.length > 0 &&
-        progressChildren.every((c) => isDoneStatus(c.status, model)) &&
-        !isCompletedStatus(milestone.meta.status, model);
-      const choices = concurrencyChoices(
-        data.config?.orchestrator.milestoneConcurrency ?? 3,
-        data.config?.orchestrator.maxConcurrency
-      );
-      return (
-        <>
-          {!band && session?.state === 'active' && (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <SelectPill aria-label={`Agent slots for ${milestoneId}`} />
-                }
-              >
-                {session.concurrency}{' '}
-                {session.concurrency === 1 ? 'slot' : 'slots'}
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[96px]">
-                <DropdownMenuRadioGroup
-                  value={String(session.concurrency)}
-                  onValueChange={(value) => {
-                    const next = Number(value);
-                    if (next !== session.concurrency)
-                      void setCeiling(milestoneId, next);
-                  }}
-                >
-                  {choices.map((choice) => (
-                    <DropdownMenuRadioItem key={choice} value={String(choice)}>
-                      {concurrencyLabel(choice)}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-          <FanoutControls
-            milestone={milestone}
-            model={model}
-            progress={progress}
-            landable={landable}
-            phases={false}
-            onSendAgents={(id) => setDialog({ milestoneId: id, mode: 'start' })}
-            onPause={data.handlePauseMilestone}
-            onResume={data.handleResumeMilestone}
-            onRaiseCeiling={(id) =>
-              setDialog({ milestoneId: id, mode: 'raise' })
-            }
-            onStop={data.handleStopMilestone}
-            onLand={data.handleLandMilestone}
-            onOpenMilestone={(id) => onOpenTask(id)}
-            showOpen={band}
-          />
-        </>
-      );
-    },
-    [data, model, setCeiling, onOpenTask]
+    (milestone: TaskListItem, band: boolean): ReactNode => (
+      <FanoutControls
+        milestone={milestone}
+        model={model}
+        progress={data.milestoneProgressById.get(milestone.meta.id)}
+        phases={false}
+        spend={band}
+        waves={band}
+        onSendAgents={(id) => setDialog({ milestoneId: id, mode: 'start' })}
+        onPause={data.handlePauseMilestone}
+        onResume={data.handleResumeMilestone}
+        onRaiseCeiling={(id) => setDialog({ milestoneId: id, mode: 'raise' })}
+        onStop={data.handleStopMilestone}
+        onLand={data.handleLandMilestone}
+        onOpenMilestone={(id) => onOpenTask(id)}
+        showOpen={band}
+        iconVerbs={!band}
+      />
+    ),
+    [data, model, onOpenTask]
   );
+
+  // The plan's own live session's slots control, drawn in the header's slots cell beside
+  // the slots text that already prints the total: an icon button whose name says the
+  // current slots, opening the choices as radio rows, with a library Tooltip saying what
+  // it does (the cell's own hint stays away while the pointer is on it or its menu is
+  // open, so the two never stack). Picking another one pauses and resumes the session at
+  // it. Null while the container has no active session; FanoutControls' own concurrency
+  // picker only renders while no session runs.
+  const slotsPickerFor = (milestone: TaskListItem): ReactNode => {
+    const milestoneId = milestone.meta.id;
+    const session =
+      data.milestoneProgressById.get(milestoneId)?.session ?? null;
+    if (session?.state !== 'active') return null;
+    const items: MenuEntry[] = concurrencyChoices(
+      data.config?.orchestrator.milestoneConcurrency ?? 3,
+      data.config?.orchestrator.maxConcurrency
+    ).map((choice) => ({
+      kind: 'radio',
+      id: String(choice),
+      label: concurrencyLabel(choice),
+      checked: choice === session.concurrency,
+      onSelect: () => {
+        if (choice !== session.concurrency)
+          void setCeiling(milestoneId, choice);
+      },
+    }));
+    const name = `Agent slots for ${milestoneId}: ${slotsText(session.concurrency)}`;
+    return (
+      <Menu
+        label={`Agent slots for ${milestoneId}`}
+        items={items}
+        align="end"
+        trigger={(props) => (
+          <Tooltip
+            content={`Change the agent slots (${slotsText(session.concurrency)} now)`}
+          >
+            <Button
+              {...props}
+              variant="quiet"
+              size="sm"
+              data-slot="flight-slots-picker"
+              aria-label={name}
+              icon={<ChevronDown {...ICON} size={12} />}
+            />
+          </Tooltip>
+        )}
+      />
+    );
+  };
 
   // A live fan-out over the whole plan; one from before plan-wide fan-outs covers
   // only the direct band, so the milestone bands keep their own controls.
@@ -730,19 +749,27 @@ export function FlightPlan({
   ]);
 
   if (!data.tasksReady) {
+    // A load: the header's strip and a few rows of cards hold the plan's shape.
     return (
-      <div className="flex h-full items-center justify-center">
-        <Spinner className="text-muted-foreground size-4" />
+      <div
+        data-slot="flight-plan"
+        className={cx(styles.root, styles.loading, className)}
+      >
+        {/* One status for the one load: the strip's block is a decorative shape. */}
+        <Skeleton height={72} className={styles.headSkeleton} />
+        <SkeletonRows rows={4} label="Loading the flight plan" />
       </div>
     );
   }
   if (container === null || scope === null) {
     return (
-      <EmptyState
-        className="h-full"
-        heading="This plan is no longer available."
-        description="Its container was archived or deleted."
-      />
+      <div data-slot="flight-plan" className={cx(styles.root, className)}>
+        <div className={styles.empty}>
+          <EmptyState label="This plan is no longer available.">
+            Its container was archived or deleted.
+          </EmptyState>
+        </div>
+      </div>
     );
   }
 
@@ -754,6 +781,11 @@ export function FlightPlan({
     }
   }
   const eta = etaMs(path, activeSlots === 0 ? null : activeSlots);
+  // The plan's own session: its spend while it is active or paused (where the controls
+  // drew their pill; paused, it leads the strip), its waves while it is active (where
+  // they drew their strip).
+  const containerProgress = data.milestoneProgressById.get(containerId);
+  const containerState = containerProgress?.session?.state;
   const stats: FlightHeaderStats = {
     slots: { used: plan.running, total: concurrency },
     running: plan.running,
@@ -763,6 +795,16 @@ export function FlightPlan({
     critical: { count: path.ids.length, ms: path.ms },
     eta: eta === null ? null : { at: now + eta, ms: eta },
     pace,
+    spend:
+      containerProgress !== undefined &&
+      (containerState === 'active' || containerState === 'paused')
+        ? spendCellWords(containerProgress.spend)
+        : null,
+    paused: containerState === 'paused',
+    waves:
+      containerProgress !== undefined && containerState === 'active'
+        ? waveSteps(containerProgress.waves)
+        : null,
   };
 
   const dialogMilestone =
@@ -773,33 +815,29 @@ export function FlightPlan({
         : (scope.bands?.find((b) => b.key === dialog.milestoneId)?.container ??
           null);
   // A teammate's task can never start in the fan-out, so the dialog never says it will.
-  const dialogReadyIds =
-    dialog === null
-      ? data.readyIds
-      : new Set(
-          [...data.readyIds].filter(
-            (id) => planNodeById.get(id)?.state !== 'teammate'
-          )
-        );
   const dialogSession =
     dialog?.mode === 'raise'
       ? (data.milestoneProgressById.get(dialog.milestoneId)?.session ?? null)
       : null;
 
   return (
-    <div
-      data-slot="flight-plan"
-      className={cn('flex h-full min-h-0 flex-col', className)}
-    >
+    <div data-slot="flight-plan" className={cx(styles.root, className)}>
       {/* The container's fan-out covers the whole plan, every band included. */}
-      <FlightPlanHeader stats={stats} controls={fanoutFor(container, false)} />
+      <FlightPlanHeader
+        stats={stats}
+        controls={fanoutFor(container, false)}
+        slotsPicker={slotsPickerFor(container)}
+      />
       {nodes.length === 0 ? (
-        <EmptyState
-          icon={Waypoints}
-          heading="Nothing to plan yet"
-          description="Tasks under this container show up here as waves, with their blockers drawn between them."
-          className="min-h-0 flex-1"
-        />
+        <div className={styles.empty}>
+          <EmptyState
+            icon={<Waypoints size={22} strokeWidth={1.8} aria-hidden />}
+            label="Nothing to plan yet"
+          >
+            Tasks under this container show up here as waves, with their
+            blockers drawn between them.
+          </EmptyState>
+        </div>
       ) : (
         <FlightStage
           title={container.meta.title}
@@ -827,7 +865,9 @@ export function FlightPlan({
             dialog.milestoneId,
             (id) => children.get(id) ?? []
           ).filter((t) => !containerIds.has(t.meta.id))}
-          readyIds={dialogReadyIds}
+          readyIds={data.readyIds}
+          // A teammate's task never starts in a fan-out: the dialog marks it Teammate.
+          holderOf={viewerHolder}
           runningNow={data.liveRunStateByTaskId.size}
           liveClaims={liveClaims}
           defaultConcurrency={

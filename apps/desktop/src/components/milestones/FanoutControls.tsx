@@ -1,6 +1,17 @@
 import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
-import { isCompletedStatus } from '@dispatch-foo/core/browser';
-import type { MilestoneProgress, MilestoneSession } from '@dispatch/client';
+import type {
+  MilestonePauseReason,
+  MilestoneProgress,
+  MilestoneSession,
+} from '@dispatch/client';
+import {
+  Button,
+  Chip,
+  ConfirmDialog,
+  ProgressPie,
+  Tooltip,
+  useTouchScreen,
+} from '@dispatch/ui';
 import {
   ChevronsUp,
   GitMerge,
@@ -13,23 +24,131 @@ import {
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 
+import { fanoutVerbs } from '../../lib/fanoutVerbs';
 import {
   pausedReasonLabel,
   PHASE_CHIP_ORDER,
   PHASE_LABEL,
   phaseCounts,
-  phaseTint,
+  phaseTone,
   rulingsWaiting,
   spendPillLabel,
   spendTitle,
   spendTone,
   waveSteps,
 } from '../../lib/milestoneSession';
-import { IconButton } from '@/ui/ai/icon-button';
-import { LabelPill, PillButton } from '@/ui/ai/pill';
-import { ProgressGlyph } from '@/ui/chrome';
-import { CountChip } from '@/ui/chrome/CountChip';
-import { StepStrip } from '@/ui/chrome/StepStrip';
+import { StepStrip } from '../status/StepStrip';
+import styles from './FanoutControls.module.css';
+
+const ICON = { size: 12, strokeWidth: 1.8 } as const;
+/** An icon-only verb's glyph: the library's 14px button icon, alone in its 26px square. */
+const ICON_ONLY = { size: 14, strokeWidth: 1.8 } as const;
+
+/** What each verb does, for its hint when it is drawn icon-only. */
+const PAUSE_HINT =
+  'Pause the fan-out: live runs go on, no new ones start until you resume';
+const STOP_HINT =
+  'Stop the fan-out for good: live runs go on, no new ones start';
+const RAISE_HINT = 'Raise the fan-out’s spend or run ceiling, then resume it';
+
+/** What Resume does after this pause, for its hint when it is drawn icon-only. Resume
+    keeps the session's ceilings, so after a ceiling pause the server's next fill pauses
+    it again (packages/server/src/orchestrator/milestone.ts: a run ceiling at once, a
+    spend ceiling once nothing is live) and no new run starts: the hint says so and
+    points at Raise ceiling…, rather than promising runs. */
+function resumeHint(reason: MilestonePauseReason | undefined): string {
+  switch (reason) {
+    case 'runs':
+      return 'Resume at the same run ceiling: it pauses again at once; use Raise ceiling… to go on';
+    case 'budget':
+      return 'Resume at the same spend ceiling: it pauses again once nothing is live; use Raise ceiling… to go on';
+    case 'human':
+    case 'fill-failed':
+    case undefined:
+      return 'Resume the fan-out at its ceilings: new runs start in free agent slots';
+  }
+}
+
+/** A verb in the row: a small secondary button with its leading icon. */
+function Verb({
+  icon,
+  disabled,
+  onClick,
+  children,
+}: {
+  icon: ReactNode;
+  disabled: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      icon={icon}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {children}
+    </Button>
+  );
+}
+
+/** A verb drawn as the library's icon-only button: named by its verb (the name it has
+    with words), with a Tooltip that says what it does on hover and keyboard focus. A
+    disabled one (a verb in flight) keeps its hint: the Tooltip wraps it in a focusable
+    span, since a disabled button takes no focus. */
+function IconVerb({
+  slot,
+  name,
+  hint,
+  icon,
+  disabled,
+  onClick,
+}: {
+  slot: string;
+  name: string;
+  hint: string;
+  icon: ReactNode;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Tooltip content={hint}>
+      <Button
+        variant="secondary"
+        size="sm"
+        data-slot={slot}
+        aria-label={name}
+        icon={icon}
+        disabled={disabled}
+        onClick={onClick}
+      />
+    </Tooltip>
+  );
+}
+
+/** A pill with a hook for tests and a hover title: a status chip in a wrapper that carries
+    both, since Chip takes neither a data attribute nor a role. */
+function Pill({
+  slot,
+  title,
+  tone,
+  role,
+  children,
+}: {
+  slot?: string;
+  title?: string;
+  tone: 'info' | 'warning' | 'danger';
+  role?: 'alert';
+  children: ReactNode;
+}) {
+  return (
+    <span data-slot={slot} title={title} role={role} className={styles.pill}>
+      <Chip tone={tone}>{children}</Chip>
+    </span>
+  );
+}
 
 export interface FanoutControlsProps {
   milestone: TaskListItem;
@@ -43,9 +162,6 @@ export interface FanoutControlsProps {
    * milestones page, progress children on the board); `undefined` while that source has
    * not resolved hides the glyph and keeps Send agents… on offer. */
   count?: { done: number; total: number };
-  /** Every child done or cancelled and the milestone not yet landed — the caller applies the
-   * server's rule; Land replaces Send agents… while it holds. */
-  landable: boolean;
   /** The board lane's concurrency `SelectPill`; rendered before Send agents… in the
    * no-session state only, since a running session chose its concurrency already. */
   concurrencyPicker?: ReactNode;
@@ -68,8 +184,19 @@ export interface FanoutControlsProps {
    * counts the same children. */
   phases?: boolean;
   /** An active session's wave strip; the Live view turns it off since its band draws the
-   * same waves. */
+   * same waves, and the Flight Plan header since its strip has a Waves cell. */
   waves?: boolean;
+  /** An active or paused session's spend pill; the Flight Plan header turns it off since
+   * its strip has a Spend cell that says the same amounts (`spendCellWords`). */
+  spend?: boolean;
+  /** The verbs of an active or paused session as icon-only buttons (still named Pause,
+   * Stop, Resume and Raise ceiling…, each with a Tooltip saying what it does), for the
+   * Flight Plan header, whose strip is short of room while a fan-out runs or is paused
+   * (owner decisions 2026-11-04: Pause and Stop, then Resume and Raise ceiling…). Stop
+   * then confirms in a ConfirmDialog first, since only its glyph sets it apart from
+   * Pause. Send agents… and Land keep their words, and so does every verb on a touch
+   * screen, where no Tooltip opens (`useTouchScreen`). */
+  iconVerbs?: boolean;
 }
 
 /** No session, or one that has run its course — the caller's own live-run pill speaks
@@ -83,9 +210,12 @@ export function sessionIdle(session: MilestoneSession | null): boolean {
 }
 
 /**
- * The fan-out controls one milestone header carries — rendered inside the `GroupHeader`
- * `actions` slot by both the milestones page and the board lane header so the two cannot
- * drift. Left to right by session state: `◔ done/total`, the caller's pills, then
+ * The fan-out controls one milestone header carries — rendered in the board's
+ * `MilestoneLaneHeader` `actions` slot and in the Flight plan and Live heads, so they
+ * cannot drift. Which verbs show is `fanoutVerbs` (lib/fanoutVerbs.ts), the rule the
+ * Issues list's group menu also reads; `count.total` stands in for the children while the
+ * progress has not resolved. Left to right by session state: `◔ done/total`, the caller's
+ * pills, then
  *
  * - no session (or a finished one): Send agents… — or Land once every child is done, and
  *   nothing for a landed milestone or one with no children to send;
@@ -94,14 +224,16 @@ export function sessionIdle(session: MilestoneSession | null): boolean {
  * - paused: the spend pill, why it paused, Resume, Raise ceiling…, Stop;
  *
  * and an Open button last. Header only — no bar under it, no card. Every async verb runs
- * through one busy flag; a failure shows as a red pill in the same row.
+ * through one busy flag; a failure shows as a red pill in the same row. `iconVerbs` draws
+ * Pause and Stop icon-only, with their names and a Tooltip each, and Stop then asks first
+ * in a ConfirmDialog; paused, Resume and Raise ceiling… are icon-only as well. On a touch
+ * screen every verb keeps its words.
  */
 export function FanoutControls({
   milestone,
   model,
   progress,
   count,
-  landable,
   concurrencyPicker,
   children,
   onSendAgents,
@@ -114,40 +246,53 @@ export function FanoutControls({
   showOpen = true,
   phases = true,
   waves = true,
+  spend: showSpend = true,
+  iconVerbs = false,
 }: FanoutControlsProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The icon-only Stop's confirmation is open.
+  const [confirmingStop, setConfirmingStop] = useState(false);
+  // A touch screen opens no Tooltip, so an icon-only verb there would be a bare glyph:
+  // the verbs keep their words (and Stop its one press), as the strip beside them keeps
+  // its notes on the row there.
+  const touch = useTouchScreen();
+  const iconOnly = iconVerbs && !touch;
   const milestoneId = milestone.meta.id;
   const session = progress?.session ?? null;
-  const active = session?.state === 'active';
-  const paused = session?.state === 'paused';
   const progressChildren = progress?.children ?? [];
+  const verbs = fanoutVerbs(milestone, model, progress, count?.total);
+  // Active and paused imply a resolved progress with a session; the narrowing keeps the
+  // types honest.
+  const active = verbs.includes('pause') && progress !== undefined;
+  const paused = verbs.includes('resume') && session !== null;
 
   // One verb at a time; a rejected handler's message replaces the verbs' error pill.
-  async function run(action: () => Promise<void>) {
-    setBusy(true);
+  // `hold` false leaves the verbs enabled, for a verb whose own dialog waits on it (the
+  // icon-only Stop's ConfirmDialog): it keeps the verbs' elements, so the dialog can hand
+  // focus back to Stop when it closes.
+  async function run(action: () => Promise<void>, hold = true) {
+    if (hold) setBusy(true);
     setError(null);
     try {
       await action();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setBusy(false);
+      if (hold) setBusy(false);
     }
   }
 
   // Settled spend against its ceiling, shown while a session is active or paused. The hover
   // text names the near-ceiling state the amber dot conveys, so it reads without colour.
   let spendPill: ReactNode = null;
-  if (progress !== undefined) {
+  if (showSpend && progress !== undefined) {
     const spend = progress.spend;
     const nearCeiling = spendTone(spend) === 'warning';
     spendPill = (
-      <LabelPill
-        data-slot="spend-pill"
-        color={
-          nearCeiling ? 'var(--state-waiting-fg)' : 'var(--state-working-fg)'
-        }
+      <Pill
+        slot="spend-pill"
+        tone={nearCeiling ? 'warning' : 'info'}
         title={
           nearCeiling
             ? `${spendTitle(spend)} · near ceiling`
@@ -155,133 +300,171 @@ export function FanoutControls({
         }
       >
         {spendPillLabel(spend)}
-      </LabelPill>
+      </Pill>
     );
   }
 
+  // Stop, in an active or a paused session's controls. Icon-only it asks first: its glyph
+  // beside Pause's is all that tells the two apart, a touch screen never shows its hint,
+  // and a stop cannot be undone.
+  const stopVerb = iconOnly ? (
+    <IconVerb
+      slot="fanout-stop"
+      name="Stop"
+      hint={STOP_HINT}
+      disabled={busy}
+      onClick={() => setConfirmingStop(true)}
+      icon={<Square {...ICON_ONLY} />}
+    />
+  ) : (
+    <Verb
+      disabled={busy}
+      onClick={() => void run(() => onStop(milestoneId))}
+      icon={<Square {...ICON} />}
+    >
+      Stop
+    </Verb>
+  );
+
   let controls: ReactNode;
-  if (active && progress !== undefined) {
+  if (active) {
     // Counting nothing leaves no chips, for a caller that shows its own counts.
     const counts = phaseCounts(phases ? progressChildren : []);
     const spend = progress.spend;
     const rulings = rulingsWaiting(progressChildren);
     controls = (
       <>
-        {PHASE_CHIP_ORDER.filter((phase) => counts[phase] > 0).map((phase) => {
-          const tint = phaseTint(phase);
-          return (
-            <span
-              key={phase}
-              data-slot="phase-chip"
-              data-phase={phase}
-              className="text-muted-foreground flex shrink-0 items-center gap-1 text-[12px] font-medium"
-              style={tint !== null ? { color: tint } : undefined}
-            >
-              <CountChip count={counts[phase]} className="text-current" />
-              {PHASE_LABEL[phase]}
-            </span>
-          );
-        })}
+        {PHASE_CHIP_ORDER.filter((phase) => counts[phase] > 0).map((phase) => (
+          <span
+            key={phase}
+            data-slot="phase-chip"
+            data-phase={phase}
+            data-tone={phaseTone(phase) ?? undefined}
+            className={styles.phase}
+          >
+            <span className={styles.count}>{counts[phase]}</span>
+            {PHASE_LABEL[phase]}
+          </span>
+        ))}
         {spendPill}
         {spend.liveCount === 0 && rulings > 0 && (
-          <LabelPill color="var(--state-waiting-fg)">
+          <Pill tone="warning">
             Waiting on {rulings} ruling{rulings === 1 ? '' : 's'}
-          </LabelPill>
+          </Pill>
         )}
         {waves && progress.waves.length > 1 && (
-          <StepStrip steps={waveSteps(progress.waves)} className="w-16" />
+          <StepStrip
+            steps={waveSteps(progress.waves)}
+            className={styles.waves}
+          />
         )}
-        {onPause !== undefined && (
-          <PillButton
-            disabled={busy}
-            onClick={() => void run(() => onPause(milestoneId))}
-          >
-            <Pause className="size-3" />
-            Pause
-          </PillButton>
-        )}
-        <PillButton
-          disabled={busy}
-          onClick={() => void run(() => onStop(milestoneId))}
-        >
-          <Square className="size-3" />
-          Stop
-        </PillButton>
+        {onPause !== undefined &&
+          (iconOnly ? (
+            <IconVerb
+              slot="fanout-pause"
+              name="Pause"
+              hint={PAUSE_HINT}
+              disabled={busy}
+              onClick={() => void run(() => onPause(milestoneId))}
+              icon={<Pause {...ICON_ONLY} />}
+            />
+          ) : (
+            <Verb
+              disabled={busy}
+              onClick={() => void run(() => onPause(milestoneId))}
+              icon={<Pause {...ICON} />}
+            >
+              Pause
+            </Verb>
+          ))}
+        {stopVerb}
       </>
     );
-  } else if (paused && session !== null) {
-    // The ceiling that tripped stays on screen next to Raise ceiling….
+  } else if (paused) {
+    // The ceiling that tripped stays on screen next to Raise ceiling…; a caller that
+    // turns the pill off (the Flight Plan header) leads its own strip with the spend.
     controls = (
       <>
         {spendPill}
-        <LabelPill
-          data-slot="paused-pill"
-          color="var(--state-waiting-fg)"
-          title={session.pausedDetail}
-        >
+        <Pill slot="paused-pill" tone="warning" title={session.pausedDetail}>
           {session.pausedReason === undefined
             ? 'Paused'
             : pausedReasonLabel(session.pausedReason)}
-        </LabelPill>
-        {onResume !== undefined && (
-          <PillButton
-            disabled={busy}
-            onClick={() => void run(() => onResume(milestoneId))}
-          >
-            <Play className="size-3" />
-            Resume
-          </PillButton>
-        )}
-        {onRaiseCeiling !== undefined && (
-          <PillButton
-            disabled={busy}
-            onClick={() => onRaiseCeiling(milestoneId)}
-          >
-            <ChevronsUp className="size-3" />
-            Raise ceiling…
-          </PillButton>
-        )}
-        <PillButton
-          disabled={busy}
-          onClick={() => void run(() => onStop(milestoneId))}
-        >
-          <Square className="size-3" />
-          Stop
-        </PillButton>
+        </Pill>
+        {onResume !== undefined &&
+          (iconOnly ? (
+            <IconVerb
+              slot="fanout-resume"
+              name="Resume"
+              hint={resumeHint(session.pausedReason)}
+              disabled={busy}
+              onClick={() => void run(() => onResume(milestoneId))}
+              icon={<Play {...ICON_ONLY} />}
+            />
+          ) : (
+            <Verb
+              disabled={busy}
+              onClick={() => void run(() => onResume(milestoneId))}
+              icon={<Play {...ICON} />}
+            >
+              Resume
+            </Verb>
+          ))}
+        {onRaiseCeiling !== undefined &&
+          (iconOnly ? (
+            // Its name keeps the ellipsis: it opens a dialog, which hands focus back to
+            // this button when it closes.
+            <IconVerb
+              slot="fanout-raise"
+              name="Raise ceiling…"
+              hint={RAISE_HINT}
+              disabled={busy}
+              onClick={() => onRaiseCeiling(milestoneId)}
+              icon={<ChevronsUp {...ICON_ONLY} />}
+            />
+          ) : (
+            <Verb
+              disabled={busy}
+              onClick={() => onRaiseCeiling(milestoneId)}
+              icon={<ChevronsUp {...ICON} />}
+            >
+              Raise ceiling…
+            </Verb>
+          ))}
+        {stopVerb}
       </>
     );
-  } else if (landable && onLand !== undefined) {
+  } else if (verbs.includes('land') && onLand !== undefined) {
     controls = (
-      <PillButton
+      <Verb
         disabled={busy}
         onClick={() => void run(() => onLand(milestoneId))}
+        icon={<GitMerge {...ICON} />}
       >
-        <GitMerge className="size-3" />
         Land
-      </PillButton>
+      </Verb>
     );
-  } else if (
-    isCompletedStatus(milestone.meta.status, model) ||
-    count?.total === 0
-  ) {
+  } else if (verbs.length === 0) {
     // Nothing to send: a landed milestone is done, and an empty milestone would open a dialog
     // whose confirm is disabled.
     controls = null;
   } else {
+    // Send agents… — also where Land falls back for a caller with no land wiring, as the
+    // board did before Land existed.
     controls = (
       <>
         {concurrencyPicker}
-        <PillButton
+        <Verb
           disabled={busy}
           onClick={() => {
             // Opening the dialog is synchronous and never busy; only a direct dispatch is.
             const result = onSendAgents(milestoneId);
             if (result instanceof Promise) void run(() => result);
           }}
+          icon={<Zap {...ICON} />}
         >
-          <Zap className="size-3" />
           Send agents…
-        </PillButton>
+        </Verb>
       </>
     );
   }
@@ -292,33 +475,49 @@ export function FanoutControls({
         <span
           data-slot="milestone-progress"
           aria-label={`${count.done} of ${count.total} landed`}
-          className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-(--text-secondary)"
+          className={styles.progress}
         >
-          <ProgressGlyph
-            fraction={count.total === 0 ? 0 : count.done / count.total}
-          />
+          {/* Decorative: the span's label and the printed count say it. */}
+          <ProgressPie done={count.done} total={count.total} label="" />
           {count.done}/{count.total}
         </span>
       )}
       {children}
       {controls}
-      {error !== null && (
-        <LabelPill
-          role="alert"
-          color="var(--state-failed-fg)"
-          title={error}
-          className="max-w-40"
+      {iconOnly && (active || paused) && (
+        <ConfirmDialog
+          open={confirmingStop}
+          data-slot="fanout-stop-confirm"
+          title="Stop the fan-out?"
+          confirmLabel="Stop fan-out"
+          tone="danger"
+          // The dialog waits on the stop (its confirm busy) and closes once it settles; a
+          // failure shows as the verbs' error pill.
+          onConfirm={() =>
+            run(() => onStop(milestoneId), false).finally(() =>
+              setConfirmingStop(false)
+            )
+          }
+          onCancel={() => setConfirmingStop(false)}
         >
+          Runs already live go on, but no new ones start, and a stopped fan-out
+          cannot be resumed. Pause it instead to start it again later.
+        </ConfirmDialog>
+      )}
+      {error !== null && (
+        <Pill role="alert" tone="danger" title={error}>
           {error}
-        </LabelPill>
+        </Pill>
       )}
       {showOpen && (
-        <IconButton
-          label={`Open ${milestone.meta.title}`}
+        <Button
+          variant="quiet"
+          size="sm"
+          icon={<Target size={14} strokeWidth={1.8} />}
+          aria-label={`Open ${milestone.meta.title}`}
+          title={`Open ${milestone.meta.title}`}
           onClick={() => onOpenMilestone(milestoneId)}
-        >
-          <Target aria-hidden />
-        </IconButton>
+        />
       )}
     </>
   );

@@ -4,9 +4,9 @@ import {
   cacheHitRateDisplay,
   DEFAULT_SPEND_WINDOW,
   parseTags,
+  sessionStatusTone,
   SPEND_WINDOWS,
   spendWindowLabel,
-  statusDotClass,
 } from './sessionDisplay.ts';
 
 describe('cacheHitRateDisplay', () => {
@@ -66,11 +66,10 @@ describe('spend windows', () => {
   });
 });
 
-describe('statusDotClass', () => {
-  // The dot is a run-state token, never a stock palette literal, so it restates with the
-  // theme.
-  test('an active session is the review green, an ended one is muted', () => {
-    expect(statusDotClass('active')).toBe('bg-state-review');
-    expect(statusDotClass('ended')).toBe('bg-muted-foreground/50');
+describe('sessionStatusTone', () => {
+  // A live session is blue (info) per the status hue table; an ended one is grey (muted).
+  test('an active session is info, an ended one is muted', () => {
+    expect(sessionStatusTone('active')).toBe('info');
+    expect(sessionStatusTone('ended')).toBe('muted');
   });
 });

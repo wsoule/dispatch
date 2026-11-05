@@ -7,6 +7,8 @@ import {
   within,
 } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import type { DecisionItem } from '../../lib/decisionFeed';
@@ -74,6 +76,18 @@ describe('NeedsYouBlock', () => {
     );
   });
 
+  // Issues always mounts the block: with nothing waiting it is the header
+  // line alone, no padded strip under it.
+  test('with nothing waiting the body stays out of the box', () => {
+    mount([]);
+    const fold = screen.getByRole('button', { name: 'Nothing needs you' });
+    const body = document.getElementById(
+      fold.getAttribute('aria-controls') ?? ''
+    );
+    expect(body?.hidden).toBe(true);
+    expect(body?.childElementCount).toBe(0);
+  });
+
   test('the header number is the number of rows', () => {
     const { needs } = mount([
       item({ id: 'a', kind: 'fix-loop-capped', taskId: 't-1' }),
@@ -103,6 +117,10 @@ describe('NeedsYouBlock', () => {
     ]);
     fireEvent.click(screen.getByRole('button', { name: 'Open' }));
     expect(opened).toEqual(['stall']);
+    // Not answered here, so not "this machine only".
+    expect(screen.getByTestId('needs-you-row').hasAttribute('title')).toBe(
+      false
+    );
   });
 
   test('a teammate’s ask is shown muted and never counted', () => {
@@ -132,6 +150,33 @@ describe('NeedsYouBlock', () => {
     expect(screen.getByTestId('needs-you-count').textContent).toBe(
       'Needs you · 1'
     );
+  });
+
+  test('the fold button says whether the block is open', () => {
+    mount([item({ id: 'a', kind: 'scope-request' })]);
+    const fold = screen.getByRole('button', { name: /Needs you · 1/ });
+    expect(fold.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(fold);
+    expect(fold.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByTestId('needs-you-preview').textContent).toBe('ask a');
+  });
+
+  test('a long group shows eight rows, then "+N more" shows the rest', () => {
+    mount(
+      Array.from({ length: 10 }, (_, i) =>
+        item({ id: `s-${i}`, kind: 'scope-request' })
+      )
+    );
+    expect(screen.getAllByTestId('needs-you-row')).toHaveLength(8);
+    const more = screen.getByRole('button', { name: '+2 more' });
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(more);
+    expect(screen.getAllByTestId('needs-you-row')).toHaveLength(10);
+    expect(
+      screen
+        .getByRole('button', { name: 'Show fewer' })
+        .getAttribute('aria-expanded')
+    ).toBe('true');
   });
 });
 
@@ -252,13 +297,114 @@ describe('answering a question from its row', () => {
     );
     // An outside agent's question sits under Outside (DIS-129).
     expect(screen.getByTestId('needs-you-group-outside')).toBeDefined();
-    fireEvent.click(await screen.findByRole('button', { name: 'Answer…' }));
+    const answer = await screen.findByRole('button', { name: 'Answer…' });
+    // A row answered in place says "this machine only" over the whole row
+    // (the legacy <li>'s hint), not on one cell.
+    const row = screen.getByTestId('needs-you-row');
+    expect(row.getAttribute('title')).toBe('this machine only');
+    expect(
+      Array.from(row.querySelectorAll('[title]'), (n) =>
+        n.getAttribute('title')
+      )
+    ).not.toContain('this machine only');
+    fireEvent.click(answer);
     fireEvent.change(screen.getByPlaceholderText('Type your answer'), {
       target: { value: 'Yes, tonight' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send answer' }));
     await waitFor(() =>
       expect(replies).toEqual([{ id: 'q-1', body: 'Yes, tonight' }])
+    );
+  });
+});
+
+// A scope grant goes out as the choice 'grant'; its receipt names the act
+// ("Granted"), never the raw choice ("Answered “grant”").
+describe('a scope request answered from its row', () => {
+  const RUN = 'r-000001';
+  const gate = {
+    id: 'm-scope',
+    thread: 'm-scope',
+    replyTo: null,
+    from: `run:${RUN}`,
+    to: [ME],
+    kind: 'question',
+    body: 'May I edit a.ts?',
+    refs: [],
+    urgent: false,
+    blocking: true,
+    wake: 'none',
+    choices: ['grant', 'deny'],
+    data: { type: 'scope', paths: ['a.ts'], reason: 'needed for the fix' },
+    createdAt: '2026-10-06T09:00:00.000Z',
+  };
+  const ask = item({
+    id: 'scope:m-scope',
+    kind: 'scope-request',
+    messageId: 'm-scope',
+    summary: 'agent asked to edit outside its scope: a.ts',
+  });
+
+  test('Grant decides the request and leaves a "Granted" receipt', async () => {
+    const decided: { runId: string; granted: boolean }[] = [];
+    const scoped = {
+      ...data,
+      client: { openDecisions: () => Promise.resolve({ items: [gate] }) },
+      handleDecideScopeRequest: (
+        runId: string,
+        _id: string,
+        granted: boolean
+      ) => {
+        decided.push({ runId, granted });
+        return Promise.resolve();
+      },
+    } as unknown as DispatchProjectData;
+    const block = (asks: DecisionItem[]) => (
+      <NeedsYouBlock
+        data={scoped}
+        needs={needsYou(asks, ME)}
+        onOpenRef={() => {}}
+        onOpenDecision={() => {}}
+      />
+    );
+    const queries = new QueryClient();
+    const { rerender } = render(
+      <QueryClientProvider client={queries}>{block([ask])}</QueryClientProvider>
+    );
+    fireEvent.click(
+      await screen.findByRole('radio', { name: /^Grant Recommended/ })
+    );
+    await waitFor(() =>
+      expect(decided).toEqual([{ runId: RUN, granted: true }])
+    );
+    // The ask leaves the open list once decided; its receipt stays in place.
+    rerender(
+      <QueryClientProvider client={queries}>{block([])}</QueryClientProvider>
+    );
+    const receipt = await screen.findByTestId('needs-you-receipt');
+    expect(receipt.textContent).toContain(
+      '✓ Granted · agent asked to edit outside its scope: a.ts'
+    );
+    expect(receipt.textContent).not.toContain('Answered');
+  });
+});
+
+// Layout is not measured here (happy-dom), so the narrow-column rules are
+// read from the module: in the Overseer's inflow (the register stacked
+// under 480px) a long summary wraps onto its own line, two lines at most,
+// as the legacy row's line clamp did; the full text stays its title.
+describe('the narrow column', () => {
+  test('clamps a stacked summary to two lines', () => {
+    const css = readFileSync(
+      join(import.meta.dir, 'NeedsYouBlock.module.css'),
+      'utf8'
+    ).replace(/\/\*[\s\S]*?\*\//g, '');
+    const narrow = css.slice(
+      css.indexOf('@container register (width < 480px)')
+    );
+    const summary = narrow.slice(narrow.indexOf('.summary'));
+    expect(summary.slice(0, summary.indexOf('}'))).toMatch(
+      /display: -webkit-box;[\s\S]*-webkit-line-clamp: 2;[\s\S]*white-space: normal;/
     );
   });
 });

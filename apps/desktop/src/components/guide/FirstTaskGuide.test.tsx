@@ -1,5 +1,11 @@
 import type { DraftRecord, RunMeta } from '@dispatch/client';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { expect, type Mock, mock, test } from 'bun:test';
 
 import type { GuideProvider, GuideView } from '../../lib/firstTaskGuide';
@@ -203,16 +209,19 @@ test('a pull request that has not merged can be opened, or set aside after a con
   fireEvent.click(screen.getByRole('button', { name: 'Start over' }));
   // Nothing happens until the confirm, which says the pull request stays open.
   expect(a.startOver).not.toHaveBeenCalled();
-  const dialog = await screen.findByRole('alertdialog');
+  // The ConfirmDialog renders on the same commit as the click.
+  const dialog = screen.getByRole('alertdialog');
   expect(dialog.textContent).toContain(
     "This won't close the pull request on GitHub"
   );
-  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-  await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  expect(screen.queryByRole('alertdialog')).toBeNull();
   expect(a.startOver).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Start over' }));
   fireEvent.click(
-    await screen.findByRole('button', { name: 'Start the task over' })
+    within(screen.getByRole('alertdialog')).getByRole('button', {
+      name: 'Start the task over',
+    })
   );
   await waitFor(() => expect(a.startOver).toHaveBeenCalledWith('r-1'));
 });
@@ -311,7 +320,7 @@ test('the collapse toggle says whether the card is open', () => {
   expect(onCollapsedChange).toHaveBeenCalledWith(true);
 });
 
-test('closing mid-task asks first; closing at Describe does not', async () => {
+test('closing mid-task asks first; closing at Describe does not', () => {
   const first = card({ stage: 'describe' });
   fireEvent.click(screen.getByRole('button', { name: 'Close the guide' }));
   expect(first.a.dismiss).toHaveBeenCalledTimes(1);
@@ -320,14 +329,90 @@ test('closing mid-task asks first; closing at Describe does not', async () => {
   const { a } = card({ stage: 'works', taskId: 't-1', run: run() });
   fireEvent.click(screen.getByRole('button', { name: 'Close the guide' }));
   expect(a.dismiss).not.toHaveBeenCalled();
-  const dialog = await screen.findByRole('alertdialog');
+  const dialog = screen.getByRole('alertdialog');
   expect(dialog.textContent).toContain('Your task keeps going');
-  fireEvent.click(screen.getByRole('button', { name: 'Keep the guide' }));
-  await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  // The way back is the palette entry, the guide's only restart since the
+  // project menu went (its Help group is not in the brand-row switcher).
+  expect(dialog.textContent).toMatch(
+    /start it again from the command palette \((⌘K|Ctrl K)\): Restart the first-task guide\./
+  );
+  expect(dialog.textContent).not.toContain('project menu');
+  fireEvent.click(
+    within(dialog).getByRole('button', { name: 'Keep the guide' })
+  );
+  expect(screen.queryByRole('alertdialog')).toBeNull();
   expect(a.dismiss).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Close the guide' }));
   fireEvent.click(
-    await screen.findByRole('button', { name: 'Close the guide for good' })
+    within(screen.getByRole('alertdialog')).getByRole('button', {
+      name: 'Close the guide for good',
+    })
   );
   expect(a.dismiss).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+});
+
+test('the steps list marks the current step with aria-current, not colour alone', () => {
+  card({ stage: 'review', taskId: 't-1', run: run({ state: 'finished' }) });
+  const steps = within(
+    screen.getByRole('list', { name: 'Steps' })
+  ).getAllByRole('listitem');
+  expect(steps.map((li) => li.getAttribute('aria-current'))).toEqual([
+    null,
+    null,
+    null,
+    'step',
+    null,
+  ]);
+  expect(steps[3]?.textContent).toBe('Review');
+});
+
+test('the drafting and working lines are polite status lines beside their Spinners', () => {
+  const draft = { id: 'd-1', prompt: 'x' } as DraftRecord;
+  const drafting = card({ stage: 'describe', draft, waiting: 'drafting' });
+  // The Spinner is hidden from assistive tech, so its line says it in words.
+  expect(screen.getByRole('status').textContent).toBe('Drafting your task…');
+  drafting.unmount();
+  card({ stage: 'works', taskId: 't-1', run: run() });
+  expect(screen.getByRole('status').textContent).toBe('Getting started…');
+});
+
+test('landing is said in words while the Spinner turns', async () => {
+  const { a } = card({
+    stage: 'land',
+    taskId: 't-1',
+    run: run({ state: 'finished' }),
+  });
+  let finish = () => {};
+  a.land.mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      })
+  );
+  // Mounted empty before the click, so the words are announced.
+  const status = screen.getByRole('status');
+  expect(status.textContent).toBe('');
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Add these changes to your project' })
+  );
+  await waitFor(() =>
+    expect(status.textContent).toBe('Adding the changes to your project…')
+  );
+  finish();
+  await waitFor(() => expect(status.textContent).toBe(''));
+});
+
+test('the review box grows with what you write', () => {
+  card({ stage: 'review', taskId: 't-1', run: run({ state: 'finished' }) });
+  fireEvent.click(screen.getByRole('button', { name: 'Ask for changes' }));
+  const box = screen.getByLabelText<HTMLTextAreaElement>('What should change');
+  expect(box.getAttribute('rows')).toBe('3');
+  // happy-dom lays nothing out, so stand in the height the text would take.
+  Object.defineProperty(box, 'scrollHeight', {
+    configurable: true,
+    value: 140,
+  });
+  fireEvent.input(box, { target: { value: 'one\ntwo\nthree\nfour\nfive' } });
+  expect(box.style.height).toBe('140px');
 });

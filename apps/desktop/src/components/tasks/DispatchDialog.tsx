@@ -2,9 +2,20 @@ import {
   MAX_CONCURRENCY_HARD_CAP,
   type TaskListItem,
 } from '@dispatch-foo/core/browser';
+import {
+  Button,
+  Chip,
+  cx,
+  Field,
+  Notice,
+  SlideOver,
+  TextField,
+} from '@dispatch/ui';
 import { Zap } from 'lucide-react';
-import { type ChangeEvent, useId, useMemo, useState } from 'react';
+import { type ChangeEvent, useId, useMemo, useRef, useState } from 'react';
 
+import styles from './DispatchDialog.module.css';
+import { StatusIcon } from './StatusIcon';
 import {
   buildDispatchPreview,
   DEFAULT_RUN_COST_USD,
@@ -16,28 +27,6 @@ import {
   defaultSpendCeiling,
   type WorkMilestoneOptions,
 } from '@/lib/milestoneSession';
-import { cn } from '@/lib/utils';
-import { ListRow } from '@/ui/ai/list-row';
-import { Pill, PillButton } from '@/ui/ai/pill';
-import { Button } from '@/ui/button';
-import { HintText } from '@/ui/chrome';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/ui/dialog';
-import { Input } from '@/ui/input';
-import { ScrollArea } from '@/ui/scroll-area';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/ui/select';
 
 interface DispatchDialogProps {
   /** What the user selected — every one of these appears in the preview. */
@@ -48,6 +37,12 @@ interface DispatchDialogProps {
   /** Live runs and their claimed files, so the preview can warn before this dispatch
    * lands on someone else's work. Optional: without it no overlap is checked. */
   liveClaims?: LiveClaim[];
+  /** For a milestone fan-out: who holds each task against the person starting it (core's
+   * `fanoutHolder`, `viewerHolderOf` in the app). A teammate's task shows a Teammate chip
+   * and is left out of the counts and the estimate, since the fan-out never starts it.
+   * Omitted for a hand dispatch of a selection, which starts each task whoever it
+   * belongs to. */
+  holderOf?: (task: TaskListItem) => string | null;
   /** Starting concurrency, from the project's config. */
   defaultConcurrency: number;
   /** The most agents the picker offers — the project's `orchestrator.maxConcurrency`.
@@ -77,6 +72,17 @@ const DISPOSITION_LABEL = {
   'starts-now': 'Starts now',
   queued: 'Queued',
   'not-ready': 'Cannot start',
+  teammate: 'Teammate',
+} as const;
+
+// Each disposition's chip tone (AGENTS.md status table): starting now is in progress
+// (blue), queued is inactive (grey), a task that cannot start is blocked (amber), and a
+// teammate's task, which this fan-out leaves alone, is inactive (grey).
+const DISPOSITION_TONE = {
+  'starts-now': 'info',
+  queued: 'muted',
+  'not-ready': 'warning',
+  teammate: 'muted',
 } as const;
 
 // From here the ceiling is what ends the fan-out, not the task list, and the hint says so.
@@ -129,9 +135,10 @@ function clampConcurrency(value: number, cap: number): number {
 }
 
 /**
- * Confirms a fan-out by showing exactly what it will do.
+ * Confirms a fan-out by showing exactly what it will do, in the library's modal SlideOver
+ * (aria-modal, a scrim, Tab kept inside, global keys muted; Escape and the scrim cancel).
  *
- * The reason this is a dialog rather than a button: concurrency is bounded, so dispatching
+ * The reason this is a form rather than a button: concurrency is bounded, so dispatching
  * twelve tasks at a concurrency of eight does not start twelve agents. Every selected task is
  * listed and badged — starting now, queued, or un-startable — because the failure this exists to
  * prevent is silently dropping four of them and reporting success. The spend and run
@@ -147,6 +154,7 @@ export function DispatchDialog({
   readyIds,
   runningNow,
   liveClaims,
+  holderOf,
   defaultConcurrency,
   maxConcurrency = MAX_CONCURRENCY_HARD_CAP,
   runCostEstimateUsd = DEFAULT_RUN_COST_USD,
@@ -175,6 +183,10 @@ export function DispatchDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fieldId = useId();
+  // Focus lands on the first field the mode shows: the concurrency, or the spend ceiling
+  // when raising a paused session's ceilings.
+  const concurrencyRef = useRef<HTMLSelectElement>(null);
+  const spendRef = useRef<HTMLInputElement>(null);
 
   // 1…cap. The default is clamped to the cap first (config already forbids an
   // `milestoneConcurrency` above `maxConcurrency`), and the list is keyed on the default rather
@@ -202,6 +214,7 @@ export function DispatchDialog({
         runCostEstimateUsd,
         ceilingUsd,
         liveClaims,
+        holderOf,
       }),
     [
       tasks,
@@ -211,6 +224,7 @@ export function DispatchDialog({
       runCostEstimateUsd,
       ceilingUsd,
       liveClaims,
+      holderOf,
     ]
   );
 
@@ -227,22 +241,17 @@ export function DispatchDialog({
       ? 'Raise ceiling'
       : `Send ${agents} ${agents === 1 ? 'agent' : 'agents'}`);
 
+  // Each task's status, for the glyph beside its row.
+  const statusById = useMemo(
+    () => new Map(tasks.map((task) => [task.meta.id, task.meta.status])),
+    [tasks]
+  );
+
   const hints: string[] = [];
   if (preview.undeclaredWrites > 0) {
     const n = preview.undeclaredWrites;
     hints.push(
       `${n} task${n === 1 ? ' declares' : 's declare'} no writes — ${n === 1 ? 'it' : 'they'} will run one at a time`
-    );
-  }
-  // One line per overlap, naming the person when there is one: "wyat's run"
-  // tells you who to talk to, a run id tells you where to look.
-  for (const overlap of preview.overlaps) {
-    const whose =
-      overlap.holder === undefined
-        ? `run ${overlap.runId}`
-        : `${overlap.holder.replace(/^human:/, '')}'s run ${overlap.runId}`;
-    hints.push(
-      `${overlap.taskTitle} writes files ${whose} has claimed — it will start anyway`
     );
   }
   if (fixLoopAuto !== undefined) {
@@ -255,170 +264,183 @@ export function DispatchDialog({
   if (tasks.length >= LARGE_FANOUT_TASKS) {
     hints.push('Large fan-out — the ceiling pauses it, Resume raises it');
   }
+  // One warning per overlap, naming the person when there is one: "wyat's run"
+  // tells you who to talk to, a run id tells you where to look.
+  const overlaps = preview.overlaps.map((overlap) => {
+    const whose =
+      overlap.holder === undefined
+        ? `run ${overlap.runId}`
+        : `${overlap.holder.replace(/^human:/, '')}'s run ${overlap.runId}`;
+    return {
+      key: `${overlap.taskId}:${overlap.runId}`,
+      text: `${overlap.taskTitle} writes files ${whose} has claimed — it will start anyway`,
+    };
+  });
+
+  function confirm() {
+    // `canConfirm` already rules out an invalid ceiling; this narrows the type.
+    if (maxSpendUsd === 'invalid' || maxRuns === 'invalid') return;
+    setBusy(true);
+    setError(null);
+    void onConfirm({ concurrency, maxSpendUsd, maxRuns })
+      .catch((err: unknown) => {
+        // Only an Error carries a message worth showing; anything else stringifies
+        // to "[object Object]", which tells the reader nothing.
+        setError(err instanceof Error ? err.message : 'Dispatch failed.');
+      })
+      .finally(() => setBusy(false));
+  }
 
   return (
-    <Dialog
+    <SlideOver
       open
-      onOpenChange={(open) => {
-        if (!open) onCancel();
-      }}
-    >
-      <DialogContent
-        showCloseButton={false}
-        className="w-[min(560px,92vw)] max-w-none sm:max-w-none"
-      >
-        <DialogHeader className="pt-4">
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription
-            data-over-ceiling={preview.overCeiling || undefined}
-            className={cn(preview.overCeiling && 'text-(--state-waiting-fg)')}
+      modal
+      onClose={onCancel}
+      title={title}
+      data-slot="dispatch-dialog"
+      data-mode={mode}
+      initialFocusRef={raising ? spendRef : concurrencyRef}
+      footer={
+        <>
+          <Button variant="quiet" onClick={onCancel}>
+            Cancel
+          </Button>
+          {/* Red when even the low estimate clears the spend ceiling: the session will
+              pause before every task has run. */}
+          <Button
+            variant={preview.overCeiling ? 'danger' : 'primary'}
+            icon={<Zap size={14} strokeWidth={1.8} />}
+            disabled={!canConfirm}
+            busy={busy}
+            busyLabel={raising ? 'Raising…' : 'Sending…'}
+            onClick={confirm}
           >
-            {raising ? preview.costSummary : preview.summary}
-            {preview.overCeiling && ' — above the ceiling'}
-          </DialogDescription>
-        </DialogHeader>
+            {label}
+          </Button>
+        </>
+      }
+    >
+      <div className={styles.form}>
+        <p
+          data-slot="dialog-description"
+          data-over-ceiling={preview.overCeiling || undefined}
+          data-tone={preview.overCeiling ? 'warning' : undefined}
+          className={styles.summary}
+        >
+          {raising ? preview.costSummary : preview.summary}
+          {preview.overCeiling && ' — above the ceiling'}
+        </p>
 
-        {!raising && (
-          <div className="flex items-center gap-2 px-4 pt-2">
-            <span className="font-book text-muted-foreground text-[13px]">
-              Run at most
-            </span>
-            <Select
-              value={String(concurrency)}
-              onValueChange={(value) => setConcurrency(Number(value) || 1)}
-            >
-              <SelectTrigger aria-label="Concurrency" className="min-w-14">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {concurrencyOptions.map((n) => (
-                  <SelectItem key={n} value={String(n)}>
-                    {String(n)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <span className="font-book text-muted-foreground text-[13px]">
-              at a time
-            </span>
-          </div>
+        {/* The failure sits at the top, under the summary: the task list below is
+            unbounded (the sheet's body scrolls), so on a large fan-out an alert after it
+            would land off-screen and a sighted reader would see nothing happen. */}
+        {error !== null && (
+          <Notice tone="danger" role="alert">
+            {error}
+          </Notice>
         )}
 
-        <div className="flex items-center gap-2 px-4 py-2">
-          <label
-            htmlFor={`${fieldId}-spend`}
-            className="flex items-center gap-2"
+        <div className={styles.fields}>
+          {!raising && (
+            <Field label="Concurrency" id={`${fieldId}-concurrency`}>
+              {/* A native select, not the library's picker Select: the choice is a plain
+                  number list, and a native control keeps role combobox with every option
+                  in the DOM (DispatchDialog.test counts them) and saves nothing until
+                  the confirm. */}
+              <select
+                ref={concurrencyRef}
+                id={`${fieldId}-concurrency`}
+                className={cx('select', styles.concurrency)}
+                value={String(concurrency)}
+                onChange={(event) =>
+                  setConcurrency(Number(event.target.value) || 1)
+                }
+              >
+                {concurrencyOptions.map((n) => (
+                  <option key={n} value={String(n)}>
+                    {String(n)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+          <Field
+            label="Spend ceiling"
+            id={`${fieldId}-spend`}
+            error={
+              spendInvalid ? 'More than $0, or empty for no ceiling' : undefined
+            }
           >
-            <span className="font-book text-muted-foreground text-[13px]">
-              Spend ceiling $
-            </span>
-            <Input
-              id={`${fieldId}-spend`}
+            <TextField
+              ref={spendRef}
               type="number"
               inputMode="decimal"
               min={1}
               step="any"
-              aria-label="Spend ceiling"
-              aria-invalid={spendInvalid || undefined}
-              className="w-24"
+              start="$"
+              className={styles.number}
               value={spend.text}
               onChange={(event) => setSpend(readCeilingField(event))}
             />
-          </label>
-          <label
-            htmlFor={`${fieldId}-runs`}
-            className="flex items-center gap-2"
+          </Field>
+          <Field
+            label="Max runs"
+            id={`${fieldId}-runs`}
+            error={
+              runsInvalid
+                ? 'A whole number above 0, or empty for no ceiling'
+                : undefined
+            }
           >
-            <span className="font-book text-muted-foreground text-[13px]">
-              Max runs
-            </span>
-            <Input
-              id={`${fieldId}-runs`}
+            <TextField
               type="number"
               inputMode="numeric"
               min={1}
               step={1}
-              aria-label="Max runs"
-              aria-invalid={runsInvalid || undefined}
-              className="w-20"
+              className={styles.number}
               value={runs.text}
               onChange={(event) => setRuns(readCeilingField(event))}
             />
-          </label>
+          </Field>
         </div>
 
         {hints.length > 0 && (
-          <div className="flex flex-col gap-0.5 px-4 pb-2">
+          <ul className={styles.hints}>
             {hints.map((hint) => (
-              <HintText key={hint}>{hint}</HintText>
+              <li key={hint}>{hint}</li>
             ))}
-          </div>
+          </ul>
+        )}
+
+        {overlaps.length > 0 && (
+          <Notice tone="warning" role="note" label="Claimed files">
+            {overlaps.map((overlap) => (
+              <p key={overlap.key} className={styles.overlap}>
+                {overlap.text}
+              </p>
+            ))}
+          </Notice>
         )}
 
         {!raising && (
-          <ScrollArea className="max-h-72 px-1">
-            <div role="table" aria-label="Tasks to dispatch">
-              {preview.rows.map((row) => (
-                <ListRow
-                  key={row.taskId}
-                  id={row.taskId}
-                  title={
-                    <span
-                      className={cn(
-                        row.disposition !== 'starts-now' &&
-                          'text-muted-foreground'
-                      )}
-                    >
-                      {row.title}
-                    </span>
-                  }
-                  trailing={
-                    <Pill
-                      data-disposition={row.disposition}
-                      className={cn(
-                        row.disposition === 'not-ready' && 'text-status-blocked'
-                      )}
-                    >
-                      {DISPOSITION_LABEL[row.disposition]}
-                    </Pill>
-                  }
-                />
-              ))}
-            </div>
-          </ScrollArea>
+          <ul className={styles.tasks} aria-label="Tasks to dispatch">
+            {preview.rows.map((row) => (
+              <li
+                key={row.taskId}
+                data-disposition={row.disposition}
+                className={styles.task}
+              >
+                <StatusIcon status={statusById.get(row.taskId) ?? ''} />
+                <span className={styles.taskTitle}>{row.title}</span>
+                <span className={styles.taskId}>{row.taskId}</span>
+                <Chip tone={DISPOSITION_TONE[row.disposition]}>
+                  {DISPOSITION_LABEL[row.disposition]}
+                </Chip>
+              </li>
+            ))}
+          </ul>
         )}
-
-        {error !== null && (
-          <p role="alert" className="text-red px-4 pt-2 text-[12px]">
-            {error}
-          </p>
-        )}
-
-        <DialogFooter>
-          <PillButton onClick={onCancel}>Cancel</PillButton>
-          <Button
-            disabled={busy || !canConfirm}
-            onClick={() => {
-              // `canConfirm` already rules out an invalid ceiling; this narrows the type.
-              if (maxSpendUsd === 'invalid' || maxRuns === 'invalid') return;
-              setBusy(true);
-              setError(null);
-              void onConfirm({ concurrency, maxSpendUsd, maxRuns })
-                .catch((err: unknown) => {
-                  // Only an Error carries a message worth showing; anything else stringifies
-                  // to "[object Object]", which tells the reader nothing.
-                  setError(
-                    err instanceof Error ? err.message : 'Dispatch failed.'
-                  );
-                })
-                .finally(() => setBusy(false));
-            }}
-          >
-            <Zap />
-            {label}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </SlideOver>
   );
 }

@@ -1,14 +1,13 @@
 import type { ApiClient, DocProposalView } from '@dispatch/client';
+import { Button, cx, Field, TextField } from '@dispatch/ui';
 import { useQuery } from '@tanstack/react-query';
-import { useId, useState } from 'react';
+import { useState } from 'react';
 
 import { docsKey } from '../../hooks/useDocs';
 import type { DecideAvailability } from '../../lib/daemonAuth';
+import { DecisionCard, type DecisionCardProps } from '../gates/DecisionCard';
 import { DecideUnavailableNotice } from '../runs/DecideUnavailableNotice';
-import type { ApprovalCardOption } from '@/ui/ai/approval-card';
-import { ApprovalCard } from '@/ui/ai/approval-card';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
+import styles from './DocGateCard.module.css';
 
 type Choice = 'approve' | 'reject';
 
@@ -31,8 +30,10 @@ interface DocGateCardProps {
   onRestartDaemon: () => Promise<void>;
 }
 
-/** A doc gate: the proposed edit's title, proposer, diff and whether it merges
- *  onto the head, then Approve (only when it merges cleanly) or Reject. */
+/** A doc gate on DecisionCard: the proposed edit's title, proposer, diff and
+ *  whether it merges onto the head, then Approve (only when it merges
+ *  cleanly) or Reject, an optional reason, and why deciding is unavailable
+ *  in this window when it is. */
 export function DocGateCard({
   doc,
   proposal,
@@ -52,7 +53,6 @@ export function DocGateCard({
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [reason, setReason] = useState('');
-  const reasonId = useId();
 
   const view = read.data ?? null;
   const clean = view?.mergeable.clean ?? true;
@@ -89,7 +89,7 @@ export function DocGateCard({
     void decide(id === 'approve' ? 'approve' : 'reject');
   }
 
-  const options: ApprovalCardOption[] = [
+  const options: DecisionCardProps['options'] = [
     { id: 'reject', label: pending === 'reject' ? 'Rejecting…' : 'Reject' },
     ...(clean
       ? [
@@ -102,61 +102,57 @@ export function DocGateCard({
   ];
 
   return (
-    <div
+    <DecisionCard
       data-slot="doc-gate-card"
-      className="animate-in fade-in-0 flex flex-col gap-2 duration-100 motion-reduce:animate-none"
-    >
-      <ApprovalCard
-        className="max-w-none"
-        question="Apply this edit to an accepted doc?"
-        detail={
-          view !== null ? (
-            <ProposalDetail
-              view={view}
-              onOpenDoc={() => onOpenDoc(doc, proposal)}
-            />
-          ) : read.error !== null && !read.isFetching ? (
-            <span className="flex flex-wrap items-center gap-x-1.5">
-              <span role="alert" className="text-red">
-                Could not read the proposal: {read.error.message}
-              </span>
-              <Button
-                variant="link"
-                size="xs"
-                className="h-auto px-0 text-[12px]"
-                onClick={() => void read.refetch()}
-              >
-                Try again
-              </Button>
+      question="Apply this edit to an accepted doc?"
+      detail={
+        view !== null ? (
+          <ProposalDetail
+            view={view}
+            onOpenDoc={() => onOpenDoc(doc, proposal)}
+          />
+        ) : read.error !== null && !read.isFetching ? (
+          <span className={styles.line}>
+            <span role="alert" className="toneText" data-tone="danger">
+              Could not read the proposal: {read.error.message}
             </span>
-          ) : (
-            'Loading the proposal…'
-          )
-        }
-        options={options}
-        onSelect={handleSelect}
-        selectedId={selectedId}
-        disabled={!decidable}
-      />
-      {view !== null && view.proposal.state === 'open' && (
-        <div className="flex items-center gap-2 text-[12px]">
-          <label htmlFor={reasonId} className="text-muted-foreground shrink-0">
-            Reason (optional)
-          </label>
-          <Input
-            id={reasonId}
+            <Button
+              variant="quiet"
+              size="sm"
+              onClick={() => void read.refetch()}
+            >
+              Try again
+            </Button>
+          </span>
+        ) : (
+          'Loading the proposal…'
+        )
+      }
+      options={options}
+      onSelect={handleSelect}
+      selectedId={selectedId}
+      disabled={!decidable}
+    >
+      {view !== null && view.proposal.state === 'open' ? (
+        <Field label="Reason (optional)">
+          <TextField
+            size="sm"
             value={reason}
             disabled={!decidable}
-            onChange={(e) => setReason(e.target.value)}
+            onChange={(event) => setReason(event.target.value)}
           />
-        </div>
-      )}
+        </Field>
+      ) : null}
       <DecideUnavailableNotice
         availability={availability}
         onRestartDaemon={onRestartDaemon}
       />
-      {error !== null && <div className="text-red text-[12px]">{error}</div>}
-    </div>
+      {error !== null ? (
+        <div className={cx(styles.error, 'toneText')} data-tone="danger">
+          {error}
+        </div>
+      ) : null}
+    </DecisionCard>
   );
 }
 
@@ -171,9 +167,9 @@ function ProposalDetail({
 }) {
   const { mergeable, proposal } = view;
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-baseline gap-x-2">
-        <span className="text-foreground font-medium">{view.title}</span>
+    <div className={styles.detail}>
+      <div className={styles.meta}>
+        <span className={styles.title}>{view.title}</span>
         <span>Proposed by {proposal.author}</span>
         <span>
           {mergeable.clean
@@ -181,36 +177,42 @@ function ProposalDetail({
             : `conflicts with rev ${mergeable.headN}`}
         </span>
       </div>
-      <pre className="rounded-control border-border-chip max-h-64 overflow-auto border-[0.5px] px-2.5 py-2 font-mono text-[11px]">
+      {/* The changed lines, scrollable by keyboard when they run long; a
+          named region, so the Tab stop announces what it holds. */}
+      <pre
+        className={styles.diff}
+        tabIndex={0}
+        role="region"
+        aria-label="Proposed changes"
+      >
         {view.chunks
           .filter((c) => !c.equal)
           .flatMap((c, i) => [
             ...c.a.map((line, j) => (
-              <div key={`a${i}-${j}`}>{`-${line.replace(/\n$/, '')}`}</div>
+              <span key={`a${i}-${j}`} className={styles.diffLine}>
+                {`-${line.replace(/\n$/, '')}`}
+              </span>
             )),
             ...c.b.map((line, j) => (
-              <div key={`b${i}-${j}`}>{`+${line.replace(/\n$/, '')}`}</div>
+              <span key={`b${i}-${j}`} className={styles.diffLine}>
+                {`+${line.replace(/\n$/, '')}`}
+              </span>
             )),
           ])}
       </pre>
       {!mergeable.clean && proposal.state === 'open' && (
-        <span className="flex flex-wrap items-center gap-x-1.5">
+        <span className={styles.line}>
           <span>
             Resolve it in the doc’s merge view and save, then reject this
             proposal as resolved.
           </span>
-          <Button
-            variant="link"
-            size="xs"
-            className="h-auto px-0 text-[12px]"
-            onClick={onOpenDoc}
-          >
+          <Button variant="quiet" size="sm" onClick={onOpenDoc}>
             Open merge view
           </Button>
         </span>
       )}
       {proposal.state !== 'open' && (
-        <span className="text-foreground">Already {proposal.state}.</span>
+        <span className={styles.strong}>Already {proposal.state}.</span>
       )}
     </div>
   );

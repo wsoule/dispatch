@@ -1,3 +1,4 @@
+import { Button, type UiTone } from '@dispatch/ui';
 import {
   Ban,
   CircleCheck,
@@ -16,7 +17,7 @@ import { formatRelativeTimeFromIso } from '../../../lib/format';
 import { assigneeLabel } from '../../../lib/taskDisplay';
 import type { TimelineItem, TimelineKind } from '../../../lib/taskTimeline';
 import { usePeople } from '../../people/PeopleContext';
-import { cn } from '@/lib/utils';
+import styles from './ActivityTimeline.module.css';
 
 const KIND_ICON: Record<TimelineKind, LucideIcon> = {
   dispatched: Play,
@@ -30,18 +31,28 @@ const KIND_ICON: Record<TimelineKind, LucideIcon> = {
   note: StickyNote,
 };
 
-const KIND_TONE: Partial<Record<TimelineKind, string>> = {
-  merged: 'text-status-done',
-  finished: 'text-state-review',
-  failed: 'text-state-failed',
-  pr: 'text-state-review',
+// Each event's glyph colour, through the data-tone hook (the words always say what
+// happened, so the hue is never the only cue): red for a failure; green for a run that
+// succeeded or a pull request ready for review; blue for a run starting; amber for work
+// waiting on the agent again (changes asked for); grey for the rest, landed work included
+// (done keeps a neutral mark, never green beside a red failure).
+const KIND_TONE: Record<TimelineKind, UiTone> = {
+  dispatched: 'info',
+  finished: 'success',
+  failed: 'danger',
+  merged: 'muted',
+  discarded: 'muted',
+  pr: 'success',
+  changes: 'warning',
+  stopped: 'muted',
+  note: 'muted',
 };
 
 function Actor({ actor }: { actor: string | null }) {
   const people = usePeople();
   if (actor === null || actor === 'none') return null;
   const name = people.personFor(actor)?.name ?? assigneeLabel(actor);
-  return <span className="text-(--text-secondary)">{name} </span>;
+  return <span className={styles.actor}>{name} </span>;
 }
 
 /**
@@ -61,44 +72,27 @@ export function ActivityTimeline({
   const shown =
     initial === undefined || expanded ? items : items.slice(0, initial);
   if (items.length === 0) {
-    return (
-      <p className="text-muted-foreground font-book px-2 text-[12px]">
-        Nothing has happened yet.
-      </p>
-    );
+    return <p className={styles.empty}>Nothing has happened yet.</p>;
   }
   return (
-    <div className="flex flex-col">
-      <ol data-slot="activity-timeline" className="flex flex-col">
+    <div className={styles.root}>
+      <ol data-slot="activity-timeline" className={styles.list}>
         {shown.map((item, i) => {
           const Icon = KIND_ICON[item.kind];
-          const last = i === shown.length - 1;
           return (
             <li
               key={`${item.at ?? ''}-${i}`}
               data-kind={item.kind}
-              className="relative flex gap-2 pb-2.5 pl-2"
+              className={styles.event}
             >
-              {/* The rail between events. */}
-              {!last && (
-                <span
-                  aria-hidden
-                  className="bg-border absolute top-5 bottom-0 left-[15px] w-px"
-                />
-              )}
-              <span
-                className={cn(
-                  'bg-surface-panel relative z-10 flex size-4 shrink-0 translate-y-0.5 items-center justify-center',
-                  KIND_TONE[item.kind] ?? 'text-muted-foreground'
-                )}
-              >
-                <Icon aria-hidden className="size-3.5" />
+              <span className={styles.glyph} data-tone={KIND_TONE[item.kind]}>
+                <Icon size={14} strokeWidth={1.8} aria-hidden />
               </span>
-              <p className="text-muted-foreground font-book min-w-0 flex-1 text-[12px] leading-5 break-words">
+              <p className={styles.text}>
                 <Actor actor={item.actor} />
                 {item.text}
                 {item.at !== null && (
-                  <span className="whitespace-nowrap">
+                  <span className={styles.when}>
                     {' '}
                     · {formatRelativeTimeFromIso(item.at)}
                   </span>
@@ -109,13 +103,14 @@ export function ActivityTimeline({
         })}
       </ol>
       {initial !== undefined && items.length > initial && (
-        <button
-          type="button"
+        <Button
+          variant="quiet"
+          size="sm"
+          className={styles.more}
           onClick={() => setExpanded((e) => !e)}
-          className="text-muted-foreground rounded-control focus-visible:ring-ring ml-2 h-6 self-start px-1 text-[12px] font-medium outline-none hover:text-(--text-secondary) focus-visible:ring-2"
         >
           {expanded ? 'Show fewer' : `Show all ${items.length}`}
-        </button>
+        </Button>
       )}
     </div>
   );

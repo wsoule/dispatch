@@ -5,11 +5,13 @@ import type {
   RunMeta,
   Snippet,
 } from '@dispatch/client';
+import { Button, Checkbox, cx } from '@dispatch/ui';
 import type {
   CodeViewItem,
   FileContents,
   FileDiffMetadata,
 } from '@pierre/diffs';
+import { DIFFS_TAG_NAME } from '@pierre/diffs';
 import type { CodeViewHandle } from '@pierre/diffs/react';
 import {
   Copy,
@@ -19,7 +21,7 @@ import {
   Pencil,
   TriangleAlert,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { DiffSurface, useParsedPatchFiles } from '../code/DiffSurface';
@@ -30,8 +32,14 @@ import type {
   SelectionAnchor,
 } from '../code/SelectionActions';
 import { SelectionActions } from '../code/SelectionActions';
+import styles from './PierreReviewDiff.module.css';
 import type { ReviewDestination } from './ReviewThread';
-import { ReviewComposer, ReviewThread } from './ReviewThread';
+import {
+  createComposerDraft,
+  ReviewComposer,
+  ReviewThread,
+} from './ReviewThread';
+import { useFittedDiffLayout } from '@/hooks/useFittedDiffLayout';
 import { useRunFileLoader } from '@/hooks/useRunFileContents';
 import { snippetFromSelection } from '@/lib/conversation';
 import { createReviewEditor } from '@/lib/pierreEditor';
@@ -42,11 +50,10 @@ import {
   editErrorMessage,
   isEditableDiffType,
   resolveEditFailure,
+  reviewCacheKeyPrefix,
 } from '@/lib/reviewDiffItems';
 import { isTerminalRunState } from '@/lib/runState';
 import type { ApplySuggestionOutcome } from '@/lib/suggestionRange';
-import { Button } from '@/ui/button';
-import { Checkbox } from '@/ui/checkbox';
 
 interface PierreReviewDiffProps {
   /** Backs the contents loader that fills in what a patch's own hunks don't carry — omitted
@@ -138,6 +145,105 @@ function anchorFrom(
   };
 }
 
+/** Rules for the "Actions for this line" slot inside Pierre's shadow root (see `diffOptions`).
+    Pierre stacks the line number over its gutter slot, so `z-index` lifts the slot to take the
+    press. Pierre also pins the slot to the number column's right edge, over the right-aligned
+    digits, which hid the hovered line's number; it moves to the column's left edge instead
+    (Pierre's own placement when numbers are off). Pierre's 2ch of padding before the digits is
+    narrower than the 16px button (--s-4), so that padding grows to the button plus 2px. */
+const GUTTER_SLOT_CSS = [
+  '[data-gutter-utility-slot] { z-index: 2; right: unset; left: 0; justify-content: flex-start; }',
+  '[data-column-number] { padding-left: max(2ch, calc(var(--s-4) + 2px)); }',
+].join('\n');
+
+// Keys that only modify another key; see `keepTypedKeysInEditor`.
+const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta']);
+
+/**
+ * Stops a plain key typed into one of Pierre's editors (edit mode, or the composer's suggestion
+ * editor) from also reaching the app's own keyboard shortcuts.
+ *
+ * Those editors live in Pierre's shadow roots, so a window or document listener sees the shadow
+ * host as the event's target, not the editable element, and its "is the reviewer typing?" check
+ * (`isTypingTarget`) says no: typing "a" or "/" into a suggestion then opened a picker or the
+ * search and took the focus, cutting the text off mid-word. The innermost target is still in
+ * `composedPath()`, so a key from an editable element stops here. Keys held with Ctrl or Cmd go
+ * on, because the app's chords (the palette, back and forward) are meant to work while typing,
+ * and so do the modifier keys themselves, which type nothing: Pierre's editor listens for Shift
+ * on the document to anchor a shift-extended selection.
+ *
+ * A native listener on the diff's frame rather than React's `onKeyDown`: React looks a key's
+ * handlers up from the target it is handed, which for a key typed in a shadow root should be the
+ * host and is not in every DOM; stopping at the frame also keeps the key from React's root
+ * listener, not only from the window. Pierre's editor has handled the key on the editable
+ * element itself by then.
+ */
+function keepTypedKeysInEditor(event: KeyboardEvent): void {
+  if (event.metaKey || event.ctrlKey || MODIFIER_KEYS.has(event.key)) return;
+  const origin = event.composedPath()[0];
+  if (origin instanceof HTMLElement && origin.isContentEditable) {
+    event.stopPropagation();
+  }
+}
+
+/**
+ * Keeps Pierre's scroll content as tall as the annotations drawn into it, by returning the ref
+ * callback each annotation's outermost element takes.
+ *
+ * Pierre 1.3.1 measures an item again when the slot content portalled into it changes size (a
+ * `ResizeObserver` on its sticky container reconciles the item heights), but that path never
+ * renders, and only a render resizes the scroll content to the new total. React draws a new
+ * annotation's content after Pierre has already measured the empty slot, so a composer opening,
+ * its suggestion editor arriving or a thread landing would hang off the bottom of the diff,
+ * clipped and out of reach, until a window resize happened to render.
+ *
+ * So each annotation is observed here, and so is the item host it sits in (Pierre's
+ * `diffs-container`), and any change in either size queues one Pierre render on the next frame,
+ * by which time Pierre's own observer has measured. Both, because neither alone sees every
+ * change: a growing annotation grows its host in the same layout, but a shrinking one leaves the
+ * host at its old height (split view keeps the other side's matching row) until a Pierre render
+ * re-pairs the rows — and that later shrink of the host is again measured without a render.
+ */
+function useRenderOnAnnotationResize(
+  viewRef: RefObject<CodeViewHandle<Annotation> | null>
+): (node: HTMLElement | null) => (() => void) | undefined {
+  const observerRef = useRef<ResizeObserver | null>(null);
+  // How many observed annotations each host holds, so a host is let go with its last one.
+  const hostsRef = useRef(new Map<Element, number>());
+  return useCallback(
+    (node: HTMLElement | null) => {
+      if (node === null || typeof ResizeObserver === 'undefined') {
+        return undefined;
+      }
+      // One observer for everything; `render()` queues on Pierre's own frame, so several sizes
+      // changing together still cost a single render.
+      observerRef.current ??= new ResizeObserver(() => {
+        viewRef.current?.getInstance()?.render();
+      });
+      const observer = observerRef.current;
+      const hosts = hostsRef.current;
+      const host = node.closest(DIFFS_TAG_NAME);
+      observer.observe(node);
+      if (host !== null) {
+        hosts.set(host, (hosts.get(host) ?? 0) + 1);
+        observer.observe(host);
+      }
+      return () => {
+        observer.unobserve(node);
+        if (host === null) return;
+        const left = (hosts.get(host) ?? 1) - 1;
+        if (left > 0) {
+          hosts.set(host, left);
+          return;
+        }
+        hosts.delete(host);
+        observer.unobserve(host);
+      };
+    },
+    [viewRef]
+  );
+}
+
 /**
  * The review diff: Pierre's `CodeView` with comment threads injected as line annotations.
  *
@@ -180,6 +286,11 @@ export function PierreReviewDiff({
   // composer's suggestion editor seeds from. `null` while that fetch is in flight, which keeps
   // the suggestion editor withheld (see `ComposerProps.fileContents`'s own doc comment).
   const [composerContents, setComposerContents] = useState<string | null>(null);
+  // The open composer's draft (its note, the suggestion typed into it, a save in flight),
+  // held here rather than in the composer: Pierre keys a file's annotation slots by position,
+  // so a thread or finding landing before the composer remounts it (see
+  // `createComposerDraft`). Kept when the composer is re-aimed; emptied when it closes.
+  const [composerDraft] = useState(createComposerDraft);
   // A comment whose `Apply now` save succeeded but whose immediate apply attempt failed — see
   // `submitAndApplyNow`. Keyed by comment id, read once by the `ReviewThread` that eventually
   // renders for it (via `initialApplyError`) so the failure shows there with the same
@@ -230,8 +341,16 @@ export function PierreReviewDiff({
   // apart from the ones that must not (see `decideEditSave`).
   const saveRequestRef = useRef<string | null>(null);
   const viewRef = useRef<CodeViewHandle<Annotation> | null>(null);
+  // Put on every annotation's outermost element, so Pierre resizes around it as it grows.
+  const observeAnnotation = useRenderOnAnnotationResize(viewRef);
   // The positioning frame for the floating selection bar, which is absolutely placed inside it.
   const containerRef = useRef<HTMLDivElement>(null);
+  // The layout the diff draws: the reviewer's setting (Settings > Diffs), except that split
+  // becomes unified while the frame is narrower than `SPLIT_MIN_WIDTH`, and comes back on its
+  // own once the frame is wide enough again. Null until the frame is measured (before the first
+  // paint), and the diff mounts only then, so Pierre lays it out once, in the right layout.
+  const layout = useFittedDiffLayout(containerRef);
+  const surfaceReady = layout !== null;
   // A patch's hunks alone don't carry the rest of the file — this loader fetches it from the
   // run's worktree, which is what makes unchanged-region expansion (and editing) possible at
   // all.
@@ -239,13 +358,25 @@ export function PierreReviewDiff({
     client ?? null,
     runId
   );
-  // Merged over the reviewer's own display settings by `DiffSurface`; only these two are
+  // Merged over the reviewer's own display settings by `DiffSurface`; the first four are
   // review-specific. `enableLineSelection` is what makes a drag down the line-number column
   // select a range, which is the only way `onSelectedLinesChange` ever fires — without it the
   // gutter affordance could never arm more than the one line it sits on.
+  // `enableGutterUtility` makes Pierre slot `renderGutterUtility`'s button into the hovered
+  // line's gutter; without it the button is rendered but never placed, so it never shows.
+  // Pierre stacks the line number (z-index 1) over that slot, which would swallow the press,
+  // so `unsafeCSS` (Pierre's hook for rules inside its shadow root) lifts the slot above it and
+  // moves it off the digits. `diffStyle` is the layout worked out above, which overrides the
+  // setting's own only in a frame too narrow for split.
   const diffOptions = useMemo(
-    () => ({ loadDiffFiles, enableLineSelection: true }),
-    [loadDiffFiles]
+    () => ({
+      loadDiffFiles,
+      enableLineSelection: true,
+      enableGutterUtility: true,
+      unsafeCSS: GUTTER_SLOT_CSS,
+      ...(layout === null ? {} : { diffStyle: layout }),
+    }),
+    [loadDiffFiles, layout]
   );
 
   // The one place a suggestion actually gets applied — shared by every `ReviewThread`'s own
@@ -273,13 +404,14 @@ export function PierreReviewDiff({
 
   // Parsed here rather than left to `DiffSurface` because the file list is read outside
   // item-building too — the pencil gate and the stale-`editing` effect below both need it — and
-  // handing the result back down keeps that one parse shared. `'review'` namespaces the worker
-  // pool's render cache for this patch.
-  const parsed = useParsedPatchFiles(patch, only, 'review');
+  // handing the result back down keeps that one parse shared. The prefix namespaces the worker
+  // pool's render cache for this patch's contents — see `reviewCacheKeyPrefix`.
+  const cacheKeyPrefix = useMemo(() => reviewCacheKeyPrefix(patch), [patch]);
+  const parsed = useParsedPatchFiles(patch, only, cacheKeyPrefix);
   const files = parsed.files;
 
   // Edit mode at all requires a run that's done and not yet reviewed — mirrors how
-  // `RunReviewView` hides its PR action when the project can't open one: hidden outright
+  // `ReviewMode` hides its PR action when the project can't open one: hidden outright
   // rather than shown disabled, since there's nothing the reviewer could do about either case
   // from here. A run still in progress can have its worktree written to by the agent at any
   // moment (the same race `applyRunEdit`'s `worktree-busy` guards server-side), and a
@@ -317,76 +449,78 @@ export function PierreReviewDiff({
         const closeComposer = () => {
           setComposing(null);
           setComposerContents(null);
+          composerDraft.reset();
         };
         return (
-          <ReviewComposer
-            line={composing?.line ?? 0}
-            startLine={annMeta.startLine}
-            file={annMeta.file}
-            fileContents={composerContents}
-            destination={destination}
-            onCancel={closeComposer}
-            // Closed only once the write resolves, so a rejected POST leaves
-            // the composer open with the note still in it and the reason shown
-            // beneath — `ReviewComposer` catches and renders it.
-            onSaved={closeComposer}
-            onSubmit={(body, suggestion, anchorText) =>
-              onAdd === undefined
-                ? Promise.reject(new Error('nowhere to add this comment'))
-                : onAdd({
-                    file: annMeta.file,
-                    line: composing?.line ?? 0,
-                    startLine: annMeta.startLine,
-                    // Read out of the same contents the composer seeded its
-                    // suggestion editor from, so the anchor can never describe
-                    // different text than the suggestion replaces.
-                    anchorText,
-                    body,
-                    suggestion,
-                  })
-            }
-            onApply={
-              onApply === undefined
-                ? undefined
-                : (commentId) => applyAndInvalidate(commentId, annMeta.file)
-            }
-            onApplyNowFailed={(commentId, outcome) =>
-              setApplyNowFailures((prev) =>
-                new Map(prev).set(commentId, outcome)
-              )
-            }
-          />
+          <div ref={observeAnnotation} className={styles.annotation}>
+            <ReviewComposer
+              line={composing?.line ?? 0}
+              startLine={annMeta.startLine}
+              file={annMeta.file}
+              fileContents={composerContents}
+              destination={destination}
+              draft={composerDraft}
+              onCancel={closeComposer}
+              // Closed only once the write resolves, so a rejected POST leaves
+              // the composer open with the note still in it and the reason shown
+              // beneath — `ReviewComposer` catches and renders it.
+              onSaved={closeComposer}
+              onSubmit={(body, suggestion, anchorText) =>
+                onAdd === undefined
+                  ? Promise.reject(new Error('nowhere to add this comment'))
+                  : onAdd({
+                      file: annMeta.file,
+                      line: composing?.line ?? 0,
+                      startLine: annMeta.startLine,
+                      // Read out of the same contents the composer seeded its
+                      // suggestion editor from, so the anchor can never describe
+                      // different text than the suggestion replaces.
+                      anchorText,
+                      body,
+                      suggestion,
+                    })
+              }
+              onApply={
+                onApply === undefined
+                  ? undefined
+                  : (commentId) => applyAndInvalidate(commentId, annMeta.file)
+              }
+              onApplyNowFailed={(commentId, outcome) =>
+                setApplyNowFailures((prev) =>
+                  new Map(prev).set(commentId, outcome)
+                )
+              }
+            />
+          </div>
         );
       }
       if (annMeta.kind === 'findings') {
         return (
-          <div className="flex flex-col gap-1 py-1">
+          <div ref={observeAnnotation} className={styles.annotation}>
             {annMeta.findings.map((f) => (
-              <div
-                key={f.id}
-                className="bg-state-waiting-surface rounded-card border-state-waiting-edge border-l-2 px-2 py-1"
-              >
-                <div className="flex items-center gap-1.5 text-[13px]">
-                  <TriangleAlert className="text-state-waiting size-3 shrink-0" />
+              <div key={f.id} className={styles.finding} data-tone="warning">
+                <div className={styles.findingHead}>
+                  <TriangleAlert
+                    className={styles.findingIcon}
+                    size={14}
+                    strokeWidth={1.8}
+                    aria-hidden="true"
+                  />
                   {/* Marked as the agent's claim rather than the reviewer's note: the two sit on
                       the same line and must not be mistaken for each other. */}
-                  <span className="text-muted-foreground font-book shrink-0 text-[12px]">
+                  <span className={styles.findingMeta}>
                     Agent · {f.severity}
                   </span>
-                  <span className="min-w-0 flex-1 truncate font-medium">
-                    {f.title}
-                  </span>
+                  <span className={styles.findingTitle}>{f.title}</span>
                 </div>
-                <p className="text-muted-foreground font-book text-[12px] leading-snug">
-                  {f.detail}
-                </p>
+                <p className={styles.findingDetail}>{f.detail}</p>
               </div>
             ))}
           </div>
         );
       }
       return (
-        <div className="flex flex-col">
+        <div ref={observeAnnotation} className={styles.annotation}>
           {annMeta.comments.map((c) => (
             <ReviewThread
               key={c.id}
@@ -412,6 +546,7 @@ export function PierreReviewDiff({
     [
       composing,
       composerContents,
+      composerDraft,
       destination,
       onAdd,
       onResolve,
@@ -419,6 +554,7 @@ export function PierreReviewDiff({
       onApply,
       applyAndInvalidate,
       applyNowFailures,
+      observeAnnotation,
     ]
   );
 
@@ -433,13 +569,15 @@ export function PierreReviewDiff({
         ...(startLine === undefined ? {} : { startLine }),
       });
       // Cleared first so a previous compose's contents can't briefly seed this one's
-      // suggestion editor while the new fetch is in flight.
+      // suggestion editor while the new fetch is in flight. A re-aimed composer keeps its
+      // note but not the last save's error, which was about the old range.
       setComposerContents(null);
+      composerDraft.set({ error: null });
       void ensureLoaded(file).then((result) => {
         setComposerContents(result?.contents ?? null);
       });
     },
-    [ensureLoaded]
+    [ensureLoaded, composerDraft]
   );
 
   const renderGutterUtility = useCallback(
@@ -451,53 +589,55 @@ export function PierreReviewDiff({
       // the affordance here keeps the two from competing over the same gesture.
       if (editing === item.id) return null;
       return (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label="Actions for this line"
-          onClick={(event) => {
-            const hovered = getHoveredLine();
-            const line = hovered?.lineNumber;
-            // Only the additions side can be acted on: a deleted line is not there for the agent
-            // to change, so a comment anchored to it would point at nothing and its text is not
-            // in the file under review.
-            if (line === undefined || hovered?.side === 'deletions') return;
-            // If the reviewer dragged a range in this file that contains this line, arm the whole
-            // range — that is what the selection was for. Otherwise it is a single line. The
-            // file check is load-bearing on a surface rendering the whole patch: line numbers
-            // alone would let a range dragged in one file arm a range in another.
-            const inRange =
-              selection !== null &&
-              selection.file === item.id &&
-              selection.side !== 'deletions' &&
-              line >= Math.min(selection.start, selection.end) &&
-              line <= Math.max(selection.start, selection.end);
-            const startLine = inRange
-              ? Math.min(selection.start, selection.end)
-              : line;
-            const endLine = inRange
-              ? Math.max(selection.start, selection.end)
-              : line;
-            setArmed({
-              selection: {
-                file: item.id,
-                startLine,
-                endLine,
-                // Read out of the already-parsed patch: synchronous, and empty rather than
-                // absent for a file type whose lines it cannot name, because a bar with an
-                // empty snippet is recoverable and a missing bar is not.
-                text: lineTextFromPatch(files, item.id, startLine, endLine),
-              },
-              anchor: anchorFrom(event.currentTarget, containerRef.current),
-            });
-          }}
-          className="text-muted-foreground hover:text-accent-foreground size-4 hover:bg-transparent"
-        >
-          {/* Neutral on purpose: this arms a bar of several actions, so an icon promising a
-              comment would misdescribe it on any surface that cannot take one. */}
-          <MoreHorizontal className="size-3" />
-        </Button>
+        <span className={styles.gutter}>
+          <Button
+            variant="quiet"
+            size="sm"
+            className={styles.iconButton}
+            aria-label="Actions for this line"
+            icon={
+              // Neutral on purpose: this arms a bar of several actions, so an icon promising a
+              // comment would misdescribe it on any surface that cannot take one.
+              <MoreHorizontal size={14} strokeWidth={1.8} aria-hidden="true" />
+            }
+            onClick={(event) => {
+              const hovered = getHoveredLine();
+              const line = hovered?.lineNumber;
+              // Only the additions side can be acted on: a deleted line is not there for the agent
+              // to change, so a comment anchored to it would point at nothing and its text is not
+              // in the file under review.
+              if (line === undefined || hovered?.side === 'deletions') return;
+              // If the reviewer dragged a range in this file that contains this line, arm the whole
+              // range — that is what the selection was for. Otherwise it is a single line. The
+              // file check is load-bearing on a surface rendering the whole patch: line numbers
+              // alone would let a range dragged in one file arm a range in another.
+              const inRange =
+                selection !== null &&
+                selection.file === item.id &&
+                selection.side !== 'deletions' &&
+                line >= Math.min(selection.start, selection.end) &&
+                line <= Math.max(selection.start, selection.end);
+              const startLine = inRange
+                ? Math.min(selection.start, selection.end)
+                : line;
+              const endLine = inRange
+                ? Math.max(selection.start, selection.end)
+                : line;
+              setArmed({
+                selection: {
+                  file: item.id,
+                  startLine,
+                  endLine,
+                  // Read out of the already-parsed patch: synchronous, and empty rather than
+                  // absent for a file type whose lines it cannot name, because a bar with an
+                  // empty snippet is recoverable and a missing bar is not.
+                  text: lineTextFromPatch(files, item.id, startLine, endLine),
+                },
+                anchor: anchorFrom(event.currentTarget, containerRef.current),
+              });
+            }}
+          />
+        </span>
       );
     },
     [selection, editing, files]
@@ -648,45 +788,38 @@ export function PierreReviewDiff({
       return (
         <>
           {error !== null && (
-            <span className="text-state-failed font-book text-[12px]">
+            <span
+              className={cx(styles.editError, 'toneText')}
+              data-tone="danger"
+            >
               {error}
             </span>
           )}
           {isEditing ? (
             <>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => saveEdit(file)}
-                className="h-auto p-0 text-[12px]"
-              >
+              <Button variant="quiet" size="sm" onClick={() => saveEdit(file)}>
                 Save
               </Button>
               {/* Cancel is the only way out that keeps the file as it was — without it,
                   leaving edit mode always meant a commit attempt. */}
               <Button
-                type="button"
-                variant="ghost"
+                variant="quiet"
                 size="sm"
                 onClick={() => cancelEdit(file)}
-                className="h-auto p-0 text-[12px]"
               >
                 Cancel
               </Button>
             </>
           ) : (
             <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
+              variant="quiet"
+              size="sm"
+              className={styles.iconButton}
               aria-label="Edit this file"
               disabled={isPending}
               onClick={() => beginEdit(file)}
-              className="text-muted-foreground hover:text-accent-foreground size-4 hover:bg-transparent"
-            >
-              <Pencil className="size-3" />
-            </Button>
+              icon={<Pencil size={14} strokeWidth={1.8} aria-hidden="true" />}
+            />
           )}
         </>
       );
@@ -713,19 +846,24 @@ export function PierreReviewDiff({
       const isViewed = viewed?.has(item.id) ?? false;
       const tick =
         onToggleViewed === undefined ? null : (
+          // The visible word is GitHub's "Viewed"; the name says which file it ticks, so a
+          // list of headers reads apart.
           <Checkbox
-            checked={isViewed}
+            label="Viewed"
             aria-label={`Mark ${item.id} viewed`}
-            onCheckedChange={() => onToggleViewed(item.id)}
-            // The header itself toggles the file's collapse on click; the tick must not
-            // also do that, or ticking a file would collapse it and immediately re-open it.
+            checked={isViewed}
+            onChange={() => onToggleViewed(item.id)}
+            // The click must stop at the tick: a header that takes clicks through React (a
+            // host's) would otherwise fold the file as well, collapsing it and re-opening it at
+            // once. React stops it at its root, so React handlers and document listeners never
+            // see it; a native listener on a DOM ancestor (Pierre's header) still would, which
+            // is harmless only because @pierre/diffs 1.3.1 has no header click handler.
             onClick={(event) => event.stopPropagation()}
-            className="data-checked:border-state-review data-checked:bg-state-review data-checked:text-background"
           />
         );
       if (edit === null && tick === null) return null;
       return (
-        <span className="flex items-center gap-1.5">
+        <span className={styles.meta}>
           {edit}
           {tick}
         </span>
@@ -736,15 +874,27 @@ export function PierreReviewDiff({
 
   // Escape is the keyboard way out of an armed bar. Deliberately the only dismissal besides
   // invoking an action: outside-click and scroll-following are not wired, and the bar not
-  // following scroll is a known, accepted limitation.
+  // following scroll is a known, accepted limitation. The key is claimed, so the app's
+  // window-level Escape (which honours `defaultPrevented`) does not close the page as well.
   useEffect(() => {
     if (armed === null) return undefined;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setArmed(null);
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setArmed(null);
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [armed]);
+
+  // Keys typed into Pierre's editors stay out of the app's shortcuts — see
+  // `keepTypedKeysInEditor`. The frame is always rendered, so this attaches once.
+  useEffect(() => {
+    const frame = containerRef.current;
+    if (frame === null) return undefined;
+    frame.addEventListener('keydown', keepTypedKeysInEditor);
+    return () => frame.removeEventListener('keydown', keepTypedKeysInEditor);
+  }, []);
 
   // A file leaving the rendered set takes its armed bar with it — a review page swaps `only`
   // without remounting, so a bar left standing would act on a file no longer on screen.
@@ -763,7 +913,9 @@ export function PierreReviewDiff({
       actions.push({
         id: 'comment',
         label: 'Comment',
-        icon: <MessageSquarePlus className="size-3" />,
+        icon: (
+          <MessageSquarePlus size={14} strokeWidth={1.8} aria-hidden="true" />
+        ),
         onInvoke: (sel) =>
           openComposer(
             sel.file,
@@ -776,14 +928,14 @@ export function PierreReviewDiff({
       actions.push({
         id: 'chat',
         label: 'Add to chat',
-        icon: <MessagesSquare className="size-3" />,
+        icon: <MessagesSquare size={14} strokeWidth={1.8} aria-hidden="true" />,
         onInvoke: (sel) => onAddToChat(snippetFromSelection(sel)),
       });
     }
     actions.push({
       id: 'copy',
       label: 'Copy',
-      icon: <Copy className="size-3" />,
+      icon: <Copy size={14} strokeWidth={1.8} aria-hidden="true" />,
       onInvoke: (sel) => {
         // Absent outside a secure context; a failed copy is not worth taking the review down.
         void navigator.clipboard?.writeText(sel.text).catch(() => undefined);
@@ -809,9 +961,11 @@ export function PierreReviewDiff({
 
   // Declarative jump: the effect fires when `scrollTo` changes identity, so clicking the same
   // thread or file twice still scrolls (the caller bumps `nonce`). A file jump lands the
-  // file's header at the top of the scroller; a line jump centres the line.
+  // file's header at the top of the scroller; a line jump centres the line. It runs once more
+  // when the diff first mounts (`surfaceReady` turns true once and stays), so a jump the page
+  // asked for before the frame was measured still lands.
   useEffect(() => {
-    if (scrollTo == null) return;
+    if (scrollTo == null || !surfaceReady) return;
     if (scrollTo.line === undefined) {
       viewRef.current?.scrollTo({
         type: 'item',
@@ -827,49 +981,53 @@ export function PierreReviewDiff({
       side: 'additions',
       align: 'center',
     });
-  }, [scrollTo]);
+  }, [scrollTo, surfaceReady]);
 
   return (
     // A flex column, not a plain box: the bar is positioned against this element, and
     // `DiffSurface`'s scroll container sizes itself off a parent that resolves its own height.
     <div
       ref={containerRef}
-      className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col"
+      className={styles.frame}
+      data-slot="review-diff"
+      data-diff-layout={layout ?? undefined}
     >
       {/* Everything shell-shaped — the worker pool, the crash boundary, the display settings,
           the empty/parse-error states, the scroll container — belongs to `DiffSurface`; what
           stays here is only what "review" means on top of a diff. `createReviewEditor` is the
           one place the editor's options are decided, shared with every other editable surface. */}
-      <DiffSurface<Annotation>
-        patch={patch}
-        parsed={parsed}
-        only={only}
-        items={items}
-        options={diffOptions}
-        viewRef={viewRef}
-        createEditor={createReviewEditor}
-        onItemEditComplete={handleEditComplete}
-        onSelectedLinesChange={(sel) =>
-          setSelection(
-            sel === null
-              ? null
-              : {
-                  file: sel.id,
-                  start: sel.range.start,
-                  end: sel.range.end,
-                  side: sel.range.side,
-                }
-          )
-        }
-        renderAnnotation={renderAnnotation}
-        renderHeaderMetadata={renderHeaderMetadata}
-        // Gated on the bar having anything to offer, not on `onAdd`: this affordance is the only
-        // thing that arms the bar, so tying it to comments alone would take Copy and Add to chat
-        // down with them on a surface that cannot take a comment.
-        renderGutterUtility={
-          selectionActions.length === 0 ? undefined : renderGutterUtility
-        }
-      />
+      {surfaceReady ? (
+        <DiffSurface<Annotation>
+          patch={patch}
+          parsed={parsed}
+          only={only}
+          items={items}
+          options={diffOptions}
+          viewRef={viewRef}
+          createEditor={createReviewEditor}
+          onItemEditComplete={handleEditComplete}
+          onSelectedLinesChange={(sel) =>
+            setSelection(
+              sel === null
+                ? null
+                : {
+                    file: sel.id,
+                    start: sel.range.start,
+                    end: sel.range.end,
+                    side: sel.range.side,
+                  }
+            )
+          }
+          renderAnnotation={renderAnnotation}
+          renderHeaderMetadata={renderHeaderMetadata}
+          // Gated on the bar having anything to offer, not on `onAdd`: this affordance is the only
+          // thing that arms the bar, so tying it to comments alone would take Copy and Add to chat
+          // down with them on a surface that cannot take a comment.
+          renderGutterUtility={
+            selectionActions.length === 0 ? undefined : renderGutterUtility
+          }
+        />
+      ) : null}
       <SelectionActions
         selection={armed?.selection ?? null}
         anchor={armed?.anchor ?? null}

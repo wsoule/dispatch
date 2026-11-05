@@ -1,4 +1,5 @@
 import type { DiffFile, Finding } from '@dispatch/client';
+import { Button } from '@dispatch/ui';
 import type { FileTreeRowDecorationContext } from '@pierre/trees';
 import { FileTree, useFileTree } from '@pierre/trees/react';
 import { useCallback, useEffect, useMemo } from 'react';
@@ -6,7 +7,7 @@ import { useCallback, useEffect, useMemo } from 'react';
 import { normalizeDiffFilePath, toTreeGitStatus } from '../../lib/pierreTree';
 import { composeRowDecoration, worstSeverity } from '../../lib/reviewAttention';
 import { viewedSummary } from '../../lib/reviewViewed';
-import { Button } from '@/ui/button';
+import styles from './ReviewFileTree.module.css';
 
 interface ReviewFileTreeProps {
   files: DiffFile[];
@@ -104,31 +105,19 @@ export function ReviewFileTree({
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-9 shrink-0 items-center gap-2 px-3">
-        <span className="text-muted-foreground text-[12px] font-medium">
-          Changed files
-        </span>
-        <span className="text-muted-foreground font-book text-[12px] tabular-nums">
-          {files.length}
-        </span>
-        <span className="flex-1" />
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          onClick={onToggleUnviewedOnly}
-          className="px-0"
-        >
+    <div className={styles.root}>
+      <div className={styles.head}>
+        <span className={styles.label}>Changed files</span>
+        <span className={styles.count}>{files.length}</span>
+        <span className={styles.spacer} />
+        <Button variant="quiet" size="sm" onClick={onToggleUnviewedOnly}>
           {unviewedOnly ? 'All' : 'Unviewed'}
         </Button>
       </div>
-      <p className="text-muted-foreground font-book px-3 pb-1 text-[12px] tabular-nums">
-        {viewedSummary(viewed, allPaths)}
-      </p>
+      <p className={styles.summary}>{viewedSummary(viewed, allPaths)}</p>
 
-      <div className="min-h-0 flex-1 overflow-auto">
-        <FileTree model={model} className="size-full" />
+      <div className={styles.tree}>
+        <FileTree model={model} className={styles.treeView} />
       </div>
     </div>
   );

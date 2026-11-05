@@ -1,34 +1,31 @@
 import type { APIRequestContext } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 
-import { APP_TOKEN, DAEMON_PORT } from './paths';
+import { type IsolatedDaemon, startIsolatedDaemon } from './isolatedDaemon';
+import { APP_TOKEN } from './paths';
+import { openDestination } from './shell';
 
-const DAEMON = `http://localhost:${DAEMON_PORT}`;
 // Deciding a memory gate is decide tier, so the daemon is driven with the app token.
 const APP = { authorization: `Bearer ${APP_TOKEN}` };
 const TITLE = 'e2e hazard';
 
-// Duplicated from views.spec.ts, following the convention edit-diff.spec.ts documents.
-function requireToken(): string {
-  const token = process.env.DISPATCH_E2E_TOKEN;
-  if (!token) {
-    throw new Error(
-      'DISPATCH_E2E_TOKEN is unset: global-setup.ts should have resolved it.'
-    );
-  }
-  return token;
-}
+// This spec's own daemon on a copy of the fixture: the runs it dispatches, the
+// gate it decides and the team entry it saves stay in the copy, so they never
+// reach the shared fixture views.spec.ts screenshots.
+let daemon: IsolatedDaemon | null = null;
 
-function authedUrl(baseURL: string | undefined): string {
-  if (!baseURL) throw new Error('baseURL is not configured');
-  return `${baseURL}&token=${requireToken()}&appToken=${APP_TOKEN}`;
+function requireDaemon(): IsolatedDaemon {
+  if (daemon === null) throw new Error('the isolated daemon is not running');
+  return daemon;
 }
 
 async function getJson<T>(
   request: APIRequestContext,
   path: string
 ): Promise<T> {
-  const res = await request.get(`${DAEMON}${path}`, { headers: APP });
+  const res = await request.get(`${requireDaemon().origin}${path}`, {
+    headers: APP,
+  });
   if (!res.ok()) {
     throw new Error(`GET ${path} failed: ${res.status()} ${await res.text()}`);
   }
@@ -49,10 +46,13 @@ async function dispatch(
   taskId: string,
   executor: string
 ): Promise<string> {
-  const res = await request.post(`${DAEMON}/api/tasks/${taskId}/runs`, {
-    headers: APP,
-    data: { executor },
-  });
+  const res = await request.post(
+    `${requireDaemon().origin}/api/tasks/${taskId}/runs`,
+    {
+      headers: APP,
+      data: { executor },
+    }
+  );
   expect(res.ok(), await res.text()).toBe(true);
   return ((await res.json()) as { id: string }).id;
 }
@@ -67,98 +67,43 @@ async function e2eEntries(
   return entries.filter((e) => e.title === TITLE);
 }
 
-// What the test changed, so afterEach can put it back.
-const created: {
-  runIds: string[];
-  tasks: { id: string; status: string }[];
-} = { runIds: [], tasks: [] };
-
 test.describe('memory end to end', () => {
-  test.afterEach(async ({ request }) => {
-    // Rejects a gate a failure left open, deletes the entry an approval made,
-    // and undoes the runs like messaging.spec.ts, so the fixture holds.
-    const { items } = await getJson<{
-      items: { id: string; data?: { type?: string; proposalId?: string } }[];
-    }>(request, '/api/decisions/open');
-    const ours = new Set(created.runIds.map((id) => `run:${id}`));
-    for (const gate of items) {
-      const proposalId = gate.data?.proposalId;
-      if (gate.data?.type !== 'memory' || proposalId === undefined) continue;
-      const { proposal } = await getJson<{ proposal: { author: string } }>(
-        request,
-        `/api/memory/proposals/${proposalId}`
-      );
-      if (!ours.has(proposal.author)) continue;
-      await request.post(`${DAEMON}/api/messages/${gate.id}/reply`, {
-        headers: APP,
-        data: {
-          body: 'Closed: the e2e attempt ended first.',
-          choice: 'reject',
-        },
-      });
-    }
-    for (const entry of await e2eEntries(request)) {
-      await request.delete(`${DAEMON}/api/memory/${entry.id}`, {
-        headers: APP,
-      });
-    }
-    for (const runId of created.runIds) {
-      await request.post(`${DAEMON}/api/runs/${runId}/cancel`, {
-        headers: APP,
-      });
-      await request.post(`${DAEMON}/api/runs/${runId}/review`, {
-        headers: APP,
-        data: { action: 'discard' },
-      });
-      await request.post(`${DAEMON}/api/runs/${runId}/archive`, {
-        headers: APP,
-        data: { archived: true },
-      });
-    }
-    for (const task of created.tasks) {
-      await request.patch(`${DAEMON}/api/tasks/${task.id}`, {
-        headers: APP,
-        data: { status: task.status },
-      });
-    }
-    created.runIds = [];
-    created.tasks = [];
+  // The copy goes with its daemon, so the runs, the gate and the entry need no
+  // undoing.
+  test.afterAll(async () => {
+    await daemon?.stop();
+    daemon = null;
   });
 
   test('a run proposes a team hazard, the human approves it in Needs you, and the next run is shown it', async ({
     page,
-    baseURL,
     request,
   }, testInfo) => {
     test.skip(testInfo.project.name !== 'dark', 'theme-independent flow');
+    daemon = await startIsolatedDaemon('memory');
 
     expect(
       await e2eEntries(request),
-      'the fixture already holds an e2e hazard from an earlier attempt'
+      'the fixture already holds an e2e hazard'
     ).toEqual([]);
     // The fixture's one unblocked ready task; its stacked siblings cannot cut a
     // worktree, so the second run is dispatched on this task again.
     const task = (
-      await getJson<{ meta: { id: string; status: string } }[]>(
-        request,
-        '/api/tasks/ready'
-      )
+      await getJson<{ meta: { id: string } }[]>(request, '/api/tasks/ready')
     )[0]?.meta;
     if (task === undefined) {
       throw new Error('the storefront fixture has no ready task');
     }
-    created.tasks.push({ id: task.id, status: task.status });
 
     // fake-remember posts the hazard to /api/memory with its run token, then finishes.
     const proposer = await dispatch(request, task.id, 'fake-remember');
-    created.runIds.push(proposer);
     await expect
       .poll(() => runState(request, proposer), { timeout: 15_000 })
       .toBe('finished');
 
-    await page.goto(authedUrl(baseURL));
-    await page.getByTestId('two-views-threads').click();
-    // Scoped to this run: a gate an earlier failed attempt left open stays in Needs you.
+    await page.goto(requireDaemon().appUrl);
+    await openDestination(page, 'Threads');
+    // Scoped to this run, among the fixture's own open gates.
     const gate = page
       .getByRole('group', { name: 'Needs you', exact: true })
       .getByRole('option')
@@ -178,7 +123,6 @@ test.describe('memory end to end', () => {
 
     // The next run's prompt carries the approved hazard in its memory index.
     const reader = await dispatch(request, task.id, 'fake');
-    created.runIds.push(reader);
     const index = await getJson<{ included: string[] }>(
       request,
       `/api/memory/index?runId=${reader}`

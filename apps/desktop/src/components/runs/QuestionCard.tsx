@@ -1,11 +1,10 @@
+import { Button, cx, TextArea } from '@dispatch/ui';
 import { useState } from 'react';
 
+import { DecisionCard } from '../gates/DecisionCard';
 import { Markdown } from './Markdown';
+import styles from './QuestionCard.module.css';
 import { formatRelativeTimeFromIso } from '@/lib/format';
-import type { ApprovalCardOption } from '@/ui/ai/approval-card';
-import { ApprovalCard } from '@/ui/ai/approval-card';
-import { Button } from '@/ui/button';
-import { Textarea } from '@/ui/textarea';
 
 interface QuestionCardProps {
   question: string;
@@ -16,11 +15,11 @@ interface QuestionCardProps {
   onAnswer: (answer: string) => Promise<void>;
 }
 
-/** An agent's blocking question and the form that answers it. Its options are one click,
- * because the agent waits on the answer until this is submitted. Built on the
- * `ui/ai/approval-card` primitive (quaternary card, chip-ringed option rows) for the question
- * header and suggested-answer options; a free-text answer stays a 13px textarea below with
- * the primary indigo `Answer`, since the primitive has no slot for one. */
+/** An agent's blocking question and the form that answers it. Built on `DecisionCard`: the
+ * question is agent-authored Markdown (lists, `code` and emphasis survive), the suggested
+ * answers are its radio cards and go out on one pick, because the agent waits on the answer
+ * until it is submitted. A free-text answer sits under them (Enter sends, Shift+Enter adds a
+ * line), with the primary `Answer`. `data-slot="question-card"` is on the card's root. */
 export function QuestionCard({
   question,
   options,
@@ -46,7 +45,8 @@ export function QuestionCard({
     }
   }
 
-  const optionItems: ApprovalCardOption[] = options.map((option, index) => ({
+  // An option's id is its index, so two suggestions with the same words stay distinct.
+  const optionItems = options.map((option, index) => ({
     id: String(index),
     label: option,
   }));
@@ -59,30 +59,34 @@ export function QuestionCard({
   }
 
   return (
-    <div
+    <DecisionCard
       data-slot="question-card"
-      className="animate-in fade-in-0 flex flex-col gap-2 duration-100 motion-reduce:animate-none"
+      question={<Markdown content={question} />}
+      detail={
+        askedAt !== undefined
+          ? `Asked ${formatRelativeTimeFromIso(askedAt)}`
+          : undefined
+      }
+      options={optionItems}
+      onSelect={handleSelect}
+      selectedId={selectedId}
+      disabled={sending}
     >
-      <ApprovalCard
-        // Full-width in the transcript, and the question is agent-authored text — render it
-        // as markdown so lists/`code`/emphasis survive instead of flattening to plain text.
-        className="max-w-none"
-        question={<Markdown content={question} />}
-        detail={
-          askedAt !== undefined
-            ? `asked ${formatRelativeTimeFromIso(askedAt)}`
-            : undefined
-        }
-        options={optionItems}
-        onSelect={handleSelect}
-        selectedId={selectedId}
-        disabled={sending}
-      />
-      {error !== null && <div className="text-red text-[12px]">{error}</div>}
-      <div className="flex items-end gap-2">
-        <Textarea
+      {error !== null && (
+        <p
+          role="alert"
+          className={cx('toneText', styles.error)}
+          data-tone="danger"
+        >
+          {error}
+        </p>
+      )}
+      <div className={styles.answer}>
+        <TextArea
+          className={styles.field}
           aria-label="Your answer"
           value={draft}
+          rows={2}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -96,15 +100,15 @@ export function QuestionCard({
               : 'Answer the agent…'
           }
           disabled={sending}
-          className="font-book min-h-[52px] flex-1 resize-y text-[13px]"
         />
         <Button
+          variant="primary"
           disabled={sending || draft.trim() === ''}
           onClick={() => void answer(draft)}
         >
           Answer
         </Button>
       </div>
-    </div>
+    </DecisionCard>
   );
 }

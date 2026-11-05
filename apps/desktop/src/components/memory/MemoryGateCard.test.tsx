@@ -278,7 +278,11 @@ describe('MemoryGateCard', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Approve' }));
     expect(onDecide).not.toHaveBeenCalled();
     expect(screen.getByText('Restart daemon to enable approvals')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /restart daemon/i }));
+    // The restart settles a microtask after the click: inside act.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /restart daemon/i }));
+      await Promise.resolve();
+    });
     expect(onRestartDaemon).toHaveBeenCalledTimes(1);
   });
 });

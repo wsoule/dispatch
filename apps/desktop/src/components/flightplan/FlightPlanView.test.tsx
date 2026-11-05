@@ -225,27 +225,26 @@ describe('FlightPlan', () => {
     expect(sentenceOf('t-c')).toBe('Auto-starts when t-b finishes');
     // Two slots, one running: the queued node is next.
     expect(sentenceOf('t-e')).toBe('Next up');
-    expect(
-      document
-        .querySelector('[data-slot=flight-slots]')
-        ?.getAttribute('aria-label')
-    ).toBe('1 of 2 slots in use');
+    // The header's slots in use are text (no meter track: owner decision 2026-11-04),
+    // said in words for a screen reader.
+    const slots = document.querySelector(
+      '[data-slot=flight-header] [data-slot=flight-slots]'
+    );
+    expect(slots?.querySelector('[aria-hidden=true]')?.textContent).toBe('1/2');
+    expect(slots?.querySelector('.srOnly')?.textContent).toBe(
+      '1 of 2 agent slots in use'
+    );
+    expect(document.querySelector('[role=progressbar]')).toBeNull();
   });
 
   test('a blocker landing flips its dependent in place and lights the edge', () => {
     const view = mount(dataWith(plan()));
     const before = node('t-c')?.style.transform;
-    expect(
-      document.querySelectorAll('[data-slot=flight-edge][data-tone=flowing]')
-        .length
-    ).toBe(1);
+    expect(document.querySelectorAll('[data-edge=flowing]').length).toBe(1);
     view.rerenderWith(dataWith(plan({ 't-b': { status: 'landed' } }), []));
     expect(stateOf('t-c')).toBe('queued');
     expect(node('t-c')?.style.transform).toBe(before);
-    expect(
-      document.querySelectorAll('[data-slot=flight-edge][data-tone=landed]')
-        .length
-    ).toBe(2);
+    expect(document.querySelectorAll('[data-edge=landed]').length).toBe(2);
   });
 
   test('arrows walk the grid, Enter opens, d dispatches optimistically', async () => {
@@ -353,7 +352,21 @@ describe('FlightPlan', () => {
         .join('|');
     const view = mount(dataWith(tasks, []), undefined, 'e-p');
     expect(header()).toContain('Send agents');
+    // The header's one-row strip (owner decision 2026-11-03), not the stats panel.
+    expect(
+      document
+        .querySelector('[data-slot=flight-header] ul[aria-label="Flight plan"]')
+        ?.getAttribute('data-variant')
+    ).toBe('compact');
     expect(bandText()).toContain('Send agents');
+    // The strip reads label then value, cell by cell; with no fan-out nothing is
+    // queued, only ready, and holds no slots (the Running cell's hint says so).
+    expect(
+      Array.from(
+        document.querySelectorAll('[data-slot=flight-header] li'),
+        (cell) => cell.textContent
+      )
+    ).toEqual(['Running0', 'Ready3', 'Landed0/3', 'Critical path1~20m']);
 
     // The project's session owns every milestone's nodes: one queue, its slots.
     view.rerenderWith(dataWith(tasks, [], [progress('active', 1, 'e-p')]));
@@ -361,6 +374,324 @@ describe('FlightPlan', () => {
     expect(sentenceOf('t-1')).toBe('Next up');
     expect(sentenceOf('t-2')).toBe('#1 in queue');
     expect(sentenceOf('t-3')).toBe('#2 in queue');
+  });
+
+  test('the agent slots menu moves a live session to a new ceiling', async () => {
+    const calls: string[] = [];
+    const data = {
+      ...dataWith(plan(), [LIVE], [progress('active', 2)]),
+      handlePauseMilestone: (id: string) => {
+        calls.push(`pause ${id}`);
+        return Promise.resolve();
+      },
+      handleResumeMilestone: (id: string, opts?: { concurrency?: number }) => {
+        calls.push(`resume ${id} ${String(opts?.concurrency)}`);
+        return Promise.resolve();
+      },
+    } as DispatchProjectData;
+    mount(data);
+    // The trigger sits in the header's Running cell, right after the slots text that prints
+    // the total, so it is an icon button: its name says the slots it would change.
+    const trigger = screen.getByRole('button', {
+      name: 'Agent slots for e-1: 2 slots',
+    });
+    expect(trigger.textContent).toBe('');
+    expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
+    const cell = trigger.closest('li');
+    expect(
+      cell?.querySelector('[data-slot=flight-slots]')?.nextElementSibling
+    ).toBe(trigger);
+    expect(cell?.closest('ul')?.getAttribute('aria-label')).toBe('Flight plan');
+    // A menu places itself a microtask after it opens, so let the queue drain.
+    const settle = (work: () => void) =>
+      act(async () => {
+        work();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    await settle(() => fireEvent.click(trigger));
+    expect(
+      screen.getByRole('menu', { name: 'Agent slots for e-1' })
+    ).toBeTruthy();
+    const rows = screen.getAllByRole('menuitemradio');
+    expect(rows.map((row) => row.textContent)).toEqual([
+      '1×',
+      '2×',
+      '3×',
+      '4×',
+    ]);
+    expect(rows.map((row) => row.getAttribute('aria-checked'))).toEqual([
+      'false',
+      'true',
+      'false',
+      'false',
+    ]);
+    // The checked row changes nothing; another pauses, then resumes at it.
+    await settle(() => fireEvent.click(rows[1]));
+    expect(calls).toEqual([]);
+    await settle(() => fireEvent.click(trigger));
+    await settle(() =>
+      fireEvent.click(screen.getAllByRole('menuitemradio')[2])
+    );
+    expect(calls).toEqual(['pause e-1', 'resume e-1 3']);
+  });
+
+  // The picker is an icon button inside the Running cell, whose own hint (the queued and
+  // landed counts) is a Tooltip on the whole cell: the picker says what it does in a
+  // library Tooltip of its own, and the cell's hint keeps away from it and its menu.
+  test("the slots picker has its own hint, and the Running cell's hint keeps away from it", async () => {
+    mount(dataWith(plan(), [LIVE], [progress('active', 2)]));
+    const trigger = screen.getByRole('button', {
+      name: 'Agent slots for e-1: 2 slots',
+    });
+    expect(trigger.hasAttribute('title')).toBe(false);
+    const cell = trigger.closest('li')?.firstElementChild;
+    if (!(cell instanceof HTMLElement)) throw new Error('no running cell');
+    expect(cell.hasAttribute('data-hint')).toBe(true);
+    const words = cell.querySelector('[data-slot=flight-slots]');
+    if (!(words instanceof HTMLElement)) throw new Error('no slots text');
+    const tips = () =>
+      screen
+        .queryAllByRole('tooltip', { hidden: true })
+        .map((tip) => tip.textContent);
+    const pause = (ms: number) =>
+      act(() => new Promise((resolve) => setTimeout(resolve, ms)));
+    const mouse = { pointerType: 'mouse' };
+    const PICKER_TIP = 'Change the agent slots (2 slots now)';
+    // Keyboard focus shows the picker's words at once, and not the cell's.
+    act(() => trigger.focus());
+    expect(tips()).toEqual([PICKER_TIP]);
+    expect(trigger.getAttribute('aria-describedby')).toBe(
+      screen.getByRole('tooltip', { hidden: true }).id
+    );
+    act(() => trigger.blur());
+    expect(tips()).toEqual([]);
+    // A hover on the picker: its own words only, after the delay.
+    await pause(450);
+    fireEvent.pointerEnter(trigger, mouse);
+    await pause(350);
+    expect(tips()).toEqual([PICKER_TIP]);
+    // On to the slots text beside it: the cell's hint takes over.
+    fireEvent.pointerLeave(trigger, { ...mouse, relatedTarget: words });
+    fireEvent.pointerOver(words, { ...mouse, relatedTarget: trigger });
+    await pause(350);
+    expect(tips()).toHaveLength(1);
+    expect(tips()[0]).toStartWith('1 of 2 agent slots in use; ');
+    fireEvent.pointerLeave(words, mouse);
+    await pause(200);
+    expect(tips()).toEqual([]);
+    // The menu opened from the keyboard: a hover on the cell opens no hint over it, so
+    // one Escape closes the menu and hands focus back to the picker.
+    act(() => trigger.focus());
+    await act(async () => {
+      fireEvent.keyDown(trigger, { key: 'Enter' });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const menu = screen.getByRole('menu', { name: 'Agent slots for e-1' });
+    expect(menu.contains(document.activeElement)).toBe(true);
+    await pause(450);
+    fireEvent.pointerEnter(words, mouse);
+    await pause(350);
+    expect(tips()).toEqual([]);
+    await act(async () => {
+      fireEvent.keyDown(document.activeElement ?? document.body, {
+        key: 'Escape',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    fireEvent.pointerLeave(words, mouse);
+  });
+
+  test("the header's verbs are only Pause and Stop: the spend and the waves are strip cells", () => {
+    const waves = [
+      { index: 1, total: 2, byPhase: { landed: 2 } },
+      { index: 2, total: 1, byPhase: { working: 1 } },
+    ];
+    mount(
+      dataWith(
+        plan(),
+        [LIVE],
+        [
+          {
+            ...progress('active', 2),
+            spend: {
+              settledUsd: 9.81,
+              liveCount: 1,
+              estimatedLiveUsd: 0,
+              runsStarted: 2,
+              maxSpendUsd: 10,
+              maxRuns: null,
+            },
+            waves,
+          },
+        ]
+      )
+    );
+    const header = document.querySelector<HTMLElement>(
+      '[data-slot=flight-header]'
+    );
+    const list = screen.getByRole('list', { name: 'Flight plan' });
+    // No pill or strip beside the verbs: the row's end holds the two buttons alone,
+    // icon-only (owner decision 2026-11-04), still named Pause and Stop.
+    expect(header?.querySelector('[data-slot=spend-pill]')).toBeNull();
+    const pause = screen.getByRole('button', { name: 'Pause' });
+    const stop = screen.getByRole('button', { name: 'Stop' });
+    expect(list.contains(pause)).toBe(false);
+    expect(
+      Array.from(pause.parentElement?.children ?? [], (el) => [
+        el.getAttribute('aria-label'),
+        el.textContent,
+      ])
+    ).toEqual([
+      ['Pause', ''],
+      ['Stop', ''],
+    ]);
+    expect(pause.parentElement).toBe(stop.parentElement);
+    // The spend is a cell, amber near its ceiling with a shape and words besides.
+    const spend = list.querySelector('[data-slot=flight-spend]');
+    // Key, value (with its words for a screen reader), then the note, which is in the
+    // cell's hint while fanning out (owner decision 2026-11-04) and so on screen only
+    // for a screen reader (srOnly); the title is the cell's hidden description.
+    const inner = spend?.firstElementChild;
+    expect(inner?.textContent).toBe(
+      ['Spend', '$9.81', ', near its ceiling', 'of $10'].join('')
+    );
+    expect(inner?.querySelector(':scope > .srOnly')?.textContent).toBe(
+      'of $10'
+    );
+    const described = inner?.getAttribute('aria-describedby');
+    const title = described ? document.getElementById(described) : null;
+    expect(title?.hidden).toBe(true);
+    expect(
+      title?.textContent?.startsWith('$9.81 settled of the $10 ceiling')
+    ).toBe(true);
+    expect(spend?.getAttribute('data-tone')).toBe('warning');
+    expect(spend?.querySelector('svg')).not.toBeNull();
+    // Near its ceiling the spend comes straight after the running cell, where the
+    // strip's fade never reaches, rather than after the counts.
+    const order = Array.from(list.children, (li) =>
+      li.getAttribute('data-slot')
+    );
+    expect(order.slice(0, 2)).toEqual(['flight-stat', 'flight-spend']);
+    expect(list.children[0]?.textContent?.startsWith('Running')).toBe(true);
+    // The waves are a cell with each wave named, last.
+    const wavesCell = list.querySelector('[data-slot=flight-waves]');
+    expect(wavesCell?.textContent).toBe('WavesWave 1: passedWave 2: active');
+    expect(order.at(-1)).toBe('flight-waves');
+  });
+
+  test('a paused plan leads its strip with the spend and has no slots picker', () => {
+    mount(dataWith(plan(), [LIVE], [progress('paused', 2)]));
+    const list = screen.getByRole('list', { name: 'Flight plan' });
+    // The paused verbs leave the strip its narrowest, so the amount Raise ceiling… asks
+    // about is the first cell.
+    expect(list.firstElementChild?.getAttribute('data-slot')).toBe(
+      'flight-spend'
+    );
+    const spend = list.querySelector('[data-slot=flight-spend] > div');
+    // The note is in the cell's hint (srOnly words on the row); the paused verbs keep
+    // Stop icon-only.
+    expect(spend?.textContent).toBe('Spend$0no ceiling');
+    expect(spend?.querySelector(':scope > .srOnly')?.textContent).toBe(
+      'no ceiling'
+    );
+    expect(spend?.hasAttribute('data-hint')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Stop' }).textContent).toBe('');
+    expect(list.querySelector('[data-slot=flight-waves]')).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: /^Agent slots for/ })
+    ).toBeNull();
+    expect(screen.getByRole('button', { name: 'Resume' })).toBeTruthy();
+  });
+
+  // Paused, every verb in the header is icon-only (owner decision 2026-11-04), each named
+  // and hinted; Raise ceiling… opens the fan-out dialog and gets focus back when it closes.
+  test('a paused plan draws Resume and Raise ceiling… icon-only, and Raise ceiling… gets focus back from its dialog', async () => {
+    const calls: string[] = [];
+    mount({
+      ...dataWith(plan(), [LIVE], [progress('paused', 2)]),
+      handleResumeMilestone: (id: string) => {
+        calls.push(`resume ${id}`);
+        return Promise.resolve();
+      },
+    } as DispatchProjectData);
+    const header = document.querySelector('[data-slot=flight-header]');
+    const verbs = ['Resume', 'Raise ceiling…', 'Stop'].map((name) =>
+      screen.getByRole('button', { name })
+    );
+    for (const verb of verbs) {
+      expect(header?.contains(verb)).toBe(true);
+      expect(verb.textContent).toBe('');
+      expect(verb.querySelector('svg')).not.toBeNull();
+    }
+    const [resume, raise] = verbs;
+    if (resume === undefined || raise === undefined)
+      throw new Error('no verbs');
+    expect(resume.getAttribute('data-slot')).toBe('fanout-resume');
+    expect(raise.getAttribute('data-slot')).toBe('fanout-raise');
+    // Keyboard focus shows what each does.
+    act(() => raise.focus());
+    expect(screen.queryByRole('tooltip', { hidden: true })?.textContent).toBe(
+      'Raise the fan-out’s spend or run ceiling, then resume it'
+    );
+    // A press opens the dialog; Cancel closes it and hands focus back to the button.
+    await act(async () => {
+      fireEvent.click(raise);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const dialog = screen.getByRole('dialog', {
+      name: 'Raise ceiling · Title e-1',
+    });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(raise);
+    await act(async () => {
+      fireEvent.click(resume);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(calls).toEqual(['resume e-1']);
+  });
+
+  // The decision is the Plan header's: a milestone band keeps its worded verbs.
+  test('a paused milestone band on a project plan keeps its worded verbs', () => {
+    const tasks = [
+      task('e-p', { kind: 'project', parent: null }),
+      task('e-1', { kind: 'milestone', parent: 'e-p', title: 'Alpha' }),
+      task('t-1', { parent: 'e-1' }),
+      task('t-2', { parent: 'e-p' }),
+    ];
+    mount(
+      dataWith(tasks, [], [progress('paused', 1, 'e-1')]),
+      undefined,
+      'e-p'
+    );
+    const band = document.querySelector(
+      '[data-slot=flight-band-head][data-band="e-1"]'
+    );
+    const names = Array.from(
+      band?.querySelectorAll('button') ?? [],
+      (b) => b.textContent
+    );
+    expect(names).toContain('Resume');
+    expect(names).toContain('Raise ceiling…');
+    expect(names).toContain('Stop');
+    expect(band?.querySelector('[data-slot=fanout-resume]')).toBeNull();
+    expect(band?.querySelector('[data-slot=fanout-raise]')).toBeNull();
+  });
+
+  test('with no fan-out the header has no spend, waves or slots picker', () => {
+    mount(dataWith(plan()));
+    const list = screen.getByRole('list', { name: 'Flight plan' });
+    expect(list.querySelector('[data-slot=flight-spend]')).toBeNull();
+    expect(list.querySelector('[data-slot=flight-waves]')).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: /^Agent slots for/ })
+    ).toBeNull();
   });
 
   test('a node the server will not start never reads as next up', () => {
@@ -491,6 +822,26 @@ describe('FlightPlan', () => {
   test('an empty container says what will appear', () => {
     mount(dataWith([task('e-1', { kind: 'milestone', parent: null })], []));
     expect(screen.getByText('Nothing to plan yet')).toBeTruthy();
+  });
+
+  test('a load draws skeletons, and a missing container says it is gone', () => {
+    const { unmount } = mount({
+      ...dataWith(plan()),
+      tasksReady: false,
+    } as DispatchProjectData);
+    // One load, one status: the strip's block is decorative.
+    const status = document.querySelectorAll(
+      '[data-slot=flight-plan] [role=status]'
+    );
+    expect(status).toHaveLength(1);
+    expect(status[0]?.textContent).toBe('Loading the flight plan');
+    expect(document.querySelector('[data-slot=flight-header]')).toBeNull();
+    unmount();
+    mount(dataWith(plan()), undefined, 'e-gone');
+    expect(screen.getByText('This plan is no longer available.')).toBeTruthy();
+    expect(
+      screen.getByText('Its container was archived or deleted.')
+    ).toBeTruthy();
   });
 
   test('the section draws from the app’s host, and nothing without one', () => {

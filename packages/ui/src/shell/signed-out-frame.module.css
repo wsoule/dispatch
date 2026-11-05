@@ -1,0 +1,180 @@
+/* Gr8r's auth frame: the warm --bg page with a plain top row (the 22px
+   brand tile and the product name on the left, a quiet badge for the
+   mode, the theme toggle on the right) above the content. No box, no
+   rule, no texture.
+
+   --shell-brand-inset: a host's extra left padding on the top row (0 by
+   default), the same property AppShell's brand row reads, so a Tauri
+   window with an overlay title bar sets the brand in from macOS's
+   traffic lights. The host sets it on the frame or above. */
+
+.frame {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+/* The top row spans the frame's width (a desktop host's drag region reaches
+   every edge, the traffic-light corner included) while its contents keep
+   the 1440px column: the side padding grows with the width beyond it. It
+   stays at the top on --bg while the content scrolls under it, so the
+   window can still be dragged by it and nothing slides under the traffic
+   lights. z-index 30, as AppShell's sticky topbar: above the content's own
+   raised layers (a radio card's aside, a register row's link), under the
+   overlays. */
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 62px;
+  padding-block: 12px;
+  padding-right: max(24px, calc((100% - 1440px) / 2 + 24px));
+  padding-left: max(
+    calc(24px + var(--shell-brand-inset, 0px)),
+    calc((100% - 1440px) / 2 + 24px)
+  );
+  background: var(--bg);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 6px;
+  margin-left: -6px;
+  border-radius: var(--r-sm);
+  transition: background-color var(--dur) ease;
+}
+
+.logo {
+  flex: 0 0 22px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-sm);
+  /* Dark in both themes, like the sidebar's tile (tokens.css). */
+  background: var(--brand-tile-bg, var(--text));
+  box-shadow: inset 0 0 0 1px var(--brand-tile-edge, transparent);
+  color: var(--brand-tile-ink, var(--text-inv));
+  font-size: 10px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.01em;
+  line-height: 1;
+}
+
+.brandName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-section);
+  color: var(--text);
+}
+
+/* Gr8r's neutral badge ("Demo"), 12px off the name as in the bar. */
+.brandLabel {
+  flex: 0 0 auto;
+  margin-left: 4px;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-chip);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The skip link's target (tabIndex -1). No outline rule of its own: the
+   browser draws its ring only for :focus-visible (a keyboard skip), never
+   for the focus a click inside the column gives it. */
+.main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The footer links: one quiet row under the content, centred, the links
+   in --text-2 (4.5:1 on --bg) separated by --text-4 dots (decoration:
+   the list itself says where one link ends). */
+.footer {
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 24px 24px 32px;
+}
+
+.footerLinks {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+}
+
+.footerItem + .footerItem::before {
+  /* The alternative text after the slash is empty: not announced. */
+  content: '·' / '';
+  padding: 0 8px;
+  color: var(--text-4);
+}
+
+.footerLink {
+  border-radius: var(--r-xs);
+  color: var(--text-2);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+.footerLink:hover,
+.footerLink:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .brand:hover {
+    background: var(--surface-3);
+  }
+}
+
+@media (width <= 640px) {
+  .bar {
+    min-height: 54px;
+    padding: 8px 12px 8px calc(16px + var(--shell-brand-inset, 0px));
+  }
+  .footer {
+    padding: 16px 16px 24px;
+  }
+  .brandName {
+    font-size: var(--fs);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand {
+    transition: none;
+  }
+}

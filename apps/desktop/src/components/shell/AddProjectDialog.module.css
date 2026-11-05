@@ -1,0 +1,96 @@
+/* The add-project dialog (AddProjectDialog.tsx): two choice cards, then the GitHub list. */
+/* The dialog's body: the error notice above the pane, a gap between. */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.error {
+  white-space: pre-wrap;
+}
+
+.waiting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  padding: var(--s-8) 0;
+  font-size: var(--fs);
+  color: var(--text-2);
+}
+
+.choices,
+.github {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+/* A choice card: a soft box with an icon, a name and a quiet line under it. The library
+   has no two-line option card, so it is a plain button styled here; its edge is a control
+   edge (3:1), and focus takes the global :focus-visible ring. */
+.choice {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  padding: var(--s-3);
+  border: 1px solid var(--control-border);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .choice:hover {
+    background: var(--surface-2);
+  }
+}
+
+.choiceIcon {
+  flex: none;
+  color: var(--text-3);
+}
+
+.choiceText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.choiceName {
+  font-size: var(--fs);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+.choiceNote {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+/* The repository register scrolls inside the dialog past about eight rows. */
+.repos {
+  max-height: 288px;
+  overflow-y: auto;
+}
+
+/* A repository's owner/name: a machine-read string (what gh clones), so
+   Geist Mono, cut to one line. */
+.repoName {
+  display: block;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .choice {
+    transition: background-color var(--dur) ease;
+  }
+}

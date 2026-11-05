@@ -1,0 +1,103 @@
+/* The review chat composer (SnippetComposer.tsx), on PromptBar's frame: a
+   --surface box in a 1px --border at --r-lg that draws the field ring while
+   anything in it has focus, holding the attached snippets as removable
+   library Chips, the global .textarea without its own box, and a footer of
+   the native "Send to" select and the Send button. Tokens only. */
+.box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: var(--text);
+}
+
+/* The field ring, as the global .input and .textarea draw it, on the box. */
+.box:focus-within {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 0 4px var(--accent-soft);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 2px 2px 0;
+  list-style: none;
+}
+
+.chipItem {
+  display: inline-flex;
+  min-width: 0;
+}
+
+/* A snippet's file path and line range: machine-read, so Geist Mono. */
+.snippet {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+}
+
+/* The global .textarea without its box: the composer's box is the field.
+   (Two classes, so these win over the global primitive whatever the sheet
+   order.) */
+.box .textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 0;
+  padding: 5px 4px;
+  border: 0;
+  background: transparent;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+  resize: vertical;
+}
+
+.box .textarea:disabled {
+  background: transparent;
+}
+
+/* The ring is the box's; the textarea keeps the global transparent outline,
+   which forced colours draw. */
+.box .textarea:focus-visible {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: 0 2px 2px;
+}
+
+/* The global .select at the footer's 26px. */
+.footer .select {
+  min-height: var(--h-sm);
+  max-width: 220px;
+  padding-left: 8px;
+  font-size: var(--fs-sm);
+}
+
+.note {
+  margin: 0;
+  padding: 0 2px 2px;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .box {
+    transition:
+      border-color var(--dur) ease,
+      box-shadow var(--dur) ease;
+  }
+}

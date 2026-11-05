@@ -1,8 +1,8 @@
 import type { SetupReport } from '@dispatch-foo/core/browser';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
 
-import { SetupBanner } from './SetupBanner';
+import { SetupBanner, setupProblem } from './SetupBanner';
 
 const base: SetupReport = {
   defaultProvider: 'claude',
@@ -44,4 +44,39 @@ test('names the first problem and links to Setup', () => {
   expect(screen.getByText("Claude Code isn't signed in.")).toBeTruthy();
   fireEvent.click(screen.getByText('Fix it'));
   expect(onOpen).toHaveBeenCalled();
+});
+
+test('announces the problem politely, with Fix it as a button inside the status', () => {
+  const onOpen = mock(() => {});
+  render(
+    <SetupBanner
+      report={{
+        ...base,
+        steps: [
+          ...base.steps,
+          { id: 'agent', status: 'missing', message: 'No agent yet.' },
+        ],
+      }}
+      onOpen={onOpen}
+    />
+  );
+  const status = screen.getByRole('status');
+  expect(status.textContent).toContain('No agent yet.');
+  const fix = within(status).getByRole('button', { name: 'Fix it' });
+  expect(fix.closest('[data-tone]')?.getAttribute('data-tone')).toBe('warning');
+  fireEvent.click(fix);
+  expect(onOpen).toHaveBeenCalledTimes(1);
+});
+
+test('setupProblem names the first step that wants a person, or nothing', () => {
+  expect(setupProblem(undefined)).toBeUndefined();
+  expect(setupProblem(base)).toBeUndefined();
+  const missing = {
+    id: 'agent',
+    status: 'missing',
+    message: 'No agent.',
+  } as const;
+  expect(
+    setupProblem({ ...base, steps: [...base.steps, missing] })?.message
+  ).toBe('No agent.');
 });

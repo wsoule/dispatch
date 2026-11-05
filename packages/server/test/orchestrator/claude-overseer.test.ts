@@ -599,6 +599,16 @@ describe('shared overseer pieces', () => {
     );
   });
 
+  it('names the desktop places the person actually has', () => {
+    // The app's sidebar lists destinations; the old "two views" layout (Overseer
+    // and Tasks) is gone, so the overseer must not send anyone to a Tasks view.
+    const intro = overseerInstructions('Claude Code').split('\n\n')[0] ?? '';
+    expect(intro).toContain('They see you in the Overseer');
+    expect(intro).toContain('every task lives under Issues');
+    expect(intro).toContain('every ask that waits on them under Needs you');
+    expect(intro).not.toContain('two views');
+  });
+
   it('promises gated reads only to an agent that asks before reading', () => {
     const gated = overseerInstructions('Claude Code');
     expect(gated).toContain('reading its token file');

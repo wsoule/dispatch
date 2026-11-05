@@ -1,0 +1,49 @@
+/* The All docs page (DocList.tsx): the library ViewToolbar over a scroller
+   holding the docs register, or its loading, error or empty state. Colours
+   and type come from @dispatch/ui's components and tokens; this sheet only
+   places them, and sets the slug in Geist Mono (a machine-read string). */
+
+.root {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.scroller {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-height: 0;
+  padding: var(--s-4) var(--gutter) var(--s-8);
+  overflow-y: auto;
+}
+
+/* Each block keeps its own height and the scroller scrolls. */
+.scroller > * {
+  flex: none;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+}
+
+.slug {
+  display: block;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The list's one tab stop (j/k open the next doc from here): an inset ring,
+   since the scroller clips anything drawn outside it. */
+.scroller:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}

@@ -1,16 +1,30 @@
 import type { TaskDoc } from '@dispatch-foo/core/browser';
+import { ApiError } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
 import {
+  aiFilterErrorText,
+  applyDatePick,
   applyTaskFilters,
   clauseParts,
+  containerMatcher,
+  DATE_PICKS,
+  datePickBound,
+  DAY_MS,
   defaultOpFor,
   EMPTY_TASK_FILTER_SET,
+  FILTER_NONE,
+  type FilterPickerContext,
   hasActiveTaskFilters,
+  isDateFacet,
+  matches,
   matchesTaskFilterSet,
   migrateLegacyFilters,
+  optionsFor,
   parseTaskFilterSet,
+  pickedDateValue,
   removeFilterClause,
+  selectedCount,
   serializeTaskFilterSet,
   setDateFilter,
   setFilterJoin,
@@ -93,7 +107,7 @@ describe('clauses', () => {
     ]);
   });
 
-  test('milestone, milestone and run state read `none` as unset', () => {
+  test('milestone and run state read `none` as unset', () => {
     expect(
       applyTaskFilters(
         TASKS,
@@ -123,6 +137,47 @@ describe('clauses', () => {
     expect(applyTaskFilters(TASKS, filters).map((t) => t.meta.id)).toEqual([
       't-3',
     ]);
+  });
+});
+
+describe('the routed container clause', () => {
+  // Store › Beta › Cart › Cart sub-issue, a loose task, a task under a parent
+  // missing from the list, and a parent cycle that never reaches the store.
+  const TREE = [
+    task('p-store', { kind: 'project' }),
+    task('ms-beta', { kind: 'milestone', parent: 'p-store' }),
+    task('t-cart', { parent: 'ms-beta' }),
+    task('t-sub', { parent: 't-cart' }),
+    task('t-direct', { parent: 'p-store' }),
+    task('t-loose'),
+    task('t-orphan', { parent: 'gone' }),
+    task('c-a', { parent: 'c-b' }),
+    task('c-b', { parent: 'c-a' }),
+  ];
+
+  test('passes everything below the container at any depth, never the container', () => {
+    const inStore = containerMatcher('p-store', TREE);
+    expect(TREE.filter(inStore).map((t) => t.meta.id)).toEqual([
+      'ms-beta',
+      't-cart',
+      't-sub',
+      't-direct',
+    ]);
+  });
+
+  test('a task outside the list is judged by its parent chain (an archived row)', () => {
+    const inBeta = containerMatcher('ms-beta', TREE);
+    expect(inBeta(task('t-archived', { parent: 't-cart' }))).toBe(true);
+    expect(inBeta(task('t-archived', { parent: 't-loose' }))).toBe(false);
+  });
+
+  test('an unknown container passes nothing, and a cycle ends the walk', () => {
+    expect(TREE.filter(containerMatcher('p-nope', TREE))).toEqual([]);
+    // c-b sits below c-a; from p-store the c-a/c-b loop is walked and left.
+    const inA = containerMatcher('c-a', TREE);
+    expect(TREE.filter(inA).map((t) => t.meta.id)).toEqual(['c-b']);
+    const inStore = containerMatcher('p-store', TREE);
+    expect(inStore(task('c-x', { parent: 'c-a' }))).toBe(false);
   });
 });
 
@@ -282,6 +337,28 @@ describe('storage', () => {
     });
   });
 
+  test('a stored epic clause reads back as a milestone clause', () => {
+    // Filter sets written before the epic -> milestone rename name the
+    // parent container facet `epic`; the `milestone` facet now matches the
+    // same parent ids, so the clause survives instead of dropping.
+    const stored = JSON.stringify({
+      clauses: [
+        { facet: 'epic', op: 'is', values: ['e-1'] },
+        { facet: 'epic', op: 'is not', values: [FILTER_NONE] },
+        { facet: 'epic', values: ['e-2'] },
+      ],
+      join: 'or',
+    });
+    expect(parseTaskFilterSet(stored)).toEqual({
+      clauses: [
+        { facet: 'milestone', op: 'is', values: ['e-1'] },
+        { facet: 'milestone', op: 'is not', values: [FILTER_NONE] },
+        { facet: 'milestone', op: 'is', values: ['e-2'] },
+      ],
+      join: 'or',
+    });
+  });
+
   test('serializeTaskFilterSet writes a fixed field order', () => {
     const shuffled = {
       join: 'and',
@@ -321,5 +398,204 @@ describe('labels', () => {
     expect(
       sentence(clauseParts({ facet: 'milestone', op: 'is', values: ['none'] }))
     ).toBe('Milestone is No milestone');
+  });
+});
+
+describe('Filter picker vocabulary', () => {
+  const PICKER_CONTEXT: FilterPickerContext = {
+    statuses: ['draft', 'working'],
+    milestones: [task('e-1', { title: 'Payments' })],
+    labels: ['api', 'ui'],
+  };
+  const NOW = Date.parse('2026-10-26T12:00:00.000Z');
+
+  test('optionsFor lists each facet in menu order with its marks', () => {
+    expect(optionsFor('status', PICKER_CONTEXT)).toEqual([
+      {
+        value: 'draft',
+        label: 'Draft',
+        mark: { kind: 'state', status: 'draft' },
+      },
+      {
+        value: 'working',
+        label: 'Working',
+        mark: { kind: 'state', status: 'working' },
+      },
+    ]);
+    expect(
+      optionsFor('priority', PICKER_CONTEXT).map((o) => [o.value, o.mark])
+    ).toEqual([
+      ['urgent', { kind: 'priority', priority: 'urgent' }],
+      ['high', { kind: 'priority', priority: 'high' }],
+      ['medium', { kind: 'priority', priority: 'medium' }],
+      ['low', { kind: 'priority', priority: 'low' }],
+      ['none', { kind: 'priority', priority: 'none' }],
+    ]);
+    // Nobody is the blank (dashed) avatar.
+    expect(optionsFor('assignee', PICKER_CONTEXT)).toEqual([
+      {
+        value: 'agent',
+        label: 'Agent',
+        mark: { kind: 'avatar', name: 'Agent' },
+      },
+      {
+        value: 'human',
+        label: 'Human',
+        mark: { kind: 'avatar', name: 'Human' },
+      },
+      {
+        value: 'none',
+        label: 'Unassigned',
+        mark: { kind: 'avatar', name: '' },
+      },
+    ]);
+    expect(optionsFor('labels', PICKER_CONTEXT)).toEqual([
+      { value: 'api', label: 'api' },
+      { value: 'ui', label: 'ui' },
+    ]);
+    // A milestone is filtered on by id and read by its title.
+    expect(optionsFor('milestone', PICKER_CONTEXT)).toEqual([
+      { value: 'none', label: 'No milestone' },
+      { value: 'e-1', label: 'Payments' },
+    ]);
+    expect(optionsFor('run', PICKER_CONTEXT).map((o) => o.label)).toEqual([
+      'Working',
+      'Provisioning',
+      'Awaiting approval',
+      'Finished',
+      'Failed',
+      'Cancelled',
+      'Interrupted',
+      'No live run',
+    ]);
+    expect(optionsFor('created', PICKER_CONTEXT)).toEqual(
+      DATE_PICKS.map((pick) => ({
+        value: `${pick.op}:${pick.days}`,
+        label: pick.label,
+      }))
+    );
+    expect(optionsFor('updated', PICKER_CONTEXT)).toEqual(
+      optionsFor('created', PICKER_CONTEXT)
+    );
+  });
+
+  test('an empty vocabulary leaves only the "none" rows', () => {
+    const empty: FilterPickerContext = {
+      statuses: [],
+      milestones: [],
+      labels: [],
+    };
+    expect(optionsFor('status', empty)).toEqual([]);
+    expect(optionsFor('labels', empty)).toEqual([]);
+    expect(optionsFor('milestone', empty)).toEqual([
+      { value: 'none', label: 'No milestone' },
+    ]);
+  });
+
+  test('matches is a trimmed, case-blind substring test', () => {
+    expect(matches('  STAT ', 'Status')).toBe(true);
+    expect(matches('run st', 'Run state')).toBe(true);
+    expect(matches('', 'Anything')).toBe(true);
+    expect(matches('parent', 'Milestone')).toBe(false);
+  });
+
+  test('isDateFacet names the two date facets', () => {
+    expect(isDateFacet('created')).toBe(true);
+    expect(isDateFacet('updated')).toBe(true);
+    expect(isDateFacet('status')).toBe(false);
+  });
+
+  test('selectedCount counts the clause values of one facet', () => {
+    const filters = set([
+      { facet: 'status', op: 'is', values: ['ready', 'working'] },
+      { facet: 'created', op: 'after', values: ['2026-10-01T00:00:00.000Z'] },
+    ]);
+    expect(selectedCount(filters, 'status')).toBe(2);
+    expect(selectedCount(filters, 'created')).toBe(1);
+    expect(selectedCount(filters, 'labels')).toBe(0);
+  });
+
+  test('datePickBound turns a pick into its operator and ISO bound', () => {
+    expect(datePickBound('after:7', NOW)).toEqual({
+      op: 'after',
+      bound: new Date(NOW - 7 * DAY_MS).toISOString(),
+    });
+    expect(datePickBound('before:30', NOW)).toEqual({
+      op: 'before',
+      bound: new Date(NOW - 30 * DAY_MS).toISOString(),
+    });
+  });
+
+  test('applyDatePick replaces the facet bound and keeps other clauses', () => {
+    const start = set([
+      { facet: 'status', op: 'is', values: ['ready'] },
+      { facet: 'created', op: 'after', values: ['2020-01-01T00:00:00.000Z'] },
+    ]);
+    const next = applyDatePick(start, 'created', 'before:7', NOW);
+    expect(next.clauses).toEqual([
+      { facet: 'status', op: 'is', values: ['ready'] },
+      {
+        facet: 'created',
+        op: 'before',
+        values: [new Date(NOW - 7 * DAY_MS).toISOString()],
+      },
+    ]);
+    expect(start.clauses).toHaveLength(2);
+    expect(start.clauses[1]?.op).toBe('after');
+  });
+
+  test('pickedDateValue finds the pick nearest the bound age, by operator', () => {
+    for (const pick of DATE_PICKS) {
+      const value = `${pick.op}:${pick.days}`;
+      const filters = applyDatePick(
+        EMPTY_TASK_FILTER_SET,
+        'updated',
+        value,
+        NOW
+      );
+      expect(pickedDateValue(filters, 'updated', NOW)).toBe(value);
+    }
+    // A day later the week pick still reads as the week, not the month.
+    const week = applyDatePick(
+      EMPTY_TASK_FILTER_SET,
+      'created',
+      'after:7',
+      NOW
+    );
+    expect(pickedDateValue(week, 'created', NOW + DAY_MS)).toBe('after:7');
+    // A clause from elsewhere (an AI filter, a saved view) maps to the nearest pick.
+    const nineDays = set([
+      {
+        facet: 'created',
+        op: 'before',
+        values: [new Date(NOW - 9 * DAY_MS).toISOString()],
+      },
+    ]);
+    expect(pickedDateValue(nineDays, 'created', NOW)).toBe('before:7');
+  });
+
+  test('pickedDateValue is null without a clause or a readable bound', () => {
+    expect(pickedDateValue(EMPTY_TASK_FILTER_SET, 'created', NOW)).toBeNull();
+    const bad = set([
+      { facet: 'created', op: 'after', values: ['not a date'] },
+    ]);
+    expect(pickedDateValue(bad, 'created', NOW)).toBeNull();
+    // An operator no pick uses has no nearest pick.
+    const odd = set([
+      { facet: 'created', op: 'is', values: ['2026-10-01T00:00:00.000Z'] },
+    ]);
+    expect(pickedDateValue(odd, 'created', NOW)).toBeNull();
+  });
+
+  test('aiFilterErrorText reads a 404 as the update hint', () => {
+    expect(aiFilterErrorText(new ApiError('not found', 404))).toBe(
+      'Update the daemon to use AI filters'
+    );
+    expect(aiFilterErrorText(new ApiError('model unavailable', 503))).toBe(
+      'model unavailable'
+    );
+    expect(aiFilterErrorText(new Error('boom'))).toBe('boom');
+    expect(aiFilterErrorText(new Error(''))).toBe('AI filter failed');
+    expect(aiFilterErrorText('a string')).toBe('AI filter failed');
   });
 });

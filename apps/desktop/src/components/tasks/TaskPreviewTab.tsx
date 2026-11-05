@@ -4,15 +4,15 @@ import type {
   RunPreviewReason,
   RunPreviewResult,
 } from '@dispatch/client';
+import { Button, cx, EmptyState, SkeletonRows } from '@dispatch/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MonitorPlay, RotateCw } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { isTeamLocalPage } from '../../lib/teamLocal';
-import { TabSkeleton } from './TabSkeleton';
-import { Button } from '@/ui/button';
-import { EmptyState } from '@/ui/chrome';
+import styles from './TaskPreviewTab.module.css';
 
 export interface TaskPreviewTabProps {
   data: Pick<DispatchProjectData, 'client' | 'port' | 'daemonBaseUrl'>;
@@ -87,6 +87,40 @@ const REFUSAL_COPY: Record<
   },
 };
 
+/** One of the tab's empty states (no run, nothing running, a refusal, a failed start),
+ * centred in the tab with the preview glyph over its title and sentence. */
+function PreviewEmpty({
+  label,
+  action,
+  children,
+}: {
+  label: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className={styles.center}>
+      <EmptyState
+        label={label}
+        action={action}
+        icon={<MonitorPlay size={22} strokeWidth={1.8} aria-hidden />}
+      >
+        {children}
+      </EmptyState>
+    </div>
+  );
+}
+
+/** What the tab shows while the preview's state loads, or while its server boots: three
+ * skeleton rows on the list-row rhythm. */
+function PreviewLoading() {
+  return (
+    <div className={styles.loading}>
+      <SkeletonRows rows={3} label="Loading the preview" />
+    </div>
+  );
+}
+
 /**
  * The task view's Preview tab: the selected run's work as a running app rather
  * than a diff.
@@ -148,15 +182,12 @@ export function TaskPreviewTab({ data, selectedRun }: TaskPreviewTabProps) {
 
   if (selectedRun === undefined) {
     return (
-      <EmptyState
-        icon={MonitorPlay}
-        heading="No session yet"
-        description="Dispatch the task to get something to preview."
-        className="h-full justify-center"
-      />
+      <PreviewEmpty label="No session yet">
+        Dispatch the task to get something to preview.
+      </PreviewEmpty>
     );
   }
-  if (isLoading) return <TabSkeleton />;
+  if (isLoading) return <PreviewLoading />;
 
   const preview: RunPreview | null = result?.preview ?? null;
   const refusal = start.data?.reason ?? result?.reason;
@@ -164,78 +195,84 @@ export function TaskPreviewTab({ data, selectedRun }: TaskPreviewTabProps) {
   if (preview === null) {
     const copy = refusal === undefined ? null : REFUSAL_COPY[refusal];
     return (
-      <EmptyState
-        icon={MonitorPlay}
-        heading={copy?.heading ?? 'No preview running'}
-        description={
-          copy?.body ??
-          "Start this run's dev server to see its work as a running app."
-        }
-        className="h-full justify-center"
-        primary={
+      <PreviewEmpty
+        label={copy?.heading ?? 'No preview running'}
+        action={
           // A refusal is not retryable by pressing the same button again —
           // the config or the worktree has to change first.
-          copy === null
-            ? {
-                label: start.isPending ? 'Starting…' : 'Start preview',
-                onClick: () => start.mutate(),
-              }
-            : undefined
+          copy === null ? (
+            <Button
+              variant="primary"
+              busy={start.isPending}
+              busyLabel="Starting…"
+              onClick={() => start.mutate()}
+            >
+              Start preview
+            </Button>
+          ) : undefined
         }
-      />
+      >
+        {copy?.body ??
+          "Start this run's dev server to see its work as a running app."}
+      </PreviewEmpty>
     );
   }
 
   if (preview.status === 'failed') {
     return (
-      <EmptyState
-        icon={MonitorPlay}
-        heading="Preview failed to start"
-        description={preview.error ?? `\`${preview.command}\` did not come up.`}
-        className="h-full justify-center"
-        primary={{
-          label: start.isPending ? 'Retrying…' : 'Try again',
-          onClick: () => start.mutate(),
-        }}
-      />
+      <PreviewEmpty
+        label="Preview failed to start"
+        action={
+          <Button
+            variant="primary"
+            busy={start.isPending}
+            busyLabel="Retrying…"
+            onClick={() => start.mutate()}
+          >
+            Try again
+          </Button>
+        }
+      >
+        {preview.error ?? (
+          <>
+            <span className="mono">{preview.command}</span> did not come up.
+          </>
+        )}
+      </PreviewEmpty>
     );
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="border-border-chip flex items-center gap-2 border-b px-3 py-1.5">
-        <span className="text-text-secondary truncate font-mono text-[11px]">
-          {preview.command}
-        </span>
-        <div className="ml-auto flex items-center gap-1">
+    <div className={styles.frame}>
+      <div className={styles.bar}>
+        <span className={cx(styles.command, 'mono')}>{preview.command}</span>
+        <div className={styles.actions}>
           <Button
             size="sm"
-            variant="ghost"
+            variant="quiet"
             onClick={() => {
               setReloads((n) => n + 1);
               void queryClient.invalidateQueries({ queryKey });
             }}
             aria-label="Reload preview"
-          >
-            <RotateCw aria-hidden />
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => stop.mutate()}>
+            title="Reload preview"
+            icon={<RotateCw size={14} strokeWidth={1.8} aria-hidden />}
+          />
+          <Button size="sm" variant="quiet" onClick={() => stop.mutate()}>
             Stop
           </Button>
         </div>
       </div>
       {preview.status === 'starting' ? (
-        <TabSkeleton />
+        <PreviewLoading />
       ) : teamLocal && remoteSrc === undefined ? (
         // A daemon from before teammate previews, or one bound to loopback
         // that served this page anyway: nothing a teammate's browser can
         // reach, said plainly rather than as a frame full of 403.
-        <EmptyState
-          icon={MonitorPlay}
-          heading="This preview is only on the host's machine"
-          description="The daemon did not offer a link teammates can open. Review the diff here, or ask them to share the run."
-          className="h-full justify-center"
-        />
+        <PreviewEmpty label="This preview is only on the host's machine">
+          The daemon did not offer a link teammates can open. Review the diff
+          here, or ask them to share the run.
+        </PreviewEmpty>
       ) : (
         <iframe
           // Keyed on the run so switching sessions remounts the frame rather
@@ -247,7 +284,7 @@ export function TaskPreviewTab({ data, selectedRun }: TaskPreviewTabProps) {
             teamLocal ? remoteSrc : `${data.daemonBaseUrl ?? ''}${preview.url}`
           }
           sandbox={teamLocal ? REMOTE_PREVIEW_SANDBOX : PREVIEW_SANDBOX}
-          className="min-h-0 w-full flex-1 border-0 bg-white"
+          className={styles.iframe}
         />
       )}
     </div>

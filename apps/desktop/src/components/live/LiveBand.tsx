@@ -1,6 +1,7 @@
 import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
-import { isCompletedStatus, isDoneStatus } from '@dispatch-foo/core/browser';
+import { isDoneStatus } from '@dispatch-foo/core/browser';
 import type { MilestoneProgress } from '@dispatch/client';
+import { Button, cx } from '@dispatch/ui';
 import { ChevronRight, Shapes, Waypoints } from 'lucide-react';
 import {
   memo,
@@ -35,9 +36,10 @@ import {
 } from '../flightplan/flightViews';
 import { FanoutControls } from '../milestones/FanoutControls';
 import { ContainerIcon } from '../tasks/page/ContainerIcon';
+import styles from './LiveBand.module.css';
 import type { LiveBandModel } from './liveBandModel';
-import { cn } from '@/lib/utils';
-import { IconButton } from '@/ui/ai/icon-button';
+
+const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
 
 /** The band's title row. */
 const LIVE_BAND_HEAD = 44;
@@ -73,7 +75,8 @@ function bandCull(
   };
 }
 
-/** A band's full height — exact, so the band list can window without measuring. */
+/** A band's full height — exact, so the band list sizes the gaps of the bands it has not
+ * drawn and every band's culling offset before a band is drawn (the row windows' `rowHeight`). */
 export function liveBandHeight(band: LiveBandModel): number {
   const body =
     band.order.length === 0
@@ -135,20 +138,11 @@ function BandControls({
 }) {
   const id = container.meta.id;
   const progress = actions.progressOf(id);
-  const session = progress?.session ?? null;
-  const kids = progress?.children ?? [];
-  const landable =
-    session?.state !== 'active' &&
-    session?.state !== 'paused' &&
-    kids.length > 0 &&
-    kids.every((c) => isDoneStatus(c.status, actions.model)) &&
-    !isCompletedStatus(container.meta.status, actions.model);
   return (
     <FanoutControls
       milestone={container}
       model={actions.model}
       progress={progress}
-      landable={landable}
       phases={false}
       waves={false}
       showOpen={false}
@@ -182,81 +176,72 @@ function BandHead({
   return (
     <div
       data-slot="live-band-head"
-      className="flex shrink-0 items-center gap-3 px-4"
+      className={styles.head}
       style={{ height: LIVE_BAND_HEAD }}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+      <div className={styles.headMain}>
         {container === null ? (
-          <Shapes
-            aria-hidden
-            className="text-muted-foreground size-3.5 shrink-0"
-          />
+          <Shapes {...ICON} className={cx(styles.glyph, styles.looseGlyph)} />
         ) : (
           <ContainerIcon
             kind={container.meta.kind}
             icon={container.meta.icon}
             color={container.meta.color}
-            className="size-3.5 shrink-0"
+            className={styles.glyph}
           />
         )}
-        <span
-          data-slot="live-band-title"
-          className="text-foreground min-w-[6rem] truncate text-[13px] font-medium"
-        >
+        <span data-slot="live-band-title" className={styles.title}>
           {container?.meta.title ?? 'Loose work'}
         </span>
-        {refLabel !== null && (
-          <span className="font-book shrink-0 text-[12px] tracking-(--id-tracking) text-(--text-muted)">
-            {refLabel}
-          </span>
-        )}
-        <span className="shrink-0 text-[12px] text-(--text-muted)">
+        {refLabel !== null && <span className={styles.ref}>{refLabel}</span>}
+        <span className={styles.quiet}>
           {container === null
             ? 'Outside any container'
             : containerLabel(container)}
         </span>
         {finished.waves > 0 && (
-          <button
-            type="button"
+          // Not a Disclosure: the fold flips the band's `expanded` flag, which rebuilds
+          // its layout with the landed waves drawn; there is no panel to show or hide.
+          <Button
+            variant="quiet"
+            size="sm"
             data-slot="live-band-fold"
             aria-expanded={expanded}
+            className={styles.fold}
+            icon={
+              <ChevronRight
+                {...ICON}
+                className={cx(styles.chevron, expanded && styles.chevronOpen)}
+              />
+            }
             onClick={() => actions.onToggleFold(spec.key)}
-            className="rounded-control hover:bg-surface-control flex h-6 shrink-0 items-center gap-1 px-1.5 text-[12px] text-(--text-muted) transition-colors duration-100 hover:text-(--text-secondary)"
           >
-            <ChevronRight
-              aria-hidden
-              className={cn(
-                'size-3 transition-transform duration-150',
-                expanded && 'rotate-90'
-              )}
-            />
             {expanded
               ? 'Fold landed waves'
               : `${finished.waves} landed ${finished.waves === 1 ? 'wave' : 'waves'} · ${finished.tasks}`}
-          </button>
+          </Button>
         )}
         {band.showWaves && plan.waves.length > 0 && (
           <FlightPlanMini plan={plan} />
         )}
         {stats.queued > 0 && (
-          <span className="font-book shrink-0 text-[12px] text-(--text-muted) tabular-nums">
-            {stats.queued} queued
-          </span>
+          <span className={styles.count}>{stats.queued} queued</span>
         )}
-        <span className="font-book shrink-0 text-[12px] text-(--text-muted) tabular-nums">
+        <span className={styles.count}>
           {stats.done}/{stats.total} landed
         </span>
       </div>
       {container !== null && (
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className={styles.controls}>
           <BandControls container={container} actions={actions} />
-          <IconButton
+          <Button
+            variant="quiet"
+            size="sm"
             data-slot="live-band-open-plan"
-            label={`Open the Flight Plan for ${container.meta.title}`}
+            aria-label={`Open the Flight Plan for ${container.meta.title}`}
+            icon={<Waypoints {...ICON} />}
             onClick={() => actions.onOpenPlan(container.meta.id)}
-          >
-            <Waypoints aria-hidden />
-          </IconButton>
+          />
         </div>
       )}
     </div>
@@ -429,7 +414,7 @@ export const LiveBand = memo(function LiveBand({
       data-live-band={spec.key}
       data-kind={spec.kind}
       aria-label={container?.meta.title ?? 'Loose work'}
-      className="flex flex-col"
+      className={styles.band}
       style={{ height: liveBandHeight(band) }}
     >
       <BandHead
@@ -439,17 +424,14 @@ export const LiveBand = memo(function LiveBand({
         refLabel={refLabel}
       />
       {band.order.length === 0 ? (
-        <p
-          className="px-5 text-[12px] leading-9 text-(--text-muted)"
-          style={{ height: EMPTY_BODY }}
-        >
+        <p className={styles.empty} style={{ height: EMPTY_BODY }}>
           Nothing under this container yet.
         </p>
       ) : (
         <div
           ref={canvasRef}
           data-slot="live-band-canvas"
-          className="relative shrink-0 [scrollbar-width:thin] overflow-x-auto overflow-y-hidden"
+          className={styles.canvas}
           style={{ height: WAVE_HEADER_HEIGHT + layout.height }}
         >
           {drawn && (

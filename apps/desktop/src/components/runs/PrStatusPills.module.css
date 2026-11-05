@@ -1,0 +1,47 @@
+/* PR status facts (PrStatusPills.tsx): the library Chip with an optional
+   glyph before its words, and the filled neutral face a merged PR takes.
+   Tokens only. */
+.body {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.icon {
+  display: inline-flex;
+  flex: none;
+}
+
+.text {
+  min-width: 0;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A merged PR: closed-out work, the filled neutral mark (never green, never
+   the accent). --surface-3 words on the --text-2 fill hold 4.5:1 in both
+   themes. Two-part selector so it outweighs the chip's own face. */
+.done {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.done > [data-fill='neutral'] {
+  border-color: var(--text-2);
+  background: var(--text-2);
+  color: var(--surface-3);
+}
+
+/* Forced colours drop backgrounds: keep the filled shape in system colours. */
+@media (forced-colors: active) {
+  .done > [data-fill='neutral'] {
+    forced-color-adjust: none;
+    border-color: CanvasText;
+    background: CanvasText;
+    color: Canvas;
+  }
+}

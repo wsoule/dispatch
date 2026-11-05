@@ -1,3 +1,4 @@
+import { cx } from '@dispatch/ui';
 import type { ReactNode } from 'react';
 import { memo, useMemo } from 'react';
 import type { Components } from 'react-markdown';
@@ -11,7 +12,6 @@ import {
   MarkdownStreamingContext,
 } from './markdown/MarkdownCodeFence';
 import { MarkdownMath } from './markdown/MarkdownMath';
-import { cn } from '@/lib/utils';
 
 // The slug remark tags a fenced block's `<code>` with (`language-xxx`), lowercased, or
 // undefined for a bare fence.
@@ -76,18 +76,18 @@ const STATIC_COMPONENTS = {
   a: ({ children, href }) => (
     <MarkdownLink href={href}>{children}</MarkdownLink>
   ),
-  // remark-math hands inline `$$…$$` over as `<code class="math-inline">`.
+  // Inline code (fences are taken at `pre` below); styles/markdown.css draws it. remark-math
+  // hands inline `$$…$$` over as `<code class="math-inline">`, typeset instead.
   code: ({ children, node }) =>
     hastClassName(node as HastLike | undefined)?.includes('math-inline') ? (
       <MarkdownMath tex={hastText(node)} display={false} />
     ) : (
-      <code className="rounded-[4px] bg-[color-mix(in_srgb,var(--foreground)_10%,transparent)] px-[0.35em] py-[0.1em] font-mono text-[0.85em]">
-        {children}
-      </code>
+      <code>{children}</code>
     ),
   // Every `<pre>` react-markdown emits wraps a fenced (or indented) code block, or a
-  // display formula from remark-math (`language-math`). The source text and language
-  // come from the hast `node`, not the rendered `children` — see `hastText`.
+  // display formula from remark-math (`language-math`). A fence becomes the library
+  // CodeBlock through MarkdownCodeFence. The source text and language come from the hast
+  // `node`, not the rendered `children` — see `hastText`.
   pre: ({ node }) => {
     const codeElement = preCodeChild(node);
     const code = hastText(codeElement ?? node).replace(/\n$/, '');
@@ -112,11 +112,13 @@ const REMARK_PLUGINS = [
 // Renders agent/message text as GitHub-flavored markdown, so a run's Session transcript reads
 // like Claude Code's own output (headings, lists, tables, **bold**, `inline code`, and fenced
 // ```code blocks```) instead of the flat pre-wrapped text it was before, with T3 Code's
-// extras: fences colored by Shiki, ```mermaid fences drawn as diagrams, `$$…$$` math typeset
-// by KaTeX, and wide tables scrolling in place (see ./markdown/). Element styling lives in
-// styles/markdown.css under the `.dispatch-md` scope. Fenced blocks are intercepted at the
-// `pre` level (react-markdown only emits `<pre>` around a code block), where the raw source
-// is lifted straight off the hast node.
+// extras (main v0.51.0): fences colored by Shiki, ```mermaid fences drawn as diagrams,
+// `$$…$$` math typeset by KaTeX, and wide tables scrolling in place (see ./markdown/).
+// Element styling lives in styles/markdown.css under the `.dispatch-md` scope; a fence is the
+// library `CodeBlock` (its own frame, a language label, the wrap and diagram toggles and a
+// Copy button), which markdown.css only spaces and colours from Shiki's variables. Fenced
+// blocks are intercepted at the `pre` level (react-markdown only emits `<pre>` around a code
+// block), where the raw source is lifted straight off the hast node.
 //
 // `variant: 'prose'` is the task page's long-form measure (Linear's 15px/450 on a 24px line,
 // headings held at 15px/600 so a description never shouts over the title); the default
@@ -158,7 +160,7 @@ export const Markdown = memo(function Markdown({
       data-slot="markdown"
       data-variant={variant}
       data-streaming={streaming || undefined}
-      className={cn(
+      className={cx(
         'dispatch-md',
         variant === 'prose' && 'dispatch-md-prose',
         className

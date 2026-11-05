@@ -124,7 +124,10 @@ function mount(client: ApiClient, readyIds: ReadonlySet<string>, retry = 20) {
   );
 }
 
-const settle = () => new Promise((r) => setTimeout(r, 60));
+// Waits out the debounce, inside act: a judge the wait lets through
+// re-renders the hook.
+const settle = () =>
+  act(() => new Promise<void>((resolve) => setTimeout(resolve, 60)));
 
 describe('useReadiness', () => {
   test('paints the cached reading, then the judged one', async () => {

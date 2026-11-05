@@ -39,9 +39,24 @@ test('the real tokens.css splits cleanly', async () => {
   ).text();
   const out = themeAwareTokens(real);
   // The frame is the first token in each block; the page surface aliases the panel.
-  expect(out).toContain(':root{--surface-frame: #f4f4f5;');
+  expect(out).toContain(':root{--surface-frame: #efeff0;');
   expect(out).toContain('--surface-page: var(--surface-panel);');
-  expect(out).toContain(':root[data-theme="dark"]{--surface-frame: #000000;');
+  expect(out).toContain(':root[data-theme="dark"]{--surface-frame: #08080a;');
+});
+
+// The shape the splitter relies on, stated outright: one light `:root` block, one dark media
+// block, and `--surface-page` (the first name Base.astro reads) declared in both halves. The
+// desktop app no longer loads this palette, so this is the one place that guards its shape.
+test('the real tokens.css is one light block and one dark block', async () => {
+  const real = await Bun.file(
+    Bun.resolveSync('@dispatch/tokens/tokens.css', import.meta.dir)
+  ).text();
+  const [light, dark, ...rest] = real.split(
+    '@media (prefers-color-scheme: dark)'
+  );
+  expect(rest).toEqual([]);
+  expect(light).toContain('--surface-page:');
+  expect(dark).toContain('--surface-page:');
 });
 
 test('a stylesheet with two dark blocks is rejected', () => {

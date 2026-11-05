@@ -1,9 +1,36 @@
 import type { TaskDoc } from '@dispatch-foo/core/browser';
 import type { RunMeta } from '@dispatch/client';
-import { act, fireEvent, render, screen } from '@testing-library/react';
-import { expect, test } from 'bun:test';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from '@testing-library/react';
+import { afterEach, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
+import { applyLabelColors } from '../../lib/labelColor';
 import { TaskCardTile } from './TaskCardTile';
+
+const css = readFileSync(
+  join(import.meta.dir, 'TaskCardTile.module.css'),
+  'utf8'
+);
+
+/** The body of one top-level rule of the card's module, for a property check. */
+function rule(selector: string): string {
+  const at = css.indexOf(`${selector} {`);
+  if (at === -1) throw new Error(`no rule ${selector}`);
+  return css.slice(at, css.indexOf('}', at));
+}
+
+// Unmount before clearing the registry, so the clear does not re-render a card outside act.
+afterEach(() => {
+  cleanup();
+  applyLabelColors(null);
+});
 
 function task(overrides: Partial<TaskDoc['meta']> = {}): TaskDoc {
   return {
@@ -75,18 +102,25 @@ test('renders the four rows: id › milestone + avatar, glyph + title, priority 
     'task-card-pills',
     'task-card-footer',
   ]);
-  // Row 1: id, the ` › Payments` crumb as plain text, the 18px assignee pushed right.
+  // Row 1: id, the ` › Payments` crumb as plain text, the assignee picker pushed right.
   expect(slot('meta').textContent).toMatch(/^t-1›Payments/);
+  const assignee = screen.getByRole('button', { name: 'Change assignee' });
+  expect(slot('meta').contains(assignee)).toBe(true);
   expect(
-    slot('meta').querySelector('[data-slot=initials-avatar]')
-  ).not.toBeNull();
+    assignee
+      .querySelector('[data-slot=assignee-avatar]')
+      ?.getAttribute('data-size')
+  ).toBe('16');
   expect(slot('meta').querySelector('svg.lucide-chevron-right')).toBeNull();
-  // Row 2: 14px status picker + a two-line 13px/500 title.
-  expect(screen.getByRole('button', { name: 'Change status' })).not.toBeNull();
-  const title = screen.getByText('Cache the search index in redis');
-  expect(title.className).toContain('line-clamp-2');
-  expect(title.className).toContain('text-[13px]');
-  expect(title.className).toContain('font-medium');
+  // Row 2: the status picker with the status glyph as its face + a two-line title.
+  const status = screen.getByRole('button', { name: 'Change status' });
+  expect(status.dataset['appearance']).toBe('mark');
+  expect(
+    status.querySelector('[data-status-shape]')?.getAttribute('aria-label')
+  ).toBe('Status: working');
+  expect(screen.getByText('Cache the search index in redis')).not.toBeNull();
+  expect(rule('.title')).toContain('-webkit-line-clamp: 2');
+  expect(rule('.title')).toContain('font-weight: var(--fw-medium)');
   // Row 3: priority picker + two label pills + a `+1` for the rest.
   expect(
     screen.getByRole('button', { name: 'Change priority' })
@@ -100,25 +134,33 @@ test('renders the four rows: id › milestone + avatar, glyph + title, priority 
   expect(slot('footer').textContent).toBe('Created Sep 13');
 });
 
-test('the card is a 322px quaternary tile with the half-pixel ring and no mono', () => {
+test('the card is a 322px tile on the surface with a soft border and no shadow', () => {
   renderCard();
   const el = card();
-  expect(el.className).toContain('w-[322px]');
-  expect(el.className).toContain('bg-surface-quaternary');
-  expect(el.className).toContain('rounded-card');
-  expect(el.className).toContain('shadow-card');
-  expect(el.className).toContain('p-3');
-  expect(el.outerHTML).not.toContain('font-mono');
-  expect(el.className).not.toContain('ring-state-waiting');
-  expect(el.className).not.toContain('ring-ring');
+  expect(el.getAttribute('style')).toBeNull();
+  const tile = rule('.card');
+  expect(tile).toContain('width: 322px');
+  expect(tile).toContain('background: var(--surface)');
+  expect(tile).toContain('border: 1px solid var(--border)');
+  expect(tile).toContain('border-radius: var(--r-lg)');
+  expect(tile).toContain('padding: var(--s-3)');
+  expect(css).not.toContain('box-shadow');
+  expect(css).not.toMatch(/outline:\s*none/);
+  // Only the id is mono (a machine-read string); the title and crumb are sans.
+  expect(rule('.id')).toContain('font-family: var(--font-mono)');
+  expect(css.match(/font-mono/g)).toHaveLength(1);
 });
 
-test('the keyboard cursor is a neutral raised ring, never the accent', () => {
+test('the keyboard cursor is a neutral edge; keyboard focus rings the card', () => {
   renderCard({ focused: true });
   const el = card();
   expect(el.dataset['focused']).toBe('true');
-  expect(el.className).toContain('data-[focused=true]:shadow-raised');
-  expect(el.className).not.toContain('ring-ring');
+  expect(rule(".card[data-focused='true']")).toContain(
+    'border-color: var(--border-strong)'
+  );
+  expect(rule('.card:has([data-task-card-open]:focus-visible)')).toContain(
+    'outline: 2px solid var(--focus-ring)'
+  );
   expect(document.activeElement).toBe(openButton());
 });
 
@@ -128,7 +170,13 @@ test('attention and blocked read as pills on row 3', () => {
     slot('pills').querySelectorAll('[data-slot=label-pill]')
   ).map((p) => p.textContent);
   expect(pills.slice(0, 2)).toEqual(['Blocked', 'Needs you']);
-  expect(card().className).not.toContain('ring-state-waiting');
+  // Blocked and Needs you are amber (warning) badges; the card itself is never tinted.
+  const [blockedPill, attentionPill] = Array.from(
+    slot('pills').querySelectorAll<HTMLElement>('[data-slot=label-pill]')
+  );
+  expect(blockedPill?.dataset['tone']).toBe('warning');
+  expect(attentionPill?.dataset['tone']).toBe('warning');
+  expect(card().dataset['tone']).toBeUndefined();
 });
 
 test('a live run shows the compact mark and the merge ladder a pill', () => {
@@ -144,7 +192,7 @@ test('a live run shows the compact mark and the merge ladder a pill', () => {
   ).not.toBeNull();
 });
 
-test('the Dispatch action is a ghost button on row 4 for a ready card', async () => {
+test('the Dispatch action is a quiet button on row 4 for a ready card', async () => {
   let dispatched = 0;
   renderCard({
     ready: true,
@@ -155,8 +203,7 @@ test('the Dispatch action is a ghost button on row 4 for a ready card', async ()
   });
   const button = screen.getByRole('button', { name: 'Dispatch' });
   expect(slot('footer').contains(button)).toBe(true);
-  expect(button.dataset['variant']).toBe('ghost');
-  expect(button.className).not.toContain('opacity-0');
+  expect(button.dataset['variant']).toBe('quiet');
   await act(async () => {
     fireEvent.click(button);
     await Promise.resolve();
@@ -173,10 +220,17 @@ test('display properties hide the id, crumb, assignee, labels and priority', () 
   expect(screen.getByRole('button', { name: 'Change status' })).not.toBeNull();
 });
 
-test('an archived card dims and says so', () => {
+test('an archived card dims, says so and shows plain label pills', () => {
   renderCard({ archived: true });
-  expect(card().className).toContain('opacity-55');
+  expect(card().dataset['archived']).toBe('true');
+  expect(rule('.card[data-archived]')).toContain('opacity: 0.55');
   expect(slot('pills').textContent).toContain('Archived');
+  expect(screen.queryByRole('button', { name: 'Change labels' })).toBeNull();
+  expect(
+    Array.from(slot('pills').querySelectorAll('[data-slot=label-pill]')).map(
+      (p) => p.textContent
+    )
+  ).toEqual(['ui', 'api']);
 });
 
 test('the title is the real button that opens the card; a nested control keeps its own keys', () => {
@@ -227,7 +281,7 @@ test('clicking a label pill opens the labels picker over the catalogue, not the 
   expect(opened).toBe(0);
   const options = screen.getAllByRole('option').map((o) => ({
     label: o.textContent,
-    checked: o.querySelector('svg.lucide-check') !== null,
+    checked: o.getAttribute('aria-selected') === 'true',
   }));
   expect(options).toEqual([
     { label: 'api', checked: true },
@@ -246,6 +300,47 @@ test('clicking a label pill opens the labels picker over the catalogue, not the 
   expect(opened).toBe(0);
 });
 
+// Ported from PropertyControls.test's LabelsControl cases: the card's labels picker
+// creates a new label from the search box, but never a case-variant of one it lists.
+test('typing an unknown name in the labels picker offers Create and appends it', async () => {
+  const patches: unknown[] = [];
+  renderCard({
+    onEditTask: (id, patch) => patches.push([id, patch]),
+    labelCatalogue: ['docs'],
+  });
+  await settle(() => {
+    fireEvent.click(screen.getByRole('button', { name: 'Change labels' }));
+  });
+  await settle(() => {
+    fireEvent.change(screen.getByPlaceholderText('Add labels…'), {
+      target: { value: '  perf ' },
+    });
+  });
+  await settle(() => {
+    const create = screen.getByRole('option', { name: /Create.*perf/ });
+    fireEvent.pointerDown(create);
+    fireEvent.click(create);
+  });
+  expect(patches).toEqual([
+    ['t-1', { labels: ['ui', 'api', 'infra', 'perf'] }],
+  ]);
+});
+
+test('a case-variant of a listed label is not offered for creation', async () => {
+  renderCard({ labelCatalogue: ['docs'] });
+  await settle(() => {
+    fireEvent.click(screen.getByRole('button', { name: 'Change labels' }));
+  });
+  for (const typed of ['UI', 'Docs']) {
+    await settle(() => {
+      fireEvent.change(screen.getByPlaceholderText('Add labels…'), {
+        target: { value: typed },
+      });
+    });
+    expect(screen.queryByRole('option', { name: /Create/ })).toBeNull();
+  }
+});
+
 test('a card without labels grows no picker', () => {
   renderCard({ labelCatalogue: ['ui'] }, task({ labels: [] }));
   expect(screen.queryByRole('button', { name: 'Change labels' })).toBeNull();
@@ -257,4 +352,110 @@ test('a card whose run is in the merge queue shows a Landing pill on row 3', () 
   const badge = slot('pills').querySelector('[data-slot=landing-badge]');
   expect(badge?.textContent).toBe('Landing');
   expect(badge?.getAttribute('title')).toBe('Landing · rebasing');
+});
+
+test('a label pill draws the registry swatch, else a decorative hue', () => {
+  applyLabelColors([{ name: 'ui', color: '#5e6ad2' }]);
+  renderCard();
+  const [ui, api] = Array.from(
+    slot('pills').querySelectorAll<HTMLElement>('[data-slot=label-pill]')
+  );
+  expect(ui?.querySelector('[data-chip-mark]')).not.toBeNull();
+  expect(ui?.querySelector('[data-hue]')).toBeNull();
+  expect(api?.querySelector('[data-chip-mark]')).toBeNull();
+  expect(['violet', 'teal', 'rose', 'orange']).toContain(
+    api?.querySelector('[data-hue]')?.getAttribute('data-hue') ?? ''
+  );
+});
+
+test('a memoized card repaints its swatches when the label registry loads', () => {
+  renderCard();
+  const ui = () =>
+    slot('pills').querySelector<HTMLElement>('[data-slot=label-pill]');
+  expect(ui()?.querySelector('[data-chip-mark]')).toBeNull();
+  act(() => applyLabelColors([{ name: 'UI', color: '#5e6ad2' }]));
+  expect(ui()?.querySelector('[data-chip-mark]')).not.toBeNull();
+});
+
+test('a picker keeps Space and pointer presses from the card and the board', () => {
+  let opened = 0;
+  let boardKeys = 0;
+  let boardPresses = 0;
+  render(
+    <div
+      onKeyDown={() => (boardKeys += 1)}
+      onPointerDown={() => (boardPresses += 1)}
+    >
+      <TaskCardTile
+        doc={task()}
+        ready={false}
+        blocked={false}
+        liveRunState={undefined}
+        statuses={['ready', 'working', 'landed']}
+        onStatusChange={() => {}}
+        onEditTask={() => {}}
+        onClick={() => (opened += 1)}
+      />
+    </div>
+  );
+  for (const name of ['Change status', 'Change priority', 'Change assignee']) {
+    const trigger = screen.getByRole('button', { name });
+    fireEvent.pointerDown(trigger);
+    fireEvent.keyDown(trigger, { key: ' ', code: 'Space' });
+  }
+  expect(boardPresses).toBe(0);
+  expect(boardKeys).toBe(0);
+  expect(opened).toBe(0);
+  // The open button's own keys still reach the board (j/k, Enter).
+  fireEvent.keyDown(openButton(), { key: 'j' });
+  expect(boardKeys).toBe(1);
+});
+
+test("the status menu draws the card's own status glyphs, matching the face", async () => {
+  renderCard();
+  const trigger = screen.getByRole('button', { name: 'Change status' });
+  expect(
+    trigger.querySelector('svg[data-status-shape]')?.getAttribute('data-tone')
+  ).toBe('info');
+  await settle(() => {
+    fireEvent.click(trigger);
+  });
+  // Landed is the neutral done disk (no tone), never the library's green.
+  const landed = screen.getByRole('option', { name: /Landed/ });
+  const glyph = landed.querySelector('svg[data-status-shape]');
+  expect(glyph?.getAttribute('data-status-shape')).toBe('done');
+  expect(glyph?.getAttribute('data-tone')).toBeNull();
+  expect(landed.querySelector('[data-kind]')).toBeNull();
+  // Working is the same blue half pie as the face.
+  const working = screen.getByRole('option', { name: /Working/ });
+  expect(
+    working.querySelector('svg[data-status-shape]')?.getAttribute('data-tone')
+  ).toBe('info');
+});
+
+test('the pickers write through the card callbacks', async () => {
+  const patches: unknown[] = [];
+  const moves: unknown[] = [];
+  renderCard({
+    onEditTask: (id, patch) => patches.push([id, patch]),
+    onStatusChange: (id, status) => moves.push([id, status]),
+  });
+  await settle(() => {
+    fireEvent.click(screen.getByRole('button', { name: 'Change status' }));
+  });
+  await settle(() => {
+    const option = screen.getByRole('option', { name: /Landed/ });
+    fireEvent.pointerDown(option);
+    fireEvent.click(option);
+  });
+  expect(moves).toEqual([['t-1', 'landed']]);
+  await settle(() => {
+    fireEvent.click(screen.getByRole('button', { name: 'Change priority' }));
+  });
+  await settle(() => {
+    const option = screen.getByRole('option', { name: /Urgent/ });
+    fireEvent.pointerDown(option);
+    fireEvent.click(option);
+  });
+  expect(patches).toEqual([['t-1', { priority: 'urgent' }]]);
 });

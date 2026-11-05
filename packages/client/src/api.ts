@@ -1527,7 +1527,7 @@ export interface TaskDraft {
 }
 
 // Maps a reviewed `TaskDraft` onto core's `CreateInput` so it saves through the
-// exact same createTask path CreateTaskModal uses, criteria in their own section.
+// exact same createTask path the task composer's Quick add uses, criteria in their own section.
 export function taskDraftToCreateInput(draft: TaskDraft): CreateInput {
   return {
     title: draft.title,
@@ -3161,9 +3161,14 @@ function isDocConflict(body: unknown): body is DocConflict {
 }
 
 // request() for a binary body: same auth and error handling, the response
-// as a Blob (an attachment download).
-async function requestBlob(target: ApiTarget, path: string): Promise<Blob> {
-  return (await send(target, path)).blob();
+// as a Blob (an attachment download, a file preview). `init` carries only
+// what a read needs, such as an AbortSignal.
+async function requestBlob(
+  target: ApiTarget,
+  path: string,
+  init?: RequestInit
+): Promise<Blob> {
+  return (await send(target, path, init)).blob();
 }
 
 // An entry's route; a `#handle` travels as %23 so it is not read as a fragment.
@@ -4444,7 +4449,6 @@ export interface ApiClient {
   /** Operator tier. */
   rotateA2AKey(compromised: boolean): Promise<A2ARotation>;
 
-  /** The `/ws` URL, token included — it is a credential, so never render or log it. */
   /** One directory's children, for a lazily expanded tree. */
   fetchWorkspaceTree(
     path: string,
@@ -4459,8 +4463,34 @@ export interface ApiClient {
     text: string,
     scope?: WorkspaceScope
   ): Promise<{ path: string; size: number; modifiedAt: string }>;
-  /** A URL the browser can put straight in an `img` or `embed` tag. */
+  /**
+   * The raw route's URL for a file, without a credential. It is a target for
+   * a download link's `href` on a team-local page, whose session cookie rides
+   * along; a loopback or desktop page authenticates with the bearer header an
+   * element `src` cannot send, so a preview reads the bytes with
+   * `fetchWorkspaceBlob` instead.
+   */
   workspaceFileUrl(path: string, scope?: WorkspaceScope): string;
+  /**
+   * A one-time URL that downloads a file with no credential on the request:
+   * the daemon checks the path and this client's token now, and the URL then
+   * serves the file once, as an attachment, within about a minute. It is what
+   * a Download link on a bearer-authenticated page points at, so the browser
+   * streams the file to disk instead of the page holding it in memory first.
+   * Rejects with the server's error (400 outside the project or worktree, 404
+   * for no such file) like any other call.
+   */
+  workspaceDownloadUrl(path: string, scope?: WorkspaceScope): Promise<string>;
+  /**
+   * A file's raw bytes, read with this client's credential like every other
+   * call. A page shows them through `URL.createObjectURL`, since an `img` or
+   * `iframe` pointed at the raw route would 401 on a bearer-authenticated
+   * page. `signal` cancels a large read when the file changes.
+   */
+  fetchWorkspaceBlob(
+    path: string,
+    scope?: WorkspaceScope & { signal?: AbortSignal }
+  ): Promise<Blob>;
   /** Quick open: fuzzy filename search, gitignore-aware. */
   searchWorkspace(
     query: string,
@@ -4487,6 +4517,7 @@ export interface ApiClient {
   closeTerminal(id: string): Promise<void>;
   /** Ends the process and forgets the session, scrollback included. */
   removeTerminal(id: string): Promise<void>;
+  /** The `/ws` URL, token included — it is a credential, so never render or log it. */
   wsUrl(): string;
   connectEvents(
     onChange: () => void,
@@ -5580,6 +5611,26 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       }),
     workspaceFileUrl: (path, scope = {}) =>
       `${baseUrl}/api/files/raw?${workspaceQuery(path, scope)}`,
+    workspaceDownloadUrl: async (path, scope = {}) => {
+      const { ticket } = await request<{ ticket: string; expiresAt: string }>(
+        target,
+        '/api/files/download-ticket',
+        {
+          method: 'POST',
+          ...jsonBody({
+            path,
+            ...(scope.runId == null ? {} : { runId: scope.runId }),
+          }),
+        }
+      );
+      return `${baseUrl}/api/files/raw?${new URLSearchParams({ ticket }).toString()}`;
+    },
+    fetchWorkspaceBlob: (path, scope = {}) =>
+      requestBlob(
+        target,
+        `/api/files/raw?${workspaceQuery(path, scope)}`,
+        scope.signal === undefined ? undefined : { signal: scope.signal }
+      ),
     searchWorkspace: (query, scope = {}) => {
       const params = new URLSearchParams({ q: query });
       if (scope.runId != null) params.set('runId', scope.runId);

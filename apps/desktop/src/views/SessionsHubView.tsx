@@ -1,6 +1,17 @@
+import {
+  Button,
+  Chip,
+  EmptyState,
+  Register,
+  SegmentedControl,
+  SkeletonBlock,
+  SkeletonRows,
+  StatsStrip,
+  ViewToolbar,
+} from '@dispatch/ui';
 import { useQuery } from '@tanstack/react-query';
-import { Coins, Inbox, OctagonAlert, X } from 'lucide-react';
-import { type ReactNode, useMemo, useState } from 'react';
+import { Coins, OctagonAlert, X } from 'lucide-react';
+import { useMemo, useState } from 'react';
 
 import { ExportControl } from '../components/sessions/ExportControl';
 import { SessionDetailModal } from '../components/sessions/SessionDetailModal';
@@ -10,7 +21,11 @@ import {
   SPEND_WINDOWS,
   spendWindowLabel,
 } from '../components/sessions/sessionDisplay';
-import { SessionRow } from '../components/sessions/SessionRow';
+import {
+  SESSION_COLUMNS,
+  SESSION_HEADER,
+  SessionRow,
+} from '../components/sessions/SessionRow';
 import { SpendTable } from '../components/sessions/SpendTable';
 import { modelDisplayName } from '../lib/models';
 import {
@@ -21,24 +36,17 @@ import {
   listProjects,
   listSessions,
 } from '../lib/tauri';
-import { PageHeader, ViewTabs } from '@/ui/ai/page-header';
-import { Pill } from '@/ui/ai/pill';
-import { TaskRowList } from '@/ui/ai/task-rows';
-import { EmptyState, SectionLabel } from '@/ui/chrome';
-import { StatTile } from '@/ui/chrome/StatTile';
-import { Skeleton } from '@/ui/skeleton';
+import styles from './SessionsHubView.module.css';
 
-/** The spend windows as header view tabs — `7 days` `30 days` `90 days`. */
-const WINDOW_TABS = SPEND_WINDOWS.map((days) => ({
+/** The spend windows as the toolbar's segmented options — `7 days` `30 days` `90 days`. */
+const WINDOW_OPTIONS = SPEND_WINDOWS.map((days) => ({
   id: String(days),
   label: spendWindowLabel(days),
 }));
 
-/** A card the spend tables and the session list sit in. */
-function Card({ children }: { children: ReactNode }) {
-  return (
-    <div className="rounded-card bg-card shadow-card px-3 py-1">{children}</div>
-  );
+/** A dollar amount the way every Usage figure prints it: `$12.34`. */
+function dollars(amount: number): string {
+  return `$${amount.toFixed(2)}`;
 }
 
 /** A failed fetch, with its retry. */
@@ -51,35 +59,41 @@ function FetchError({
 }) {
   return (
     <EmptyState
-      icon={OctagonAlert}
-      heading={message}
-      secondary={{ label: 'Retry', onClick: onRetry }}
-    />
+      icon={<OctagonAlert size={22} strokeWidth={1.8} />}
+      action={
+        <Button variant="secondary" size="sm" onClick={onRetry}>
+          Retry
+        </Button>
+      }
+    >
+      {message}
+    </EmptyState>
   );
 }
 
 /**
- * The entire observability surface, collapsed from five tabs (Dashboard, Projects,
- * Sessions, Timeline, Reports) into one view: headline spend tiles, spend by model, spend by
- * project (click a row to filter the session list below to that project), the session list
- * itself, and a single export action in the header. The header's view tabs pick the window
- * the "Spend (Nd)" tile and the export cover. Everything here reads the app's own local
- * session/project data — no dispatch task/plan state lives on this page.
- */
-/**
- * Usage reads the agent session logs on this machine through the desktop
- * app's native side; a browser (a teammate on team-local, or dev) has no way
- * to, so it says so instead of loading forever.
+ * Settings › Usage: the whole observability surface in one view. A toolbar picks the spend
+ * window (7, 30 or 90 days) the "Spend (Nd)" headline and the spend-report export cover;
+ * under it come the headline figures, spend by model, spend by project (click a row to
+ * filter the session list below to that project, click it again or the chip's clear button
+ * to drop the filter) and the session list itself, whose rows open `SessionDetailModal`.
+ * Everything here reads the agent session logs on this machine through the desktop app's
+ * native side, so no dispatch task or plan state lives on this page; a browser (a teammate
+ * on team-local, or dev) has no way to read them, so it says so instead of loading forever.
  */
 export function SessionsHubView() {
   if (!isTauri()) {
     return (
-      <EmptyState
-        icon={Coins}
-        heading="Usage lives in the desktop app"
-        description="It reads the agent session logs on the machine running Dispatch, which a browser can't. Open Dispatch on that machine to see spend by model and project."
-        className="h-full justify-center"
-      />
+      <div className={styles.browser}>
+        <EmptyState
+          label="Usage lives in the desktop app"
+          icon={<Coins size={22} strokeWidth={1.8} />}
+        >
+          {
+            "It reads the agent session logs on the machine running Dispatch, which a browser can't. Open Dispatch on that machine to see spend by model and project."
+          }
+        </EmptyState>
+      </div>
     );
   }
   return <SessionsHubBody />;
@@ -99,8 +113,8 @@ function SessionsHubBody() {
     refetch: refetchStats,
   } = useQuery({ queryKey: ['dashboard'], queryFn: getDashboardStats });
 
-  // Powers the "Spend (Nd)" headline tile — the one piece of the old Reports tab's windowed
-  // totals worth surfacing, with the window as header tabs rather than a full range picker.
+  // Powers the "Spend (Nd)" headline figure — the one piece of the old Reports tab's windowed
+  // totals worth surfacing, with the window as a segmented control rather than a range picker.
   const { data: recentReport } = useQuery({
     queryKey: ['report', windowDays],
     queryFn: () => generateReport(windowDays),
@@ -139,126 +153,131 @@ function SessionsHubBody() {
   }, [sessions, projectFilter]);
 
   // Toggles the clicked project as the active filter — clicking the already-active row
-  // clears it, matching the filter pill's "✕" affordance.
+  // clears it, matching the filter chip's clear button.
   function toggleProjectFilter(projectId: string) {
     setProjectFilter((current) => (current === projectId ? null : projectId));
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <PageHeader
-        crumb={['Sessions']}
-        actions={
+    <div className={styles.root}>
+      <ViewToolbar
+        label="Usage options"
+        controls={
+          <SegmentedControl
+            label="Spend window"
+            size="sm"
+            options={WINDOW_OPTIONS}
+            value={String(windowDays)}
+            onChange={(id) => setWindowDays(Number(id))}
+          />
+        }
+        end={
           <ExportControl
             variant="ghost"
             label="Export spend report"
             onExport={() => exportReport(windowDays)}
           />
         }
-        tabs={
-          <ViewTabs
-            label="Spend window"
-            tabs={WINDOW_TABS}
-            active={String(windowDays)}
-            onChange={(id) => setWindowDays(Number(id))}
-          />
-        }
       />
 
-      <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-4">
+      <div className={styles.scroller}>
         {statsError ? (
           <FetchError
             message="Couldn’t load spend stats. Is the backend running?"
             onRetry={() => void refetchStats()}
           />
         ) : statsLoading || !stats ? (
-          <div className="grid grid-cols-4 gap-3">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className="rounded-card h-16" />
-            ))}
-          </div>
+          <SkeletonBlock height={84} label="Loading spend summary" />
         ) : (
-          <div className="grid grid-cols-4 gap-3">
-            <StatTile
-              value={`$${stats.total_cost_usd.toFixed(2)}`}
-              label="Total spend"
-            />
-            <StatTile
-              value={`$${(recentReport?.totals.total_cost_usd ?? 0).toFixed(2)}`}
-              label={`Spend (${String(windowDays)}d)`}
-            />
-            <StatTile value={stats.total_sessions} label="Total sessions" />
-            <StatTile value={stats.total_projects} label="Active projects" />
-          </div>
+          <StatsStrip
+            label="Spend summary"
+            cells={[
+              {
+                id: 'total',
+                label: 'Total spend',
+                value: dollars(stats.total_cost_usd),
+              },
+              {
+                id: 'window',
+                label: `Spend (${String(windowDays)}d)`,
+                value: dollars(recentReport?.totals.total_cost_usd ?? 0),
+              },
+              {
+                id: 'sessions',
+                label: 'Total sessions',
+                value: stats.total_sessions,
+              },
+              {
+                id: 'projects',
+                label: 'Active projects',
+                value: stats.total_projects,
+              },
+            ]}
+          />
         )}
 
-        <section className="flex flex-col gap-2">
-          <SectionLabel>Spend by model</SectionLabel>
-          <Card>
-            <SpendTable
-              columnLabel="Model"
-              rows={(stats?.model_usage ?? []).map((m) => ({
-                key: m.model ?? 'unknown',
-                label: modelDisplayName(m.model) ?? 'Unknown',
-                sessionCount: m.session_count,
-                totalCostUsd: m.total_cost_usd,
-              }))}
-              emptyMessage="No model usage yet."
+        <section className={styles.section}>
+          <div className={styles.sectionHead}>
+            <h2 className={styles.heading}>Spend by model</h2>
+          </div>
+          <SpendTable
+            columnLabel="Model"
+            rows={(stats?.model_usage ?? []).map((m) => ({
+              key: m.model ?? 'unknown',
+              label: modelDisplayName(m.model) ?? 'Unknown',
+              sessionCount: m.session_count,
+              totalCostUsd: m.total_cost_usd,
+            }))}
+            emptyMessage="No model usage yet."
+          />
+        </section>
+
+        <section className={styles.section}>
+          <div className={styles.sectionHead}>
+            <h2 className={styles.heading}>Spend by project</h2>
+          </div>
+          {projectsError ? (
+            <FetchError
+              message="Couldn’t load projects."
+              onRetry={() => void refetchProjects()}
             />
-          </Card>
+          ) : projectsLoading ? (
+            <SkeletonBlock height={96} label="Loading projects" />
+          ) : (
+            <SpendTable
+              columnLabel="Project"
+              emptyMessage="No projects yet. Start a Claude Code session and it shows up here."
+              rows={projectsBySpend.map((project) => ({
+                key: project.id,
+                label: project.name,
+                sessionCount: project.session_count,
+                totalCostUsd: project.total_cost_usd,
+              }))}
+              activeKey={projectFilter ?? undefined}
+              onRowClick={toggleProjectFilter}
+            />
+          )}
         </section>
 
-        <section className="flex flex-col gap-2">
-          <SectionLabel>Spend by project</SectionLabel>
-          <Card>
-            {projectsError ? (
-              <FetchError
-                message="Couldn’t load projects."
-                onRetry={() => void refetchProjects()}
-              />
-            ) : projectsLoading ? (
-              <Skeleton className="my-2 h-24 w-full" />
-            ) : (
-              <SpendTable
-                columnLabel="Project"
-                emptyMessage="No projects yet. Start a Claude Code session and it shows up here."
-                rows={projectsBySpend.map((project) => ({
-                  key: project.id,
-                  label: project.name,
-                  sessionCount: project.session_count,
-                  totalCostUsd: project.total_cost_usd,
-                }))}
-                activeKey={projectFilter ?? undefined}
-                onRowClick={toggleProjectFilter}
-              />
-            )}
-          </Card>
-        </section>
-
-        <section className="flex min-h-0 flex-col gap-2">
-          <div className="flex items-center gap-2">
-            <SectionLabel>Sessions</SectionLabel>
+        <section className={styles.section}>
+          <div className={styles.sectionHead}>
+            <h2 className={styles.heading}>Sessions</h2>
             {filteredProject && (
-              <Pill className="pr-1">
-                {filteredProject.name}
-                <button
-                  type="button"
-                  onClick={() => setProjectFilter(null)}
+              <span className={styles.filter}>
+                <Chip>{filteredProject.name}</Chip>
+                <Button
+                  variant="quiet"
+                  size="sm"
                   aria-label="Clear project filter"
-                  className="text-muted-foreground hover:bg-surface-active hover:text-foreground rounded-pill flex size-4 shrink-0 items-center justify-center transition-colors duration-100"
-                >
-                  <X className="size-3" />
-                </button>
-              </Pill>
+                  icon={<X size={14} strokeWidth={1.8} aria-hidden />}
+                  onClick={() => setProjectFilter(null)}
+                />
+              </span>
             )}
           </div>
 
           {sessionsLoading && (
-            <div className="flex flex-col gap-2">
-              <Skeleton className="h-9 w-full" />
-              <Skeleton className="h-9 w-full" />
-              <Skeleton className="h-9 w-full" />
-            </div>
+            <SkeletonRows rows={3} label="Loading sessions" />
           )}
 
           {sessionsError && (
@@ -270,26 +289,24 @@ function SessionsHubBody() {
 
           {!sessionsLoading &&
             !sessionsError &&
-            filteredSessions.length === 0 && (
-              <EmptyState
-                icon={Inbox}
-                heading={
-                  projectFilter
-                    ? 'No sessions for this project yet'
-                    : 'No sessions yet'
-                }
-                description={
-                  projectFilter
-                    ? undefined
-                    : 'Start a Claude Code session and it shows up here.'
-                }
-              />
-            )}
+            filteredSessions.length === 0 &&
+            (projectFilter ? (
+              <EmptyState>No sessions for this project yet</EmptyState>
+            ) : (
+              <EmptyState label="No sessions yet">
+                Start a Claude Code session and it shows up here.
+              </EmptyState>
+            ))}
 
           {!sessionsLoading &&
             !sessionsError &&
             filteredSessions.length > 0 && (
-              <TaskRowList>
+              <Register
+                label="Sessions"
+                columns={SESSION_COLUMNS}
+                header={SESSION_HEADER}
+                stackWithin={600}
+              >
                 {filteredSessions.map((session) => (
                   <SessionRow
                     key={session.id}
@@ -298,7 +315,7 @@ function SessionsHubBody() {
                     onClick={() => setSelectedSessionId(session.id)}
                   />
                 ))}
-              </TaskRowList>
+              </Register>
             )}
         </section>
       </div>

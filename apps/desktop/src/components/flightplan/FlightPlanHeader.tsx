@@ -1,7 +1,11 @@
+import { type StatCell, StatsStrip } from '@dispatch/ui';
+import { TriangleAlert } from 'lucide-react';
 import type { ReactNode } from 'react';
 
+import type { SpendCellWords } from '../../lib/milestoneSession';
+import { type Step, StepStrip } from '../status/StepStrip';
 import { formatDuration, formatEta } from './criticalPath';
-import { cn } from '@/lib/utils';
+import styles from './FlightPlanHeader.module.css';
 
 export interface FlightHeaderStats {
   slots: { used: number; total: number | null };
@@ -15,145 +19,328 @@ export interface FlightHeaderStats {
   eta: { at: number; ms: number } | null;
   /** The run length the estimates assume, and how many runs it came from. */
   pace: { medianMs: number; samples: number };
+  /** The plan's own fan-out spend while its session is active or paused, else absent.
+   * It replaces the controls' spend pill, so the end of the row holds only the verbs. */
+  spend?: SpendCellWords | null;
+  /** The plan's own fan-out session is paused: its spend then leads the strip, beside
+   * nothing but the paused verbs (Resume, Raise ceiling…, Stop). */
+  paused?: boolean;
+  /** The plan's own fan-out waves while its session is active and has more than one,
+   * else absent: the controls' wave strip, as a cell. */
+  waves?: readonly Step[] | null;
 }
 
-// A number and its word, the number bright.
-function Stat({
-  value,
-  label,
-  dot,
-}: {
-  value: ReactNode;
-  label: string;
-  dot?: string;
-}) {
+// The agent slots in use as text, "2/4", with no meter track (owner decision 2026-11-04:
+// the track cost the strip ~48px it needs while a fan-out runs). The printed fraction is
+// hidden from a screen reader, which hears "2 of 4 agent slots in use" in its place, so
+// it is never read as a fraction ("two quarters").
+function slotsText(used: number, total: number): ReactNode {
   return (
-    <span
-      data-slot="flight-stat"
-      className="flex shrink-0 items-center gap-1.5 text-[12px]"
-    >
-      {dot !== undefined && (
-        <span
-          aria-hidden
-          className="size-1.5 rounded-full"
-          style={{ backgroundColor: dot }}
-        />
-      )}
-      <span className="text-foreground font-medium tabular-nums">{value}</span>
-      <span className="text-(--text-muted)">{label}</span>
+    <span data-slot="flight-slots">
+      <span aria-hidden="true">
+        {used}/{total}
+      </span>
+      <span className="srOnly">{`${used} of ${total} agent slots in use`}</span>
     </span>
   );
 }
 
-// One dot per agent slot, filled while in use — the Cockpit mini's slot meter.
-function SlotMeter({ used, total }: { used: number; total: number }) {
+// The Queued and Landed counts while a fan-out runs or is paused, folded into the
+// running cell as its note (owner decision 2026-11-04), so the strip has two cells fewer
+// and every count is still there: in the cell's hint on hover and keyboard focus, in its
+// text for a screen reader (in list order), and on the row on a touch screen. A part
+// with nothing to say is dropped: no queued part with nothing queued, no landed part with
+// nothing in the plan. The landed part keeps its total ("0 of 12 landed"), which no other
+// cell says, in words rather than "0/12", since the note is what a screen reader hears
+// and a printed fraction can be read as one (or as a date). `hint` is the same facts as
+// a sentence, for the Tooltip.
+function countsNote(stats: FlightHeaderStats): {
+  note: string;
+  hint: string;
+} | null {
+  const note: string[] = [];
+  const hint: string[] = [];
+  if (stats.queued > 0) {
+    note.push(`${stats.queued} queued`);
+    hint.push(`${stats.queued} queued for a free agent slot`);
+  }
+  if (stats.total > 0) {
+    note.push(`${stats.done} of ${stats.total} landed`);
+    hint.push(`${stats.done} of ${stats.total} landed`);
+  }
+  if (note.length === 0) return null;
+  return { note: note.join(' · '), hint: hint.join('; ') };
+}
+
+// The strip's first cells: what runs and, while a fan-out holds slots, how many of them.
+// FlightPlanView counts a fan-out's slots in use as the plan's running nodes, so fanning
+// out one "Running" cell carries the slots in use as text (its "1/2" is both) and the
+// header's columns stay free for the critical path and the ETA. Only when
+// hand-dispatched runs push the running count past the slots does the strip keep a Slots
+// cell and a Running count apart, so the slots never hide a run. With no fan-out it is a
+// plain count, and "not fanning out" is the cell's hint (Ready and Send agents… say it on
+// screen). Fanning out, the Running cell (the second one when they split) also carries
+// the queued and landed counts as its note (`countsNote`).
+//
+// `picker` is the plan's own slots control (FlightPlanView's Menu trigger), drawn right
+// after the slots in the same cell: they already print the total, so the control needs
+// no words of its own on screen, only its accessible name.
+//
+// The first cell keeps the id `running` (its React key) in every mode: the plain count
+// with no fan-out, the Running cell fanning out, and the Slots cell that holds the
+// picker when the runs pass the slots; the split's own Running count is
+// `running-count`. So the <li> survives a fan-out that ends, or splits, under keyboard
+// focus: a hinted Running cell that holds focus as its note goes back on the row keeps
+// it (the strip's tabIndex -1 hold), and the picker keeps its focus through a split.
+function runningCells(stats: FlightHeaderStats, picker: ReactNode): StatCell[] {
+  const { slots, running } = stats;
+  const tone = running > 0 ? 'info' : 'default';
+  if (slots.total === null) {
+    return [
+      {
+        id: 'running',
+        'data-slot': 'flight-stat',
+        label: 'Running',
+        value: withPicker(running, picker),
+        tone,
+        title: 'Not fanning out, so no agent slots are held',
+      },
+    ];
+  }
+  const used = Math.min(slots.used, slots.total);
+  const slotsHint = `${used} of ${slots.total} agent slots in use`;
+  const value = withPicker(slotsText(used, slots.total), picker);
+  const counts = countsNote(stats);
+  if (running <= slots.total) {
+    // With the counts as its note the cell is hinted, and its hint starts with the slots'
+    // words: no title, which would be its description and read the slots a second time
+    // after the value's own words. With no counts it keeps them as its hover title.
+    return [
+      {
+        id: 'running',
+        'data-slot': 'flight-stat',
+        label: 'Running',
+        value,
+        tone,
+        ...(counts === null
+          ? { title: slotsHint }
+          : { note: counts.note, hint: `${slotsHint}; ${counts.hint}` }),
+      },
+    ];
+  }
+  // Runs past the slots fill every one of them: the Slots cell warns, as the meter's
+  // track did, and its "3/3" says so in numbers, so the tone is never the only cue.
+  return [
+    {
+      id: 'running',
+      'data-slot': 'flight-stat',
+      label: 'Slots',
+      value,
+      tone: 'warning',
+      title: slotsHint,
+    },
+    {
+      id: 'running-count',
+      'data-slot': 'flight-stat',
+      label: 'Running',
+      value: running,
+      tone,
+      ...(counts === null ? {} : { note: counts.note, hint: counts.hint }),
+    },
+  ];
+}
+
+// A cell's value with the slots picker after it, or the value alone with no picker.
+function withPicker(value: ReactNode, picker: ReactNode): ReactNode {
+  if (picker === undefined || picker === null || picker === false) return value;
   return (
-    <span
-      data-slot="flight-slots"
-      role="img"
-      aria-label={`${Math.min(used, total)} of ${total} slots in use`}
-      className="flex shrink-0 items-center gap-1.5 text-[12px]"
-    >
-      <span aria-hidden className="flex items-center gap-[3px]">
-        {Array.from({ length: total }, (_, i) => (
-          <span
-            key={i}
-            className={cn(
-              'size-1.5 rounded-full transition-colors duration-300',
-              i < used
-                ? 'bg-state-working'
-                : 'border-[0.5px] border-(--text-muted)'
-            )}
-          />
-        ))}
-      </span>
-      <span aria-hidden className="text-foreground font-medium tabular-nums">
-        {Math.min(used, total)}/{total}
-      </span>
-      <span aria-hidden className="text-(--text-muted)">
-        slots
-      </span>
+    <span className={styles.slots}>
+      {value}
+      {picker}
     </span>
   );
 }
 
-/**
- * The Flight Plan's header strip: the slot meter, what is running, queued and landed, the
- * critical path (its accent swatch is the legend for the highlighter on the canvas) and
- * the ETA, then the caller's fan-out controls on the right.
- */
-export function FlightPlanHeader({
-  stats,
-  controls,
-}: {
-  stats: FlightHeaderStats;
-  controls: ReactNode;
-}) {
+// The fan-out's spend cell: what it has spent against its ceiling, a warning near it
+// said by a triangle and in words for a screen reader as well as by the tone. Null while
+// the plan's own session is neither active nor paused.
+function spendCell(spend: SpendCellWords | null | undefined): StatCell | null {
+  if (spend === undefined || spend === null) return null;
+  return {
+    id: 'spend',
+    'data-slot': 'flight-spend',
+    label: 'Spend',
+    icon: spend.nearCeiling ? (
+      <TriangleAlert size={12} strokeWidth={2} />
+    ) : undefined,
+    value: spend.nearCeiling ? (
+      <>
+        {spend.value}
+        <span className="srOnly">, near its ceiling</span>
+      </>
+    ) : (
+      spend.value
+    ),
+    note: spend.note,
+    tone: spend.nearCeiling ? 'warning' : 'default',
+    title: spend.title,
+    // The title already says the note's amounts: the hint says it alone.
+    hint: spend.title,
+  };
+}
+
+// The fan-out's waves as the step strip, each wave named for a screen reader, or null
+// with one wave or none.
+function wavesCell(waves: readonly Step[] | null | undefined): StatCell | null {
+  if (waves === undefined || waves === null || waves.length <= 1) return null;
+  return {
+    id: 'waves',
+    'data-slot': 'flight-waves',
+    label: 'Waves',
+    value: <StepStrip steps={waves} className={styles.waves} />,
+    title: waves.map((step) => `${step.name}: ${step.status}`).join(', '),
+  };
+}
+
+// The cells in reading order once the spend has its place. A calm spend comes after the
+// timing, before the waves, the least urgent at the end where the strip's fade hides
+// first. A spend that needs reading is never left there: a paused session's spend leads
+// the strip (the paused verbs leave it its narrowest, and the amount is what Raise
+// ceiling… asks about), and an active session's spend near its ceiling comes straight
+// after the running cell(s), on screen at every width without moving the cell that holds
+// the slots picker (moving that <li> would drop the picker's focus).
+function placeSpend(
+  running: StatCell[],
+  rest: StatCell[],
+  spend: StatCell | null,
+  waves: StatCell | null,
+  stats: FlightHeaderStats
+): StatCell[] {
+  const tail = waves === null ? [] : [waves];
+  if (spend === null) return [...running, ...rest, ...tail];
+  if (stats.paused === true) return [spend, ...running, ...rest, ...tail];
+  if (stats.spend?.nearCeiling === true) {
+    return [...running, spend, ...rest, ...tail];
+  }
+  return [...running, ...rest, spend, ...tail];
+}
+
+// Every cell of the strip, in reading order. With no fan-out: running, ready, landed, then
+// the critical path. Fanning out, the cells that answer "when is it done" come first —
+// running (with the slots in use, their picker, and the queued and landed counts as its
+// note: owner decision 2026-11-04), the ETA, the critical path, then the fan-out's spend
+// and waves — so a column too narrow for them all hides the least urgent behind the
+// strip's fade; a spend that warns or a paused session's spend moves forward instead
+// (`placeSpend`). The critical path's remaining time is its
+// note unless the ETA's "left" says the very same duration, and is always in its title
+// too. While fanning out the notes go into the cells' hints (`FlightPlanHeader`), so
+// each noted cell's `hint` is a sentence that says its note's facts.
+function headerCells(stats: FlightHeaderStats, picker: ReactNode): StatCell[] {
   const { slots, critical, eta, pace } = stats;
+  const fanningOut = slots.total !== null;
+  const showEta = eta !== null && eta.ms > 0;
   const paceNote =
     pace.samples === 0
       ? `assuming ${formatDuration(pace.medianMs).replace('~', '')} a run until more runs finish`
       : `at ${formatDuration(pace.medianMs).replace('~', '')} a run, the median of the last ${pace.samples}`;
+  // With no fan-out the ready and landed counts are cells of their own; fanning out, the
+  // queued and landed counts are the running cell's note instead (`runningCells`).
+  const counts: StatCell[] = fanningOut
+    ? []
+    : [
+        {
+          id: 'queued',
+          'data-slot': 'flight-stat',
+          label: 'Ready',
+          value: stats.queued,
+          title: 'Free to start, with no blocker ahead',
+        },
+        {
+          id: 'landed',
+          'data-slot': 'flight-stat',
+          label: 'Landed',
+          value: `${stats.done}/${stats.total}`,
+        },
+      ];
+  const timing: StatCell[] = [];
+  if (showEta) {
+    const etaBasis = `critical path, or the remaining work over the slots when that is longer, ${paceNote}`;
+    timing.push({
+      id: 'eta',
+      'data-slot': 'flight-eta',
+      label: 'ETA',
+      value: formatEta(eta.at, eta.at - eta.ms),
+      note: `${formatDuration(eta.ms)} left`,
+      title: `The ${etaBasis}`,
+      hint: `${formatDuration(eta.ms)} left, by the ${etaBasis}`,
+    });
+  }
+  if (critical.count > 0) {
+    const left = formatDuration(critical.ms);
+    // The ETA is the longer of the critical path and the remaining work over the slots, so
+    // its "left" can be a different, longer time: the path's own time then stays on screen.
+    const sameAsEta = showEta && formatDuration(eta.ms) === left;
+    const title = `The longest chain still to land, ${left} of work ${paceNote}`;
+    timing.push({
+      id: 'critical',
+      'data-slot': 'flight-critical-stat',
+      label: 'Critical path',
+      // The accent swatch is the legend for the highlighter under the canvas's edges.
+      icon: <span className={styles.criticalSwatch} />,
+      value: critical.count,
+      ...(sameAsEta ? {} : { note: left }),
+      title,
+      // The title says the note's time: the hint says it alone.
+      hint: title,
+    });
+  }
+  return placeSpend(
+    runningCells(stats, picker),
+    [...counts, ...timing],
+    spendCell(stats.spend),
+    wavesCell(stats.waves),
+    stats
+  );
+}
+
+/**
+ * The Flight Plan's header: a library StatsStrip of what is running (with the agent slots
+ * in use and, for the plan's own live fan-out, the `slotsPicker` that changes them), the
+ * ETA and the critical path (its accent swatch is the legend for the highlighter on the
+ * canvas), ready and landed with no fan-out, the fan-out's spend and waves, then the
+ * caller's fan-out verbs as the strip's `end`, at the end of the same row. The picker, the
+ * spend and the waves live in cells rather than beside the verbs, so the verbs take as
+ * little of the row as they can and the cells keep the rest; a spend near its ceiling, or
+ * a paused session's, moves to the front of the strip so it stays on screen. The strip is
+ * the compact variant (owner decision 2026-11-03): one 26px row at every width, the cells
+ * scrolling sideways inside the strip when the column is too narrow, so Plan mode and
+ * container pages keep their canvas height; the controls drop under it only on a column
+ * too narrow for both. While a fan-out runs or is paused (owner decisions 2026-11-04) the
+ * cells' notes (the queued and landed counts, folded into the Running cell; the ETA's
+ * time left, the critical path's, the spend's ceiling) move into their hints, a Tooltip on
+ * each of those cells on hover and keyboard focus (the notes stay in the cells' text for a
+ * screen reader, and on the row on a touch screen), the slots in use are text with no
+ * meter track, and the caller draws every verb icon-only, so every cell shares the row
+ * with the verbs at 1440px.
+ */
+export function FlightPlanHeader({
+  stats,
+  controls,
+  slotsPicker,
+}: {
+  stats: FlightHeaderStats;
+  controls: ReactNode;
+  slotsPicker?: ReactNode;
+}) {
   return (
-    <div
-      data-slot="flight-header"
-      className="shadow-hairline-bottom flex min-h-11 shrink-0 flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5"
-    >
-      {slots.total === null ? (
-        <span className="shrink-0 text-[12px] text-(--text-muted)">
-          Not fanning out
-        </span>
-      ) : (
-        <SlotMeter used={slots.used} total={slots.total} />
-      )}
-      <Stat
-        value={stats.running}
-        label="running"
-        dot="var(--state-working-fg)"
+    <div data-slot="flight-header" className={styles.header}>
+      <StatsStrip
+        variant="compact"
+        label="Flight plan"
+        notes={stats.slots.total === null ? 'inline' : 'hint'}
+        cells={headerCells(stats, slotsPicker)}
+        end={controls}
       />
-      {/* Nothing is queued for a fan-out that is not running — only ready. */}
-      <Stat
-        value={stats.queued}
-        label={slots.total === null ? 'ready' : 'queued'}
-      />
-      <Stat value={`${stats.done}/${stats.total}`} label="landed" />
-      {critical.count > 0 && (
-        <span
-          data-slot="flight-critical-stat"
-          title={`The longest chain still to land, ${paceNote}`}
-          className="flex shrink-0 items-center gap-1.5 text-[12px]"
-        >
-          <span
-            aria-hidden
-            className="h-[5px] w-3.5 rounded-full bg-(--accent) opacity-40"
-          />
-          <span className="text-(--text-muted)">Critical path</span>
-          <span className="text-foreground font-medium tabular-nums">
-            {critical.count}
-          </span>
-          <span className="text-(--text-muted) tabular-nums">
-            {formatDuration(critical.ms)}
-          </span>
-        </span>
-      )}
-      {eta !== null && eta.ms > 0 && (
-        <span
-          data-slot="flight-eta"
-          title={`The critical path, or the remaining work over the slots when that is longer, ${paceNote}`}
-          className="flex shrink-0 items-center gap-1.5 text-[12px]"
-        >
-          <span className="text-(--text-muted)">ETA</span>
-          <span className="text-foreground font-medium tabular-nums">
-            {formatEta(eta.at, eta.at - eta.ms)}
-          </span>
-          <span className="text-(--text-muted) tabular-nums">
-            {formatDuration(eta.ms)} left
-          </span>
-        </span>
-      )}
-      <div className="ml-auto flex shrink-0 flex-wrap items-center gap-1.5">
-        {controls}
-      </div>
     </div>
   );
 }

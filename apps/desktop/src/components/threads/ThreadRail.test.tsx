@@ -60,7 +60,39 @@ test('renders Needs you, Channels and Direct in that order, with unread counts',
   expect(
     screen.getAllByRole('group').map((r) => r.getAttribute('aria-label'))
   ).toEqual(['Needs you', 'Channels', 'Direct']);
-  expect(screen.getByLabelText('2 unread')).toBeTruthy();
+  // Each group's header prints its count after its name.
+  expect(
+    screen
+      .getAllByRole('group')
+      .map(
+        (group) =>
+          group.querySelector('[data-part="name"]')?.parentElement?.textContent
+      )
+  ).toEqual(['Needs you 1', 'Channels 1', 'Direct 0']);
+  const unread = screen.getByLabelText('2 unread');
+  expect(unread.textContent).toBe('2');
+  expect(unread.querySelector('[data-tone="accent"]')).not.toBeNull();
+});
+
+test('a row is an option that says it is open and names its thread', () => {
+  render(
+    <ThreadRail
+      groups={{
+        'needs-you': [summary('m-01', { needsYou: true })],
+        channels: [],
+        direct: [summary('m-02')],
+      }}
+      selected="m-02"
+      onSelect={() => {}}
+      lookups={lookups}
+    />
+  );
+  const open = screen.getByRole('option', { name: /m-02/ });
+  expect(open.getAttribute('aria-selected')).toBe('true');
+  expect(open.getAttribute('data-thread')).toBe('m-02');
+  expect(
+    screen.getByRole('option', { name: /m-01/ }).getAttribute('aria-selected')
+  ).toBe('false');
 });
 
 test('a row selects its thread', () => {
@@ -90,12 +122,16 @@ test('collapsing a group hides its rows and keeps the others', () => {
       lookups={lookups}
     />
   );
-  const [needsYouToggle] = screen.getAllByRole('button', {
-    name: 'Collapse group',
+  const needsYouToggle = screen.getByRole('button', {
+    name: 'Collapse Needs you',
   });
-  if (needsYouToggle === undefined) throw new Error('no group toggle');
+  expect(needsYouToggle.getAttribute('aria-expanded')).toBe('true');
   fireEvent.click(needsYouToggle);
   expect(optionNames()).toEqual(['m-02']);
+  const expand = screen.getByRole('button', { name: 'Expand Needs you' });
+  expect(expand.getAttribute('aria-expanded')).toBe('false');
+  fireEvent.click(expand);
+  expect(optionNames()).toEqual(['m-01', 'm-02']);
 });
 
 // The option the listbox's cursor is on, by its thread id (each root's body).
@@ -178,19 +214,13 @@ test('the cursor starts from the open thread and skips a collapsed group', () =>
       lookups={lookups}
     />
   );
-  const toggles = () =>
-    screen.getAllByRole('button', { name: 'Collapse group' });
-  const channels = toggles()[1];
-  if (channels === undefined) throw new Error('no Channels toggle');
-  fireEvent.click(channels);
+  fireEvent.click(screen.getByRole('button', { name: 'Collapse Channels' }));
   const list = screen.getByRole('listbox', { name: 'Threads' });
   fireEvent.keyDown(list, { key: 'j' });
   expect(cursorName()).toBe('m-03');
 
   // Collapsing the group under the cursor clears it rather than pointing at nothing.
-  const direct = toggles()[1];
-  if (direct === undefined) throw new Error('no Direct toggle');
-  fireEvent.click(direct);
+  fireEvent.click(screen.getByRole('button', { name: 'Collapse Direct' }));
   expect(cursorName()).toBeNull();
 });
 
@@ -204,8 +234,7 @@ test('keys pressed on a group toggle stay with the toggle', () => {
       lookups={lookups}
     />
   );
-  const [toggle] = screen.getAllByRole('button', { name: 'Collapse group' });
-  if (toggle === undefined) throw new Error('no group toggle');
+  const toggle = screen.getByRole('button', { name: 'Collapse Needs you' });
   fireEvent.keyDown(toggle, { key: 'j' });
   fireEvent.keyDown(toggle, { key: 'Enter' });
   expect(cursorName()).toBeNull();

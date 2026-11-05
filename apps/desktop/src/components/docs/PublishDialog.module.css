@@ -1,0 +1,20 @@
+/* The publish dialog's body (PublishDialog.tsx): the repo path field and
+   an error. The error is coloured by the global toneText class with
+   data-tone="danger". */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+/* A repo path is machine-read: Geist Mono (scoped under .body so it wins
+   over the global .input font). */
+.body .path {
+  font-family: var(--font-mono);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--fs-xs);
+}

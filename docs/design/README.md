@@ -20,25 +20,28 @@ Ignore entirely: every hex value, the blurple accent, and every
 `--st-work`, `--st-wait`, `--st-fail`, `--st-ok`, `--st-land`, `--dim`,
 `--dim2`, `--line`, or raw hexes like `#12131d` and `#1b1d2b`.
 
-All color comes from the app's existing token layer in
-`apps/desktop/src/styles/tokens.css`, which already defines light and dark
-variants of everything these screens need. Status colors map onto tokens that
-exist today — no new palette:
+All color comes from `@dispatch/ui`'s token layer,
+`packages/ui/src/styles/tokens.css`, which defines light and dark variants of
+everything these screens need. A status is colored only through a `UiTone` and
+the `data-tone` hook ("Status vocabulary" in `packages/ui/README.md`), never
+through a raw hue and never through the accent: the purple means primary, focus,
+selection and links, not a status. The mockup's states map onto the tones the
+app already draws them in (`feedStateTone` in
+`apps/desktop/src/lib/feedState.ts`):
 
-| Run/task state in the mockup | Dispatch token                        |
-| ---------------------------- | ------------------------------------- |
-| working (an agent is live)   | `--accent`, `--accent-muted`          |
-| waiting on you               | `--amber`, `--amber-bg`               |
-| failed                       | `--red`, `--red-bg`                   |
-| needs review / passed        | `--green`, `--green-bg`               |
-| landing (in the merge queue) | `--blue`, `--blue-bg`                 |
-| ready                        | `--text-secondary`, `--surface-muted` |
-| blocked                      | `--text-ghost`, `--gray-bg`           |
+| Run/task state in the mockup | `UiTone`          |
+| ---------------------------- | ----------------- |
+| working (an agent is live)   | `info` (blue)     |
+| waiting on you               | `warning` (amber) |
+| failed                       | `danger` (red)    |
+| needs review / passed        | `success` (green) |
+| landing (in the merge queue) | `info` (blue)     |
+| ready                        | `muted` (grey)    |
+| blocked                      | `warning` (amber) |
 
-Dimmed metadata is `--text-muted` and `--text-secondary`. Hairlines are
-`--border-default` / `--border-strong`. Mono metadata uses `--font-mono` at
-`--text-xs` / `--text-sm`. Where the mockup reaches for a tint the tokens don't
-cover, add a token first, then use the token.
+Each state also keeps its own glyph and words, so color is never the only cue,
+and done is a filled neutral mark, never green. Where the mockup reaches for a
+tint the tokens don't cover, add a token to `tokens.css` first, then use it.
 
 ## Reading the mockup
 
@@ -63,29 +66,29 @@ the `feed` builder (grouping, caps, per-row actions), and `milestoneList()`
 
 ## What is here that the app does not have
 
-The app has since moved to two views, Overseer and Tasks, so the mockup's
-screens no longer map one to one. **Brain dump** is built (`BrainDumpView.tsx`,
-Notes under Tasks). The **Control room** and **Landing** screens were built and
-then retired with the old sidebar layout: what waits on you leads Tasks and the
-Overseer, and the merge queue shows in the Overseer's outflow column and on each
-task's review.
+The app now uses a sidebar of destinations (Overseer, Issues, Needs you,
+Timeline, Graph, Threads, Docs, Runs), so the mockup's screens no longer map one
+to one. **Brain dump** is built as Drop a thought (⌘D): captures wait under
+Noted in the Overseer's Coming in column until made a task or dismissed. The
+**Control room** and **Landing** screens were built and then retired with the
+old sidebar layout: what waits on you is the Needs you destination and the
+Overseer's Coming in column, and the merge queue shows in the Overseer's Going
+out column and on each task's review.
 
 ## What not to build
 
 **Do not build the mockup's `isNotes` screen.** Notes & triage has been removed;
-Brain dump is the single inbox. Also skip the "Older — the triage list from
-before →" link in Brain dump's right rail: it points at a page that no longer
-exists.
+Drop a thought (⌘D) and the Overseer's Noted list are the single inbox. Also
+skip the mockup's "Older — the triage list from before →" link: it points at a
+page that no longer exists.
 
-Two things the old Notes surface carried moved into the inbox rather than dying
-with it. The MCP `dispatch_note` tool that agents call mid-run to flag what they
+One thing the old Notes surface carried moved into the inbox rather than dying
+with it: the MCP `dispatch_note` tool that agents call mid-run to flag what they
 noticed now POSTs to `/api/inbox` (its four note kinds fold onto `note` and
-`task`); `packages/server/src/notes.ts` still exists and still backs the
-`/api/notes` routes, but no longer backs that tool. And `useDispatchProject.ts`
-holds a second plan slot (`notePlanId` / `notePlanRecord` /
-`handleConfirmNotePlan`) that AI-drafts a task from one item, which is Brain
-dump's "Plan it" action. Neither is dead code.
+`task`). `packages/server/src/notes.ts` still exists and still backs the
+`/api/notes` routes, but no longer backs that tool. The old Brain dump's "Plan
+it" action, which AI-drafted a task from one note, is gone.
 
-The mockup's **Plans** screen is also not its own milestone: `PlansView.tsx`
-already covers it, and the conversational-planning work is tracked under
-`e-359627`.
+The mockup's **Plans** screen is not its own milestone either: plans live in the
+Overseer conversation as plan cards (the palette's "Plan work…" opens it), and
+the conversational-planning work is tracked under `e-359627`.

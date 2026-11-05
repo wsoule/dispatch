@@ -11,9 +11,9 @@ import {
   deriveTaskFeedState,
   FEED_STATE_LABEL,
   FEED_STATE_ORDER,
+  feedStateTone,
   isInFlightState,
   isUrgentState,
-  tintForState,
 } from './feedState';
 
 // Only the fields deriveFeedState reads, matching the fixture style in runState.test.ts.
@@ -186,16 +186,68 @@ describe('state metadata', () => {
       'landing',
     ]);
   });
+
+  // Pinned word for word: the labels are the asks a person reads, and the order is what the
+  // feed groups render in, so moving this vocabulary between modules must not change either.
+  test('the labels and the full order are the shipped ones', () => {
+    expect(
+      FEED_STATE_ORDER.map((state) => [state, FEED_STATE_LABEL[state]])
+    ).toEqual([
+      ['answer', 'Answer'],
+      ['approve', 'Approve'],
+      ['review', 'Review'],
+      ['ruling', 'Ruling'],
+      ['unblock', 'Unblock'],
+      ['failed', 'Failed'],
+      ['working', 'Working'],
+      ['fixing', 'Fixing'],
+      ['checking', 'AI review'],
+      ['landing', 'Landing'],
+      ['ready', 'Ready'],
+      ['blocked', 'Blocked'],
+    ]);
+  });
 });
 
-describe('tintForState', () => {
-  test('every state of one tier shares its tint, and tiers differ', () => {
-    expect(tintForState('answer')).toBe(tintForState('review'));
-    expect(tintForState('working')).toBe(tintForState('landing'));
-    expect(tintForState('failed')).not.toBe(tintForState('working'));
-    expect(tintForState('ready')).not.toBe(tintForState('answer'));
-    for (const state of FEED_STATE_ORDER) {
-      expect(tintForState(state)).toMatch(/^var\(--state-[a-z]+-fg\)$/);
-    }
+describe('feedStateTone', () => {
+  // The hue comes from the tier: amber your move, red broken, blue the machine's move, grey
+  // resting, except where the AGENTS.md hue table fixes it: review is green (the work
+  // succeeded and waits on a person, plan Q6.2) and blocked amber like every blocked
+  // surface. Every state is covered, so a new state cannot slip in untoned.
+  test('maps every feed state onto its tier tone, review green, blocked amber', () => {
+    expect(
+      Object.fromEntries(
+        FEED_STATE_ORDER.map((state) => [state, feedStateTone(state)])
+      )
+    ).toEqual({
+      answer: 'warning',
+      approve: 'warning',
+      review: 'success',
+      ruling: 'warning',
+      unblock: 'warning',
+      failed: 'danger',
+      working: 'info',
+      fixing: 'info',
+      checking: 'info',
+      landing: 'info',
+      ready: 'muted',
+      blocked: 'warning',
+    });
+  });
+
+  // Blocked takes the amber tone but stays a resting state: it is not your move, so it
+  // earns no urgency and no pulse.
+  test('blocked is amber but neither urgent nor in flight', () => {
+    expect(feedStateTone('blocked')).toBe('warning');
+    expect(isUrgentState('blocked')).toBe(false);
+    expect(isInFlightState('blocked')).toBe(false);
+  });
+
+  // Review takes the green of succeeded work, yet it is still your move: it stays urgent
+  // (a row's emphasis, its place among the asks) and never pulses.
+  test('review is green but still your move', () => {
+    expect(feedStateTone('review')).toBe('success');
+    expect(isUrgentState('review')).toBe(true);
+    expect(isInFlightState('review')).toBe(false);
   });
 });

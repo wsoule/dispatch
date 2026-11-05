@@ -1,0 +1,20 @@
+/* The Overseer's focus on someone's talk (OverseerFocusView.tsx): the address
+   row over the conversation, its name truncating before the Close button.
+   Tokens only. */
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs);
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

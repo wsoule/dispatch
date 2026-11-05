@@ -39,7 +39,7 @@ export interface AiTaskFilterPort {
   ): Promise<AiTaskFilterResult>;
 }
 
-// The nine facets and five operators are apps/desktop/src/lib/taskFilters.ts's
+// The eight facets and five operators are apps/desktop/src/lib/taskFilters.ts's
 // FilterFacet/FilterOp verbatim; the desktop's parser is the final gate on what
 // the chips render.
 const FACETS = [

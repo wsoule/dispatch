@@ -7,9 +7,16 @@ import type {
   MilestoneSession,
   MilestoneWave,
 } from '@dispatch/client';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
+import { FANOUT_VERB_LABEL, fanoutVerbs } from '../../lib/fanoutVerbs';
 import { FanoutControls } from './FanoutControls';
 
 const payments = {
@@ -102,7 +109,6 @@ function mount(
               total: children.length,
             }
       }
-      landable={false}
       onSendAgents={(id) => {
         calls.push(`send:${id}`);
       }}
@@ -146,6 +152,10 @@ test('no session: ◔ done/total, the caller’s pills, Send agents… and Open'
   const progress = document.querySelector('[data-slot=milestone-progress]');
   expect(progress?.textContent).toBe('1/2');
   expect(progress?.getAttribute('aria-label')).toBe('1 of 2 landed');
+  // The library pie is decorative here: the span's label and the printed count say it.
+  const pie = progress?.querySelector('svg[data-progress-pie]');
+  expect(pie?.getAttribute('aria-hidden')).toBe('true');
+  expect(pie?.getAttribute('role')).toBeNull();
   expect(screen.getByText('At risk')).not.toBeNull();
   expect(buttonNames()).toEqual(['Send agents…', '']);
   fireEvent.click(screen.getByRole('button', { name: 'Send agents…' }));
@@ -162,7 +172,6 @@ test('the concurrency picker only shows before a session exists', () => {
       model={DEFAULT_STATUS_MODEL}
       progress={noSession}
       count={{ done: 1, total: 2 }}
-      landable={false}
       concurrencyPicker={picker}
       onSendAgents={() => {}}
       onStop={() => Promise.resolve()}
@@ -179,7 +188,6 @@ test('the concurrency picker only shows before a session exists', () => {
         session: sessionWith('active'),
       })}
       count={{ done: 0, total: 1 }}
-      landable={false}
       concurrencyPicker={picker}
       onSendAgents={() => {}}
       onStop={() => Promise.resolve()}
@@ -216,18 +224,17 @@ test('active: phase chips in order, the spend pill against its ceiling, Pause an
     '2Queued',
     '1Capped',
   ]);
-  expect(chips[0]?.style.color).toBe('var(--state-working-fg)');
-  expect(chips[2]?.style.color).toBe('var(--state-waiting-fg)');
+  expect(chips[0]?.dataset['tone']).toBe('info');
+  expect(chips[1]?.dataset['tone']).toBeUndefined();
+  expect(chips[2]?.dataset['tone']).toBe('warning');
 
   const spend = screen
     .getByText('$41.20 / $100')
     .closest('[data-slot=spend-pill]');
   expect(spend?.getAttribute('title')).toBe('+~$30.00 in flight · 7/20 runs');
-  expect(
-    spend
-      ?.querySelector<HTMLElement>('span[aria-hidden]')
-      ?.style.backgroundColor.replace(/\s/g, '')
-  ).toBe('var(--state-working-fg)');
+  expect(spend?.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe(
+    'info'
+  );
   // Three live runs, so no ruling pill and no Send agents… while it runs.
   expect(screen.queryByText(/Waiting on/)).toBeNull();
   expect(screen.queryByRole('button', { name: 'Send agents…' })).toBeNull();
@@ -261,11 +268,9 @@ test('the spend pill turns amber from 80 % of the ceiling, in-flight estimate in
   expect(spend?.getAttribute('title')).toBe(
     '+~$20.00 in flight · 3 runs · near ceiling'
   );
-  expect(
-    spend
-      ?.querySelector<HTMLElement>('span[aria-hidden]')
-      ?.style.backgroundColor.replace(/\s/g, '')
-  ).toBe('var(--state-waiting-fg)');
+  expect(spend?.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe(
+    'warning'
+  );
 });
 
 test('active with nothing live and a capped loop: Waiting on N rulings', () => {
@@ -314,7 +319,6 @@ test('a multi-wave session shows a wave strip; a single wave does not', () => {
     })
   );
   const strip = document.querySelector('ol');
-  expect(strip?.className).toContain('w-16');
   expect(
     Array.from(strip?.querySelectorAll('li') ?? []).map((li) =>
       li.getAttribute('title')
@@ -385,8 +389,7 @@ test('landable: Land replaces Send agents… once every child is done', async ()
   const { calls } = mount(
     progressWith([child('t-1', 'landed'), child('t-2', 'landed')], {
       session: sessionWith('complete'),
-    }),
-    { landable: true }
+    })
   );
   expect(buttonNames()).toEqual(['Land', '']);
   await settle(() => {
@@ -495,4 +498,488 @@ test('waves={false} drops the wave strip and keeps the verbs', () => {
   mount(active, { waves: false });
   expect(document.querySelector('ol')).toBeNull();
   expect(screen.getByRole('button', { name: 'Pause' })).not.toBeNull();
+});
+
+// The Flight Plan header shows the spend in its strip's Spend cell, so its controls drop the
+// pill in both states that draw one, and keep every verb.
+test('spend={false} drops the spend pill while active and paused, and keeps the verbs', () => {
+  const active = progressWith([child('t-1', 'working')], {
+    session: sessionWith('active'),
+  });
+  const { unmount } = mount(active);
+  expect(document.querySelector('[data-slot=spend-pill]')).not.toBeNull();
+  unmount();
+  const first = mount(active, { spend: false });
+  expect(document.querySelector('[data-slot=spend-pill]')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Pause' })).not.toBeNull();
+  expect(screen.getByRole('button', { name: 'Stop' })).not.toBeNull();
+  first.unmount();
+  mount(
+    progressWith([child('t-1', 'working')], {
+      session: sessionWith('paused'),
+    }),
+    { spend: false }
+  );
+  expect(document.querySelector('[data-slot=spend-pill]')).toBeNull();
+  expect(document.querySelector('[data-slot=paused-pill]')).not.toBeNull();
+  expect(screen.getByRole('button', { name: 'Resume' })).not.toBeNull();
+});
+
+// A caller with no land wiring keeps the board's old offer: Send agents… where Land would be.
+test('Land without an onLand handler falls back to Send agents…', () => {
+  mount(progressWith([child('t-1', 'landed')]), { onLand: undefined });
+  expect(buttonNames()).toEqual(['Send agents…', '']);
+});
+
+// The header and the Issues list's group menu read one rule: for every session state and
+// child mix, the verbs FanoutControls draws are the ones `fanoutVerbs` offers (Raise
+// ceiling… rides along with Resume, and Open is the header's own button).
+test('the verbs drawn are exactly the ones fanoutVerbs offers', () => {
+  const landed = {
+    ...payments,
+    meta: { ...payments.meta, status: 'landed' },
+  } as TaskDoc;
+  const allDone = [child('t-1', 'landed'), child('t-2', 'landed')];
+  const mixed = [child('t-1', 'working'), child('t-2', 'landed')];
+  const cases: [string, TaskDoc, MilestoneProgress | undefined, number?][] = [
+    ['no progress', payments, undefined],
+    ['no progress, empty', payments, undefined, 0],
+    ['no session, mixed', payments, progressWith(mixed)],
+    ['no session, all done', payments, progressWith(allDone)],
+    ['no session, no children', payments, progressWith([])],
+    ['landed', landed, progressWith(allDone)],
+    [
+      'active',
+      payments,
+      progressWith(mixed, { session: sessionWith('active') }),
+    ],
+    [
+      'paused',
+      payments,
+      progressWith(mixed, { session: sessionWith('paused') }),
+    ],
+    [
+      'stopped, all done',
+      payments,
+      progressWith(allDone, { session: sessionWith('stopped') }),
+    ],
+    [
+      'complete, mixed',
+      payments,
+      progressWith(mixed, { session: sessionWith('complete') }),
+    ],
+  ];
+  const verbWords = new Set(Object.values(FANOUT_VERB_LABEL));
+  for (const [name, milestone, progress, total] of cases) {
+    const { unmount } = mount(progress, {
+      milestone,
+      showOpen: false,
+      count: total === undefined ? undefined : { done: 0, total },
+    });
+    const drawn = screen
+      .queryAllByRole('button')
+      .map((b) => b.textContent ?? '')
+      .filter((word) => verbWords.has(word));
+    const offered = fanoutVerbs(
+      milestone,
+      DEFAULT_STATUS_MODEL,
+      progress,
+      total
+    ).map((verb) => FANOUT_VERB_LABEL[verb]);
+    expect({ name, drawn }).toEqual({ name, drawn: offered });
+    unmount();
+  }
+});
+
+// The Flight Plan header's verbs (owner decision 2026-11-04): Pause and Stop icon-only,
+// keeping their names, each with a Tooltip that says what it does; Stop asks first.
+const PAUSE_TIP =
+  'Pause the fan-out: live runs go on, no new ones start until you resume';
+const STOP_TIP =
+  'Stop the fan-out for good: live runs go on, no new ones start';
+// Then, paused (the same day's second decision), Resume and Raise ceiling… as well.
+// Resume's hint after a pause by hand, or a failed auto-dispatch (or no reason given).
+const RESUME_TIP =
+  'Resume the fan-out at its ceilings: new runs start in free agent slots';
+const RAISE_TIP = 'Raise the fan-out’s spend or run ceiling, then resume it';
+
+function tipText(): string | null {
+  return screen.queryByRole('tooltip', { hidden: true })?.textContent ?? null;
+}
+
+function wait(ms: number): Promise<void> {
+  return act(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+}
+
+test('iconVerbs: Pause and Stop are icon-only, named, and hinted on focus and after a hover delay', async () => {
+  mount(
+    progressWith([child('t-1', 'working')], { session: sessionWith('active') }),
+    { iconVerbs: true, showOpen: false }
+  );
+  const pause = screen.getByRole('button', { name: 'Pause' });
+  const stop = screen.getByRole('button', { name: 'Stop' });
+  for (const [button, slot] of [
+    [pause, 'fanout-pause'],
+    [stop, 'fanout-stop'],
+  ] as const) {
+    // No words on the button, only its icon; the Tooltip is the one hint (no title).
+    expect(button.textContent).toBe('');
+    expect(button.querySelector('svg')).not.toBeNull();
+    expect(button.getAttribute('data-slot')).toBe(slot);
+    expect(button.hasAttribute('title')).toBe(false);
+    expect(button.hasAttribute('aria-describedby')).toBe(false);
+  }
+  // A hover first, out of the warm window a tip another test closed would leave: not at
+  // once, only after the tooltip's 300ms delay.
+  await wait(450);
+  fireEvent.pointerEnter(stop, { pointerType: 'mouse' });
+  expect(tipText()).toBeNull();
+  await wait(150);
+  expect(tipText()).toBeNull();
+  await wait(200);
+  expect(tipText()).toBe(STOP_TIP);
+  fireEvent.pointerLeave(stop, { pointerType: 'mouse' });
+  await wait(200);
+  expect(tipText()).toBeNull();
+  // Keyboard focus shows the hint at once and makes it the button's description.
+  act(() => pause.focus());
+  const tip = screen.getByRole('tooltip', { hidden: true });
+  expect(tip.textContent).toBe(PAUSE_TIP);
+  expect(pause.getAttribute('aria-describedby')).toBe(tip.id);
+  act(() => pause.blur());
+  expect(tipText()).toBeNull();
+  act(() => stop.focus());
+  expect(tipText()).toBe(STOP_TIP);
+  act(() => stop.blur());
+});
+
+test('iconVerbs: Pause pauses; Stop asks first and stops only once confirmed', async () => {
+  const { calls } = mount(
+    progressWith([child('t-1', 'working')], { session: sessionWith('active') }),
+    { iconVerbs: true, showOpen: false }
+  );
+  await settle(() =>
+    fireEvent.click(screen.getByRole('button', { name: 'Pause' }))
+  );
+  expect(calls).toEqual(['pause:e-1']);
+  const stop = screen.getByRole('button', { name: 'Stop' });
+  act(() => stop.focus());
+  await settle(() => fireEvent.click(stop));
+  // Not yet: a dialog says what Stop does, in words, with Cancel focused.
+  expect(calls).toEqual(['pause:e-1']);
+  const dialog = screen.getByRole('alertdialog', { name: 'Stop the fan-out?' });
+  expect(dialog.textContent).toContain('cannot be resumed');
+  expect(document.activeElement).toBe(
+    screen.getByRole('button', { name: 'Cancel' })
+  );
+  await settle(() =>
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  );
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  expect(calls).toEqual(['pause:e-1']);
+  // Focus is back on Stop, which never left the page.
+  expect(document.activeElement).toBe(stop);
+  await settle(() => fireEvent.click(stop));
+  await settle(() =>
+    fireEvent.click(screen.getByRole('button', { name: 'Stop fan-out' }))
+  );
+  expect(calls).toEqual(['pause:e-1', 'stop:e-1']);
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  expect(document.activeElement).toBe(stop);
+});
+
+test('iconVerbs: a failed stop closes the dialog and shows the error pill', async () => {
+  let fail: (err: Error) => void = () => {};
+  mount(
+    progressWith([child('t-1', 'working')], { session: sessionWith('active') }),
+    {
+      iconVerbs: true,
+      showOpen: false,
+      onStop: () =>
+        new Promise<void>((_, reject) => {
+          fail = reject;
+        }),
+    }
+  );
+  const stop = screen.getByRole('button', { name: 'Stop' });
+  await settle(() => fireEvent.click(stop));
+  await settle(() =>
+    fireEvent.click(screen.getByRole('button', { name: 'Stop fan-out' }))
+  );
+  // While the stop runs the dialog waits on it; the verbs behind it keep their elements.
+  expect(screen.getByRole('alertdialog')).not.toBeNull();
+  const during = screen.getByRole('button', { name: 'Stop' });
+  expect(during).toBe(stop);
+  await settle(() => fail(new Error('stop failed')));
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  expect(screen.getByRole('alert').textContent).toBe('stop failed');
+});
+
+// A keyboard press on a verb whose request is held: the verbs go disabled, which swaps the
+// Tooltip's focusable wrapper in (a new element). Focus and the one tip move onto it, never
+// left on the removed button (a stray tip at the window's corner), and back when it fails.
+test('iconVerbs: a verb pressed by keyboard keeps focus and one tip while its request runs and fails', async () => {
+  let fail: (err: Error) => void = () => {};
+  mount(
+    progressWith([child('t-1', 'working')], { session: sessionWith('active') }),
+    {
+      iconVerbs: true,
+      showOpen: false,
+      onPause: () =>
+        new Promise<void>((_, reject) => {
+          fail = reject;
+        }),
+    }
+  );
+  const pause = screen.getByRole('button', { name: 'Pause' });
+  act(() => pause.focus());
+  expect(tipText()).toBe(PAUSE_TIP);
+  // Enter or Space on a focused button clicks it.
+  await settle(() => fireEvent.click(pause));
+  const busyPause = screen.getByRole('button', { name: 'Pause' });
+  const busyStop = screen.getByRole('button', { name: 'Stop' });
+  expect(busyPause.hasAttribute('disabled')).toBe(true);
+  expect(busyStop.hasAttribute('disabled')).toBe(true);
+  expect(pause.isConnected).toBe(false);
+  const wrapper = busyPause.parentElement;
+  if (!(wrapper instanceof HTMLElement)) throw new Error('no wrapper');
+  expect(document.activeElement).toBe(wrapper);
+  const tips = screen.queryAllByRole('tooltip', { hidden: true });
+  expect(tips.map((tip) => tip.textContent)).toEqual([PAUSE_TIP]);
+  expect(wrapper.getAttribute('aria-describedby')).toBe(tips[0]?.id ?? 'none');
+  // The disabled Stop's hint stays reachable through its own wrapper.
+  const stopWrapper = busyStop.parentElement;
+  if (!(stopWrapper instanceof HTMLElement)) throw new Error('no wrapper');
+  act(() => stopWrapper.focus());
+  expect(
+    screen.queryAllByRole('tooltip', { hidden: true }).map((t) => t.textContent)
+  ).toEqual([STOP_TIP]);
+  act(() => wrapper.focus());
+  // The request fails: the verbs come back, focus and the tip with them.
+  await settle(() => fail(new Error('pause failed')));
+  const again = screen.getByRole('button', { name: 'Pause' });
+  expect(again.hasAttribute('disabled')).toBe(false);
+  expect(document.activeElement).toBe(again);
+  const after = screen.queryAllByRole('tooltip', { hidden: true });
+  expect(after.map((tip) => tip.textContent)).toEqual([PAUSE_TIP]);
+  expect(again.getAttribute('aria-describedby')).toBe(after[0]?.id ?? 'none');
+  expect(screen.getByRole('alert').textContent).toBe('pause failed');
+});
+
+test('iconVerbs while paused: Resume, Raise ceiling… and Stop are icon-only, named and hinted; Stop asks first', async () => {
+  const { calls } = mount(
+    progressWith([child('t-1', 'working')], {
+      session: sessionWith('paused', { pausedReason: 'human' }),
+    }),
+    { iconVerbs: true, showOpen: false, spend: false }
+  );
+  // Every verb is a glyph alone; the paused pill keeps its words.
+  expect(buttonNames()).toEqual(['', '', '']);
+  expect(document.querySelector('[data-slot=paused-pill]')?.textContent).toBe(
+    'Paused — by you'
+  );
+  const resume = screen.getByRole('button', { name: 'Resume' });
+  const raise = screen.getByRole('button', { name: 'Raise ceiling…' });
+  const stop = screen.getByRole('button', { name: 'Stop' });
+  for (const [button, slot, tip] of [
+    [resume, 'fanout-resume', RESUME_TIP],
+    [raise, 'fanout-raise', RAISE_TIP],
+    [stop, 'fanout-stop', STOP_TIP],
+  ] as const) {
+    expect(button.getAttribute('data-slot')).toBe(slot);
+    expect(button.querySelector('svg')).not.toBeNull();
+    expect(button.hasAttribute('title')).toBe(false);
+    // Keyboard focus shows what it does at once, as the button's description.
+    act(() => button.focus());
+    const shown = screen.getByRole('tooltip', { hidden: true });
+    expect(shown.textContent).toBe(tip);
+    expect(button.getAttribute('aria-describedby')).toBe(shown.id);
+    act(() => button.blur());
+    expect(tipText()).toBeNull();
+  }
+  // A hover shows it too, after the tooltip's delay.
+  await wait(450);
+  fireEvent.pointerEnter(raise, { pointerType: 'mouse' });
+  expect(tipText()).toBeNull();
+  await wait(350);
+  expect(tipText()).toBe(RAISE_TIP);
+  fireEvent.pointerLeave(raise, { pointerType: 'mouse' });
+  await wait(200);
+  expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
+  // Raise ceiling… opens the caller's dialog straight away; Resume resumes.
+  await settle(() => fireEvent.click(raise));
+  await settle(() => fireEvent.click(resume));
+  expect(calls).toEqual(['raise:e-1', 'resume:e-1']);
+  // Resume held the verbs while it ran, which redraws them: find Stop again.
+  await settle(() =>
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+  );
+  await settle(() =>
+    fireEvent.click(screen.getByRole('button', { name: 'Stop fan-out' }))
+  );
+  expect(calls).toEqual(['raise:e-1', 'resume:e-1', 'stop:e-1']);
+});
+
+// Resume holds the verbs while its request runs, like Pause: each disabled icon-only verb
+// keeps its hint through the Tooltip's focusable wrapper, and focus stays with Resume.
+test('iconVerbs while paused: a Resume in flight disables the verbs and keeps focus and hints', async () => {
+  let fail: (err: Error) => void = () => {};
+  mount(
+    progressWith([child('t-1', 'working')], {
+      session: sessionWith('paused', { pausedReason: 'human' }),
+    }),
+    {
+      iconVerbs: true,
+      showOpen: false,
+      spend: false,
+      onResume: () =>
+        new Promise<void>((_, reject) => {
+          fail = reject;
+        }),
+    }
+  );
+  const resume = screen.getByRole('button', { name: 'Resume' });
+  act(() => resume.focus());
+  await settle(() => fireEvent.click(resume));
+  const names = ['Resume', 'Raise ceiling…', 'Stop'];
+  for (const name of names) {
+    expect(screen.getByRole('button', { name }).hasAttribute('disabled')).toBe(
+      true
+    );
+  }
+  const wrapper = screen.getByRole('button', { name: 'Resume' }).parentElement;
+  if (!(wrapper instanceof HTMLElement)) throw new Error('no wrapper');
+  expect(document.activeElement).toBe(wrapper);
+  expect(
+    screen.queryAllByRole('tooltip', { hidden: true }).map((t) => t.textContent)
+  ).toEqual([RESUME_TIP]);
+  // The disabled Raise ceiling…'s hint stays reachable through its own wrapper.
+  const raiseWrapper = screen.getByRole('button', {
+    name: 'Raise ceiling…',
+  }).parentElement;
+  if (!(raiseWrapper instanceof HTMLElement)) throw new Error('no wrapper');
+  act(() => raiseWrapper.focus());
+  expect(
+    screen.queryAllByRole('tooltip', { hidden: true }).map((t) => t.textContent)
+  ).toEqual([RAISE_TIP]);
+  act(() => wrapper.focus());
+  await settle(() => fail(new Error('resume failed')));
+  const again = screen.getByRole('button', { name: 'Resume' });
+  expect(again.hasAttribute('disabled')).toBe(false);
+  expect(document.activeElement).toBe(again);
+  expect(screen.getByRole('alert').textContent).toBe('resume failed');
+});
+
+// Resume keeps the session's ceilings, so after a ceiling pause the server pauses it again
+// (a run ceiling at once, a spend ceiling once nothing is live) and no new run starts: the
+// icon-only Resume's hint, the only words a mouse user gets for it, says so and points at
+// Raise ceiling…, and promises new runs only after a pause that has no ceiling behind it.
+test('iconVerbs while paused: Resume says what it does after each kind of pause', () => {
+  const cases: [MilestoneSession['pausedReason'], string, string][] = [
+    [
+      'runs',
+      'Paused — run ceiling',
+      'Resume at the same run ceiling: it pauses again at once; use Raise ceiling… to go on',
+    ],
+    [
+      'budget',
+      'Paused — budget ceiling',
+      'Resume at the same spend ceiling: it pauses again once nothing is live; use Raise ceiling… to go on',
+    ],
+    ['human', 'Paused — by you', RESUME_TIP],
+    ['fill-failed', 'Paused — auto-dispatch failed', RESUME_TIP],
+    [undefined, 'Paused', RESUME_TIP],
+  ];
+  for (const [reason, pill, tip] of cases) {
+    const { unmount } = mount(
+      progressWith([child('t-1', 'working')], {
+        session: sessionWith(
+          'paused',
+          reason === undefined ? {} : { pausedReason: reason }
+        ),
+      }),
+      { iconVerbs: true, showOpen: false, spend: false }
+    );
+    expect(document.querySelector('[data-slot=paused-pill]')?.textContent).toBe(
+      pill
+    );
+    const resume = screen.getByRole('button', { name: 'Resume' });
+    act(() => resume.focus());
+    const shown = screen.getByRole('tooltip', { hidden: true });
+    expect([reason, shown.textContent]).toEqual([reason, tip]);
+    expect(resume.getAttribute('aria-describedby')).toBe(shown.id);
+    act(() => resume.blur());
+    // Raise ceiling…'s hint is the same whatever paused it.
+    const raise = screen.getByRole('button', { name: 'Raise ceiling…' });
+    act(() => raise.focus());
+    expect(tipText()).toBe(RAISE_TIP);
+    act(() => raise.blur());
+    unmount();
+  }
+});
+
+test('without iconVerbs, paused, Resume, Raise ceiling… and Stop keep their words', () => {
+  mount(
+    progressWith([child('t-1', 'working')], {
+      session: sessionWith('paused', { pausedReason: 'human' }),
+    }),
+    { showOpen: false, spend: false }
+  );
+  expect(buttonNames()).toEqual(['Resume', 'Raise ceiling…', 'Stop']);
+  act(() => screen.getByRole('button', { name: 'Resume' }).focus());
+  expect(tipText()).toBeNull();
+});
+
+test('without iconVerbs, Pause and Stop keep their words, no tooltip and no confirm', async () => {
+  const { calls } = mount(
+    progressWith([child('t-1', 'working')], { session: sessionWith('active') }),
+    { showOpen: false, spend: false }
+  );
+  expect(buttonNames()).toEqual(['Pause', 'Stop']);
+  act(() => screen.getByRole('button', { name: 'Pause' }).focus());
+  expect(tipText()).toBeNull();
+  await settle(() =>
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+  );
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  expect(calls).toEqual(['stop:e-1']);
+});
+
+// A touch screen opens no Tooltip, so an icon-only verb there would be a bare
+// glyph: iconVerbs keeps every verb's words (and Stop its one press), as the strip keeps its notes.
+test('iconVerbs on a touch screen: every verb keeps its words and Stop its one press', async () => {
+  const original = window.matchMedia;
+  window.matchMedia = ((query: string) =>
+    ({
+      matches: query === '(hover: none), (pointer: coarse)',
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }) as unknown as MediaQueryList) as typeof window.matchMedia;
+  try {
+    const { calls } = mount(
+      progressWith([child('t-1', 'working')], {
+        session: sessionWith('active'),
+      }),
+      { iconVerbs: true, showOpen: false, spend: false }
+    );
+    expect(buttonNames()).toEqual(['Pause', 'Stop']);
+    await settle(() =>
+      fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    );
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(calls).toEqual(['stop:e-1']);
+    cleanup();
+    // Paused, Resume and Raise ceiling… keep their words as well.
+    mount(
+      progressWith([child('t-1', 'working')], {
+        session: sessionWith('paused', { pausedReason: 'human' }),
+      }),
+      { iconVerbs: true, showOpen: false, spend: false }
+    );
+    expect(buttonNames()).toEqual(['Resume', 'Raise ceiling…', 'Stop']);
+    expect(document.querySelector('[data-slot=fanout-resume]')).toBeNull();
+  } finally {
+    window.matchMedia = original;
+  }
 });

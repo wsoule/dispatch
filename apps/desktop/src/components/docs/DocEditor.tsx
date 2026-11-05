@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 
 import { docUrlTransform, imageFiles } from '../../lib/docAssets';
 import { Markdown } from '../runs/Markdown';
+import styles from './DocEditor.module.css';
 
 interface DocEditorProps {
   text: string;
@@ -108,7 +109,7 @@ export function DocEditor({
   }, [placeAt]);
   if (previewing) {
     return (
-      <div className="h-full overflow-auto p-4">
+      <div className={styles.preview}>
         <Markdown
           content={text}
           variant="prose"
@@ -127,7 +128,7 @@ export function DocEditor({
       onChange={(e) => onChange(e.target.value)}
       onPaste={(e) => insertImages(imageFiles(e.clipboardData.files), e)}
       onDrop={(e) => insertImages(imageFiles(e.dataTransfer.files), e)}
-      className="h-full w-full resize-none border-0 bg-[var(--color-card)] p-3 font-mono text-xs leading-relaxed outline-none"
+      className={styles.source}
       aria-label={label}
     />
   );

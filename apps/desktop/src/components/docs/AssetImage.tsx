@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 
 import { assetNameOf } from '../../lib/docAssets';
 import { LinkedImage } from '../runs/LinkedImage';
+import styles from './AssetImage.module.css';
 
 interface AssetImageProps {
   client: Pick<ApiClient, 'fetchDocAsset'>;
@@ -49,7 +50,9 @@ export function AssetImage({ client, docId, src, alt }: AssetImageProps) {
     if (name === null) return null;
     if (failed)
       return (
-        <span className="text-muted-foreground text-xs">{`[image ${alt ?? name} could not load]`}</span>
+        <span
+          className={styles.failed}
+        >{`[image ${alt ?? name} could not load]`}</span>
       );
     return url === null ? null : <img src={url} alt={alt ?? ''} />;
   }

@@ -1,6 +1,12 @@
 import type { ApiClient, DocLinking } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import { DocsLinkingList } from './DocsLinkingList';
@@ -42,6 +48,11 @@ test('lists the docs that link a thread, and opens one', async () => {
     ],
     (id) => opened.push(id)
   );
+  // A landmark named "Linked docs", holding one chip per doc in a list.
+  const region = await screen.findByRole('region', { name: 'Linked docs' });
+  const list = within(region).getByRole('list');
+  expect(list.querySelectorAll('li')).toHaveLength(1);
+  expect(within(list).getByText('context').closest('button')).not.toBeNull();
   fireEvent.click(await screen.findByRole('button', { name: /Auth refactor/ }));
   expect(asked).toEqual(['thread:m-01']);
   expect(opened).toEqual(['doc-1']);
@@ -51,4 +62,5 @@ test('renders nothing when no doc links the target', async () => {
   const asked = renderList('thread:m-02', []);
   await waitFor(() => expect(asked).toEqual(['thread:m-02']));
   expect(screen.queryByRole('region', { name: 'Linked docs' })).toBeNull();
+  expect(screen.queryByRole('list')).toBeNull();
 });

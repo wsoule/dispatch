@@ -1,0 +1,413 @@
+/* The Overseer conversation (OverseerChat.tsx): the find bar, the role="log"
+   transcript, its rows (your bubbles on the right, the agent's replies as
+   bare Markdown, quiet narration, tool chips, approval cards, outcome lines,
+   notices, doors, queued bubbles), the status line and the composer, plus
+   the opening card with its starters. Tokens only; status colour comes from
+   data-tone (outcome lines) or the library's toned components. */
+
+.chat {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-height: 0;
+}
+
+/* ---- find bar ----------------------------------------------------------- */
+
+.find {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.findField {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.findCount {
+  flex: none;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+/* ---- the transcript ----------------------------------------------------- */
+
+/* Rows keep their size (the log scrolls, they never squash), and long
+   unbroken words wrap rather than push the column wide. */
+.log {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-height: 0;
+  overflow: hidden auto;
+  overflow-wrap: anywhere;
+}
+
+.log > * {
+  flex-shrink: 0;
+}
+
+/* A row that sits at the start of the column (a door, a failure). */
+.start {
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+/* The agent's words: bare Markdown across the column. */
+.reply {
+  align-self: stretch;
+  max-width: 100%;
+  padding: 0 4px;
+}
+
+.prose {
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+  color: var(--text);
+}
+
+/* Narration: the agent's quieter voice in the same column. */
+.narration {
+  color: var(--text-2);
+}
+
+/* Your words: verbatim in a bubble on the right. */
+.userBubble {
+  align-self: flex-end;
+  max-width: 80%;
+  margin: 0;
+  padding: var(--s-3);
+  border-radius: var(--r);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+  white-space: pre-wrap;
+}
+
+.sentFiles {
+  display: flex;
+  flex-wrap: wrap;
+  align-self: flex-end;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 85%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sentImage {
+  display: block;
+  max-width: 256px;
+  max-height: 192px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  object-fit: contain;
+}
+
+.sentFile {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+
+.sentFileName {
+  max-width: 192px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The wait before the first words of a turn. */
+.pending {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 6px var(--s-3);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs);
+}
+
+/* ---- tool calls --------------------------------------------------------- */
+
+.toolsHead {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.toolDetails {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0 4px;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  line-height: var(--lh);
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.toolDetailName {
+  color: var(--text);
+}
+
+/* ---- approval cards ----------------------------------------------------- */
+
+.card {
+  align-self: stretch;
+}
+
+.summary {
+  margin: 0;
+  font-size: var(--fs);
+  line-height: var(--lh);
+  color: var(--text);
+}
+
+.batchRows {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.batchRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0;
+  border-top: 1px solid var(--tone-line);
+}
+
+.batchLine {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.batchSummary {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs);
+  line-height: var(--lh);
+  color: var(--text);
+}
+
+/* ---- outcome lines ------------------------------------------------------ */
+
+/* A decided action's audit line on its tone's tint (data-tone: success for
+   applied and allowed, muted for denied, danger for failed). The words stay
+   --text, the mark takes the tone's ink. */
+.outcome {
+  display: flex;
+  align-self: flex-start;
+  align-items: flex-start;
+  gap: var(--s-2);
+  max-width: 100%;
+  padding: 6px var(--s-3);
+  border: 1px solid var(--tone-line);
+  border-radius: var(--r-sm);
+  background: var(--tone-soft);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  line-height: var(--lh);
+}
+
+.outcomeMark {
+  flex: none;
+  margin-top: 1px;
+  color: var(--tone-ink);
+}
+
+.outcome[data-tone='muted'] .outcomeMark {
+  color: var(--text-2);
+}
+
+.outcomeTime {
+  color: var(--text-2);
+}
+
+/* ---- notices, doors, queued bubbles ------------------------------------- */
+
+/* A line across the column with the notice's words in the middle. */
+.notice {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 4px 0;
+  color: var(--text-2);
+  font-size: var(--fs-2xs);
+}
+
+.noticeRule {
+  flex: 1 1 0;
+  min-width: var(--s-4);
+  border-top: 1px solid var(--divider);
+}
+
+.noticeText {
+  max-width: 80%;
+  text-align: center;
+}
+
+.doorLine {
+  align-self: flex-start;
+  padding: 0 4px;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+
+/* A message waiting behind the turn: a dashed bubble on the right. */
+.queued {
+  display: flex;
+  flex-direction: column;
+  align-self: flex-end;
+  gap: 4px;
+  max-width: 80%;
+  padding: var(--s-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r);
+  color: var(--text-2);
+  font-size: var(--fs);
+}
+
+.queuedText {
+  white-space: pre-wrap;
+}
+
+.queuedEdit {
+  min-height: 0;
+  resize: vertical;
+}
+
+.queuedFoot {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-2xs);
+}
+
+.queuedNote {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ---- status line and composer ------------------------------------------- */
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.statusRow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.status {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  vertical-align: middle;
+}
+
+.stop {
+  flex: none;
+}
+
+/* ---- the opening card --------------------------------------------------- */
+
+.opening {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.openingHead {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.openingTitle {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+.openingLede {
+  margin: 0;
+  font-size: var(--fs);
+  color: var(--text-2);
+}
+
+.starters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.errorLine {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+}
+
+.errorIcon {
+  flex: none;
+  margin-top: 2px;
+}
+
+/* Forced colours: the bubbles and outcome lines keep an edge, the rule its
+   line. */
+@media (forced-colors: active) {
+  .userBubble,
+  .outcome {
+    border: 1px solid CanvasText;
+  }
+
+  .noticeRule {
+    border-top-color: CanvasText;
+  }
+
+  .outcomeMark {
+    color: CanvasText;
+  }
+}

@@ -1,7 +1,7 @@
 // Every label, tint, default and piece of copy the milestone fan-out surfaces
 // print — the header pills, the row pills, the dialog defaults, the paused
 // toast and the live-rail readout all read from here so board and milestone
-// headers cannot drift apart. Pure and relative-import only (the `@/ui`
+// headers cannot drift apart. Pure and relative-import only (the StepStrip
 // import is type-only) so it stays bun-test-able without a DOM.
 
 import type {
@@ -13,8 +13,8 @@ import type {
   ServerEvent,
 } from '@dispatch/client';
 
+import type { Step } from '../components/status/StepStrip';
 import type { TaskTab } from './appNav';
-import type { Step } from '@/ui/chrome/StepStrip';
 
 /** What the fan-out dialog hands `handleWorkMilestone`/`handleResumeMilestone`. `null`
  * lifts a ceiling; `undefined` leaves the server default (start) or the
@@ -48,25 +48,29 @@ export const PHASE_LABEL: Record<MilestoneChildPhase, string> = {
   dropped: 'Dropped',
 };
 
-/** The colour a phase pill or chip carries, as a CSS token; `null` for the
- * phases the status glyph already says everything about. */
-export function phaseTint(phase: MilestoneChildPhase): string | null {
+/** The status tone a phase chip carries (its `data-tone`), on the status hue
+ * table: info (blue) while agents work, warning (amber) while it waits on
+ * someone or is blocked, success (green) once its work passed and only a
+ * person's review is left, danger (red) once it failed; `null` for the phases
+ * the status glyph already says everything about. */
+export function phaseTone(
+  phase: MilestoneChildPhase
+): 'info' | 'warning' | 'danger' | 'success' | null {
   switch (phase) {
     case 'working':
     case 'reviewing':
     case 'fixing':
-      return 'var(--state-working-fg)';
+    case 'landing':
+      return 'info';
     case 'capped':
     case 'held':
     case 'waiting':
-      return 'var(--state-waiting-fg)';
-    case 'failed':
     case 'blocked':
-      return 'var(--state-failed-fg)';
+      return 'warning';
     case 'needs-review':
-      return 'var(--state-review-fg)';
-    case 'landing':
-      return 'var(--state-landing-fg)';
+      return 'success';
+    case 'failed':
+      return 'danger';
     default:
       return null;
   }
@@ -183,6 +187,37 @@ export function spendTitle(spend: MilestoneSpend): string {
       : `${spend.runsStarted}/${spend.maxRuns} runs`
   );
   return parts.join(' · ');
+}
+
+/** A session's spend as a header's stat cell says it: the settled amount, a short note
+ * naming the ceiling, the hover hint in full, and whether the spend is near its ceiling
+ * (`spendTone`'s warning, which counts the in-flight estimate). */
+export interface SpendCellWords {
+  value: string;
+  note: string;
+  title: string;
+  nearCeiling: boolean;
+}
+
+/** The Spend cell's words for one fan-out session: `$9.81` · `of $10` (or `no ceiling`),
+ * with the pill's hover text (`spendTitle`) after the amounts in the hint, and "near its
+ * ceiling" there too while `spendTone` warns. The Flight Plan header shows this cell in
+ * place of the controls' spend pill, so the two never disagree on the amounts. */
+export function spendCellWords(spend: MilestoneSpend): SpendCellWords {
+  const settled = formatUsd(spend.settledUsd);
+  const nearCeiling = spendTone(spend) === 'warning';
+  const ceiling =
+    spend.maxSpendUsd === null ? null : formatUsd(spend.maxSpendUsd);
+  const amounts =
+    ceiling === null
+      ? `${settled} settled, with no ceiling`
+      : `${settled} settled of the ${ceiling} ceiling`;
+  return {
+    value: settled,
+    note: ceiling === null ? 'no ceiling' : `of ${ceiling}`,
+    title: `${amounts}${nearCeiling ? ', near it' : ''} · ${spendTitle(spend)}`,
+    nearCeiling,
+  };
 }
 
 /** The paused pill's text, by why the session stopped filling. */

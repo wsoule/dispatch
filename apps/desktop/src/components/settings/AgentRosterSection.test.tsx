@@ -13,7 +13,7 @@ import { describe, expect, mock, test } from 'bun:test';
 import { agentRosterKey } from '../../lib/agentRoster';
 import { accessFor, NEEDS_DECIDE, SettingsAccessProvider } from './access';
 import { AgentRosterSection } from './AgentRosterSection';
-import { dataWith } from './fixtures.test-helper';
+import { dataWith, visibleText } from './fixtures.test-helper';
 
 const PORT = 4321;
 const PENDING = 'agent:wyat/cursor.macbook';
@@ -104,10 +104,11 @@ function mount(
   return queryClient;
 }
 
-// The roster row naming `address`; the row's own text holds every cell.
+// The roster row (a Register list item) naming `address`; the row's own text
+// holds every cell.
 async function row(address: string): Promise<HTMLElement> {
   const title = await screen.findByText(address);
-  const element = title.closest<HTMLElement>('[data-slot="list-row"]');
+  const element = title.closest<HTMLElement>('li');
   if (element === null) throw new Error(`no row for ${address}`);
   return element;
 }
@@ -116,9 +117,9 @@ describe('AgentRosterSection', () => {
   test('lists every agent with its client and status, pending first', async () => {
     mount(rosterClient());
     await row(APPROVED);
-    const rows = screen
-      .getAllByRole('row')
-      .map((r) => r.querySelector('[data-slot="list-row-title"]')?.textContent);
+    const rows = within(screen.getByRole('list', { name: 'Connected agents' }))
+      .getAllByRole('listitem')
+      .map((r) => r.querySelector('[data-roster-title]')?.textContent);
     expect(rows).toEqual([
       `${PENDING}cursor`,
       `${APPROVED}claude-code`,
@@ -260,13 +261,15 @@ describe('AgentRosterSection', () => {
   test('without decide, the reason is written on the page, not only in tooltips', async () => {
     mount(rosterClient(), 'request');
     await row(PENDING);
-    expect(screen.queryByText(NEEDS_DECIDE)?.textContent).toBe(NEEDS_DECIDE);
+    const written = visibleText(NEEDS_DECIDE);
+    expect(written).toHaveLength(1);
+    expect(written[0]?.textContent).toBe(NEEDS_DECIDE);
   });
 
   test('with decide, no reason is written out', async () => {
     mount(rosterClient());
     await row(PENDING);
-    expect(screen.queryByText(NEEDS_DECIDE)?.textContent).toBeUndefined();
+    expect(visibleText(NEEDS_DECIDE)).toEqual([]);
   });
 
   // The pressed button leaves the row once the change lands; focus must not fall to the page.
@@ -276,7 +279,10 @@ describe('AgentRosterSection', () => {
     const approve = within(await row(PENDING)).getByRole('button', {
       name: `Approve ${PENDING}`,
     });
-    approve.focus();
+    // Focus shows the button's tooltip, a state update: inside act.
+    act(() => {
+      approve.focus();
+    });
     fireEvent.click(approve);
     await waitFor(async () =>
       expect(within(await row(PENDING)).queryByText('Approved')).not.toBeNull()
@@ -294,7 +300,10 @@ describe('AgentRosterSection', () => {
     const revoke = within(await row(APPROVED)).getByRole('button', {
       name: `Revoke ${APPROVED}`,
     });
-    revoke.focus();
+    // Focus shows the button's tooltip, a state update: inside act.
+    act(() => {
+      revoke.focus();
+    });
     fireEvent.click(revoke);
     fireEvent.click(
       within(await screen.findByRole('alertdialog')).getByRole('button', {
@@ -307,6 +316,23 @@ describe('AgentRosterSection', () => {
     await waitFor(() =>
       expect(document.activeElement?.getAttribute('aria-label')).toBe('Agents')
     );
+    // Script focus marks the group, so its ring shows after a mouse confirm;
+    // the mark goes once focus leaves, and a press on its text draws none.
+    const group = screen.getByRole('group', { name: 'Agents' });
+    expect(group.dataset.refocused).toBe('');
+    fireEvent.blur(group);
+    expect(group.dataset.refocused).toBeUndefined();
+  });
+
+  test('the roster is one dense row per agent at desktop width, stacking only on a phone', async () => {
+    mount(rosterClient());
+    await row(APPROVED);
+    // stackBelow is a viewport query: a container query (stackWithin 700)
+    // would always stack inside the ~640px settings column.
+    const register = screen
+      .getByRole('list', { name: 'Connected agents' })
+      .closest('[data-roster]');
+    expect(register?.getAttribute('data-stack')).toBe('viewport-700');
   });
 
   test('a refused action says why beside the roster', async () => {
@@ -320,9 +346,10 @@ describe('AgentRosterSection', () => {
         name: `Approve ${PENDING}`,
       })
     );
-    expect((await screen.findByRole('alert')).textContent).toBe(
-      'no agent agent:wyat/cursor.macbook'
-    );
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('no agent agent:wyat/cursor.macbook');
+    expect(alert.classList.contains('toneText')).toBe(true);
+    expect(alert.dataset.tone).toBe('danger');
   });
 
   // Approving from Needs you or the CLI answers the gate elsewhere; the data

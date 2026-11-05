@@ -187,7 +187,16 @@ test("opens on a conflicting proposal's marked merge and saves the resolution", 
     name: 'Conflict 1 of 1',
   });
   expect(getDocProposal).toHaveBeenCalledWith('rev-p');
-  fireEvent.click(within(conflict).getByRole('button', { name: 'Take yours' }));
+  const head = within(conflict).getByRole('button', { name: 'Take head' });
+  const yours = within(conflict).getByRole('button', { name: 'Take yours' });
+  expect(yours.getAttribute('aria-pressed')).toBe('false');
+  fireEvent.click(yours);
+  // The side taken is pressed and leads with a check (a shape, not only the
+  // pressed fill); the other side has neither.
+  expect(yours.getAttribute('aria-pressed')).toBe('true');
+  expect(yours.querySelector('svg')).not.toBeNull();
+  expect(head.getAttribute('aria-pressed')).toBe('false');
+  expect(head.querySelector('svg')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Save resolution' }));
   await waitFor(() => expect(calls).toEqual([`save "# Auth\\nrun\\n"`]));
   expect(
@@ -301,7 +310,20 @@ test('lists open proposals with how long ago each was made', async () => {
         }),
     } as unknown as Partial<ApiClient>,
   });
-  expect(await screen.findByText(/rev-p · run:r-1 · 3h ago/)).toBeDefined();
+  // One line per proposal: the rev id and author in Geist Mono spans, the
+  // age in sans with tabular figures.
+  const text = 'rev-p · run:r-1 · 3h ago';
+  const line = await screen.findByText(
+    (_content, el) =>
+      el?.textContent === text &&
+      Array.from(el.children).every((c) => c.textContent !== text)
+  );
+  const [rev, author, age] = Array.from(line.children);
+  expect(rev?.textContent).toBe('rev-p');
+  expect(author?.textContent).toBe('run:r-1');
+  expect(age?.textContent).toBe('3h ago');
+  expect(age?.classList.contains('num')).toBe(true);
+  expect(rev?.tagName).toBe('SPAN');
 });
 
 test('uploads a pasted image and inserts its link at the caret', async () => {
@@ -474,7 +496,7 @@ test('offers Share to Linear to a decider on a live team doc not yet in Linear, 
     { doc: doc({ status: 'archived' }) },
   ]) {
     renderPage(opts);
-    await screen.findByText('Auth refactor');
+    await screen.findByLabelText('Editing auth');
     expect(
       screen.queryByRole('button', { name: 'Share to Linear' })
     ).toBeNull();

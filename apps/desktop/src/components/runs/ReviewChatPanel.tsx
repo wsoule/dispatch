@@ -1,4 +1,5 @@
 import type { ApiClient, ChatMessage, Snippet } from '@dispatch/client';
+import { Button, Panel } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, MessageSquare } from 'lucide-react';
 import type { Ref } from 'react';
@@ -6,12 +7,11 @@ import { useCallback, useImperativeHandle, useMemo, useState } from 'react';
 
 import type { ChatTarget } from '../chat/SnippetComposer';
 import { SnippetComposer } from '../chat/SnippetComposer';
+import styles from './ReviewChatPanel.module.css';
 import { snippetLabel } from '@/lib/conversation';
 import { reviewTargetKey } from '@/lib/reviewTarget';
-import { Button } from '@/ui/button';
-import { Panel } from '@/ui/chrome';
 
-const META_CLASS = 'text-[12px] font-book text-muted-foreground tabular-nums';
+const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
 
 /** How the diff hands a selection to the dock. Imperative because the two sit side by side in
  * the review page and the pending attachments belong to the dock, not to the page. */
@@ -130,40 +130,48 @@ export function ReviewChatPanel({
   const count = messages?.length ?? 0;
 
   if (!open) {
+    // The collapsed dock: one full-width row that opens the composer. The
+    // count trails it as decoration; the words carry it for assistive tech.
     return (
-      <Button
-        type="button"
-        variant="ghost"
-        onClick={() => setOpen(true)}
-        className="bg-surface-quaternary hover:bg-surface-active rounded-card border-border font-book mt-2 h-9 w-full justify-start gap-2 border-[0.5px] px-3 text-left text-[13px]"
-      >
-        <MessageSquare className="shrink-0" />
-        <span className="min-w-0 flex-1 truncate">Ask about this diff…</span>
-        {count > 0 && <span className={`${META_CLASS} shrink-0`}>{count}</span>}
-      </Button>
+      <div className={styles.dock}>
+        <Button
+          block
+          className={styles.openRow}
+          onClick={() => setOpen(true)}
+          icon={<MessageSquare {...ICON} />}
+          iconAfter={
+            count > 0 ? (
+              <span className={styles.count}>{count}</span>
+            ) : undefined
+          }
+        >
+          Ask about this diff…
+          {count > 0 && (
+            <span className="srOnly">
+              {`, ${count} message${count === 1 ? '' : 's'}`}
+            </span>
+          )}
+        </Button>
+      </div>
     );
   }
 
   return (
-    <Panel className="mt-2 flex max-h-[45%] shrink-0 flex-col gap-2 p-2">
-      <div className="flex h-7 items-center gap-2">
-        <MessageSquare className="text-muted-foreground size-3.5 shrink-0" />
-        <span className="min-w-0 flex-1 text-[13px] font-medium text-(--text-secondary)">
-          Chat about this diff
-        </span>
+    <Panel
+      heading="Chat about this diff"
+      className={styles.panel}
+      actions={
         <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
+          variant="quiet"
+          size="sm"
           aria-label="Collapse the chat"
+          icon={<ChevronDown {...ICON} />}
           onClick={() => setOpen(false)}
-        >
-          <ChevronDown />
-        </Button>
-      </div>
-
+        />
+      }
+    >
       {count > 0 && (
-        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+        <div className={styles.messages}>
           {messages?.map((m) => (
             <Message key={m.id} message={m} />
           ))}
@@ -177,7 +185,7 @@ export function ReviewChatPanel({
         onSend={handleSend}
       />
 
-      <p className="text-muted-foreground font-book text-[12px]">
+      <p className={styles.note}>
         Saved with this review — nothing is dispatched to an agent yet.
       </p>
     </Panel>
@@ -187,13 +195,13 @@ export function ReviewChatPanel({
 /** One stored message: who wrote it, what it said, and which code it pointed at. */
 function Message({ message }: { message: ChatMessage }) {
   return (
-    <div className="flex flex-col gap-1">
-      <span className="text-muted-foreground text-[12px] font-medium">
+    <div className={styles.message}>
+      <span className={styles.author}>
         {message.role === 'human' ? 'You' : 'Agent'}
         {message.target === undefined ? '' : ` → ${message.target}`}
       </span>
       {message.snippets.length > 0 && (
-        <div className="text-muted-foreground flex flex-wrap gap-1 font-mono text-[12px]">
+        <div className={styles.snippets}>
           {message.snippets.map((snippet, index) => (
             <span key={`${snippet.file}-${index}`}>
               {snippetLabel(snippet)}
@@ -201,9 +209,7 @@ function Message({ message }: { message: ChatMessage }) {
           ))}
         </div>
       )}
-      <p className="font-book text-[13px] leading-snug whitespace-pre-wrap">
-        {message.body}
-      </p>
+      <p className={styles.body}>{message.body}</p>
     </div>
   );
 }

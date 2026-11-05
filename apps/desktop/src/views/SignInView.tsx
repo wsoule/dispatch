@@ -1,12 +1,11 @@
 import type { AuthTier } from '@dispatch/client';
+import { Button, Field, Notice, TextField } from '@dispatch/ui';
 import { KeyRound } from 'lucide-react';
 import { useState } from 'react';
 
 import type { TeamSession } from '../lib/teamLocal';
 import { saveTeamSession } from '../lib/teamLocal';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
-import { Spinner } from '@/ui/spinner';
+import styles from './SignInView.module.css';
 
 interface SignInViewProps {
   /** The daemon's origin — the page's own, in team-local mode. */
@@ -108,46 +107,61 @@ export function SignInView({ baseUrl, onSignedIn, notice }: SignInViewProps) {
     }
   }
 
+  const empty = token.trim() === '';
+
   return (
-    <div className="flex h-full min-h-screen flex-col items-center justify-center px-6">
+    <div className={styles.root}>
       <form
-        className="flex w-full max-w-md flex-col gap-4"
+        className={styles.form}
         onSubmit={(e) => {
           e.preventDefault();
           void submit();
         }}
       >
-        <div className="flex flex-col gap-1">
-          <h1 className="flex items-center gap-2 text-lg font-medium">
-            <KeyRound aria-hidden className="size-5" />
+        <div className={styles.head}>
+          <h1 className={styles.title}>
+            <KeyRound aria-hidden size={14} strokeWidth={1.8} />
             Sign in to this project
           </h1>
-          <p className="text-text-secondary text-sm">
+          <p className={styles.intro}>
             Paste the token you were sent. Whoever runs this daemon makes one
-            with <code className="font-mono text-xs">dispatch team invite</code>
-            .
+            with <code className={styles.code}>dispatch team invite</code>.
           </p>
         </div>
         {notice !== undefined && notice !== null && (
-          <p className="text-sm text-(--state-waiting-fg)">{notice}</p>
+          <Notice tone="warning">{notice}</Notice>
         )}
-        <Input
-          type="password"
-          autoComplete="off"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          aria-label="Team token"
-          placeholder="Team token"
-          className="font-mono"
-        />
-        {error !== null && (
-          <p className="text-sm text-(--state-error-fg)" role="alert">
-            {error}
-          </p>
-        )}
-        <Button type="submit" disabled={token.trim() === '' || pending}>
-          {pending && <Spinner className="size-4" />}
-          {pending ? 'Checking…' : 'Sign in'}
+        {/* The token is a machine-read string, so it is set in mono. It lives in this field
+            only: it goes to the daemon once and is never stored. */}
+        <Field
+          label="Team token"
+          error={
+            error === null ? undefined : (
+              <span role="alert" className="toneText" data-tone="danger">
+                {error}
+              </span>
+            )
+          }
+        >
+          <TextField
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="Team token"
+            className={styles.token}
+          />
+        </Field>
+        <Button
+          type="submit"
+          variant="primary"
+          block
+          disabled={empty}
+          busy={pending}
+          busyLabel="Checking…"
+        >
+          Sign in
         </Button>
       </form>
     </div>

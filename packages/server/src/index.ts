@@ -53,6 +53,7 @@ import {
   validateTaskInput,
 } from './api.js';
 import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
+import { goneFileBodyResponse } from './api/files.js';
 import { closeAsksOfRevoked, speaksForRevoked } from './api/revoke.js';
 import { storageErrorResponse } from './api/storageErrors.js';
 import { installBlockingSpawner, spawnGitSync } from './blockingGit.js';
@@ -627,9 +628,12 @@ function withCors(
   const allowed = resolveCorsOrigin(origin, own);
   if (allowed !== null) {
     res.headers.set('access-control-allow-origin', allowed);
+    // Every method the client sends must be listed: the webview is
+    // cross-origin, so a method missing here (PUT for label colours, the
+    // license, doc bodies and the A2A listener) dies at the preflight.
     res.headers.set(
       'access-control-allow-methods',
-      'GET, POST, PATCH, DELETE, OPTIONS'
+      'GET, POST, PUT, PATCH, DELETE, OPTIONS'
     );
     // `authorization` must stay listed: every guarded route needs the bearer
     // header, and the desktop webview and dev harness are both cross-origin to
@@ -2722,6 +2726,10 @@ async function bootServer(
       // snippets in the response body. Loopback-only or not, responses must
       // never carry stack traces — log server-side, return opaque JSON.
       error(err) {
+        // A raw-route file deleted between the route's stat and Bun opening
+        // it: the route's own 404, not an unexpected error.
+        const gone = goneFileBodyResponse(err);
+        if (gone !== null) return gone;
         console.error(`dispatchd: unexpected error: ${(err as Error).message}`);
         const storage = storageErrorResponse(err);
         if (storage !== null) return storage;

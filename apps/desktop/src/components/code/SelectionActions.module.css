@@ -1,0 +1,17 @@
+/* The floating bar over a code selection (SelectionActions.tsx): a raised row of quiet
+   buttons, hung above the selection's top edge unless it is placed below. */
+.bar {
+  position: absolute;
+  z-index: 50;
+  display: flex;
+  gap: var(--s-1);
+  padding: var(--s-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+
+.bar[data-place='above'] {
+  transform: translateY(-100%);
+}

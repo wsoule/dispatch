@@ -1,4 +1,11 @@
 import type { Message } from '@dispatch/client';
+import {
+  Chip,
+  cx,
+  Disclosure,
+  EmptyState,
+  SegmentedControl,
+} from '@dispatch/ui';
 import { useQuery } from '@tanstack/react-query';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 
@@ -16,17 +23,14 @@ import { formatRelativeTimeFromIso } from '../../lib/format';
 import { participantLabel, type RefAction } from '../../lib/threadSources';
 import { buildTimeline, quoteOf, type TimelineEntry } from '../../lib/timeline';
 import { MessageRow } from '../threads/MessageRow';
+import styles from './ConversationTimeline.module.css';
 import { HomeComposer } from './HomeComposer';
-import { InlineSegmented } from '@/ui/ai/inline-segmented';
-import { Badge } from '@/ui/badge';
-import { EmptyState } from '@/ui/chrome';
-import { CollapseBar } from '@/ui/chrome/collapse-bar';
 
 const NONE: ReadonlySet<string> = new Set();
 const SHOW = [
   { id: 'people', label: 'People' },
   { id: 'all', label: 'All' },
-] as const;
+];
 
 function clock(iso: string): string {
   const date = new Date(iso);
@@ -119,11 +123,11 @@ export function ConversationTimeline({
 
   if (!access.canMessage) {
     return (
-      <EmptyState
-        className="h-full"
-        heading="Conversations are not available in this window."
-        description={access.explanation}
-      />
+      <div className={styles.unavailable}>
+        <EmptyState label="Conversations are not available in this window.">
+          {access.explanation}
+        </EmptyState>
+      </div>
     );
   }
 
@@ -134,28 +138,28 @@ export function ConversationTimeline({
         <li
           key={entry.key}
           data-testid="timeline-comment"
-          className="px-3 py-2"
+          className={styles.comment}
         >
-          <div className="text-muted-foreground flex items-center gap-2 text-[12px]">
-            <Badge variant="outline" className="h-5 px-1.5 text-[11px]">
-              comment
-            </Badge>
-            <span className="text-foreground font-medium">
+          <div className={styles.commentHead}>
+            <Chip>comment</Chip>
+            <span className={styles.author}>
               {participantLabel(comment.author, pane.lookups)}
             </span>
             <span>{formatRelativeTimeFromIso(comment.created)}</span>
           </div>
-          <p className="mt-1 text-[13px] whitespace-pre-wrap">{comment.body}</p>
+          {/* A teammate's comment: plain text only. */}
+          <p className={styles.commentBody}>{comment.body}</p>
         </li>
       );
     }
     if (entry.kind === 'fold') {
       const expanded = all || open.has(entry.key);
       return (
-        <li key={entry.key} data-testid="timeline-fold" className="px-3 py-1">
-          <CollapseBar
-            collapsed={!expanded}
-            onToggle={() =>
+        <li key={entry.key} data-testid="timeline-fold" className={styles.fold}>
+          <Disclosure
+            variant="bar"
+            open={expanded}
+            onOpenChange={() =>
               setOpen((prev) => {
                 const next = new Set(prev);
                 if (next.has(entry.key)) next.delete(entry.key);
@@ -163,16 +167,15 @@ export function ConversationTimeline({
                 return next;
               })
             }
-            label={`Agent chatter · ${entry.messages.length} · ${entry.between
+            summary={`Agent chatter · ${entry.messages.length} · ${entry.between
               .slice(0, 2)
               .map((a) => participantLabel(a, pane.lookups))
               .join(' ↔ ')} · ${clock(entry.first)}–${clock(entry.last)}`}
-          />
-          {expanded && (
-            <ul className="border-border mt-1 border-l-[0.5px]">
+          >
+            <ul className={styles.folded}>
               {entry.messages.map((message) => messageRow(message))}
             </ul>
-          )}
+          </Disclosure>
         </li>
       );
     }
@@ -184,7 +187,7 @@ export function ConversationTimeline({
     return (
       <li key={message.id} data-testid="timeline-message">
         {quote !== null && (
-          <p className="text-muted-foreground truncate px-3 pt-1 text-[12px]">
+          <p className={styles.quote}>
             ↳ re: {participantLabel(quote.from, pane.lookups)} {clock(quote.at)}{' '}
             “{quote.text}”
           </p>
@@ -211,26 +214,29 @@ export function ConversationTimeline({
   };
 
   return (
-    <div data-testid="conversation" className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-2 px-3 py-2">
-        <div className="min-w-0 flex-1">{header}</div>
-        <InlineSegmented
+    <div data-testid="conversation" className={styles.root}>
+      <div className={styles.bar}>
+        <div className={styles.header}>{header}</div>
+        <SegmentedControl
           label="Show"
+          size="sm"
           options={SHOW}
           value={all ? 'all' : 'people'}
           onChange={(choice) => setAll(choice === 'all')}
         />
       </div>
-      <ul className="min-h-0 flex-1 overflow-y-auto">
+      <ul className={styles.timeline}>
         {conversation.error !== null && (
-          <li role="alert" className="text-state-failed px-3 py-2 text-[12px]">
+          <li
+            role="alert"
+            className={cx('toneText', styles.error)}
+            data-tone="danger"
+          >
             {conversation.error.message}
           </li>
         )}
         {entries.length === 0 && conversation.isSuccess && (
-          <li className="text-muted-foreground px-3 py-6 text-center text-[13px]">
-            {emptyText}
-          </li>
+          <li className={styles.empty}>{emptyText}</li>
         )}
         {entries.map(row)}
       </ul>

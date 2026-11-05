@@ -1,0 +1,26 @@
+/* The thread listbox (ThreadList.tsx): one tab stop over every section,
+   its rows the library's ListItem as options. The listbox draws an inset
+   focus ring while it holds focus; the row under the keyboard cursor
+   draws its own (ListItem's `active`). */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-radius: var(--r-sm);
+}
+
+.list:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.row {
+  cursor: pointer;
+}

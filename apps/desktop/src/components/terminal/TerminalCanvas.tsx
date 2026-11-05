@@ -7,6 +7,7 @@ import type {
   StyledSpan,
   TerminalScreen,
 } from '../../lib/terminalScreen';
+import styles from './TerminalCanvas.module.css';
 
 /**
  * Renders a `TerminalScreen` as styled text.
@@ -25,14 +26,14 @@ function styleToCss(style: CellStyle): React.CSSProperties {
   // Inverse swaps the two at render time. An inverted cell with no explicit
   // colours still has to flip, so it falls back to the surface's own colours.
   const [color, background] = style.inverse
-    ? [bg ?? 'var(--color-background)', fg ?? 'var(--color-foreground)']
+    ? [bg ?? 'var(--surface)', fg ?? 'var(--text)']
     : [fg, bg];
   return {
     ...(color === null || color === undefined ? {} : { color }),
     ...(background === null || background === undefined
       ? {}
       : { backgroundColor: background }),
-    ...(style.bold ? { fontWeight: 600 } : {}),
+    ...(style.bold ? { fontWeight: 'var(--fw-semibold)' } : {}),
     // Dim is opacity, not a second colour: it has to compose with whatever
     // foreground is already set.
     ...(style.dim ? { opacity: 0.65 } : {}),
@@ -67,10 +68,7 @@ function SpanRun({ span, search }: { span: StyledSpan; search: string }) {
     <span style={css}>
       {runsFromNeedle(span.text, search).map((run, index) =>
         run.hit ? (
-          <mark
-            key={index}
-            className="rounded-[2px] bg-amber-300/70 text-black dark:bg-amber-400/70"
-          >
+          <mark key={index} className={styles.match}>
             {run.text}
           </mark>
         ) : (
@@ -106,11 +104,11 @@ export function TerminalCanvas({
   return (
     <div
       ref={scrollRef}
-      className="h-full overflow-auto bg-[var(--color-card)] px-3 py-2 font-mono text-[12px] leading-[1.45] whitespace-pre"
+      className={styles.screen}
       data-testid="terminal-canvas"
     >
       {lines.map((spans, row) => (
-        <div key={row} className="min-h-[1.45em]">
+        <div key={row} className={styles.row}>
           {spans.map((span, index) => (
             <SpanRun key={index} span={span} search={search} />
           ))}

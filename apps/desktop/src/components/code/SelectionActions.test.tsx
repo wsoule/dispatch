@@ -88,7 +88,7 @@ describe('SelectionActions — where it lands', () => {
     expect(bar().style.top).toBe('200px');
     expect(bar().style.left).toBe('48px');
     // Hanging above means being pulled up by its own height, which is only knowable in CSS.
-    expect(bar().className).toContain('-translate-y-full');
+    expect(bar().dataset['place']).toBe('above');
   });
 
   // A selection at the very top of the pane has nothing above it to hang in; the bar drops
@@ -103,7 +103,7 @@ describe('SelectionActions — where it lands', () => {
     );
 
     expect(bar().style.top).toBe('66px');
-    expect(bar().className).not.toContain('-translate-y-full');
+    expect(bar().dataset['place']).toBe('below');
   });
 
   it('pulls the bar back so it cannot run off the right edge', () => {

@@ -1,0 +1,40 @@
+/* The Flight Plan's header (FlightPlanHeader): the compact stats strip,
+   which carries the fan-out controls at the end of its own row. A soft
+   rule closes it off from the canvas. */
+.header {
+  flex: none;
+  /* 8px above and below the compact strip's 26px row: a 43px header. */
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--border);
+}
+
+/* The critical path's legend: the canvas highlighter's accent at the
+   same strength. */
+.criticalSwatch {
+  display: block;
+  width: 14px;
+  height: 5px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  opacity: 0.4;
+}
+
+/* The slots in use (as text) and the picker that changes them, side by side in one
+   cell. */
+.slots {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+/* The fan-out's waves in their cell: one short track the waves share equally. */
+.waves {
+  width: 48px;
+}
+
+@media (forced-colors: active) {
+  .criticalSwatch {
+    border: 1px solid CanvasText;
+    opacity: 1;
+  }
+}

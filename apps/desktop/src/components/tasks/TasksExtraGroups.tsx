@@ -1,24 +1,39 @@
+import {
+  Button,
+  Chip,
+  Register,
+  RegisterCell,
+  RegisterRow,
+  SectionHeader,
+} from '@dispatch/ui';
+import { FileText } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { useDocList } from '../../hooks/useDocs';
-import { GroupHeader } from '@/ui/ai/group-header';
-import { ListRow } from '@/ui/ai/list-row';
-import { Badge } from '@/ui/badge';
-import { Button } from '@/ui/button';
+import styles from './TasksExtraGroups.module.css';
 
 const UNLINKED_TEAM_DOCS = { unlinked: true, scope: 'team' } as const;
 const PERSONAL_DOCS = { scope: 'personal' } as const;
 
-// One folding section under the task groups.
+/* The registers' grids: a note and its two buttons; a PR's number, title
+   and author; a doc's title and its "unreviewed" chip. */
+const NOTE_COLUMNS = 'minmax(0, 1fr) auto';
+const PR_COLUMNS = '56px minmax(0, 1fr) auto';
+const DOC_COLUMNS = 'minmax(0, 1fr) auto';
+
+// One folding section under the task groups: a group header with the fold
+// chevron, the count and the host's actions, then (open) its rows.
 function Section({
   name,
+  icon,
   count,
   testId,
   extra,
   children,
 }: {
-  name: ReactNode;
+  name: string;
+  icon?: ReactNode;
   count: number;
   testId: string;
   extra?: ReactNode;
@@ -26,22 +41,16 @@ function Section({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <section
-      data-testid={testId}
-      aria-label={typeof name === 'string' ? name : undefined}
-    >
-      <GroupHeader
+    <section data-testid={testId} aria-label={name} className={styles.section}>
+      <SectionHeader
         name={name}
+        icon={icon}
         count={count}
         collapsed={!open}
         onToggle={() => setOpen(!open)}
         actions={extra}
       />
-      {open && (
-        <div role="list" className="flex flex-col pb-1">
-          {children}
-        </div>
-      )}
+      {open && <div className={styles.rows}>{children}</div>}
     </section>
   );
 }
@@ -69,82 +78,115 @@ export function TasksExtraGroups({
   const unreviewed = teamDocs.filter((d) => d.unreviewed).length;
 
   return (
-    <div data-testid="tasks-extra-groups" className="pt-2">
+    <div data-testid="tasks-extra-groups" className={styles.root}>
       <Section name="Notes" count={notes.length} testId="tasks-group-notes">
-        {notes.map((note) => (
-          <ListRow
-            key={note.id}
-            role="listitem"
-            title={note.text}
-            trailing={
-              <>
-                <Button
-                  size="xs"
-                  variant="outline"
-                  onClick={() => void data.handleConvertInbox([note.id])}
-                >
-                  Convert
-                </Button>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  onClick={() => void data.handleDismissInbox([note.id])}
-                >
-                  Dismiss
-                </Button>
-              </>
-            }
-          />
-        ))}
+        {notes.length > 0 && (
+          <Register label="Notes" columns={NOTE_COLUMNS} stackWithin={480}>
+            {notes.map((note) => (
+              <RegisterRow key={note.id}>
+                <RegisterCell>
+                  <span className={styles.line} title={note.text}>
+                    {note.text}
+                  </span>
+                </RegisterCell>
+                <RegisterCell align="end">
+                  <span className={styles.actions}>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => void data.handleConvertInbox([note.id])}
+                    >
+                      Convert
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="quiet"
+                      onClick={() => void data.handleDismissInbox([note.id])}
+                    >
+                      Dismiss
+                    </Button>
+                  </span>
+                </RegisterCell>
+              </RegisterRow>
+            ))}
+          </Register>
+        )}
       </Section>
       <Section name="Pull requests" count={prs.length} testId="tasks-group-prs">
-        {prs.map((pr) => (
-          <ListRow
-            key={pr.number}
-            role="listitem"
-            onClick={() => onOpenPr(pr.number)}
-            id={`#${pr.number}`}
-            title={pr.title}
-            date={pr.author}
-          />
-        ))}
+        {prs.length > 0 && (
+          <Register
+            label="Pull requests"
+            columns={PR_COLUMNS}
+            stackWithin={480}
+          >
+            {prs.map((pr) => (
+              <RegisterRow
+                key={pr.number}
+                onActivate={() => onOpenPr(pr.number)}
+                rowLabel={`#${pr.number} ${pr.title}`}
+              >
+                <RegisterCell variant="mono">
+                  <span className="mono">#{pr.number}</span>
+                </RegisterCell>
+                <RegisterCell variant="name">
+                  <span className={styles.line}>{pr.title}</span>
+                </RegisterCell>
+                <RegisterCell variant="mono" align="end">
+                  {pr.author}
+                </RegisterCell>
+              </RegisterRow>
+            ))}
+          </Register>
+        )}
       </Section>
       {docsClient !== null && (
         <Section
-          name="▤ Docs"
+          name="Docs"
+          icon={<FileText size={14} strokeWidth={1.8} aria-hidden="true" />}
           count={teamDocs.length}
           testId="tasks-group-docs"
           extra={
             <>
               {unreviewed > 0 && (
-                <Badge variant="outline">{unreviewed} unreviewed</Badge>
+                <Chip tone="warning">{unreviewed} unreviewed</Chip>
               )}
-              <Button variant="link" size="xs" onClick={onOpenAllDocs}>
+              <Button
+                variant="quiet"
+                size="sm"
+                className={styles.link}
+                onClick={onOpenAllDocs}
+              >
                 All docs →
               </Button>
             </>
           }
         >
-          {teamDocs.map((doc) => (
-            <ListRow
-              key={doc.id}
-              role="listitem"
-              onClick={() => onOpenDoc(doc.id)}
-              title={doc.title}
-              trailing={
-                doc.unreviewed ? (
-                  <Badge variant="outline">unreviewed</Badge>
-                ) : undefined
-              }
-            />
-          ))}
+          {teamDocs.length > 0 && (
+            <Register label="Docs" columns={DOC_COLUMNS} stackWithin={480}>
+              {teamDocs.map((doc) => (
+                <RegisterRow
+                  key={doc.id}
+                  onActivate={() => onOpenDoc(doc.id)}
+                  rowLabel={
+                    doc.unreviewed ? `${doc.title}, unreviewed` : doc.title
+                  }
+                >
+                  <RegisterCell variant="name">
+                    <span className={styles.line}>{doc.title}</span>
+                  </RegisterCell>
+                  <RegisterCell align="end">
+                    {doc.unreviewed ? (
+                      <Chip tone="warning">unreviewed</Chip>
+                    ) : null}
+                  </RegisterCell>
+                </RegisterRow>
+              ))}
+            </Register>
+          )}
           {personalDocs.length > 0 && (
-            <div
-              role="listitem"
-              className="text-muted-foreground px-3 py-1 text-[12px]"
-            >
+            <p className={styles.personal}>
               Personal · {personalDocs.length} · only you
-            </div>
+            </p>
           )}
         </Section>
       )}

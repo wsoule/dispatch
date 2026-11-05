@@ -1,4 +1,5 @@
 import type { VerificationCheck, VerificationResult } from '@dispatch/client';
+import { Chip, ChipButton, cx, TaskDetailSection } from '@dispatch/ui';
 import { FlaskConical } from 'lucide-react';
 
 import { revealInFinder } from '../../../lib/tauri';
@@ -8,49 +9,47 @@ import {
   verificationCheckDetail,
 } from '../../../lib/verificationSummary';
 import { StatusIcon } from '../StatusIcon';
-import { MainSection } from './MainSection';
-import { cn } from '@/lib/utils';
-import { Pill, PillButton } from '@/ui/ai/pill';
+import styles from './sections.module.css';
 
 // A check's pass/fail as the 14px status glyph: the done disk for a pass, the
-// cancelled disk in the blocked red for a failure. The glyph is decorative;
+// cancelled disk in the danger red for a failure. The glyph is decorative;
 // the visually hidden word carries the meaning for a screen reader.
 function CheckGlyph({ pass }: { pass: boolean }) {
   return (
     <>
-      <span aria-hidden className="mt-0.5 shrink-0">
+      <span aria-hidden="true" className={styles.glyph}>
         {pass ? (
           <StatusIcon status="landed" />
         ) : (
-          <StatusIcon status="dropped" blocked />
+          <StatusIcon status="dropped" tone="danger" />
         )}
       </span>
-      <span className="sr-only">{pass ? 'Passed' : 'Failed'}</span>
+      <span className="srOnly">{pass ? 'Passed' : 'Failed'}</span>
     </>
   );
 }
 
 // One check row: glyph, name, and for a failure the expected/actual pair
-// beneath it.
+// beneath it, the actual value in the danger tone's words.
 function CheckRow({ check }: { check: VerificationCheck }) {
   const detail = verificationCheckDetail(check);
   return (
     <li
       data-slot="verification-check"
       data-pass={check.pass || undefined}
-      className="flex items-start gap-2 text-[13px]"
+      className={styles.check}
     >
       <CheckGlyph pass={check.pass} />
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="text-foreground font-book">{check.check}</span>
+      <div className={styles.checkBody}>
+        <span>{check.check}</span>
         {detail !== null && (
-          <dl className="text-muted-foreground font-book grid grid-cols-[64px_1fr] gap-x-2 text-[13px]">
+          <dl className={styles.pair}>
             <dt>Expected</dt>
-            <dd className="break-words text-(--text-secondary)">
-              {detail.expected}
-            </dd>
+            <dd className={styles.expected}>{detail.expected}</dd>
             <dt>Actual</dt>
-            <dd className="text-red break-words">{detail.actual}</dd>
+            <dd className="toneText" data-tone="danger">
+              {detail.actual}
+            </dd>
           </dl>
         )}
       </div>
@@ -58,28 +57,27 @@ function CheckRow({ check }: { check: VerificationCheck }) {
   );
 }
 
-// Artifacts as 24px pills; a path stays mono because it is code, and an
-// absolute path is a button that reveals the file in Finder.
-function ArtifactPill({ path }: { path: string }) {
+// Artifacts as chips; a path is set in mono because it is a machine-read
+// string, and an absolute path is a chip button that reveals the file in Finder.
+function ArtifactChip({ path }: { path: string }) {
   if (isRevealableArtifact(path)) {
     return (
-      <PillButton
+      <ChipButton
         title={path}
         onClick={() => {
           revealInFinder(path).catch((err: unknown) => {
             console.error(`Failed to reveal ${path}:`, err);
           });
         }}
-        className="h-6 max-w-full px-2 font-mono text-[11px] font-normal"
       >
-        <span className="truncate">{path}</span>
-      </PillButton>
+        <span className="mono">{path}</span>
+      </ChipButton>
     );
   }
   return (
-    <Pill title={path} className="font-mono text-[11px] font-normal">
-      <span className="truncate">{path}</span>
-    </Pill>
+    <Chip title={path}>
+      <span className="mono">{path}</span>
+    </Chip>
   );
 }
 
@@ -99,53 +97,53 @@ export function VerificationSection({
   if (!exercised && result === null && error === null) return null;
   const summary = summarizeVerification(result);
   return (
-    <MainSection title="Verification">
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2 text-[13px]">
-          <FlaskConical
-            aria-hidden
-            className={cn(
-              'size-3.5 shrink-0',
-              exercised ? 'text-state-review' : 'text-muted-foreground'
-            )}
-          />
+    <TaskDetailSection title="Verification" headingLevel={3}>
+      <div className={styles.body}>
+        <div className={styles.status}>
+          {/* Exercised is a success in words and its tone's ink; not exercised
+              carries no hue, only the quiet text step. */}
           <span
-            className={
-              exercised
-                ? 'text-state-review font-medium'
-                : 'text-muted-foreground font-medium'
-            }
+            className={cx(styles.exercised, exercised ? 'toneText' : undefined)}
+            data-tone={exercised ? 'success' : undefined}
           >
+            <FlaskConical size={14} strokeWidth={1.8} aria-hidden="true" />
             {exercised ? 'Exercised' : 'Not exercised'}
           </span>
           {error === null ? (
-            <span className="text-muted-foreground font-book text-[12px]">
-              · {summary.label}
-            </span>
+            <span className={styles.summaryLine}>· {summary.label}</span>
           ) : (
-            <span className="text-red font-book text-[12px]">
+            <span
+              className={cx('toneText', styles.summaryLine)}
+              data-tone="danger"
+            >
               · couldn&rsquo;t load checks
             </span>
           )}
         </div>
         {error !== null && (
-          <div className="text-red font-book text-[12px]">{error}</div>
+          <p
+            data-slot="load-error"
+            className={cx('toneText', styles.note)}
+            data-tone="danger"
+          >
+            {error}
+          </p>
         )}
         {result !== null && result.checks.length > 0 && (
-          <ul className="flex flex-col gap-1.5">
+          <ul className={styles.checks}>
             {result.checks.map((check, i) => (
               <CheckRow key={i} check={check} />
             ))}
           </ul>
         )}
         {result !== null && result.artifacts.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
+          <div className={styles.artifacts}>
             {result.artifacts.map((path) => (
-              <ArtifactPill key={path} path={path} />
+              <ArtifactChip key={path} path={path} />
             ))}
           </div>
         )}
       </div>
-    </MainSection>
+    </TaskDetailSection>
   );
 }

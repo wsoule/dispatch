@@ -62,9 +62,9 @@ describe('Composer', () => {
     render(<Composer known={KNOWN} label={label} onSend={onSend} />);
     type('hello @bogus');
     press('Enter');
-    expect(screen.getByRole('alert').textContent).toContain(
-      'No address matches @bogus'
-    );
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain('No address matches @bogus');
+    expect(alert.getAttribute('data-tone')).toBe('danger');
     expect(onSend).not.toHaveBeenCalled();
   });
 
@@ -135,6 +135,46 @@ describe('Composer', () => {
     );
     expect(box().value).toBe('');
     expect(screen.queryByText('task:t-1a2b3c')).toBeNull();
+  });
+
+  it('sends an urgent question picked from the Kind radios and the Urgent switch', async () => {
+    const onSend = mock((_state: ComposeState) => Promise.resolve(SENT));
+    render(
+      <Composer
+        known={KNOWN}
+        initialTo={['task:t-1a2b3c']}
+        label={label}
+        onSend={onSend}
+      />
+    );
+    const kinds = screen.getByRole('radiogroup', { name: 'Kind' });
+    expect(
+      Array.from(kinds.querySelectorAll('[role="radio"]')).map(
+        (radio) => radio.textContent
+      )
+    ).toEqual(['Message', 'Question', 'Notice']);
+    const question = screen.getByRole('radio', { name: 'Question' });
+    expect(question.getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(question);
+    expect(question.getAttribute('aria-checked')).toBe('true');
+    const urgent = screen.getByRole('switch', { name: 'Urgent' });
+    expect(urgent.getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(urgent);
+    expect(urgent.getAttribute('aria-checked')).toBe('true');
+    // A task wakes by default, and the switch says so.
+    expect(
+      screen
+        .getByRole('switch', { name: 'Wake if asleep' })
+        .getAttribute('aria-checked')
+    ).toBe('true');
+    type('Which cart?');
+    press('Enter');
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(onSend.mock.calls[0]?.[0]).toMatchObject({
+      kind: 'question',
+      urgent: true,
+      wake: true,
+    });
   });
 
   it('keeps one idempotency key per draft: resent unchanged after a lost response, new after an edit or a send', async () => {

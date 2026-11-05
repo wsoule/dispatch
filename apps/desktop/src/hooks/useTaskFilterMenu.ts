@@ -1,9 +1,9 @@
 import { useMemo } from 'react';
 
-import type { FilterMenuContext } from '../components/tasks/FilterMenu';
 import {
   EMPTY_TASK_FILTER_SET,
   type FilterContext,
+  type FilterPickerContext,
   type TaskFilterSet,
   taskFilterSetFromValue,
 } from '../lib/taskFilters';
@@ -13,7 +13,7 @@ interface TaskFilterMenu {
   /** What a clause reads beyond the task itself: live run states and milestone titles. */
   filterContext: FilterContext;
   /** The values the Filter menu offers, from the project's own vocabulary. */
-  menuContext: FilterMenuContext;
+  menuContext: FilterPickerContext;
   /** The menu's AI row; `undefined` without a client, which hides the row. */
   aiFilter: ((sentence: string) => Promise<TaskFilterSet>) | undefined;
 }
@@ -31,7 +31,7 @@ export function useTaskFilterMenu(data: DispatchProjectData): TaskFilterMenu {
     }),
     [data.liveRunStateByTaskId, milestoneTitleById]
   );
-  const menuContext = useMemo<FilterMenuContext>(() => {
+  const menuContext = useMemo<FilterPickerContext>(() => {
     const labels = new Set<string>();
     for (const doc of data.tasks) {
       for (const l of doc.meta.labels) labels.add(l);

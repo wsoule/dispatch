@@ -7,16 +7,12 @@ import type { ApiClient } from '@dispatch/client';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
-import { testConfig } from './fixtures.test-helper';
+import {
+  chooseOption,
+  selectTrigger,
+  testConfig,
+} from './fixtures.test-helper';
 import { PolicySection } from './PolicySection';
-
-// Base UI commits a select item on a click that began on it (a bare click is
-// treated as one that opened the list under the pointer), so press first.
-function chooseOption(name: string) {
-  const option = screen.getByRole('option', { name });
-  fireEvent.pointerDown(option);
-  fireEvent.click(option);
-}
 
 function configAt(
   rung: number,
@@ -84,7 +80,7 @@ test('gate rows show the effective mode consultPolicy derives from the rung', ()
   expect(screen.getAllByText('Waits for you')).toHaveLength(3);
 });
 
-test('a pinned gate reads as pinned and a pin change saves key-by-key', () => {
+test('a pinned gate reads as pinned and a pin change saves key-by-key', async () => {
   const saves: unknown[] = [];
   render(
     <PolicySection
@@ -94,13 +90,11 @@ test('a pinned gate reads as pinned and a pin change saves key-by-key', () => {
     />
   );
   expect(screen.getByText('Automatic, pinned')).toBeDefined();
-  fireEvent.click(screen.getByRole('combobox', { name: 'Merging override' }));
-  chooseOption('Follow level');
+  fireEvent.click(selectTrigger('Merging override'));
+  await chooseOption('Follow level');
   expect(saves).toEqual([{ policy: { gates: { merge: null } } }]);
-  fireEvent.click(
-    screen.getByRole('combobox', { name: 'Extra files override' })
-  );
-  chooseOption('Always wait');
+  fireEvent.click(selectTrigger('Extra files override'));
+  await chooseOption('Always wait');
   expect(saves).toHaveLength(2);
   expect(saves[1]).toEqual({ policy: { gates: { scope: 'block' } } });
 });
@@ -112,7 +106,9 @@ test('the irreversibility floor renders fixed rows with no control', () => {
   expect(screen.getByText(/Publishing packages/)).toBeDefined();
   // Even at the top rung the floor never gains a select: only the seven
   // policy gates have overrides.
-  expect(screen.getAllByRole('combobox')).toHaveLength(7);
+  expect(screen.getAllByRole('button', { name: / override: / })).toHaveLength(
+    7
+  );
 });
 
 test("the top stop says it accepts agents' shared memory, and memory has its own row", () => {
@@ -123,9 +119,7 @@ test("the top stop says it accepts agents' shared memory, and memory has its own
     })
   ).toBeDefined();
   expect(screen.getByText('Shared memory from agents')).toBeDefined();
-  expect(
-    screen.getByRole('combobox', { name: 'Shared memory from agents override' })
-  ).toBeDefined();
+  expect(selectTrigger('Shared memory from agents override')).toBeDefined();
 });
 
 test('the top stop covers doc edits, doc has its own row, and saving a rung never writes a doc pin', async () => {
@@ -141,9 +135,7 @@ test('the top stop covers doc edits, doc has its own row, and saving a rung neve
     name: 'Merge and accept memory and doc edits on their own',
   });
   expect(screen.getByText('Edits to accepted docs')).toBeDefined();
-  expect(
-    screen.getByRole('combobox', { name: 'Edits to accepted docs override' })
-  ).toBeDefined();
+  expect(selectTrigger('Edits to accepted docs override')).toBeDefined();
   fireEvent.click(top);
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0]).toEqual({ policy: { rung: 4 } });
@@ -207,10 +199,9 @@ test('an empty ledger explains where receipts will land', async () => {
   );
 });
 
-// The hard stops are their own group under a 13px/600 sentence-case heading,
-// never an uppercase tracked label, and the receipt's task id is sans with the
-// id tracking.
-test('the hard stops heading is 13px sentence case and receipt ids are tracked sans', async () => {
+// The hard stops are their own group under a sentence-case heading, and the
+// receipt names its task by id.
+test('the hard stops heading is sentence case and receipts name their task', async () => {
   render(
     <PolicySection
       config={configAt(2)}
@@ -219,11 +210,8 @@ test('the hard stops heading is 13px sentence case and receipt ids are tracked s
     />
   );
   const floor = screen.getByRole('heading', { level: 2, name: 'Hard stops' });
-  expect(floor.className).toContain('text-[13px]');
-  expect(floor.className).toContain('font-semibold');
-  expect(floor.className).not.toContain('uppercase');
+  expect(floor.textContent).toBe('Hard stops');
   await screen.findByText('Scope extended for run r-x');
   const id = screen.getByText('t-aaaaaa');
-  expect(id.className).toContain('tracking-(--id-tracking)');
-  expect(id.className).not.toContain('font-mono');
+  expect(id.hasAttribute('data-task-id')).toBe(true);
 });

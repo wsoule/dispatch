@@ -1,10 +1,11 @@
+import { cx } from '@dispatch/ui';
 import { useState } from 'react';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';
+import { DecisionCard } from '../gates/DecisionCard';
 import { DecideUnavailableNotice } from './DecideUnavailableNotice';
 import { Markdown } from './Markdown';
-import type { ApprovalCardOption } from '@/ui/ai/approval-card';
-import { ApprovalCard } from '@/ui/ai/approval-card';
+import styles from './ScopeRequestCard.module.css';
 
 interface ScopeRequestCardProps {
   paths: string[];
@@ -20,10 +21,10 @@ const DENY_ID = 'deny';
 const GRANT_ID = 'grant';
 
 /** An agent's scope gate: it waits on permission to edit outside its declared fence — grant
- *  or deny, no ruling text required (a grant is advisory and logged). Built on the
- *  `ui/ai/approval-card` primitive for the question/options chrome; the affected paths and the
- *  daemon-unavailable notice render as their own blocks below since the primitive has no slot
- *  for either. */
+ *  or deny, no ruling text required (a grant is advisory and logged). Built on `DecisionCard`:
+ *  the agent's reason is its Markdown detail, Deny and Grant (recommended) are its radio
+ *  cards, and the affected paths, the daemon-unavailable notice and a failed answer's error
+ *  sit under them. `data-slot="scope-request-card"` is on the card's root. */
 export function ScopeRequestCard({
   paths,
   reason,
@@ -34,14 +35,19 @@ export function ScopeRequestCard({
   const [pending, setPending] = useState<'grant' | 'deny' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | undefined>();
+  // The answer that went out, so the line says "Answered" only once it has.
+  const [sentId, setSentId] = useState<string | undefined>();
 
   async function decide(granted: boolean) {
     setPending(granted ? 'grant' : 'deny');
     setError(null);
     try {
       await onDecide(granted);
+      setSentId(granted ? GRANT_ID : DENY_ID);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      // A refused answer did not go out, so no choice is shown as made.
+      setSelectedId(undefined);
     } finally {
       setPending(null);
     }
@@ -53,7 +59,7 @@ export function ScopeRequestCard({
     void decide(id === GRANT_ID);
   }
 
-  const options: ApprovalCardOption[] = [
+  const options = [
     { id: DENY_ID, label: pending === 'deny' ? 'Denying…' : 'Deny' },
     {
       id: GRANT_ID,
@@ -63,30 +69,22 @@ export function ScopeRequestCard({
   ];
 
   return (
-    <div
+    <DecisionCard
       data-slot="scope-request-card"
-      className="animate-in fade-in-0 flex flex-col gap-2 duration-100 motion-reduce:animate-none"
+      question="The agent wants to edit outside its scope"
+      detail={<Markdown content={reason} />}
+      options={options}
+      onSelect={handleSelect}
+      selectedId={selectedId}
+      disabled={pending !== null || !availability.enabled}
+      // Disabled while the answer is in flight, yet only "Answered" once it went out.
+      answered={selectedId !== undefined && selectedId === sentId}
     >
-      <ApprovalCard
-        // Full-width in the transcript; `reason` is agent-authored text, so it renders as
-        // markdown rather than flattening to a plain string.
-        className="max-w-none"
-        question="The agent wants to edit outside its scope"
-        detail={<Markdown content={reason} />}
-        options={options}
-        onSelect={handleSelect}
-        selectedId={selectedId}
-        disabled={pending !== null || !availability.enabled}
-      />
       {/* Wrapped, never truncated: this is what the grant applies to, so a
           path the user cannot read in full is a permission they cannot judge. */}
-      <ul className="flex min-w-0 flex-col gap-0.5">
+      <ul className={styles.paths}>
         {paths.map((path) => (
-          <li
-            key={path}
-            title={path}
-            className="text-muted-foreground max-w-full min-w-0 font-mono text-[11px] break-all"
-          >
+          <li key={path} title={path} className={styles.path}>
             {path}
           </li>
         ))}
@@ -95,7 +93,15 @@ export function ScopeRequestCard({
         availability={availability}
         onRestartDaemon={onRestartDaemon}
       />
-      {error !== null && <div className="text-red text-[12px]">{error}</div>}
-    </div>
+      {error !== null && (
+        <p
+          role="alert"
+          className={cx('toneText', styles.error)}
+          data-tone="danger"
+        >
+          {error}
+        </p>
+      )}
+    </DecisionCard>
   );
 }

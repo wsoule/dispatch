@@ -749,6 +749,10 @@ describe('the daemon’s one-time import', () => {
     expect(state()).toBe('complete');
   });
 
+  // A daemon restart and a 4 s wait for the recovery mark run inside this
+  // test, so Bun's 5 s default would time it out before the wait could end
+  // and its assertions say why. A loaded runner has taken the whole test
+  // past 6 s (0.3-0.5 s idle).
   it('overflows long project notes into the owner’s personal doc, and recovers ones cut before docs, once (docs Task 18)', async () => {
     const key = projectKeyOf(root);
     expect(self().meta(`claude-import-overflow:${key}`)).toBe('done');
@@ -797,7 +801,7 @@ describe('the daemon’s one-time import', () => {
     const recovered = self().getEntry(entry.id);
     expect(recovered?.body).toMatch(/full text in doc doc-/);
     expect(recovered?.refs.some((r) => r.type === 'doc')).toBe(true);
-  });
+  }, 30_000);
 
   it('marks the recovery done only once docs answered it', async () => {
     const key = projectKeyOf(root);

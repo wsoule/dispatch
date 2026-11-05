@@ -5,6 +5,7 @@ import type {
   DocRevisionInfo,
   DocSummary,
 } from '@dispatch/client';
+import type { UiTone } from '@dispatch/ui';
 
 import type { DocBuffer } from './docBuffer';
 
@@ -31,6 +32,27 @@ export function docBadges(
     ...(doc.conflicted ? (['conflicted'] as const) : []),
     ...(doc.restored !== null ? (['restored'] as const) : []),
   ];
+}
+
+// The Chip tone a doc badge is drawn in: amber for what waits on a human (an
+// unreviewed or conflicted doc), grey for what is inactive or unfinished
+// (archived, a draft), and the neutral badge for plain facts (its scope, an
+// accepted doc, a restore the receipt log replayed). A restore is not blue:
+// blue means in progress or live, and a restored doc is neither.
+export function docBadgeTone(badge: DocBadge): UiTone {
+  switch (badge) {
+    case 'unreviewed':
+    case 'conflicted':
+      return 'warning';
+    case 'archived':
+    case 'draft':
+      return 'muted';
+    case 'restored':
+    case 'team':
+    case 'personal':
+    case 'accepted':
+      return 'default';
+  }
 }
 
 // The status moves a decider may make from here: accept a draft (again, when

@@ -442,6 +442,7 @@ export {
   writeGitAttributes,
 } from './mergeDriverSetup.js';
 export { childEnv } from './childEnv.js';
+export { exemptLoopbackFromProxy } from './loopbackProxy.js';
 export type {
   SyncSpawner,
   SyncSpawnOptions,

@@ -161,6 +161,39 @@ describe('task_save', () => {
     expect(meta.id).toMatch(/^t-[0-9a-f]{6}$/);
   });
 
+  // `assignee` takes any actor ref, not only the legacy agent|human|none
+  // triple: the daemon and the desktop assign named people and agents.
+  it('accepts a named assignee and rejects a malformed one', async () => {
+    const created = (await client.callTool({
+      name: 'task_save',
+      arguments: { title: 'Assigned', assignee: 'human:wyat' },
+    })) as ToolCallResult;
+    expect(created.isError).toBeUndefined();
+    const meta = created.structuredContent?.meta as {
+      id: string;
+      assignee: string;
+    };
+    expect(meta.assignee).toBe('human:wyat');
+
+    const updated = (await client.callTool({
+      name: 'task_save',
+      arguments: { id: meta.id, assignee: 'agent:wyat/claude' },
+    })) as ToolCallResult;
+    expect(updated.isError).toBeUndefined();
+    expect(
+      (updated.structuredContent!.meta as { assignee: string }).assignee
+    ).toBe('agent:wyat/claude');
+
+    const rejected = (await client.callTool({
+      name: 'task_save',
+      arguments: { id: meta.id, assignee: 'robot' },
+    })) as ToolCallResult;
+    expect(rejected.isError).toBe(true);
+    expect(callToolText(rejected)).toContain(
+      'invalid assignee: robot (expected an actor ref'
+    );
+  });
+
   it('creates a task with a declared write-set, then replaces it on update', async () => {
     const created = (await client.callTool({
       name: 'task_save',

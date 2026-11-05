@@ -77,6 +77,14 @@ moonx :test --affected   # only projects affected by staged/changed files
 
 Other packages and apps should expose local test scripts when relevant.
 
+Component tests in `apps/desktop` and `packages/ui` never touch the network.
+Their shared setup (`apps/desktop/test-setup.ts`, `packages/ui/test/setup.ts`)
+refuses every fetch, XHR and resource load, fails the test that made one, and
+keeps iframes from navigating, so a test that needs an answer stubs `fetch` or
+the client. After every test the setup unmounts what it rendered and resets the
+document (selection, body, storage, `<html>` attributes, timers and the clock),
+so a test can rely on starting clean in any file order.
+
 ## Snapshots
 
 Bun supports `toMatchSnapshot()`. Avoid new snapshot coverage unless it is

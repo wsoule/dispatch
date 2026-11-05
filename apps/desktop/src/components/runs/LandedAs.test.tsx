@@ -33,10 +33,33 @@ describe('LandedAs', () => {
     expect(container.textContent).toContain('Landed on origin/main');
     expect(container.textContent).toContain('a1a7606');
     expect(container.textContent).toContain('not released yet');
-    const link = screen.getByRole('link', { name: /on GitHub/ });
+    const link = screen.getByRole('link', { name: 'Open a1a7606 on GitHub' });
     expect(link.getAttribute('href')).toBe(
       'https://github.com/wsoule/dispatch/commit/a1a7606ac17dee9ae72e5f4bed208ee4a07a2fa1'
     );
+    expect(
+      container.querySelector('[data-landing]')?.getAttribute('data-landing')
+    ).toBe('on-origin');
+    // The release is a neutral chip that says whether it shipped.
+    const release = container.querySelector('[data-release]');
+    expect(release?.getAttribute('data-release')).toBe('not-yet');
+    expect(release?.getAttribute('data-tone')).toBe('default');
+  });
+
+  test('a run handed on as a pull request links it', () => {
+    render(
+      <LandedAs
+        run={run({
+          reviewAction: 'pr',
+          mergeCommit: undefined,
+          prUrl: 'https://github.com/wsoule/dispatch/pull/42',
+        })}
+        originWebUrl="https://github.com/wsoule/dispatch"
+      />
+    );
+    expect(
+      screen.getByRole('link', { name: /Pull request/ }).getAttribute('href')
+    ).toBe('https://github.com/wsoule/dispatch/pull/42');
   });
 
   test('a merge that never reached origin says so and offers a one-click retry', async () => {
@@ -55,6 +78,10 @@ describe('LandedAs', () => {
       'Merged locally — not on GitHub yet'
     );
     expect(container.textContent).not.toContain('Landed');
+    // The owed push is said in the warning tone's words, not by hue alone.
+    expect(
+      screen.getByText('Merged locally — not on GitHub yet').dataset['tone']
+    ).toBe('warning');
     // No GitHub link for a commit GitHub does not have.
     expect(screen.queryByRole('link')).toBeNull();
     const retry = screen.getByRole('button', { name: /Push to origin/ });

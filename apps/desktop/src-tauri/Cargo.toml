@@ -43,6 +43,9 @@ tokio = { version = "1", features = [
   "time",
   "fs",
   "macros",
+  # loopback.rs's tests serve fake daemons and proxies; reqwest and tauri enable both anyway.
+  "net",
+  "io-util",
 ] }
 dirs = "5"
 similar = "2"

@@ -9,7 +9,6 @@
     "skipLibCheck": true,
 
     "paths": {
-      "@/ui/*": ["../../packages/ui/src/*"],
       "@/*": ["./src/*"]
     },
 

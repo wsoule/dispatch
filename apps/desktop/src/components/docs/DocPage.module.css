@@ -1,0 +1,168 @@
+/* One doc (DocPage.tsx): a toolbar (slug, badges, the save line and the
+   actions) over the strips that report on it (proposals, the published
+   revision, a problem, notes, the review confirmation, a conflict), then
+   the body: the editor, history or merge beside the links rail. Status
+   words take their colour from the global .toneText with data-tone; the
+   slug and repo paths are Geist Mono (machine-read strings). */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.loading {
+  padding: var(--s-4);
+}
+
+.toolbar {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 44px;
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--divider);
+}
+
+.slug,
+.path {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+/* "Saved · rev 3", "Unsaved", or a save failure in the danger ink. */
+.saveLine {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+/* A one-line report under the toolbar, ruled off from what follows. */
+.strip {
+  flex-shrink: 0;
+  margin: 0;
+  padding: var(--s-1) var(--s-4);
+  border-bottom: 1px solid var(--divider);
+  font-size: var(--fs-xs);
+  line-height: var(--lh);
+  color: var(--text);
+}
+
+.quiet {
+  color: var(--text-2);
+}
+
+/* The accepted doc's open proposals, each with its gate card. */
+.proposals {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: var(--s-2);
+  max-height: 50vh;
+  padding: var(--s-2) var(--s-4);
+  overflow: auto;
+  border-bottom: 1px solid var(--divider);
+  font-size: var(--fs-xs);
+}
+
+.proposalsLead {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.proposalList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.proposal {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-1);
+}
+
+.proposalLine {
+  color: var(--text-2);
+}
+
+.proposalId {
+  font-family: var(--font-mono);
+}
+
+/* What Mark reviewed would cover, with its diff, before it acts. */
+.confirm {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--divider);
+  font-size: var(--fs-xs);
+}
+
+.confirmLead {
+  margin: 0;
+}
+
+.confirmList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.confirmDiff {
+  display: flex;
+  flex-direction: column;
+  height: 256px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+
+.confirmActions {
+  display: flex;
+  gap: var(--s-1);
+}
+
+/* The conflict banner: the library Notice, inset from the page edges. */
+.notice {
+  flex-shrink: 0;
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--divider);
+}
+
+.body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The editor's slot: hidden (the hidden attribute), not unmounted, under
+   History and Merge. */
+.editor {
+  height: 100%;
+}

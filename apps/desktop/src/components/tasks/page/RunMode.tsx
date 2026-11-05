@@ -1,3 +1,4 @@
+import { Button, EmptyState, SkeletonRows } from '@dispatch/ui';
 import { SquareTerminal } from 'lucide-react';
 import { useMemo } from 'react';
 
@@ -12,11 +13,9 @@ import {
 } from '../../../lib/taskAsks';
 import { RunLogView } from '../../runs/RunLogView';
 import { useShellActions } from '../../shell/ShellActionsContext';
-import { TabSkeleton } from '../TabSkeleton';
 import type { TaskPageModel } from './pageModel';
+import styles from './RunMode.module.css';
 import { FilesTouched, RunStrip } from './RunStrip';
-import { Button } from '@/ui/button';
-import { EmptyState } from '@/ui/chrome';
 
 // Shared so a run with nothing open keeps one prop identity across renders.
 const NO_QUESTIONS: RunQuestion[] = [];
@@ -56,13 +55,19 @@ export function RunMode({ page }: { page: TaskPageModel }) {
 
   if (run === undefined) {
     return (
-      <EmptyState
-        icon={SquareTerminal}
-        heading="No agent has worked this yet"
-        description="Dispatch it from the spec, and its run streams in here."
-        className="h-full justify-center"
-        primary={{ label: 'Open spec', onClick: () => page.selectMode('spec') }}
-      />
+      <div className={styles.fill}>
+        <EmptyState
+          icon={<SquareTerminal size={22} strokeWidth={1.8} />}
+          label="No agent has worked this yet"
+          action={
+            <Button size="sm" onClick={() => page.selectMode('spec')}>
+              Open spec
+            </Button>
+          }
+        >
+          Dispatch it from the spec, and its run streams in here.
+        </EmptyState>
+      </div>
     );
   }
 
@@ -72,8 +77,8 @@ export function RunMode({ page }: { page: TaskPageModel }) {
   const stop = deriveStopControl(meta);
 
   return (
-    <div data-slot="run-mode" className="flex h-full min-h-0 flex-col gap-2">
-      <div className="flex shrink-0 flex-col gap-1.5">
+    <div data-slot="run-mode" className={styles.root}>
+      <div className={styles.head}>
         <RunStrip
           run={meta}
           runs={page.allRuns}
@@ -90,16 +95,19 @@ export function RunMode({ page }: { page: TaskPageModel }) {
                   {stop.stopLabel}
                 </Button>
                 <Button
-                  variant="ghost"
+                  variant="quiet"
                   size="sm"
-                  className="hover:text-state-failed"
                   onClick={() => void project.handleCancelRun(meta.id)}
                 >
                   Cancel
                 </Button>
               </>
             ) : terminal && meta.state === 'finished' ? (
-              <Button size="sm" onClick={() => page.selectMode('review')}>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => page.selectMode('review')}
+              >
                 Review
               </Button>
             ) : undefined
@@ -108,9 +116,11 @@ export function RunMode({ page }: { page: TaskPageModel }) {
         <FilesTouched files={meta.claims ?? []} />
       </div>
       {detail === undefined || detail.meta.id !== run.id ? (
-        <TabSkeleton />
+        <div className={styles.log}>
+          <SkeletonRows rows={3} label="Loading the run" />
+        </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className={styles.log}>
           <RunLogView
             meta={detail.meta}
             entries={detail.entries}

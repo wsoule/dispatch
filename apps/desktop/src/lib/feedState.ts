@@ -3,37 +3,135 @@ import type {
   MergeQueueEntryState,
   RunMeta,
 } from '@dispatch/client';
+import type { UiTone } from '@dispatch/ui';
 
 import { deriveRunDisposition } from './runState';
-import type { FeedState } from '@/ui/lib/feedState';
-import { feedTier } from '@/ui/lib/feedState';
 
-// The vocabulary (states, tiers, labels, order, TaskRow mapping) lives in
-// @dispatch/ui (packages/ui) with the components keyed on it. This module
-// keeps the app-domain half: deriving a state from runs and merge-queue
-// entries. The re-export keeps `@/lib/feedState` the one import path app code
-// needs.
-export {
-  FEED_STATE_LABEL,
-  FEED_STATE_ORDER,
-  feedStateToTaskRowState,
-  isInFlightState,
-  isUrgentState,
-  type FeedState,
-} from '@/ui/lib/feedState';
+/**
+ * The one vocabulary every dense surface in the app groups and colors by, and the
+ * app-domain derivation that turns runs and merge-queue entries into it. Both halves
+ * live here now, and `@/lib/feedState` is the one import path app code uses.
+ *
+ * The organizing rule: a state names whose move it is AND what the move is.
+ * The tone comes from the tier (`feedStateTone`: warning = your move, danger =
+ * broken, info = the machine's move, muted = resting), except where the
+ * app-wide status table fixes a state's hue: `review` is green (the agent's
+ * work succeeded and waits on a person) and `blocked` is amber like every other
+ * blocked surface. The glyph names the specific move — see
+ * `components/status/StateMark`.
+ */
 
-// A group header's tint: the tier's colour, the same hue its rows' glyphs carry.
-const TIER_TINT = {
-  you: 'var(--state-waiting-fg)',
-  broken: 'var(--state-failed-fg)',
-  machine: 'var(--state-working-fg)',
-  resting: 'var(--state-ready-fg)',
-} as const;
+export type FeedState =
+  // Your move — each one is a different ask with a different cost.
+  | 'answer' // an agent asked a free-text question
+  | 'approve' // an agent wants a tool approval — one click
+  | 'review' // a finished run's diff wants human eyes
+  | 'ruling' // a capped fix loop needs findings adjudicated
+  | 'unblock' // the merge queue is held on a dirty checkout
+  // Broken — nothing proceeds until a human retries or reads the error.
+  | 'failed'
+  // The machine's move — watchable, not actionable.
+  | 'working'
+  | 'fixing' // a fix-loop round is implementing
+  | 'checking' // review/verify agents are running
+  | 'landing'
+  // Resting — tasks that have not started.
+  | 'ready'
+  | 'blocked';
 
-/** The status colour a feed state's `GroupHeader` is tinted with — shared by the Control
- * room and the Inbox's group-by-kind headers so the same state never reads two ways. */
-export function tintForState(state: FeedState): string {
-  return TIER_TINT[feedTier(state)];
+/** Whose move a state is — the hue carrier. */
+type FeedTier = 'you' | 'broken' | 'machine' | 'resting';
+
+const TIER: Record<FeedState, FeedTier> = {
+  answer: 'you',
+  approve: 'you',
+  review: 'you',
+  ruling: 'you',
+  unblock: 'you',
+  failed: 'broken',
+  working: 'machine',
+  fixing: 'machine',
+  checking: 'machine',
+  landing: 'machine',
+  ready: 'resting',
+  blocked: 'resting',
+};
+
+function feedTier(state: FeedState): FeedTier {
+  return TIER[state];
+}
+
+/** Human labels. Verbs where the user is the blocker, because the label is the ask. */
+export const FEED_STATE_LABEL: Record<FeedState, string> = {
+  answer: 'Answer',
+  approve: 'Approve',
+  review: 'Review',
+  ruling: 'Ruling',
+  unblock: 'Unblock',
+  failed: 'Failed',
+  working: 'Working',
+  fixing: 'Fixing',
+  checking: 'AI review',
+  landing: 'Landing',
+  ready: 'Ready',
+  blocked: 'Blocked',
+};
+
+/**
+ * The order the Control room's feed groups render in, and the order everything else should
+ * sort by when it needs one. Fixed, not data-driven: what needs a human comes first, and it
+ * must not reshuffle as counts change or rows would move under the cursor mid-click.
+ */
+export const FEED_STATE_ORDER: readonly FeedState[] = [
+  'answer',
+  'approve',
+  'review',
+  'ruling',
+  'unblock',
+  'failed',
+  'working',
+  'fixing',
+  'checking',
+  'landing',
+  'ready',
+  'blocked',
+];
+
+/** States where the user is the thing standing in the way, so the row earns emphasis. */
+export function isUrgentState(state: FeedState): boolean {
+  const tier = feedTier(state);
+  return tier === 'you' || tier === 'broken';
+}
+
+/** States with something actively moving, which is what earns the pulsing mark. */
+export function isInFlightState(state: FeedState): boolean {
+  return feedTier(state) === 'machine';
+}
+
+const TIER_TONE: Record<FeedTier, UiTone> = {
+  you: 'warning',
+  broken: 'danger',
+  machine: 'info',
+  resting: 'muted',
+};
+
+/** The states whose hue the app-wide status table (AGENTS.md) fixes whatever their tier.
+ * `review` is a finished run or draft whose work succeeded and now waits on a person, so it
+ * is green "succeeded" (plan Q6.2), not the amber of an ask. `blocked` is amber wherever
+ * it shows, so a task waiting on a dependency is amber too. Both keep their tier for
+ * urgency (`isUrgentState`) and grouping: review is still your move, blocked still resting. */
+const TABLE_TONE: Partial<Record<FeedState, UiTone>> = {
+  review: 'success',
+  blocked: 'warning',
+};
+
+/** The status tone a state is drawn in (`data-tone`): the table's hue for `review` and
+ * `blocked` (`TABLE_TONE`), else its tier's: amber means your move whatever the move is,
+ * red broken, blue the machine's move and grey resting. The glyph, not the hue, tells two
+ * states of one tone apart. Attention ("needs your input") keeps amber where it is drawn
+ * as attention, not as a state: Needs you counts and chips stay warning. */
+export function feedStateTone(state: FeedState): UiTone {
+  return TABLE_TONE[state] ?? TIER_TONE[feedTier(state)];
 }
 
 /** Queue states that have come to rest — the entry is out of the pipeline either way. */

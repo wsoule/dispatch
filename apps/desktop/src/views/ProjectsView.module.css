@@ -1,0 +1,113 @@
+/* Layout of the Projects page (views/ProjectsView.tsx): a full-height
+   column that scrolls inside itself, with the page head (the back chip,
+   title, receipts and New project), the toolbar, then one panel per
+   initiative under its section title, and the cell contents (milestone name
+   with its mark, the toned due line, the end cell's ghost icon buttons).
+   Colours and type come from @dispatch/ui's components and tokens; this
+   sheet only places them. */
+
+.root {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-height: 0;
+  height: 100%;
+  padding: var(--s-4) var(--s-4) var(--s-6);
+  overflow: auto;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-1) var(--s-4);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-heading);
+}
+
+/* The receipts line: "9 projects in 3 initiatives · 2 at risk". */
+.receipts {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.headActions {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+}
+
+/* The toolbar's count: "4 of 9 projects" while narrowed. */
+.count {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* One initiative: its section title over its register panel. */
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.milestone {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.milestoneName {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A due date with a status tone (data-tone: danger overdue, warning due
+   soon or undated) in the tone's text colour. */
+.toneText {
+  color: var(--tone-ink);
+}
+
+.dash {
+  color: var(--text-3);
+}
+
+/* A value printed as quiet meta, not a badge ("Nothing to do"): the neutral
+   secondary text, a step above the muted cells' --text-3. */
+.plainValue {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 16px;
+  color: var(--text-2);
+}
+
+/* End-cell buttons sit above the row's stretched link (the register lifts
+   links inside cells). */
+.links {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 2px;
+  margin-right: -6px;
+}
+
+/* Once the register stacks (stackWithin 900), the end cell starts at the
+   left, its icon buttons' glyphs in line with the other cells' text. */
+@container register (width < 900px) {
+  .links {
+    justify-content: flex-start;
+    margin: 0 0 0 -6px;
+  }
+}

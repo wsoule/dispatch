@@ -9,6 +9,7 @@ import {
   DEFAULT_NOTIFICATIONS,
   DEFAULT_REPO_DIGEST,
 } from '@dispatch-foo/core/browser';
+import { act, fireEvent, screen } from '@testing-library/react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 
@@ -154,4 +155,40 @@ export function dataWith(
       Promise.resolve({ started: true, candidates: 0 }),
     ...rest,
   } as unknown as DispatchProjectData;
+}
+
+type RoleQueries = Pick<typeof screen, 'getByRole'>;
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** A settings Select's trigger by the setting's name: the button reads "Name" while
+ *  empty and "Name: Value" once chosen. */
+export function selectTrigger(
+  name: string,
+  root: RoleQueries = screen
+): HTMLElement {
+  return root.getByRole('button', {
+    name: new RegExp(`^${escapeRegExp(name)}(: |$)`),
+  });
+}
+
+/** Picks an option in the open Select (or picker) list. The pick saves, and
+ *  the save settles a microtask later (the picker leaves its pending state),
+ *  so the act waits for it. */
+export async function chooseOption(name: string | RegExp): Promise<void> {
+  await act(async () => {
+    fireEvent.click(screen.getByRole('option', { name }));
+    await Promise.resolve();
+  });
+}
+
+/** Elements printing `text` that a viewer can see: a plain text query also finds copies
+ *  inside a `hidden` subtree (a folded Disclosure's kept panel, a hidden tab), which this
+ *  filters out. The Tooltip renders its tip only while shown, so it adds none. */
+export function visibleText(text: string): HTMLElement[] {
+  return screen
+    .queryAllByText(text)
+    .filter((el) => el.closest('[hidden]') === null);
 }

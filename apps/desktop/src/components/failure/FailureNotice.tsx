@@ -1,10 +1,11 @@
 import { explainFailure } from '@dispatch-foo/core/browser';
+import { Button, cx, Disclosure, Notice } from '@dispatch/ui';
 import { CircleAlert } from 'lucide-react';
 import { useState } from 'react';
 
-import { DetailsDisclosure } from '../setup/DetailsDisclosure';
+import { RawText } from '../gr8r/RawText';
 import { useOptionalShellActions } from '../shell/ShellActionsContext';
-import { Button } from '@/ui/button';
+import styles from './FailureNotice.module.css';
 
 /** What "Ask the agent to fix it" sends: the failure verbatim and what to do about it. */
 export function askAgentToFix(error: string): string {
@@ -22,7 +23,8 @@ interface FailureNoticeProps {
 
 /**
  * A failure as one plain sentence and the fix that applies: Settings → Setup for a
- * missing tool or a sign-in, otherwise Try again and Ask the agent to fix it.
+ * missing tool or a sign-in, otherwise Try again and Ask the agent to fix it. It is the
+ * library's danger Notice (role alert), with the raw error behind a Details fold.
  */
 export function FailureNotice({
   error,
@@ -60,8 +62,8 @@ export function FailureNotice({
   const actions = toSetup ? (
     shell !== null && (
       <Button
-        size="xs"
-        variant="outline"
+        size="sm"
+        variant="secondary"
         onClick={() => shell.setGlobalView('settings', { page: 'setup' })}
       >
         Fix in Settings → Setup
@@ -71,8 +73,8 @@ export function FailureNotice({
     <>
       {onRetry !== undefined && (
         <Button
-          size="xs"
-          variant="outline"
+          size="sm"
+          variant="secondary"
           disabled={busy}
           onClick={() => void run(onRetry)}
         >
@@ -81,8 +83,8 @@ export function FailureNotice({
       )}
       {onAskAgent !== undefined && (
         <Button
-          size="xs"
-          variant="ghost"
+          size="sm"
+          variant="quiet"
           disabled={busy}
           onClick={() => void run(onAskAgent)}
         >
@@ -93,25 +95,31 @@ export function FailureNotice({
   );
 
   return (
-    <div
-      role="alert"
-      data-slot="failure-notice"
-      className="bg-state-failed-surface rounded-card flex flex-col gap-2 self-stretch px-3 py-2 text-[13px]"
-    >
-      <div className="text-state-failed flex items-start gap-2">
-        <CircleAlert
-          aria-hidden
-          className="size-3.5 shrink-0 translate-y-0.5"
-        />
-        <span>{sentence}</span>
+    <Notice tone="danger" role="alert" data-slot="failure-notice">
+      <div className={styles.content}>
+        <p className={styles.sentence}>
+          <CircleAlert
+            aria-hidden="true"
+            className={styles.icon}
+            size={14}
+            strokeWidth={1.8}
+          />
+          <span>{sentence}</span>
+        </p>
+        <div className={styles.actions}>{actions}</div>
+        {actionError !== null && (
+          <p className={cx('toneText', styles.actionError)} data-tone="danger">
+            {actionError}
+          </p>
+        )}
+        {showDetails && (
+          <div className={styles.details}>
+            <Disclosure summary="Details">
+              <RawText className={styles.raw}>{error}</RawText>
+            </Disclosure>
+          </div>
+        )}
       </div>
-      <div className="flex flex-wrap items-center gap-1.5 empty:hidden">
-        {actions}
-      </div>
-      {actionError !== null && (
-        <p className="text-state-failed text-[12px]">{actionError}</p>
-      )}
-      {showDetails && <DetailsDisclosure text={error} />}
-    </div>
+    </Notice>
   );
 }

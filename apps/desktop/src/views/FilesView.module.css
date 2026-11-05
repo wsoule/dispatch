@@ -1,0 +1,95 @@
+/* The Files page (views/FilesView.tsx): the page head over a 256px tree
+   aside beside the editor column (the textarea, the preview, an error or
+   the empty state). The aside and the editor scroll on their own; the head
+   stays put. On a phone the aside stacks above the editor. */
+
+.view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.head {
+  flex: none;
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--divider);
+}
+
+/* The open path and the run id: machine-read strings, so mono. */
+.mono {
+  font-family: var(--font-mono);
+}
+
+.body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.aside {
+  flex: none;
+  width: 256px;
+  min-height: 0;
+  border-right: 1px solid var(--divider);
+}
+
+.editor {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.notice {
+  padding: var(--s-3);
+}
+
+.empty {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s-4);
+}
+
+/* The editor itself: a plain textarea in mono. The ring is inset so it
+   stays inside the pane rather than under the aside's edge. */
+.text {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: var(--s-3) var(--s-4);
+  border: 0;
+  resize: none;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+}
+
+.text:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.preview {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+@media (width <= 640px) {
+  .body {
+    flex-direction: column;
+  }
+
+  .aside {
+    width: auto;
+    max-height: 40%;
+    border-right: 0;
+    border-bottom: 1px solid var(--divider);
+  }
+}

@@ -1,0 +1,109 @@
+/* Layout of the Graph page (views/GraphView.tsx): a full-height column that
+   scrolls inside itself, with the page head (trail, title, receipts, quiet
+   notices) and the blocks under it 12px apart (the section title over the
+   graph panel, the legend's key rows, the Mermaid toggle, or the too-large
+   notice and its register). Colours and type come from @dispatch/ui's
+   components and tokens; this sheet only places them. */
+
+.root {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-height: 0;
+  height: 100%;
+  padding: var(--s-4) var(--s-4) var(--s-6);
+  overflow: auto;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-heading);
+}
+
+/* The receipts line: "8 milestones in 6 projects; 3 arrows, 1 on a risk
+   chain. Select a milestone to see its issues." */
+.receipts {
+  max-width: 96ch;
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The drill-up trail above the title (Workspace / project / milestone); it
+   keeps to one line and shrinks the earlier crumbs first. */
+.trail {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Quiet one-line notes under the receipts: what this level cannot place, a
+   closed or cut chain. */
+.notice {
+  max-width: 96ch;
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+  color: var(--text-2);
+}
+
+/* The blocks of the page, each its own panel (or quiet rows), 12px apart;
+   the section title sits right above the graph panel. */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+/* In the graph panel's toolbar the level tabs drop their own rule (the
+   toolbar draws one under them); the current tab keeps its underline. The
+   class is doubled to outrank NavTabs' own rule for its bar. */
+.toolbarTabs.toolbarTabs > ul {
+  border-bottom-color: transparent;
+}
+
+/* The highlight switch (Status / Risk / Critical path) after the level tabs
+   in the canvas toolbar. */
+.highlightSwitch {
+  display: flex;
+  min-width: 0;
+}
+
+/* Every highlight's legend stacked in one grid cell under the drawing, only
+   the current one shown: the cell keeps the tallest legend's height, so
+   switching the highlight never moves what follows it. */
+.legends {
+  display: grid;
+  padding: 0 2px;
+}
+
+.legendSlot {
+  display: flex;
+  flex-direction: column;
+  grid-area: 1 / 1;
+  min-width: 0;
+  visibility: hidden;
+}
+
+.legendSlot[data-shown] {
+  visibility: visible;
+}
+
+/* The Mermaid toggle and, while it is pressed, the Copy Mermaid panel. */
+.mermaid {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-2);
+}

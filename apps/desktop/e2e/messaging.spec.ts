@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import { type IsolatedDaemon, startIsolatedDaemon } from './isolatedDaemon';
 import { APP_TOKEN } from './paths';
+import { openDestination } from './shell';
 
 // Messaging refuses the shared agent token, so the daemon is driven with the app token.
 const APP = { authorization: `Bearer ${APP_TOKEN}` };
@@ -99,7 +100,7 @@ test.describe('messaging end to end', () => {
     expect(asked.status()).toBe(201);
 
     await page.goto(requireDaemon().appUrl);
-    await page.getByTestId('two-views-threads').click();
+    await openDestination(page, 'Threads');
     // Scoped to this run, among the fixture's own open questions.
     const question = page
       .getByRole('group', { name: 'Needs you', exact: true })

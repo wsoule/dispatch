@@ -1,8 +1,10 @@
+import { Button, EmptyState } from '@dispatch/ui';
 import { OctagonAlert } from 'lucide-react';
 import { Component, type ErrorInfo, Fragment, type ReactNode } from 'react';
 
+import { RawDetails } from '../gr8r/RawText';
+import styles from './ErrorBoundary.module.css';
 import { errorDetails, isStaleChunkError } from './errorBoundaryUtils';
-import { Button } from '@/ui/button';
 
 interface ErrorBoundaryProps {
   /** Human-readable name for the crashed view, used in the fallback's message — e.g. "the
@@ -63,47 +65,59 @@ export class ErrorBoundary extends Component<
     }
 
     const staleChunk = isStaleChunkError(error.message);
+    const label = this.props.label ?? 'this view';
 
+    // The fallback: the library EmptyState with a danger-toned OctagonAlert, the sentence
+    // naming what failed and the reassurance under it, "Try again", "Reload app" and "Copy
+    // error details" (the name, message and stack for a bug report), the stale-module hint
+    // when a stale chunk threw, and the thrown message in the shared mono well behind
+    // "Details" (RawDetails).
+    // role="alert" so a crash that replaces a view is announced.
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-        <OctagonAlert className="text-destructive size-5" />
-        <p className="text-foreground max-w-sm text-[13px]">
-          Dispatch couldn&apos;t display {this.props.label ?? 'this view'}.
-        </p>
-        <p className="text-muted-foreground max-w-sm text-[12px]">
+      <div className={styles.root} role="alert">
+        <EmptyState
+          icon={
+            <span className={styles.icon} data-tone="danger">
+              <OctagonAlert size={22} strokeWidth={1.8} aria-hidden="true" />
+            </span>
+          }
+          label={`Dispatch couldn't display ${label}.`}
+          action={
+            <div className={styles.actions}>
+              <div className={styles.buttons}>
+                <Button variant="secondary" size="sm" onClick={this.reset}>
+                  Try again
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => window.location.reload()}
+                >
+                  Reload app
+                </Button>
+                <Button
+                  variant="quiet"
+                  size="sm"
+                  onClick={() =>
+                    void navigator.clipboard?.writeText(errorDetails(error))
+                  }
+                >
+                  Copy error details
+                </Button>
+              </div>
+              {staleChunk && (
+                <p className={styles.hint}>
+                  A stale module was requested — reloading usually fixes this
+                  after an update.
+                </p>
+              )}
+              <RawDetails text={error.message} />
+            </div>
+          }
+        >
           Your runs and tasks are unaffected. Try again, or reload the app if it
           keeps happening.
-        </p>
-        <pre className="text-muted-foreground bg-secondary/50 max-h-48 max-w-lg overflow-auto rounded-md p-3 text-left font-mono text-[11px] whitespace-pre-wrap">
-          {error.message}
-        </pre>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={this.reset}>
-            Try again
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => window.location.reload()}
-          >
-            Reload app
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() =>
-              void navigator.clipboard?.writeText(errorDetails(error))
-            }
-          >
-            Copy error details
-          </Button>
-        </div>
-        {staleChunk && (
-          <p className="text-muted-foreground/70 max-w-sm text-[11px]">
-            A stale module was requested — reloading usually fixes this after an
-            update.
-          </p>
-        )}
+        </EmptyState>
       </div>
     );
   }

@@ -28,6 +28,56 @@ holds what a user upgrading needs to know.
 
 ### Changed
 
+- **The desktop app has one look.** Every view uses the same design system, with
+  warm neutral surfaces, one purple accent for selection and focus, and status
+  colours that always mean the same thing (red failed, amber waiting on you or
+  blocked, green review and succeeded, blue working, grey resting).
+  - A sidebar lists where you can go: Overseer, Issues, Needs you, Timeline,
+    Graph, Threads, Docs, Runs and Settings, with your projects below. The
+    project switcher is the sidebar's top row, and ⌘K opens the command menu.
+  - Issues is a grouped list you can filter, sort, select from and edit in
+    place, with the Kanban board as its other mode. Clicking a task, or pressing
+    Space, opens it in a slide-over beside the list; Enter or `o` opens its full
+    page, and Escape brings you back to the row you came from.
+  - Timeline draws projects and milestones as a Gantt chart, Graph draws the
+    dependencies between tasks, and the Projects register lists every project
+    with its lead, progress and next milestone.
+  - Live opens from Runs and counts as part of it, so Escape and the "Runs" chip
+    take you back there.
+  - Live's and Flight Plan's header strips use shorter labels and notes, so more
+    of their cells fit beside the header's buttons; hover a cell for more
+    detail. While a fan-out runs or is paused, Flight Plan's Running cell shows
+    the agent slots in use ("2/4") with the queued and landed counts in its
+    hint, the ETA and the critical path come right after it, and the fan-out's
+    buttons are icons that say what they do when you hover or focus them, so
+    every cell fits beside them.
+  - A review diff set to split, of a live run or a settled one, shows unified
+    when its column is narrower than 980px, and goes back to split once the
+    column is wide enough. An agent finding's title wraps instead of being cut
+    off.
+  - Settings opens as a page in the main column (⌘, and Escape still work).
+  - The sidebar flips the theme between light and dark, and Settings → General
+    also offers follow-the-system. The desktop app keeps the choice for every
+    project; in a browser opened on a daemon (`dispatch ui`), each daemon port
+    keeps its own, so another port starts from the system theme until you choose
+    again. The app window's native parts (its menus, the background shown before
+    the page draws) follow the choice too, from the first frame of a launch.
+  - Quick open over the project's files is ⌘P on macOS and Ctrl+P elsewhere. On
+    macOS, Ctrl+P keeps its text meaning (previous line) in every text field.
+- **Download in the Files view saves the file.** In the desktop app the file
+  goes straight to your Downloads folder, and the view says where it went with a
+  Reveal in Finder button; before, the app silently dropped the download. In a
+  browser opened on a daemon, the browser downloads the file itself at any size,
+  instead of the page reading the whole file into memory first. Update the
+  daemon to get this; with an older daemon a browser falls back to the in-memory
+  read.
+- **Label colours, the license, doc bodies and the A2A listener save again from
+  the desktop app.** The daemon now accepts the PUT requests the app sends for
+  them; before, the webview dropped each one before it reached the daemon, so
+  the change silently did not stick. Update the daemon to get this.
+- **A milestone fan-out says which tasks a teammate holds.** The dispatch dialog
+  marks them Teammate instead of "Cannot start", or instead of counting them as
+  tasks it would start.
 - **A CLI agent's output reads as one text in its run chat.** Gemini, Qwen,
   Cursor, opencode, Crush, Goose, Aider and any agent you set up with
   `executors.<name>.command` print their answer in pieces, and the chat used to

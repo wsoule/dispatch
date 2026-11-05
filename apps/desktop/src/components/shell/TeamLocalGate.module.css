@@ -1,0 +1,9 @@
+/* The team-local gate while a stored session is re-checked: one spinner, centred across
+   GateFrame's content column and held well clear of its top row. */
+.checking {
+  display: grid;
+  place-items: center;
+  min-height: 60dvh;
+  padding: var(--s-8) var(--s-4);
+  color: var(--text-3);
+}

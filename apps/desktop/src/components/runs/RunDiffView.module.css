@@ -1,0 +1,49 @@
+/* RunDiffView (RunDiffView.tsx): a 14rem changed-files column beside the diff. Both columns
+   are framed cards on the soft border; the grid fills its flex pane (height 100% with
+   min-height 0) so each column scrolls inside it rather than growing the page. */
+
+.grid {
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr);
+  gap: var(--s-3);
+  height: 100%;
+  min-height: 0;
+}
+
+/* The file tree's column scrolls on its own. */
+.treeColumn {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+/* The diff's column is a flex column that clips, never scrolls: DiffSurface's CodeView must
+   stay the one scroller (it reads its own scrollTop to window its rows). */
+.diffColumn {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+/* @pierre/trees' FileTree fills its column. */
+.tree {
+  width: 100%;
+  height: 100%;
+}
+
+/* The tree's "Changed files" header row. */
+.treeHeader {
+  display: flex;
+  align-items: center;
+  height: var(--h-lg);
+  padding: 0 var(--s-3);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+}

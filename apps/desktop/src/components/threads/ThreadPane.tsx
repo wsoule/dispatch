@@ -18,6 +18,7 @@ import { replyPlan, threadOpenIds } from '../../lib/threadSources';
 import type { MessageRowProps } from './MessageRow';
 import { MessageRow } from './MessageRow';
 import { type OverseerVoice, ReplyBox } from './ReplyBox';
+import styles from './ThreadPane.module.css';
 
 // How long a message a link opened the thread at stays marked.
 const LINKED_MARK_MS = 2000;
@@ -57,7 +58,8 @@ export interface ThreadPaneProps {
   /** The Assistant is mid-turn or taking a message, so it would refuse another. */
   overseerBusy: boolean;
   onOpenOverseer: () => void;
-  /** How the reply box names the Overseer: "the Assistant", or "your agent" in Two views. */
+  /** How the reply box names the Overseer: "the Assistant" (the default, the Threads
+   * page), or "your agent" (the thread peek). */
   overseerVoice?: OverseerVoice;
 }
 
@@ -98,14 +100,14 @@ export function ThreadPane(props: ThreadPaneProps) {
   }, [linked]);
   const marked = linked !== faded ? linked : null;
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className={styles.pane}>
       <div
         ref={scrollRef}
         role="log"
         aria-label="Messages"
-        className="min-h-0 flex-1 overflow-y-auto"
+        className={styles.log}
       >
-        <div ref={contentRef} className="flex flex-col gap-3 p-3">
+        <div ref={contentRef} className={styles.messages}>
           {messages.map((message) => (
             <MessageRow
               key={message.id}
@@ -127,7 +129,7 @@ export function ThreadPane(props: ThreadPaneProps) {
           ))}
         </div>
       </div>
-      <div className="border-border border-t-[0.5px] p-2">
+      <div className={styles.reply}>
         <ReplyBox
           {...props}
           openIds={openIds}

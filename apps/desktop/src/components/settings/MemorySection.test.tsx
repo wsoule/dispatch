@@ -16,7 +16,12 @@ import {
 import { describe, expect, it, mock } from 'bun:test';
 
 import { health, report } from '../../lib/memory.test-helper';
-import { dataWith, testConfig } from './fixtures.test-helper';
+import {
+  chooseOption,
+  dataWith,
+  selectTrigger,
+  testConfig,
+} from './fixtures.test-helper';
 import { MemorySection } from './MemorySection';
 
 type Identity = Awaited<ReturnType<ApiClient['memoryIdentity']>>;
@@ -98,13 +103,6 @@ function renderSection(
     </QueryClientProvider>
   );
   return saved;
-}
-
-// Base UI commits a select item on a click that began on it, so press first.
-function chooseOption(name: string) {
-  const option = screen.getByRole('option', { name });
-  fireEvent.pointerDown(option);
-  fireEvent.click(option);
 }
 
 describe('MemorySection', () => {
@@ -321,6 +319,7 @@ describe('MemorySection', () => {
     expect(screen.getByText('dispatch')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Get a link code' }));
     expect(await screen.findByText('k7m2-q9xd')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Copy link code' })).toBeTruthy();
     expect(client.startMemoryLink).toHaveBeenCalledWith();
   });
 
@@ -383,10 +382,9 @@ describe('MemorySection', () => {
   it('writes claudeAutoMemory and indexTokens through the config patch', async () => {
     const saved = renderSection(memoryClient());
     await screen.findByText('15 entries · 2 open proposals · full-text search');
-    fireEvent.click(
-      screen.getByRole('combobox', { name: 'Claude’s memory in runs' })
-    );
-    chooseOption('Export to Claude');
+    fireEvent.click(selectTrigger('Claude’s memory in runs'));
+    // The default is Export; picking the value already shown saves nothing.
+    await chooseOption('Off');
     const tokens = screen.getByLabelText('Index budget');
     expect((tokens as HTMLInputElement).value).toBe('1000');
     fireEvent.change(tokens, { target: { value: '1500' } });
@@ -394,7 +392,7 @@ describe('MemorySection', () => {
     fireEvent.change(tokens, { target: { value: '9000' } });
     fireEvent.blur(tokens);
     expect(saved).toEqual([
-      { memory: { claudeAutoMemory: 'export' } },
+      { memory: { claudeAutoMemory: 'off' } },
       { memory: { indexTokens: 1500 } },
     ]);
   });

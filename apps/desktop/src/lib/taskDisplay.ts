@@ -11,15 +11,14 @@ import { parseActorRef } from '@dispatch-foo/core/browser';
 // type.
 type Tone = 'green' | 'blue' | 'red' | 'amber' | 'gray' | 'accent';
 
-/** Renders a raw config status id as a human label — `in-progress` becomes `In Progress`.
- * The board's flat columns and its swim-lane columns previously formatted the same status two
- * different ways (one raw lowercase, one CSS-uppercased), so both now route through here. */
+/** Renders a raw config status id as a human label in sentence case — `in-progress` becomes
+ * `In progress`, as every other label in the app reads. The board's flat columns and its
+ * swim-lane columns previously formatted the same status two different ways (one raw
+ * lowercase, one CSS-uppercased), so both now route through here. */
 export function statusLabel(status: string): string {
-  return status
-    .split('-')
-    .filter((word) => word !== '')
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
+  const words = status.split('-').filter((word) => word !== '');
+  const phrase = words.join(' ');
+  return phrase.charAt(0).toUpperCase() + phrase.slice(1);
 }
 
 /** Only urgent/high get a color treatment; medium/low/none stay silent so the one accent

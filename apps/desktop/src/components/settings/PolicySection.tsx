@@ -7,28 +7,22 @@ import type {
 } from '@dispatch-foo/core/browser';
 import {
   consultPolicy,
-  MAX_POLICY_RUNG,
-  MIN_POLICY_RUNG,
   POLICY_GATES,
-  POLICY_RUNGS,
   projectPolicy,
 } from '@dispatch-foo/core/browser';
 import type { ApiClient } from '@dispatch/client';
+import { cx, Select } from '@dispatch/ui';
 import { Lock } from 'lucide-react';
+import type { KeyboardEvent } from 'react';
 import { useEffect, useState } from 'react';
 
 import { relativeTime } from '../../lib/landingView';
 import { policyReceipts } from '../../lib/policyReceipts';
+import { AutonomySlider } from './AutonomySlider';
+import styles from './PolicySection.module.css';
 import { SettingsSearchable } from './search';
+import kit from './settings.module.css';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
-import { PanelRow } from '@/ui/chrome';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/ui/select';
 
 /** The patch shape the section saves — the `policy` slice of the config
  *  PATCH, where a `null` gate pin clears the override. */
@@ -38,23 +32,6 @@ interface PolicyPatch {
     gates?: Partial<Record<PolicyGate, PolicyGateMode | null>>;
   };
 }
-
-// What each ladder stop means, phrased for the slider. Cumulative on purpose:
-// a rung carries every demotion below it (see GATE_RUNGS in core's policy.ts).
-const RUNG_DESCRIPTIONS: Record<number, string> = {
-  1: 'Every decision waits for you.',
-  2: 'Requests to edit extra files are approved for you. Everything else waits.',
-  3: 'Extra files and uncertain commands are decided for you, and failed checks go straight back to be fixed. Merging, shared memory and accepted docs still wait.',
-  4: "Work that passes its checks merges on its own. You review what happened afterwards. Agents' lessons join shared memory without review. Agents' edits to accepted docs apply without review.",
-};
-
-// Short names for the slider's stops, in the page's words rather than core's.
-const RUNG_LABELS: Record<number, string> = {
-  1: 'Review everything',
-  2: 'Allow extra files',
-  3: 'Fix on its own',
-  4: 'Merge and accept memory and doc edits on their own',
-};
 
 // One line per gate: what actually happens when it auto-decides, so the table
 // reads as behavior, not as config keys.
@@ -110,79 +87,12 @@ const FLOOR_ROWS: readonly { text: string; keywords: string }[] = [
   },
 ];
 
-interface AutonomySliderProps {
-  rung: number;
-  onRungChange: (rung: number) => void;
-}
-
-/** The builder lens's whole policy surface: one slider over the ladder's
- *  stops. Fully controlled; `onRungChange` fires once per settled change
- *  (release or stop click), not per drag frame. */
-function AutonomySlider({ rung, onRungChange }: AutonomySliderProps) {
-  // Local while dragging so a drag across stops saves once, on release.
-  const [draft, setDraft] = useState(rung);
-  useEffect(() => {
-    setDraft(rung);
-  }, [rung]);
-
-  const commit = (value: number) => {
-    setDraft(value);
-    if (value !== rung) onRungChange(value);
-  };
-
-  const percent =
-    ((draft - MIN_POLICY_RUNG) / (MAX_POLICY_RUNG - MIN_POLICY_RUNG)) * 100;
-  const active = POLICY_RUNGS.find((stop) => stop.rung === draft);
-
-  return (
-    <div className="flex flex-col gap-2">
-      <input
-        type="range"
-        aria-label="Autonomy"
-        min={MIN_POLICY_RUNG}
-        max={MAX_POLICY_RUNG}
-        step={1}
-        value={draft}
-        onChange={(e) => setDraft(Number(e.target.value))}
-        onPointerUp={() => commit(draft)}
-        onKeyUp={() => commit(draft)}
-        style={{
-          backgroundImage: `linear-gradient(to right, var(--accent) ${String(percent)}%, var(--border-chip) ${String(percent)}%)`,
-        }}
-        className="[&::-moz-range-thumb]:bg-card [&::-moz-range-thumb]:shadow-btn [&::-webkit-slider-thumb]:bg-card [&::-webkit-slider-thumb]:shadow-btn h-1.5 w-full cursor-pointer appearance-none rounded-full outline-none [&::-moz-range-thumb]:size-3.5 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-webkit-slider-thumb]:size-3.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full"
-      />
-      {/* One label per stop, sitting under the stop it names: the first hugs the track's
-          left end, the last its right end, the middle ones centre on theirs — a plain
-          four-column grid left every label drifting right of its stop. */}
-      <div className="flex">
-        {POLICY_RUNGS.map((stop, index) => {
-          const edge =
-            index === 0
-              ? 'text-left'
-              : index === POLICY_RUNGS.length - 1
-                ? 'text-right'
-                : 'text-center';
-          return (
-            <button
-              key={stop.rung}
-              type="button"
-              aria-pressed={stop.rung === draft}
-              onClick={() => commit(stop.rung)}
-              className={`rounded-control min-w-0 flex-1 px-1 py-0.5 text-[12px] leading-tight transition-colors duration-100 ${edge} ${
-                stop.rung === draft
-                  ? 'text-foreground font-medium'
-                  : 'text-muted-foreground font-book hover:text-(--text-secondary)'
-              }`}
-            >
-              {RUNG_LABELS[stop.rung] ?? stop.label}
-            </button>
-          );
-        })}
-      </div>
-      <SettingsHint>{RUNG_DESCRIPTIONS[draft] ?? active?.label}</SettingsHint>
-    </div>
-  );
-}
+// An override's choices: follow the level, or pin the gate either way.
+const PIN_OPTIONS = [
+  { value: 'rung', label: 'Follow level' },
+  { value: 'block', label: 'Always wait' },
+  { value: 'auto', label: 'Always automatic' },
+];
 
 interface GateTableProps {
   policy: PolicyConfig;
@@ -207,11 +117,8 @@ function GateTable({ policy, onPinGate }: GateTableProps) {
             control={
               <>
                 <span
-                  className={`font-book shrink-0 text-[12px] ${
-                    ruling.mode === 'auto'
-                      ? 'text-state-review'
-                      : 'text-muted-foreground'
-                  }`}
+                  className={styles.ruling}
+                  data-tone={ruling.mode === 'auto' ? 'accent' : 'muted'}
                 >
                   {ruling.mode === 'auto'
                     ? ruling.authorizedBy === 'override'
@@ -222,26 +129,17 @@ function GateTable({ policy, onPinGate }: GateTableProps) {
                       : 'Waits for you'}
                 </span>
                 <Select
+                  label={`${GATE_COPY[gate].label} override`}
                   value={pin ?? 'rung'}
-                  onValueChange={(next) =>
+                  options={PIN_OPTIONS}
+                  className={styles.pin}
+                  onChange={(next) =>
                     onPinGate(
                       gate,
-                      next === 'rung' ? null : (next as PolicyGateMode)
+                      next === 'block' || next === 'auto' ? next : null
                     )
                   }
-                >
-                  <SelectTrigger
-                    aria-label={`${GATE_COPY[gate].label} override`}
-                    className="w-[140px]"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="rung">Follow level</SelectItem>
-                    <SelectItem value="block">Always wait</SelectItem>
-                    <SelectItem value="auto">Always automatic</SelectItem>
-                  </SelectContent>
-                </Select>
+                />
               </>
             }
           />
@@ -260,14 +158,11 @@ function HardStops() {
           key={row.text}
           text={`${row.text} ${row.keywords} hard stop floor`}
         >
-          <PanelRow
-            aria-disabled="true"
-            className="text-muted-foreground min-h-9 flex-nowrap gap-2 py-1 text-[13px]"
-          >
-            <Lock aria-hidden className="size-3.5 shrink-0" />
-            <span className="min-w-0 flex-1">{row.text}</span>
-            <span className="font-book shrink-0 text-[12px]">Always waits</span>
-          </PanelRow>
+          <div aria-disabled="true" className={cx(kit.row, styles.floor)}>
+            <Lock aria-hidden size={14} strokeWidth={1.8} />
+            <span className={styles.floorText}>{row.text}</span>
+            <span className={styles.meta}>Always waits</span>
+          </div>
         </SettingsSearchable>
       ))}
     </>
@@ -328,12 +223,12 @@ export function PolicySection({
         keywords="autonomy policy rung slider"
       >
         <SettingsSearchable text="autonomy level review everything merge on its own">
-          <PanelRow className="flex-col items-stretch gap-1.5 py-3">
+          <div className={kit.row}>
             <AutonomySlider
               rung={policy.rung}
               onRungChange={(rung) => void onSave({ policy: { rung } })}
             />
-          </PanelRow>
+          </div>
         </SettingsSearchable>
       </SettingsGroup>
 
@@ -365,16 +260,16 @@ export function PolicySection({
         keywords="receipts ledger"
       >
         {receiptsError && (
-          <PanelRow>
+          <div className={kit.row}>
             <SettingsHint>Couldn&rsquo;t load recent decisions.</SettingsHint>
-          </PanelRow>
+          </div>
         )}
         {!receiptsError && receipts !== null && receipts.length === 0 && (
-          <PanelRow>
+          <div className={kit.row}>
             <SettingsHint>
               None yet. Each one is listed here and recorded on its task.
             </SettingsHint>
-          </PanelRow>
+          </div>
         )}
         {!receiptsError &&
           receipts !== null &&
@@ -382,28 +277,36 @@ export function PolicySection({
             const taskId = entry.sourceTaskId;
             const canOpen = onOpenTask !== undefined && taskId !== null;
             return (
-              <PanelRow
+              <div
                 key={entry.id}
-                onClick={canOpen ? () => onOpenTask(taskId) : undefined}
-                className="flex-col items-stretch gap-0.5 py-2"
+                className={cx(kit.row, styles.receipt)}
+                {...(canOpen
+                  ? {
+                      role: 'button',
+                      tabIndex: 0,
+                      'data-clickable': '',
+                      onClick: () => onOpenTask(taskId),
+                      onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+                        if (event.key !== 'Enter' && event.key !== ' ') return;
+                        event.preventDefault();
+                        onOpenTask(taskId);
+                      },
+                    }
+                  : {})}
               >
-                <div className="flex items-baseline gap-2">
-                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
-                    {entry.title}
-                  </span>
+                <div className={styles.receiptLine}>
+                  <span className={styles.receiptTitle}>{entry.title}</span>
                   {entry.sourceTaskId !== null && (
-                    <span className="text-muted-foreground font-book shrink-0 text-[12px] tracking-(--id-tracking)">
+                    <span className={styles.meta} data-task-id="">
                       {entry.sourceTaskId}
                     </span>
                   )}
-                  <span className="text-muted-foreground font-book shrink-0 text-[12px]">
+                  <span className={styles.meta}>
                     {relativeTime(entry.createdAt, now)}
                   </span>
                 </div>
-                <p className="text-muted-foreground font-book truncate text-left text-[12px]">
-                  {entry.detail}
-                </p>
-              </PanelRow>
+                <p className={styles.receiptDetail}>{entry.detail}</p>
+              </div>
             );
           })}
       </SettingsGroup>

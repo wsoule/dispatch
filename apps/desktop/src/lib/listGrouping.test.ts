@@ -56,7 +56,6 @@ describe('groupTasks by status (the default)', () => {
     ]);
     expect(groups[0]?.label).toBe('Ready');
     expect(groups[0]?.icon).toEqual({ kind: 'status', status: 'ready' });
-    expect(groups[0]?.tint).toBe('var(--status-todo)');
     expect(groups[0]?.preset).toEqual({ status: 'ready' });
   });
 
@@ -199,7 +198,6 @@ describe('groupTasks by parent and milestone', () => {
     ]);
     expect(groups[0]?.milestoneId).toBe('e-1');
     expect(groups[0]?.preset).toEqual({ milestone: 'e-1' });
-    expect(groups[0]?.tint).toMatch(/^var\(--project-color-[1-8]\)$/);
     expect(groups.flatMap((g) => g.rows.map((r) => r.doc.meta.id))).toEqual([
       't-1',
       't-2',
@@ -224,7 +222,6 @@ describe('groupTasks by parent and milestone', () => {
       'milestone:e-2',
     ]);
     expect(groups[0]?.icon).toEqual({ kind: 'milestone', status: 'working' });
-    expect(groups[0]?.tint).toBe('var(--status-progress)');
     expect(groups[1]?.icon).toEqual({ kind: 'milestone', status: 'landed' });
   });
 
@@ -506,7 +503,6 @@ describe('sortTasks', () => {
     // Finished under the passed model: it sinks below the open one and wears Done.
     expect(groups.map((g) => g.key)).toEqual(['milestone:n', 'milestone:m']);
     expect(groups[1]?.icon).toEqual({ kind: 'milestone', status: 'Done' });
-    expect(groups[1]?.tint).toBe('var(--status-done)');
   });
 
   test('completedByRecency sinks landed/dropped below open rows, newest first', () => {

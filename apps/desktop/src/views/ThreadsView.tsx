@@ -1,7 +1,8 @@
+import { Button, cx, EmptyState, SkeletonRows } from '@dispatch/ui';
 import { useEffect, useRef, useState } from 'react';
 
 import { DocsLinkingList } from '../components/docs/DocsLinkingList';
-import { TasksBackButton } from '../components/tasks/TasksPageHeader';
+import { PageHead } from '../components/shell/PageHead';
 import { Composer } from '../components/threads/Composer';
 import { ThreadPane } from '../components/threads/ThreadPane';
 import { ThreadRail } from '../components/threads/ThreadRail';
@@ -15,12 +16,10 @@ import {
 } from '../hooks/useThreads';
 import type { RefAction } from '../lib/threadSources';
 import { participantLabel, replyRoute } from '../lib/threadSources';
-import { PageHeader } from '@/ui/ai/page-header';
-import { Button } from '@/ui/button';
-import { EmptyState } from '@/ui/chrome';
+import styles from './ThreadsView.module.css';
 
 export interface ThreadsViewProps {
-  /** Two views: the page leads with "‹ tasks" back to the list. */
+  /** The back chip to the Tasks list the page leads with; omitted, no chip. */
   onBack?: () => void;
   data: DispatchProjectData;
   projectName: string | null;
@@ -76,84 +75,97 @@ export function ThreadsView({
     !rail.loading && rail.error === null && rail.summaries.length === 0;
 
   const header = (
-    <PageHeader
-      leading={
-        onBack === undefined ? undefined : <TasksBackButton onBack={onBack} />
-      }
-      crumb={
-        onBack === undefined
-          ? [projectName ?? 'Project', 'Threads']
-          : ['Threads']
-      }
-      actions={
-        <Button
-          ref={newThreadRef}
-          size="sm"
-          variant="ghost"
-          disabled={!access.canMessage || me === null}
-          onClick={startComposing}
-        >
-          New thread
-        </Button>
-      }
-    />
+    <div className={styles.head}>
+      <PageHead
+        onBack={onBack}
+        crumbs={
+          onBack === undefined
+            ? [projectName ?? 'Project', 'Threads']
+            : ['Threads']
+        }
+        actions={
+          <Button
+            ref={newThreadRef}
+            size="sm"
+            variant="secondary"
+            disabled={!access.canMessage || me === null}
+            onClick={startComposing}
+          >
+            New thread
+          </Button>
+        }
+      />
+    </div>
   );
   if (!access.canMessage) {
     return (
-      <div className="flex h-full flex-col">
+      <div className={styles.view}>
         {header}
-        <EmptyState
-          className="flex-1"
-          heading="Threads are not available in this window."
-          description={access.explanation}
-        />
+        <div className={styles.empty}>
+          <EmptyState label="Threads are not available in this window.">
+            {access.explanation}
+          </EmptyState>
+        </div>
       </div>
     );
   }
   if (me === null && data.whoamiError !== null) {
     return (
-      <div className="flex h-full flex-col">
+      <div className={styles.view}>
         {header}
-        <EmptyState
-          className="flex-1"
-          heading="The daemon did not say who you are"
-          description={data.whoamiError.message}
-          secondary={{ label: 'Retry', onClick: data.retryWhoami }}
-        />
+        <div className={styles.empty}>
+          <EmptyState
+            label="The daemon did not say who you are"
+            action={
+              <Button size="sm" variant="secondary" onClick={data.retryWhoami}>
+                Retry
+              </Button>
+            }
+          >
+            {data.whoamiError.message}
+          </EmptyState>
+        </div>
       </div>
     );
   }
+  // Still waiting on whoami: the rail's skeleton, as while the rail loads.
   if (me === null) {
     return (
-      <div aria-busy="true" className="flex h-full flex-col">
+      <div className={styles.view}>
         {header}
-        <EmptyState
-          className="flex-1"
-          heading="Loading threads"
-          description="Waiting for the daemon to say who you are."
-        />
+        <div className={styles.body}>
+          <aside aria-label="Thread list" aria-busy className={styles.rail}>
+            <SkeletonRows
+              rows={5}
+              label="Waiting for the daemon to say who you are."
+            />
+          </aside>
+        </div>
       </div>
     );
   }
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className={styles.view}>
       {header}
-      <div className="flex min-h-0 flex-1">
+      <div className={styles.body}>
         <aside
           aria-label="Thread list"
           aria-busy={rail.loading || undefined}
-          className="border-border w-80 shrink-0 overflow-y-auto border-r-[0.5px] p-2"
+          className={styles.rail}
         >
           {rail.loading ? (
-            <p className="text-muted-foreground p-2 text-[12px]">
-              Loading threads…
-            </p>
+            <SkeletonRows rows={5} label="Loading threads…" />
           ) : railEmpty ? (
             <EmptyState
-              heading="No threads yet"
-              description="Questions, handoffs and messages to or from you land here."
-              primary={{ label: 'New thread', onClick: startComposing }}
-            />
+              label="No threads yet"
+              action={
+                <Button size="sm" variant="primary" onClick={startComposing}>
+                  New thread
+                </Button>
+              }
+            >
+              Questions, handoffs and messages to or from you land here.
+            </EmptyState>
           ) : (
             <ThreadRail
               groups={rail.groups}
@@ -166,14 +178,18 @@ export function ThreadsView({
             />
           )}
           {rail.error !== null && (
-            <p role="alert" className="text-destructive p-2 text-[12px]">
+            <p
+              role="alert"
+              className={cx('toneText', styles.error)}
+              data-tone="danger"
+            >
               {rail.error.message}
             </p>
           )}
         </aside>
-        <section aria-label="Thread" className="flex min-w-0 flex-1 flex-col">
+        <section aria-label="Thread" className={styles.thread}>
           {composing ? (
-            <div className="p-3">
+            <div className={styles.composer}>
               <Composer
                 known={known}
                 label={(address) => participantLabel(address, lookups)}
@@ -190,7 +206,7 @@ export function ThreadsView({
               />
             </div>
           ) : open.thread !== null && open.messages.length > 0 ? (
-            <div className="flex h-full min-h-0 flex-col">
+            <div className={styles.open}>
               <DocsLinkingList
                 client={client}
                 port={port}
@@ -199,7 +215,7 @@ export function ThreadsView({
                   onOpen({ kind: 'doc', docId, anchor: null })
                 }
               />
-              <div className="min-h-0 flex-1">
+              <div className={styles.paneSlot}>
                 <ThreadPane
                   // A fresh reply draft per thread.
                   key={open.thread}
@@ -262,30 +278,30 @@ function EmptyPane({
 }) {
   if (open.error !== null) {
     return (
-      <EmptyState
-        className="flex-1"
-        heading="This thread did not load"
-        description={open.error.message}
-      />
+      <div className={styles.empty}>
+        <EmptyState label="This thread did not load">
+          {open.error.message}
+        </EmptyState>
+      </div>
     );
   }
   if ((focus !== null && open.loading) || railLoading) {
-    return <div aria-busy="true" className="flex-1" />;
+    return <div aria-busy="true" className={styles.empty} />;
   }
   if (railEmpty) {
     return (
-      <EmptyState
-        className="flex-1"
-        heading="Nothing to read yet"
-        description="A thread opens here once someone writes to you, or once you start one."
-      />
+      <div className={styles.empty}>
+        <EmptyState label="Nothing to read yet">
+          A thread opens here once someone writes to you, or once you start one.
+        </EmptyState>
+      </div>
     );
   }
   return (
-    <EmptyState
-      className="flex-1"
-      heading="Pick a thread"
-      description="Questions and handoffs waiting on you are at the top."
-    />
+    <div className={styles.empty}>
+      <EmptyState label="Pick a thread">
+        Questions and handoffs waiting on you are at the top.
+      </EmptyState>
+    </div>
   );
 }

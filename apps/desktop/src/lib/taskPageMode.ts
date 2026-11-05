@@ -89,12 +89,7 @@ export function taskPageModes(isContainer: boolean): TaskPageMode[] {
 
 /** How far the task has got through one stage of its lifecycle; `skipped` is a stage the
  * task moved past without using (landed with no agent run, say). */
-export type StageProgress =
-  | 'done'
-  | 'current'
-  | 'failed'
-  | 'pending'
-  | 'skipped';
+type StageProgress = 'done' | 'current' | 'failed' | 'pending' | 'skipped';
 
 export interface LifecycleStage {
   mode: TaskPageMode;

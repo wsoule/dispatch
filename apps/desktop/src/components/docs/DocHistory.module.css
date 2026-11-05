@@ -1,0 +1,94 @@
+/* A doc's history (DocHistory.tsx): the revision list over the diff of the
+   two picked. The list takes at most two fifths of the pane and scrolls;
+   the diff fills the rest. Errors are coloured by the global toneText class
+   with data-tone="danger". */
+
+.history {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.list {
+  flex: 0 0 auto;
+  max-height: 40%;
+  margin: 0;
+  padding: var(--s-1);
+  overflow: auto;
+  border-bottom: 1px solid var(--border);
+  list-style: none;
+  font-size: var(--fs-xs);
+}
+
+.row {
+  display: flex;
+  gap: var(--s-2);
+  align-items: center;
+  min-height: 30px;
+  padding: 0 var(--s-2);
+  border-radius: var(--r-sm);
+}
+
+.row:hover {
+  background: var(--surface-2);
+}
+
+.rev {
+  flex: 0 0 auto;
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+.author {
+  flex: 0 0 auto;
+  font-size: var(--fs-2xs);
+  color: var(--text-2);
+}
+
+.cause {
+  flex: 0 0 auto;
+  color: var(--text-3);
+}
+
+.summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+
+.time {
+  flex: 0 0 auto;
+  color: var(--text-3);
+}
+
+.message {
+  margin: 0;
+  padding: var(--s-3);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.alert {
+  margin: 0;
+  padding: var(--s-1) var(--s-3);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-xs);
+}
+
+.note {
+  margin: 0;
+  padding: var(--s-1) var(--s-3);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.diff {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}

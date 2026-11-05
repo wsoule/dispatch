@@ -4,9 +4,6 @@ import { expect, test } from 'bun:test';
 
 import { ReceiptsSection } from './ReceiptsSection';
 
-const classesOf = (el: Element | null) =>
-  (el?.getAttribute('class') ?? '').split(/\s+/);
-
 function entry(overrides: Partial<LedgerEntry>): LedgerEntry {
   return {
     id: 'l-000001',
@@ -43,48 +40,59 @@ test("a policy auto-decision among the task's receipts is marked as one", () => 
   expect(screen.getByText('By hand')).toBeDefined();
 });
 
-// Sub-headings are sentence-case 12px/500 with a plain count — no uppercase,
-// no `·` separator — and the section heading carries the total on the right.
+// Sub-headings are sentence case with a plain count, in kind order, no `·`
+// separator and no shouting (the gr8r-rules scan keeps text-transform out of
+// the module); the section heading carries the total.
 test('groups under sentence-case sub-headings with a count', () => {
   const { container } = render(
     <ReceiptsSection
       entries={[
+        entry({ id: 'l-3', kind: 'hazard', title: 'A hazard' }),
         entry({ id: 'l-1', kind: 'constraint', title: 'Keep the API' }),
         entry({ id: 'l-2', kind: 'constraint', title: 'No new deps' }),
-        entry({ id: 'l-3', kind: 'hazard', title: 'A hazard' }),
       ]}
     />
   );
-  expect(screen.getByText('Receipts')).toBeDefined();
-  const constraints = screen.getByText('Constraints');
-  expect(classesOf(constraints)).toContain('text-[12px]');
-  expect(classesOf(constraints)).toContain('font-medium');
-  expect(classesOf(constraints)).not.toContain('uppercase');
-  expect(constraints.textContent).toBe('Constraints2');
-  expect(screen.getByText('Hazards')).toBeDefined();
-  expect(screen.queryByText(/CONSTRAINT/)).toBeNull();
   expect(
+    screen.getByRole('heading', { name: /^Receipts\b.*3$/ })
+  ).toBeDefined();
+  const groups = Array.from(
     container.querySelectorAll('[data-slot="receipt-group"]')
-  ).toHaveLength(2);
+  );
+  expect(groups).toHaveLength(2);
+  const constraints = screen.getByText('Constraints');
+  expect(constraints.textContent).toBe('Constraints2');
+  expect(groups[0]?.contains(constraints)).toBe(true);
+  expect(groups[1]?.contains(screen.getByText('Hazards'))).toBe(true);
+  expect(
+    Array.from(groups[0]?.querySelectorAll('[data-slot="receipt-entry"]') ?? [])
+      .length
+  ).toBe(2);
+  expect(screen.queryByText(/CONSTRAINT/)).toBeNull();
+  expect(container.textContent).not.toContain('·');
 });
 
-// Each entry is a comment card: quaternary surface, 8px radius, half-pixel
-// border; the source task id sits in sans, not mono.
-test('renders each entry as a comment card with a sans source id', () => {
+// Each entry is a comment card: its title, its detail, and the source task id
+// at the right, set in mono because an id is a machine-read string.
+test('renders each entry as a card with its source task id in mono', () => {
   const { container } = render(
     <ReceiptsSection
       entries={[entry({ id: 'l-1', sourceTaskId: 't-1a2b3c' })]}
     />
   );
   const card = container.querySelector('[data-slot="receipt-entry"]');
-  const classes = classesOf(card);
-  expect(classes).toContain('bg-surface-quaternary');
-  expect(classes).toContain('rounded-card');
-  expect(classes).toContain('border-[0.5px]');
-  expect(classes).toContain('border-border-strong');
-  const source = screen.getByText('t-1a2b3c');
-  expect(classesOf(source)).toContain('font-book');
-  expect(classesOf(source)).not.toContain('font-mono');
+  expect(card?.textContent).toContain('Scope extended for run r-x');
+  expect(card?.textContent).toContain('src/x.ts — needed');
+  const source = card?.querySelector('[data-slot="receipt-source"]');
+  expect(source?.textContent).toBe('t-1a2b3c');
+  expect(source?.classList.contains('mono')).toBe(true);
+});
+
+test('leaves the source out when no task raised the entry', () => {
+  const { container } = render(
+    <ReceiptsSection entries={[entry({ id: 'l-1', sourceTaskId: null })]} />
+  );
+  expect(container.querySelector('[data-slot="receipt-source"]')).toBeNull();
 });
 
 test('renders nothing when the task has no receipts', () => {

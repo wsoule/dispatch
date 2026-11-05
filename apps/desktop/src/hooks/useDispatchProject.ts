@@ -227,10 +227,10 @@ async function wakeNoticeFor(
   }
 }
 
-// Persists the Board/List/Runs "show archived" toggle across restarts — mirrors BoardView's
-// own `dispatch:tasks-view-mode` persistence. Guarded for `window` for the same reason (this
-// is a Tauri/browser-only app, never SSR'd, but a stray server-side render of this module
-// shouldn't throw on a missing `localStorage`).
+// Persists the one "show archived" toggle (the Issues Display popover's and the Runs
+// page's) across restarts, per origin, as '1' or '0'. Every read and write is guarded
+// for `window`: this is a Tauri/browser-only app, never SSR'd, but a stray server-side
+// render of this module shouldn't throw on a missing `localStorage`.
 const SHOW_ARCHIVED_STORAGE_KEY = 'dispatch:show-archived';
 
 // An in-place dispatch's failure reaches its caller as a rejection instead.

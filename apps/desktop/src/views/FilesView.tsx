@@ -1,12 +1,20 @@
 import type { WorkspaceFile } from '@dispatch/client';
-import { Eye, FileCode2, Save, Search } from 'lucide-react';
+import {
+  Button,
+  Chip,
+  EmptyState,
+  KbdKeys,
+  Notice,
+  useModKeyLabel,
+} from '@dispatch/ui';
+import { Eye, FileCode2, Search } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { FilePreview } from '../components/files/FilePreview';
 import { FileTree } from '../components/files/FileTree';
 import { QuickOpenDialog } from '../components/files/QuickOpenDialog';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
-import { TasksBackButton } from '../components/tasks/TasksPageHeader';
+import { PageHead } from '../components/shell/PageHead';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { EditorBuffer } from '../lib/editorBuffer';
 import {
@@ -18,7 +26,7 @@ import {
   saveSucceeded,
   shouldSave,
 } from '../lib/editorBuffer';
-import { Button } from '@/ui/button';
+import styles from './FilesView.module.css';
 
 /**
  * Browse a checkout, edit a file, preview what cannot be edited.
@@ -33,12 +41,23 @@ interface FilesViewProps {
   data: DispatchProjectData;
   /** The run whose worktree to browse, or null for the project checkout. */
   runId?: string | null;
-  /** Starts the header with "‹ tasks", back to the Tasks list. */
+  /** Starts the header with the back chip to the Tasks list. */
   onBack?: () => void;
   /** Opens with this file selected, e.g. from a file link in a thread. */
   initialPath?: string;
+  /** Whether quick open (Go to file) shows, when the host controls it: App's
+   * project Files page and the Tasks page's run Files tab, where ⌘P is a
+   * global command (`quickOpen` in lib/appNav.ts). Read only together with
+   * `onQuickOpenChange`. */
+  quickOpen?: boolean;
+  /** Called with the quick open's new state (the Go to file button opens
+   * it; a pick, Escape or the scrim closes it). Given, the host controls
+   * quick open; omitted (the run's Files embedded in the Overseer's column),
+   * the view keeps it in local state. */
+  onQuickOpenChange?: (open: boolean) => void;
 }
 
+// The head's save state in words: nothing before a text file is open.
 function statusLabel(buffer: EditorBuffer | null): string {
   if (buffer === null) return '';
   if (buffer.status === 'saving') return 'Saving…';
@@ -47,23 +66,42 @@ function statusLabel(buffer: EditorBuffer | null): string {
   return 'Saved';
 }
 
+// A shortcut as one string for a title attribute: "⌘P" on a Mac, "Ctrl+P"
+// elsewhere (the modifier label comes from useModKeyLabel).
+function shortcutTitle(mod: string, key: string): string {
+  return mod === '⌘' ? `${mod}${key}` : `${mod}+${key}`;
+}
+
 export function FilesView({
   data,
   runId = null,
   onBack,
   initialPath,
+  quickOpen,
+  onQuickOpenChange,
 }: FilesViewProps) {
   const { client } = data;
+  const mod = useModKeyLabel();
   const [selected, setSelected] = useState<string | null>(null);
   const [file, setFile] = useState<WorkspaceFile | null>(null);
   const [buffer, setBuffer] = useState<EditorBuffer | null>(null);
   const [previewing, setPreviewing] = useState(false);
-  const [quickOpen, setQuickOpen] = useState(false);
+  const [localQuickOpen, setLocalQuickOpen] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   // The save loop reads the latest buffer without re-arming its timer on every
   // keystroke, which is what makes the debounce a debounce.
   const bufferRef = useRef<EditorBuffer | null>(null);
   bufferRef.current = buffer;
+  const rootRef = useRef<HTMLDivElement>(null);
+  const textRef = useRef<HTMLTextAreaElement>(null);
+
+  // Controlled by the host when it passes onQuickOpenChange, local otherwise.
+  const quickOpenShown =
+    onQuickOpenChange === undefined ? localQuickOpen : quickOpen === true;
+  const setQuickOpen = (open: boolean): void => {
+    if (onQuickOpenChange === undefined) setLocalQuickOpen(open);
+    else onQuickOpenChange(open);
+  };
 
   const open = useCallback(
     async (path: string) => {
@@ -134,16 +172,30 @@ export function FilesView({
     return () => clearTimeout(timer);
   }, [client, buffer, runId]);
 
+  // Quick open cannot show while the daemon is down (the page is
+  // DaemonUnavailable then), so an open state is dropped rather than left
+  // unseen, taking the next Escape and popping up when the client is back.
   useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'p') {
-        event.preventDefault();
-        setQuickOpen(true);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+    if (client !== null || !quickOpenShown) return;
+    if (onQuickOpenChange === undefined) setLocalQuickOpen(false);
+    else onQuickOpenChange(false);
+  }, [client, quickOpenShown, onQuickOpenChange]);
+
+  // When quick open closes with focus nowhere (⌘P from another page unmounted
+  // whatever had it, so the dialog's own focus return found nothing), focus
+  // lands on the page: the editor when a text file is open, else Go to file.
+  const wasQuickOpen = useRef(false);
+  useEffect(() => {
+    const closed = wasQuickOpen.current && !quickOpenShown;
+    wasQuickOpen.current = quickOpenShown;
+    if (!closed) return;
+    const focused = document.activeElement;
+    if (focused !== null && focused !== document.body) return;
+    const target =
+      textRef.current ??
+      rootRef.current?.querySelector<HTMLElement>('[data-files-go-to-file]');
+    target?.focus();
+  }, [quickOpenShown]);
 
   if (client === null) {
     return (
@@ -155,57 +207,76 @@ export function FilesView({
     );
   }
 
+  // The Preview toggle is for a text file that also renders as something
+  // else: Markdown, known by its mime (the daemon marks its `preview`
+  // "none"), or an SVG or a PDF with no NUL byte, which are kind "text" but
+  // which the daemon marks `preview` "image" or "pdf". A file with no text
+  // always shows its preview, so a toggle there would only report a state it
+  // cannot change.
   const canPreview =
-    file !== null && (file.kind !== 'text' || file.preview !== 'none');
+    file !== null &&
+    file.kind === 'text' &&
+    (file.preview !== 'none' || file.mime === 'text/markdown');
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <header className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2">
-        {onBack && <TasksBackButton onBack={onBack} />}
-        <FileCode2 className="size-4" />
-        <h1 className="text-sm font-medium">Files</h1>
-        {runId !== null && (
-          <span className="rounded bg-[var(--color-muted)] px-1.5 py-0.5 text-[10px]">
-            run {runId.slice(0, 8)}
-          </span>
-        )}
-        <span className="truncate text-xs text-[var(--color-muted-foreground)]">
-          {selected ?? 'no file open'}
-        </span>
-        <div className="flex-1" />
-        {buffer !== null && (
-          <span
-            className={`text-xs ${
-              buffer.status === 'error'
-                ? 'text-[var(--color-destructive)]'
-                : 'text-[var(--color-muted-foreground)]'
-            }`}
-          >
-            {statusLabel(buffer)}
-          </span>
-        )}
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => setQuickOpen(true)}
-          title="⌘P"
-        >
-          <Search className="size-3" />
-        </Button>
-        {canPreview && (
-          <Button
-            size="sm"
-            variant={previewing ? 'default' : 'ghost'}
-            onClick={() => setPreviewing((value) => !value)}
-            title="Toggle preview"
-          >
-            <Eye className="size-3" />
-          </Button>
-        )}
-      </header>
+    <div ref={rootRef} className={styles.view}>
+      <div className={styles.head}>
+        <PageHead
+          onBack={onBack}
+          title="Files"
+          // Inside the task page the task's title is the h1.
+          titleLevel={runId === null ? 1 : 2}
+          meta={
+            <>
+              {runId === null ? null : (
+                <Chip>
+                  run <span className={styles.mono}>{runId.slice(0, 8)}</span>
+                </Chip>
+              )}{' '}
+              {selected === null ? (
+                'No file open'
+              ) : (
+                <span className={styles.mono}>{selected}</span>
+              )}
+            </>
+          }
+          receipts={
+            buffer === null ? undefined : buffer.status === 'error' ? (
+              <span className="toneText" data-tone="danger" role="alert">
+                {statusLabel(buffer)}
+              </span>
+            ) : (
+              statusLabel(buffer)
+            )
+          }
+          actions={
+            <>
+              <Button
+                variant="quiet"
+                size="sm"
+                aria-label="Go to file"
+                data-files-go-to-file=""
+                title={`Go to file (${shortcutTitle(mod, 'P')})`}
+                icon={<Search size={14} strokeWidth={1.8} aria-hidden />}
+                onClick={() => setQuickOpen(true)}
+              />
+              {canPreview ? (
+                <Button
+                  variant="quiet"
+                  size="sm"
+                  aria-label="Preview"
+                  aria-pressed={previewing}
+                  icon={<Eye size={14} strokeWidth={1.8} aria-hidden />}
+                  onClick={() => setPreviewing((value) => !value)}
+                />
+              ) : null}
+            </>
+          }
+        />
+      </div>
 
-      <div className="flex min-h-0 flex-1">
-        <aside className="w-64 shrink-0 border-r border-[var(--color-border)]">
+      <div className={styles.body}>
+        <aside className={styles.aside} aria-label="File tree">
           <FileTree
             client={client}
             runId={runId}
@@ -214,27 +285,36 @@ export function FilesView({
           />
         </aside>
 
-        <main className="min-w-0 flex-1">
+        <div className={styles.editor}>
           {loadError !== null && (
-            <p className="p-3 text-xs text-[var(--color-destructive)]">
-              {loadError}
-            </p>
+            <div className={styles.notice}>
+              <Notice tone="danger" role="alert" label="Could not open">
+                {loadError}
+              </Notice>
+            </div>
           )}
           {file === null && loadError === null && (
-            <div className="flex h-full flex-col items-center justify-center gap-1 text-xs text-[var(--color-muted-foreground)]">
-              <Save className="size-4 opacity-50" />
-              <p>Pick a file, or press ⌘P.</p>
+            <div className={styles.empty}>
+              <EmptyState
+                label="Pick a file"
+                icon={<FileCode2 size={22} strokeWidth={1.8} />}
+              >
+                or press <KbdKeys keys={[mod, 'P']} />
+              </EmptyState>
             </div>
           )}
           {file !== null &&
             (previewing || buffer === null ? (
-              <FilePreview client={client} file={file} runId={runId} />
+              <div className={styles.preview}>
+                <FilePreview client={client} file={file} runId={runId} />
+              </div>
             ) : (
               /* A textarea rather than a code editor component: it is the one
                  control that gets native undo, IME input, spellcheck-off and
                  accessibility for free, and the surrounding autosave is where
                  the actual behaviour lives. */
               <textarea
+                ref={textRef}
                 value={buffer.text}
                 spellCheck={false}
                 onChange={(event) =>
@@ -242,20 +322,21 @@ export function FilesView({
                     prev === null ? prev : editBuffer(prev, event.target.value)
                   )
                 }
-                className="h-full w-full resize-none border-0 bg-[var(--color-card)] p-3 font-mono text-xs leading-relaxed outline-none"
+                className={styles.text}
                 aria-label={`Editing ${file.path}`}
               />
             ))}
-        </main>
+        </div>
       </div>
 
-      <QuickOpenDialog
-        client={client}
-        runId={runId}
-        open={quickOpen}
-        onOpenChange={setQuickOpen}
-        onPick={(path) => void open(path)}
-      />
+      {quickOpenShown ? (
+        <QuickOpenDialog
+          client={client}
+          runId={runId}
+          onClose={() => setQuickOpen(false)}
+          onPick={(path) => void open(path)}
+        />
+      ) : null}
     </div>
   );
 }

@@ -1,0 +1,330 @@
+/* Gr8r's stat strip: one rounded panel split into cells by soft rules (a
+   1px gap over the border colour, so a rule is drawn once at any column
+   count), not four cards. Key in secondary text, a 22px semibold tabular
+   value, a quiet note; a toned cell (data-tone) prints its value and note
+   in the tone's text colour. A linked cell answers hover with the hover
+   fill. */
+
+.strip {
+  display: grid;
+  grid-template-columns: repeat(var(--stat-cols, 4), minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--border);
+}
+
+.cell {
+  grid-column: span var(--stat-span, 1);
+  min-width: 0;
+  background: var(--surface);
+  transition: background-color var(--dur) ease;
+}
+
+.inner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 100%;
+  padding: 14px 16px;
+  color: var(--text);
+}
+
+a.inner:focus-visible {
+  outline-offset: -3px;
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-sm);
+  line-height: 1.3;
+  color: var(--text-2);
+}
+
+/* The optional key icon: one step lighter than the key. */
+.icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-4);
+}
+
+.value {
+  font-size: 22px;
+  font-weight: var(--fw-semibold);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.note {
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+/* The count that needs attention, in its tone's text colour (data-tone):
+   danger overdue, warning at risk, accent new, success, info. */
+.accent :where(.value, .note),
+.danger :where(.value, .note),
+.warning :where(.value, .note),
+.success :where(.value, .note),
+.info :where(.value, .note) {
+  color: var(--tone-ink);
+}
+
+.muted .value {
+  color: var(--text-3);
+}
+
+.cell:has(a.inner:focus-visible) {
+  background: var(--surface-2);
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .cell:has(a.inner:hover) {
+    background: var(--surface-2);
+  }
+}
+
+/* Two across on tablets and phones (Gr8r's phone home); an odd last cell
+   takes the whole row so the panel closes. */
+@media (width <= 900px) {
+  .strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cell {
+    grid-column: auto;
+  }
+
+  .cell:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
+  .inner {
+    padding: 12px 14px;
+  }
+}
+
+/* ---- compact: a page header's one-row strip --------------------------- */
+
+/* The row: the strip's frame, then the host's end controls pushed to the
+   right. The frame's 12rem basis is the narrowest strip worth keeping
+   beside the controls: below that the controls wrap under it, right
+   aligned, and the strip takes the whole row. */
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+  min-width: 0;
+}
+
+/* Holds the scroller's focus ring: the scroller's own outline would sit
+   outside its mask and vanish with it. */
+.frame {
+  flex: 1 1 12rem;
+  min-width: 0;
+  border-radius: var(--r-xs);
+}
+
+.frame:has(> .scroller:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* The scroller: one line of cells that scrolls sideways inside itself
+   when the column is narrower than they are. It reaches 6px past the
+   frame on both sides and 4px above and below (margin, padded back), so
+   a linked cell's fill (6px past its words) and its focus ring (3 to 5px
+   out) are not cut at the ends, while the first cell's rule (9px left
+   of it) is. No scrollbar, so overflowing never changes the row's height:
+   the edge fades say there is more, and a trackpad, Shift + wheel, a
+   swipe, Tab through linked cells or the arrow keys (the scroller takes
+   a tab stop while it overflows) move it. scroll-padding keeps a cell
+   that takes focus clear of a fade. */
+.scroller {
+  margin: -4px -6px;
+  padding: 4px 6px;
+  overflow: auto hidden;
+  overscroll-behavior-x: contain;
+  scroll-padding-inline: 24px;
+  scrollbar-width: none;
+}
+
+.scroller::-webkit-scrollbar {
+  display: none;
+}
+
+/* The edge cue: the side that hides cells fades out over 24px, a change
+   of shape as much as of colour, so it holds in forced colours too. */
+.scroller[data-fade-start] {
+  mask-image: linear-gradient(to right, transparent, currentcolor 24px);
+}
+
+.scroller[data-fade-end] {
+  mask-image: linear-gradient(
+    to right,
+    currentcolor calc(100% - 24px),
+    transparent
+  );
+}
+
+.scroller[data-fade-start][data-fade-end] {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    currentcolor 24px,
+    currentcolor calc(100% - 24px),
+    transparent
+  );
+}
+
+/* The host's controls: one line at the row's end, wrapping among
+   themselves only when they alone are wider than the column. */
+.end {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin-left: auto;
+}
+
+/* No panel: the cells sit inline on the header's own surface, each a
+   26px row (--h-sm) of icon, key, value and note, parted by a soft rule
+   centred in the 17px gap (the cell's ::before, 9px left of it: 8px of
+   air either side, so a page header's cells and its controls share one
+   row at common widths). The list is as wide as its cells (the scroller
+   clips it), so they never wrap and the first cell's rule falls outside
+   the scroller. */
+.compact {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 17px;
+  width: max-content;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.compact .cell {
+  position: relative;
+  flex: none;
+  min-width: 0;
+  background: none;
+}
+
+.compact .cell::before {
+  content: '';
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  left: -9px;
+  border-left: 1px solid var(--border);
+}
+
+/* Key, value and note on one line. */
+.compact .inner {
+  flex-flow: row nowrap;
+  align-items: center;
+  gap: 0 6px;
+  height: auto;
+  min-height: var(--h-sm);
+  padding: 0;
+}
+
+.compact .label,
+.compact .value,
+.compact .note {
+  white-space: nowrap;
+}
+
+.compact .value {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--fs);
+  line-height: 1.3;
+  letter-spacing: 0;
+}
+
+/* A meter value (ProgressRule) is at least 80px: a 40px track (the
+   meter's own minimum) beside its "3/4" receipt. A longer receipt
+   ("16/16", "100/128") widens the value instead of running into the next
+   cell. An engine without :has() draws the meter's own minimum. */
+.compact .value:has([role='progressbar']) {
+  min-width: 80px;
+}
+
+/* A cell whose note is in its hint (notes="hint"): its key underlined in
+   dots, the shape that says a hint is there (as a glossary word's), and
+   the help cursor on hover. */
+.compact .inner[data-hint] {
+  cursor: help;
+}
+
+.compact .inner[data-hint] .label {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+/* The focus ring of a cell the keyboard reaches (a hinted cell, or one
+   that kept focus as the strip put its note back on the row): 2px, 1px
+   out, so it reaches 3px past the cell, inside the scroller's 4px of
+   block padding (and 6px inline), and is never clipped. */
+.compact div.inner:focus-visible {
+  border-radius: var(--r-xs);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* A linked cell's hover and focus fill reaches 6px past its words, on the
+   link itself (the cell stays clear). */
+.compact a.inner {
+  margin: 0 -6px;
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  transition: background-color var(--dur) ease;
+}
+
+.compact .cell:has(a.inner:focus-visible) {
+  background: none;
+}
+
+.compact a.inner:focus-visible {
+  background: var(--surface-2);
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .compact .cell:has(a.inner:hover) {
+    background: none;
+  }
+
+  .compact a.inner:hover {
+    background: var(--surface-2);
+  }
+}
+
+/* Forced colours drop backgrounds, so the panel's rules (its border colour
+   showing through a 1px gap) would vanish: each cell draws an outline
+   instead, the neighbours' lines meeting in that gap. The compact rules
+   are borders and stay. */
+@media (forced-colors: active) {
+  .strip:not(.compact) .cell {
+    outline: 1px solid CanvasText;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cell,
+  .compact a.inner {
+    transition: none;
+  }
+}

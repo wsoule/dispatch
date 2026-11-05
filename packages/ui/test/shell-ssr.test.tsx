@@ -1,0 +1,156 @@
+import { describe, expect, test } from 'bun:test';
+import path from 'node:path';
+
+// Server rendering without a DOM. The test process has happy-dom
+// registered (test/setup.ts), which would hide any `window` or `document`
+// read during render, so the render runs in a child process instead.
+
+interface SsrResult {
+  hasWindow: boolean;
+  hasDocument: boolean;
+  shell: string;
+  switcher: string;
+  projectSwitcher: string;
+  signedOut: string;
+  gate: string;
+  overlays: string;
+  modalDrawer: string;
+  quickOpen: string;
+}
+
+function serverRender(): SsrResult {
+  const entry = path.join(import.meta.dir, 'shell-ssr-entry.tsx');
+  const child = Bun.spawnSync([process.execPath, 'run', entry], {
+    cwd: path.join(import.meta.dir, '..'),
+    env: { ...process.env, NODE_ENV: 'production' },
+  });
+  const out = child.stdout.toString();
+  if (child.exitCode !== 0) {
+    throw new Error(`server render failed:\n${child.stderr.toString()}`);
+  }
+  return JSON.parse(out) as SsrResult;
+}
+
+describe('shell family server render', () => {
+  test('renders with no window or document', () => {
+    const result = serverRender();
+    expect(result.hasWindow).toBe(false);
+    expect(result.hasDocument).toBe(false);
+    // The frame, the open drawer and the real sign-out form are all there.
+    expect(result.shell).toContain('Skip to content');
+    expect(result.shell).toContain('aria-label="Primary"');
+    expect(result.shell).toContain('role="dialog"');
+    expect(result.shell).toContain('M3 Cutover');
+    expect(result.shell).toContain('action="/api/auth/logout"');
+    // The server answers "expanded" and "Ctrl"; the client corrects both
+    // after hydration (pre-paint script + platform check).
+    expect(result.shell).toContain('Collapse sidebar');
+    expect(result.shell).toContain('(Ctrl K)');
+    expect(result.signedOut).toContain('Milestone Planner');
+  });
+
+  test('the signed-out frame lists its footer links in a named landmark', () => {
+    const { signedOut } = serverRender();
+    expect(signedOut).toContain('<footer');
+    expect(signedOut).toContain('<nav aria-label="About this site">');
+    const links = [...signedOut.matchAll(/<a [^>]*href="([^"]+)"/g)].map(
+      (m) => m[1]
+    );
+    expect(links).toEqual(['#main', '/', '/privacy', '/terms', '/contact']);
+  });
+
+  test('the workspace switcher renders as a closed menu button', () => {
+    const { switcher } = serverRender();
+    expect(switcher).toContain(
+      'aria-label="Milestone Planner Northwind, switch workspace"'
+    );
+    expect(switcher).toContain('aria-haspopup="dialog"');
+    expect(switcher).toContain('aria-expanded="false"');
+    expect(switcher).toContain('data-appearance="brand"');
+    expect(switcher).toContain('data-tip="Northwind · Switch workspace"');
+    // Closed: no menu rows in the markup.
+    expect(switcher).not.toContain('Connect another workspace');
+  });
+
+  test("a host's switcher renders with its own words and an in-place connect row", () => {
+    const { projectSwitcher } = serverRender();
+    expect(projectSwitcher).toContain(
+      'aria-label="Dispatch dispatch, switch project"'
+    );
+    expect(projectSwitcher).toContain('data-tip="dispatch · Switch project"');
+    expect(projectSwitcher).toContain('aria-expanded="false"');
+    // Closed: no menu rows, so the in-place row is not in the markup.
+    expect(projectSwitcher).not.toContain('Add project…');
+    expect(projectSwitcher.match(/data-tauri-drag-region=""/g)).toHaveLength(2);
+  });
+
+  test('a gate screen: one main, the skip link to it, a drag-region header', () => {
+    const { gate } = serverRender();
+    expect(gate.match(/<main /g)).toHaveLength(1);
+    expect(gate).toContain('<main id="gate-main" tabindex="-1"');
+    expect(gate).toContain('href="#gate-main"');
+    expect(gate).toMatch(/<header data-tauri-drag-region=""/);
+    expect(gate.match(/data-tauri-drag-region=""/g)).toHaveLength(1);
+    expect(gate).toContain('Set up Dispatch');
+    // The host's control sits in the header row.
+    expect(gate.indexOf('Sign out')).toBeLessThan(gate.indexOf('<main'));
+  });
+
+  test('the overlays render: dialog, confirmation, tooltip, spinner', () => {
+    const { overlays } = serverRender();
+    expect(overlays).toContain('role="dialog"');
+    expect(overlays).toContain('role="alertdialog"');
+    expect(overlays.match(/aria-modal="true"/g)).toHaveLength(2);
+    expect(overlays).toContain('data-slot="dialog-content"');
+    expect(overlays).toContain('Share this doc with the team.');
+    expect(overlays).toContain('Delete view');
+    expect(overlays).toContain('role="tooltip"');
+    expect(overlays).toContain('Visible to the team');
+    expect(overlays).not.toContain('Never shown on the server');
+    expect(overlays).toContain('aria-label="Starting the daemon"');
+  });
+
+  test('a modal slide-over renders its scrim, aria-modal and footer', () => {
+    const { modalDrawer, shell } = serverRender();
+    expect(modalDrawer).toContain('aria-modal="true"');
+    expect(modalDrawer).toContain('data-modal="true"');
+    expect(modalDrawer).toContain('data-size="wide"');
+    expect(modalDrawer).toContain('data-testid="task-composer"');
+    // The scrim, before the panel.
+    expect(modalDrawer).toMatch(
+      /^<div data-state="open" aria-hidden="true"><\/div><div [^>]*role="dialog"/
+    );
+    // The footer comes after the body, which holds the title.
+    const title = modalDrawer.indexOf('New task');
+    const create = modalDrawer.indexOf('Create task');
+    expect(title).toBeGreaterThanOrEqual(0);
+    expect(create).toBeGreaterThan(title);
+    // The default drawer stays non-modal on the server (media queries
+    // answer false there).
+    expect(shell).not.toContain('data-modal="true"');
+  });
+
+  test('the palette renders open with its own names and the host highlight', () => {
+    const { quickOpen } = serverRender();
+    expect(quickOpen).toContain('role="dialog"');
+    expect(quickOpen).toContain('aria-modal="true"');
+    expect(quickOpen).toContain('aria-label="Go to file"');
+    expect(quickOpen).not.toContain('aria-label="Command palette"');
+    expect(quickOpen).not.toContain('Search commands, pages and issues');
+    expect(quickOpen.match(/aria-label="Go to file"/g)).toHaveLength(2);
+    expect(quickOpen).toContain('role="combobox"');
+    // The Esc button is named after the dialog; one section, so no Tab hint.
+    expect(quickOpen).toContain('aria-label="Esc, close go to file"');
+    expect(quickOpen).not.toContain('Sections');
+    // The path label carries the mono hook.
+    expect(quickOpen.match(/data-mono=""/g)).toHaveLength(1);
+    // Indices 0 and 4 of "src/app.ts": "s" and "a" marked, the rest plain.
+    const marks = [...quickOpen.matchAll(/<mark[^>]*>([^<]*)<\/mark>/g)].map(
+      (m) => m[1]
+    );
+    expect(marks).toEqual(['s', 'a']);
+    expect(quickOpen).toMatch(
+      /<mark[^>]*>s<\/mark><span>rc\/<\/span><mark[^>]*>a<\/mark><span>pp\.ts<\/span>/
+    );
+  });
+});

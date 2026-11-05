@@ -24,9 +24,10 @@ export interface GlobalKeyboardContext {
    * regardless, since those are the two shortcuts a person expects to work from inside a text
    * field too (bail out of an edit, or jump to the palette). */
   isTyping: boolean;
-  /** True while a `Modal`-based dialog (CreateTaskModal, SessionDetailModal, DiffModal, …) is
-   * open. `Modal` owns its own Escape listener; the global layer must stay out of the way
-   * entirely while one is open, or a single Escape press would also fire the app's own
+  /** True while a modal surface (TaskComposerSlideOver, SessionDetailModal's modal SlideOver,
+   * DiffModal's Dialog, …) is open. The surface owns its own Escape listener; the global layer
+   * must stay out of the way entirely while one is open, or a single Escape press would also
+   * fire the app's own
    * `escape` nav action and close whatever's stacked behind the modal (e.g. the task peek
    * panel) in the same keystroke. */
   modalOpen: boolean;
@@ -34,6 +35,11 @@ export interface GlobalKeyboardContext {
    * holds it for 600ms after a bare `g`; while armed, the next letter resolves to a
    * `goto-*` chord instead of its own bare-key meaning. */
   pendingPrefix: ChordPrefix | null;
+  /** True on macOS (and the other Apple platforms), where Command is the app's modifier and
+   * Control keeps its Cocoa text meanings: Ctrl+P is "previous line" in every text field, so
+   * the app must not claim it there. Only the quick-open rule reads it today. Absent means
+   * not an Apple platform, where Ctrl is the app's modifier. */
+  isApplePlatform?: boolean;
 }
 
 /** The keys that start a two-key chord. Only `g` ("go to") today. */
@@ -56,13 +62,24 @@ export type GlobalKeyCommand =
   | 'new-task'
   /** Open the keyboard-shortcuts reference (`?`). */
   | 'open-shortcuts'
-  /** The `g` chords: `g h` Home, `g s` Settings, `g i` Inbox, `g m` Threads (messages),
-   * `g t` Tasks, `g r` Projects (the roadmap), `g f` Live (work in flight), `g c` Control
-   * room, `g a` Overseer (Linear's "Agent"). */
+  /** Go to file (⌘P on macOS, Ctrl+P elsewhere): the Files page with its quick open showing. */
+  | 'quick-open'
+  /** The quick-open chord while a modal is open: nothing opens, but the key is still the
+   * app's, so the browser's print dialog never does either. */
+  | 'quick-open-blocked'
+  /** The `g` chords, as lib/appNav.ts keyAction routes them: `g s` Settings, `g i` the
+   * Needs you preset, `g m` Threads (messages), `g t` Issues, `g l` Timeline (`t` is
+   * taken), `g g` Graph, `g f` the Moving preset (work in flight), `g r` the Review
+   * preset, and `g a`, `g o`, `g h` and `g c` the Overseer. Some command names predate
+   * their targets: goto-live is Moving, goto-projects is Review, and goto-home and
+   * goto-control-room are the Overseer. lib/shortcutGroups.ts lists the chords the
+   * shortcut sheet shows. */
   | 'goto-home'
   | 'goto-settings'
   | 'goto-inbox'
   | 'goto-threads'
+  | 'goto-timeline'
+  | 'goto-graph'
   | 'goto-tasks'
   | 'goto-projects'
   | 'goto-live'
@@ -78,6 +95,10 @@ const G_CHORDS: Record<string, GlobalKeyCommand> = {
   i: 'goto-inbox',
   m: 'goto-threads',
   t: 'goto-tasks',
+  l: 'goto-timeline',
+  // A second `g` completes the chord rather than re-arming it: the prefix is
+  // held only while `pendingPrefix` is null, so `g g` is free for the Graph.
+  g: 'goto-graph',
   r: 'goto-projects',
   f: 'goto-live',
   c: 'goto-control-room',
@@ -131,6 +152,21 @@ export function resolveGlobalKeyCommand(
   if (combo && input.key === ']') return 'nav-forward';
   // ⌘, is Settings everywhere on macOS; a modifier chord, so it works while typing.
   if (combo && input.key === ',') return 'goto-settings';
+  // Go to file. On macOS only ⌘P opens it: Ctrl+P there is Cocoa's "previous
+  // line" in every text field, so it resolves to nothing and the field keeps
+  // it. Elsewhere Ctrl+P (or Meta+P) opens it. A modifier chord like ⌘K, so it
+  // fires while typing (the Files editor's own textarea is a typing target, and
+  // the chord from it is the way to the next file), but never over a modal:
+  // the open quick open is itself one, and a second layer over any dialog
+  // helps nobody. Over a modal it is still resolved (to a command that does
+  // nothing), so the keystroke is claimed and the browser's print dialog does
+  // not open in its place.
+  if (input.key.toLowerCase() === 'p') {
+    const quickOpenChord = ctx.isApplePlatform === true ? input.metaKey : combo;
+    if (quickOpenChord) {
+      return ctx.modalOpen ? 'quick-open-blocked' : 'quick-open';
+    }
+  }
 
   // cmd+1..9 jumps to a rail entry. These work while typing on purpose: they
   // carry a modifier, so they cannot be confused with entering text, and being
@@ -245,18 +281,37 @@ export function resolveListKeyCommand(
   return LIST_KEYS[input.key] ?? null;
 }
 
+/** `<input>` types that take no typed text, only their own press (Space toggles a checkbox,
+ * Enter or Space presses a button), so a letter landing on one is free for a shortcut. Radio
+ * and range inputs are left out: their arrow keys belong to them. */
+const KEYLESS_INPUT_TYPES: ReadonlySet<string> = new Set([
+  'checkbox',
+  'button',
+  'submit',
+  'reset',
+]);
+
 /** The actual "does this tag name/contenteditable-ness count as typing" decision —
  * `isTypingTarget` (hooks/useGlobalKeyboard.ts) is the thin DOM-touching wrapper that pulls
  * `tagName`/`isContentEditable` off a real `EventTarget` and calls this; kept separate so the
  * decision itself is testable without a DOM. Any view with a keydown-listening container that
  * also contains real form controls (the Board's roving-focus track wrapping a milestone card's
  * concurrency `<input>` is the motivating case) should build its `isTyping` this way rather
- * than hardcoding `false`. */
+ * than hardcoding `false`. A focused native `<select>` counts too: its typeahead jumps to the
+ * option whose label starts with the letter pressed, so a bare `g` or digit there picks an
+ * option rather than firing a global chord. An `<input>` whose `inputType` is given and takes
+ * no text (a checkbox, a button) does not count: a ticked review criterion keeps focus on its
+ * box, and the page's and the app's letter keys must still work from there. Without
+ * `inputType`, every `<input>` counts, as before. */
 export function isTypingTagName(
   tagName: string,
-  isContentEditable: boolean
+  isContentEditable: boolean,
+  inputType?: string
 ): boolean {
-  return tagName === 'INPUT' || tagName === 'TEXTAREA' || isContentEditable;
+  if (tagName === 'INPUT') {
+    return inputType === undefined || !KEYLESS_INPUT_TYPES.has(inputType);
+  }
+  return tagName === 'TEXTAREA' || tagName === 'SELECT' || isContentEditable;
 }
 
 /** True for tag names that are their own interactive controls — a keydown landing on one

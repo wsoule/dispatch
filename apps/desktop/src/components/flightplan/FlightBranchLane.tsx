@@ -1,12 +1,13 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
 import type { BranchEntry, RunMeta, RunState } from '@dispatch/client';
+import { cx, Disclosure } from '@dispatch/ui';
 import { ChevronRight, GitBranch, GitMerge } from 'lucide-react';
 import { memo, type ReactNode, useCallback, useMemo, useState } from 'react';
 
 import { dagTaskFromDoc } from '../../lib/dagLayout';
 import { BranchGraph } from '../graph/BranchGraph';
 import { RunStatePill } from '../runs/RunStatePill';
-import { cn } from '@/lib/utils';
+import styles from './FlightBranchLane.module.css';
 
 const OPEN_STORAGE_KEY = 'dispatch:flight-branches-open';
 
@@ -78,25 +79,17 @@ const LaneGroup = memo(function LaneGroup({
   );
   return (
     <div data-slot="flight-branch-group" data-group={group.key}>
-      <div className="flex h-7 items-center gap-2 px-3 text-[12px]">
+      <div className={styles.groupHead}>
         {group.title !== null && (
-          <span className="text-text-secondary truncate font-medium">
-            {group.title}
-          </span>
+          <span className={styles.groupTitle}>{group.title}</span>
         )}
         {group.integration !== null ? (
           <>
-            <span className="text-foreground font-book shrink-0 tracking-(--id-tracking)">
-              {group.integration}
-            </span>
-            <span className="shrink-0 text-(--text-muted)">
-              {integrationNote(entry)}
-            </span>
+            <span className={styles.integration}>{group.integration}</span>
+            <span className={styles.note}>{integrationNote(entry)}</span>
           </>
         ) : (
-          <span className="shrink-0 text-(--text-muted)">
-            Children land on the base branch
-          </span>
+          <span className={styles.note}>Children land on the base branch</span>
         )}
       </div>
       <BranchGraph
@@ -106,7 +99,7 @@ const LaneGroup = memo(function LaneGroup({
         focusedId={focusedId}
         onOpenNode={onOpenNode}
         ariaLabel={`${group.title ?? group.integration ?? 'Plan'} branches`}
-        className="pb-1"
+        className={styles.graph}
       />
     </div>
   );
@@ -116,7 +109,8 @@ const LaneGroup = memo(function LaneGroup({
  * Beneath the plan, the same work as git sees it: for each integration branch (one for a
  * milestone; one per milestone band on a project) the git-log `BranchGraph` of the
  * children merging into it, each line trailing its run's branch — live runs as their
- * state pill, merged ones marked merged. Starts folded; opening it is remembered.
+ * state pill, merged ones marked merged. A library Disclosure, controlled here: it starts
+ * folded, and opening or closing it is remembered under `OPEN_STORAGE_KEY`.
  */
 export function FlightBranchLane({
   groups,
@@ -144,17 +138,13 @@ export function FlightBranchLane({
         return <RunStatePill meta={run} compact />;
       if (run.reviewAction === 'merge') {
         return (
-          <span className="text-status-done flex items-center gap-1 text-[12px]">
-            <GitMerge aria-hidden className="size-3" />
+          <span className={styles.merged}>
+            <GitMerge aria-hidden size={14} strokeWidth={1.8} />
             merged
           </span>
         );
       }
-      return (
-        <span className="font-book max-w-56 truncate text-[12px] text-(--text-muted)">
-          {run.branch}
-        </span>
-      );
+      return <span className={styles.branch}>{run.branch}</span>;
     },
     [latestRunByTaskId, liveRunStateByTaskId]
   );
@@ -164,49 +154,51 @@ export function FlightBranchLane({
     <section
       aria-label="Branches"
       data-slot="flight-branch-lane"
-      className="shadow-hairline-top flex max-h-[min(30%,240px)] min-h-9 shrink-0 flex-col"
+      className={styles.lane}
     >
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => {
-          setOpen(!open);
-          writeOpen(!open);
+      <Disclosure
+        data-slot="flight-branch-fold"
+        variant="plain"
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          writeOpen(next);
         }}
-        className="hover:bg-surface-hover focus-visible:bg-surface-active flex h-9 shrink-0 items-center gap-2 px-4 text-left text-[12px] outline-none"
-      >
-        <ChevronRight
-          aria-hidden
-          className={cn(
-            'size-3.5 text-(--text-muted) transition-transform duration-150',
-            open && 'rotate-90'
-          )}
-        />
-        <GitBranch aria-hidden className="size-3.5 text-(--text-muted)" />
-        <span className="text-foreground font-medium">Branches</span>
-        <span className="font-book text-(--text-muted) tabular-nums">
-          {count}
-        </span>
-      </button>
-      {open && (
-        <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2">
-          {groups.map((group) => (
-            <LaneGroup
-              key={group.key}
-              group={group}
-              entry={
-                group.integration === null
-                  ? undefined
-                  : milestoneEntries.get(group.integration)
-              }
-              accessoryFor={accessoryFor}
-              refFor={refFor}
-              focusedId={focusedId}
-              onOpenNode={onOpenNode}
+        trigger={({ props }) => (
+          <button {...props} className={styles.trigger}>
+            <ChevronRight
+              aria-hidden
+              size={14}
+              strokeWidth={1.8}
+              className={styles.chevron}
             />
-          ))}
-        </div>
-      )}
+            <GitBranch
+              aria-hidden
+              size={14}
+              strokeWidth={1.8}
+              className={styles.icon}
+            />
+            <span className={styles.label}>Branches</span>
+            <span className={cx(styles.count, 'num')}>{count}</span>
+          </button>
+        )}
+      >
+        {groups.map((group) => (
+          <LaneGroup
+            key={group.key}
+            group={group}
+            entry={
+              group.integration === null
+                ? undefined
+                : milestoneEntries.get(group.integration)
+            }
+            accessoryFor={accessoryFor}
+            refFor={refFor}
+            focusedId={focusedId}
+            onOpenNode={onOpenNode}
+          />
+        ))}
+      </Disclosure>
     </section>
   );
 }

@@ -1,4 +1,5 @@
 import { ApiError } from '@dispatch/client';
+import { Button, cx } from '@dispatch/ui';
 import { useState } from 'react';
 
 import { useDraftKey } from '../../hooks/useThreads';
@@ -6,9 +7,9 @@ import type { ComposeProblem } from '../../lib/composer';
 import { problemText, sendProblem } from '../../lib/composer';
 import type { ReplyPlan } from '../../lib/threadSources';
 import { hasAnswerButtons, replyTarget } from '../../lib/threadSources';
+import { PromptBar } from '../chat/PromptBar';
+import styles from './ReplyBox.module.css';
 import type { ThreadPaneProps } from './ThreadPane';
-import { PromptBar } from '@/ui/ai/prompt-bar';
-import { Button } from '@/ui/button';
 
 export type ReplyBoxProps = Pick<
   ThreadPaneProps,
@@ -30,7 +31,8 @@ export type ReplyBoxProps = Pick<
 
 export type OverseerVoice = 'assistant' | 'agent';
 
-// The Overseer's name in each layout: classic says Assistant, Two views says your agent.
+// The Overseer's name in each place: the Threads page says Assistant, the thread peek says
+// your agent (ThreadPane's `overseerVoice`).
 const VOICE: Record<
   OverseerVoice,
   { elsewhere: string; open: string; to: string; busy: string; reply: string }
@@ -77,15 +79,13 @@ export function ReplyBox({
     null
   );
   if (!access.canMessage) {
-    return (
-      <p className="text-muted-foreground text-[12px]">{access.explanation}</p>
-    );
+    return <p className={styles.note}>{access.explanation}</p>;
   }
   if (route === 'overseer-elsewhere') {
     return (
-      <p className="text-muted-foreground flex items-center gap-2 text-[12px]">
+      <p className={cx(styles.note, styles.elsewhere)}>
         {voice.elsewhere}
-        <Button size="sm" variant="ghost" onClick={onOpenOverseer}>
+        <Button size="sm" variant="quiet" onClick={onOpenOverseer}>
           {voice.open}
         </Button>
       </p>
@@ -93,7 +93,7 @@ export function ReplyBox({
   }
   if (route === 'bus' && plan === null && lost === null) {
     return (
-      <p className="text-muted-foreground text-[12px]">
+      <p className={styles.note}>
         {hasAnswerButtons(messages, { me, openIds, access })
           ? 'Answer with the buttons above.'
           : 'Nothing in this thread takes a reply.'}
@@ -125,8 +125,8 @@ export function ReplyBox({
     }
   };
   return (
-    <div className="flex flex-col gap-1">
-      <p className="text-muted-foreground truncate text-[12px]">
+    <div className={styles.reply}>
+      <p className={styles.target}>
         {route === 'overseer'
           ? voice.to
           : next === null
@@ -148,7 +148,11 @@ export function ReplyBox({
         ariaLabel="Reply"
       />
       {problem !== null && (
-        <p role="alert" className="text-destructive text-[12px]">
+        <p
+          role="alert"
+          className={cx('toneText', styles.note)}
+          data-tone="danger"
+        >
           {problemText(problem)}
         </p>
       )}

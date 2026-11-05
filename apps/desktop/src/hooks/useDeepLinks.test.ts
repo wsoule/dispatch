@@ -1,4 +1,4 @@
-import { act, renderHook } from '@testing-library/react';
+import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { StrictMode } from 'react';
 
@@ -33,7 +33,12 @@ function enterTauri() {
     {};
 }
 
-afterEach(() => {
+// Unmounts first and lets the plugin's unlisten promise settle: a test that
+// leaves its hook mounted would otherwise unlisten during the next test (the
+// shared setup unmounts after this hook runs) and count against its total.
+afterEach(async () => {
+  cleanup();
+  await act(async () => {});
   setSearch('');
   delete (window as unknown as { __TAURI_INTERNALS__?: object })
     .__TAURI_INTERNALS__;

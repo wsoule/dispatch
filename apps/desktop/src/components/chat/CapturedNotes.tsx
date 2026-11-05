@@ -1,9 +1,8 @@
 import type { InboxItem } from '@dispatch/client';
+import { Button, Chip, cx, Panel, PanelRow, SectionHeader } from '@dispatch/ui';
 import { useState } from 'react';
 
-import { Pill } from '@/ui/ai/pill';
-import { Button } from '@/ui/button';
-import { SectionLabel } from '@/ui/chrome';
+import styles from './posts.module.css';
 
 export interface CapturedNotesProps {
   /** Open captures, already filtered and sorted by `openCaptures`. */
@@ -24,24 +23,25 @@ export function CapturedNotes({
     <section
       aria-label="Noted"
       data-testid="captured-notes"
-      className="flex flex-col gap-1.5"
+      className={styles.stack}
     >
-      <h2 className="contents">
-        <SectionLabel>Noted</SectionLabel>
-      </h2>
-      {items.map((item) => (
-        <CapturedNote
-          key={item.id}
-          item={item}
-          onMakeTask={onMakeTask}
-          onDismiss={onDismiss}
-        />
-      ))}
+      <SectionHeader as="h2" name="Noted" />
+      <Panel as="div" flush>
+        {items.map((item) => (
+          <CapturedNote
+            key={item.id}
+            item={item}
+            onMakeTask={onMakeTask}
+            onDismiss={onDismiss}
+          />
+        ))}
+      </Panel>
     </section>
   );
 }
 
-// One capture with its two actions; a failed action leaves its reason on the row.
+// One capture as a panel row with its two actions; a failed action leaves its
+// reason on a line of its own under the row.
 function CapturedNote({
   item,
   onMakeTask,
@@ -59,22 +59,34 @@ function CapturedNote({
     });
   };
   return (
-    <div className="flex min-w-0 flex-col gap-0.5">
-      <div className="flex min-w-0 items-center gap-1.5">
-        <span className="min-w-0 flex-1 truncate text-sm">{item.text}</span>
-        {item.createdByRunId !== null && <Pill>agent</Pill>}
-        <Button variant="ghost" size="xs" onClick={() => run(onMakeTask)}>
-          Make task
-        </Button>
-        <Button variant="ghost" size="xs" onClick={() => run(onDismiss)}>
-          Dismiss
-        </Button>
-      </div>
+    <PanelRow className={styles.noteRow}>
+      <span className={styles.rowText}>{item.text}</span>
+      {item.createdByRunId !== null && <Chip>agent</Chip>}
+      <Button
+        variant="quiet"
+        size="sm"
+        className={styles.rowAction}
+        onClick={() => run(onMakeTask)}
+      >
+        Make task
+      </Button>
+      <Button
+        variant="quiet"
+        size="sm"
+        className={styles.rowAction}
+        onClick={() => run(onDismiss)}
+      >
+        Dismiss
+      </Button>
       {error !== null && (
-        <p role="alert" className="text-destructive text-[12px]">
+        <p
+          role="alert"
+          className={cx('toneText', styles.error)}
+          data-tone="danger"
+        >
           {error}
         </p>
       )}
-    </div>
+    </PanelRow>
   );
 }

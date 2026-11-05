@@ -205,9 +205,12 @@ test('a value ending in the mask suffix is refused and PATCHes nothing', () => {
   fireEvent.change(input, { target: { value: MASKED } });
   fireEvent.blur(input);
   expect(saved).toEqual([]);
-  expect(
-    screen.getByText(/shortened address shown for a saved webhook/)
-  ).toBeTruthy();
+  const refusal = screen.getByText(
+    /shortened address shown for a saved webhook/
+  );
+  // The refusal is a status line in the danger tone (the global toneText).
+  expect(refusal.getAttribute('data-tone')).toBe('danger');
+  expect(refusal.classList.contains('toneText')).toBe(true);
 });
 
 test('the mask suffix is refused even with nothing stored', () => {
@@ -278,12 +281,12 @@ test('the side-panel switch hides notifications without saving config', () => {
   const name = 'Show notifications in the side panel';
   // A viewing preference: not locked behind the owner, and on by default.
   expect(
-    screen.getByRole('switch', { name }).hasAttribute('data-checked')
-  ).toBe(true);
+    screen.getByRole('switch', { name }).getAttribute('aria-checked')
+  ).toBe('true');
   toggle(name);
   expect(
-    screen.getByRole('switch', { name }).hasAttribute('data-checked')
-  ).toBe(false);
+    screen.getByRole('switch', { name }).getAttribute('aria-checked')
+  ).toBe('false');
   expect(saved).toEqual([]);
   window.localStorage.clear();
 });

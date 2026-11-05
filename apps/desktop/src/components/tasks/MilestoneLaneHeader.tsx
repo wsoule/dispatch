@@ -1,11 +1,18 @@
 import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
-import { isCompletedStatus, isDoneStatus } from '@dispatch-foo/core/browser';
+import { isDoneStatus } from '@dispatch-foo/core/browser';
 import type { MilestoneProgress } from '@dispatch/client';
-import { Milestone, Waypoints } from 'lucide-react';
+import {
+  Button,
+  Chip,
+  Menu,
+  type MenuEntry,
+  SectionHeader,
+  Tooltip,
+} from '@dispatch/ui';
+import { ChevronDown, Milestone, Waypoints } from 'lucide-react';
 import { useState } from 'react';
 
 import {
-  clampConcurrencyInput,
   concurrencyChoices,
   concurrencyLabel,
 } from '../../lib/milestoneConcurrency';
@@ -13,18 +20,12 @@ import { rollupMilestoneStatus } from '../../lib/milestoneRollup';
 import type { WorkMilestoneOptions } from '../../lib/milestoneSession';
 import { FanoutControls, sessionIdle } from '../milestones/FanoutControls';
 import { useShellActions } from '../shell/ShellActionsContext';
-import { statusColor, StatusIcon } from './StatusIcon';
-import { GroupHeader } from '@/ui/ai/group-header';
-import { IconButton } from '@/ui/ai/icon-button';
-import { LabelPill, PillButton, SelectPill } from '@/ui/ai/pill';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from '@/ui/dropdown-menu';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
+import { LaneTitleButton } from './LaneHeader';
+import laneStyles from './LaneHeader.module.css';
+import styles from './MilestoneLaneHeader.module.css';
+import { StatusIcon } from './StatusIcon';
+
+const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
 
 interface MilestoneLaneHeaderProps {
   /** The milestone this lane belongs to, or `null` for the catch-all "No milestone" lane — which still
@@ -58,20 +59,22 @@ interface MilestoneLaneHeaderProps {
   onRaiseCeiling?: (milestoneId: string) => void;
   onStop: (milestoneId: string) => Promise<void>;
   /** Lands the finished milestone branch on the default base (one PR or one local merge, decided
-   * server-side). Optional so a header rendered without land wiring stays valid; the Land
-   * button only renders once every child is done/cancelled, replacing the then-useless
-   * Send agents… button. */
+   * server-side). Optional so a header rendered without land wiring stays valid; when Land
+   * is offered (`fanoutVerbs`: every child done or cancelled, the milestone not landed, no
+   * session running) it replaces the then-useless Send agents… button. The server stays
+   * the authority and answers a stale offer with its reason in the error pill. */
   onLand?: (milestoneId: string) => Promise<void>;
   /** A `+` on the right that presets the milestone in the task creator. */
   onAdd?: () => void;
 }
 
 /**
- * One milestone's lane header on the board: a 36px `GroupHeader` tinted by the milestone's rolled-up
- * status (the same glyph vocabulary its cards use), the title as the collapse target, the
- * card count, then `FanoutControls` — the same `◔ done/total`, phase chips, spend pill and
- * verbs the milestones page shows — with the id chip, the flight-plan button and the
- * concurrency picker slotted in.
+ * One milestone's lane header on the board: a `SectionHeader` whose icon is the milestone's
+ * rolled-up status glyph (the same vocabulary its cards use; no SectionHeader `tone`, which
+ * would draw a second status mark), the title as the collapse target, the card count, then
+ * `FanoutControls` (the same progress pie, phase chips, spend pill and verbs the milestones
+ * page shows) with the id button, the flight-plan button and the concurrency menu slotted
+ * in.
  *
  * Milestones are containers here, not objects on the board: they are never dragged and never
  * occupy a status column. Only the chevron and the title toggle the lane; the controls in
@@ -100,149 +103,121 @@ export function MilestoneLaneHeader({
   const shell = useShellActions();
   const [concurrency, setConcurrency] = useState(concurrencyDefault);
   const session = progress?.session ?? null;
-  const active = progress?.active ?? false;
-  const paused = session?.state === 'paused';
 
   const doneCount =
     progress?.children.filter((c) => isDoneStatus(c.status, model)).length ?? 0;
   const totalCount = progress?.children.length ?? 0;
   const liveCount = progress?.liveRuns.length ?? 0;
-  // Same "finished" rule the server's land validation applies (every child done or
-  // cancelled) — the button still only *requests*; the server is the authority and 409s
-  // with its reason into the error pill.
-  const landable =
-    onLand !== undefined &&
-    milestone !== null &&
-    !active &&
-    !paused &&
-    totalCount > 0 &&
-    doneCount === totalCount &&
-    !isCompletedStatus(milestone.meta.status, model);
   const rollup =
     milestone !== null ? rollupMilestoneStatus(childTasks, model) : null;
 
+  const concurrencyItems: MenuEntry[] = concurrencyChoices(
+    concurrencyDefault
+  ).map((choice) => ({
+    kind: 'radio',
+    id: String(choice),
+    label: concurrencyLabel(choice),
+    checked: choice === concurrency,
+    onSelect: () => setConcurrency(choice),
+  }));
+
   return (
-    <>
-      <GroupHeader
-        tint={rollup !== null ? statusColor(rollup, model) : undefined}
-        icon={
-          rollup !== null ? (
+    <SectionHeader
+      data-slot="group-header"
+      className={laneStyles.header}
+      icon={
+        <span data-slot="group-header-icon" className={laneStyles.icon}>
+          {rollup !== null ? (
             <StatusIcon status={rollup} />
           ) : (
-            <Milestone className="text-muted-foreground" />
-          )
-        }
-        name={
-          <button
-            type="button"
-            onClick={onToggle}
-            aria-expanded={expanded}
-            className="focus-visible:ring-ring inline-flex max-w-full cursor-pointer items-center rounded-[4px] text-left outline-none focus-visible:ring-2"
-          >
-            <span className="truncate">{title}</span>
-          </button>
-        }
-        count={total}
-        collapsed={!expanded}
-        onToggle={onToggle}
-        onAdd={onAdd}
-        addLabel={`New task in ${title}`}
-        className="mb-2"
-        actions={
-          milestone !== null && (
-            <FanoutControls
-              milestone={milestone}
-              model={model}
-              progress={progress}
-              count={
-                progress === undefined
-                  ? undefined
-                  : { done: doneCount, total: totalCount }
-              }
-              landable={landable}
-              concurrencyPicker={
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={
-                      <SelectPill
-                        aria-label={`Milestone dispatch concurrency for ${milestone.meta.id}`}
-                      />
-                    }
+            <Milestone {...ICON} className={styles.noRollup} />
+          )}
+        </span>
+      }
+      name={
+        <LaneTitleButton
+          title={title}
+          expanded={expanded}
+          onToggle={onToggle}
+        />
+      }
+      count={total}
+      collapsed={!expanded}
+      onToggle={onToggle}
+      onAdd={onAdd}
+      addLabel={`New task in ${title}`}
+      actions={
+        milestone !== null && (
+          <FanoutControls
+            milestone={milestone}
+            model={model}
+            progress={progress}
+            count={
+              progress === undefined
+                ? undefined
+                : { done: doneCount, total: totalCount }
+            }
+            concurrencyPicker={
+              <Menu
+                label={`Concurrency for ${milestone.meta.id}`}
+                items={concurrencyItems}
+                align="end"
+                trigger={(props) => (
+                  <Button
+                    {...props}
+                    variant="secondary"
+                    size="sm"
+                    aria-label={`Milestone dispatch concurrency for ${milestone.meta.id}`}
+                    iconAfter={<ChevronDown {...ICON} size={12} />}
                   >
                     {concurrencyLabel(concurrency)}
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="min-w-[96px]">
-                    <DropdownMenuRadioGroup
-                      value={String(concurrency)}
-                      onValueChange={(value) =>
-                        setConcurrency(clampConcurrencyInput(String(value)))
-                      }
-                    >
-                      {concurrencyChoices(concurrencyDefault).map((choice) => (
-                        <DropdownMenuRadioItem
-                          key={choice}
-                          value={String(choice)}
-                        >
-                          {concurrencyLabel(choice)}
-                        </DropdownMenuRadioItem>
-                      ))}
-                    </DropdownMenuRadioGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              }
-              onSendAgents={(milestoneId) =>
-                onRequestWork !== undefined
-                  ? onRequestWork(milestoneId)
-                  : onWork(milestoneId, { concurrency })
-              }
-              onPause={onPause}
-              onResume={onResume}
-              onRaiseCeiling={onRaiseCeiling}
-              onStop={onStop}
-              onLand={onLand}
-              onOpenMilestone={onOpenTask}
-              showOpen={false}
-            >
-              {/* Outside a session the live count is the only thing to say; inside one the
-                  phase chips carry it. */}
-              {sessionIdle(session) && liveCount > 0 && (
-                <LabelPill color="var(--state-working-fg)">
-                  {liveCount} running
-                </LabelPill>
-              )}
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    // The milestone id as a 24px pill that opens the milestone — a `Pill`'s look on a
-                    // real button.
-                    <PillButton
-                      aria-label={`Open ${milestone.meta.id}`}
-                      onClick={() => onOpenTask(milestone.meta.id)}
-                      className="bg-surface-quaternary h-6 px-2"
-                    />
-                  }
-                >
-                  {milestone.meta.id}
-                </TooltipTrigger>
-                <TooltipContent>Open milestone</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <IconButton
-                      label={`Open the flight plan for ${milestone.meta.id}`}
-                      onClick={() => shell.openTask(milestone.meta.id, 'plan')}
-                    />
-                  }
-                >
-                  <Waypoints aria-hidden />
-                </TooltipTrigger>
-                <TooltipContent>Open flight plan</TooltipContent>
-              </Tooltip>
-            </FanoutControls>
-          )
-        }
-      />
-    </>
+                  </Button>
+                )}
+              />
+            }
+            onSendAgents={(milestoneId) =>
+              onRequestWork !== undefined
+                ? onRequestWork(milestoneId)
+                : onWork(milestoneId, { concurrency })
+            }
+            onPause={onPause}
+            onResume={onResume}
+            onRaiseCeiling={onRaiseCeiling}
+            onStop={onStop}
+            onLand={onLand}
+            onOpenMilestone={onOpenTask}
+            showOpen={false}
+          >
+            {/* Outside a session the live count is the only thing to say; inside one the
+                phase chips carry it. */}
+            {sessionIdle(session) && liveCount > 0 && (
+              <Chip tone="info">{liveCount} running</Chip>
+            )}
+            <Tooltip content="Open milestone">
+              {/* The milestone id, in mono (a machine-read string), as a quiet button that
+                  opens the milestone. */}
+              <Button
+                variant="quiet"
+                size="sm"
+                className={styles.idButton}
+                aria-label={`Open ${milestone.meta.id}`}
+                onClick={() => onOpenTask(milestone.meta.id)}
+              >
+                {milestone.meta.id}
+              </Button>
+            </Tooltip>
+            <Tooltip content="Open flight plan">
+              <Button
+                variant="quiet"
+                size="sm"
+                aria-label={`Open the flight plan for ${milestone.meta.id}`}
+                onClick={() => shell.openTask(milestone.meta.id, 'plan')}
+                icon={<Waypoints {...ICON} />}
+              />
+            </Tooltip>
+          </FanoutControls>
+        )
+      }
+    />
   );
 }

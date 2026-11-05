@@ -1,11 +1,10 @@
+import { Button, cx, Panel, PanelRow, type UiTone } from '@dispatch/ui';
 import { useCallback, useState } from 'react';
 
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import type { NarratorLine } from '../../lib/narrator';
 import { doorLabel, type OverseerDoor } from '../../lib/overseerThread';
-import { cn } from '@/lib/utils';
-import { Button } from '@/ui/button';
-import { SectionLabel } from '@/ui/chrome';
+import styles from './posts.module.css';
 
 const SEEN_PREFIX = 'dispatch:narrator-seen:';
 
@@ -56,11 +55,13 @@ function initial(key: string): string {
   return now;
 }
 
-// The same colours as the top bar's counts.
-const TONE: Record<NarratorLine['tone'], string> = {
-  failed: 'text-(--state-failed-fg)',
-  review: 'text-(--state-review-fg)',
-  landed: 'text-muted-foreground',
+// The same tones as the top bar's counts: a failed run is red, a finished
+// run waiting on review green (Q6), a landed one quiet grey. The line's own
+// glyph (✕, ◇, ✓) still says which it is, so colour is never the only signal.
+const TONE: Record<NarratorLine['tone'], UiTone> = {
+  failed: 'danger',
+  review: 'success',
+  landed: 'muted',
 };
 
 /** The narrator's "While you were away", above the composer; dismissing marks it seen. */
@@ -77,38 +78,37 @@ export function AwayDigest({
 }) {
   if (lines.length === 0) return null;
   return (
-    <section
-      aria-label="While you were away"
-      data-testid="away-digest"
-      className="rounded-card border-border flex flex-col gap-1 border-[0.5px] px-3 py-2"
-    >
-      <SectionLabel
-        rule
-        trailing={
-          <Button variant="ghost" size="xs" onClick={onDismiss}>
+    // The section carries the region's name; Panel takes no aria-label.
+    <section aria-label="While you were away" data-testid="away-digest">
+      <Panel
+        as="div"
+        flush
+        heading={`While you were away · since ${formatRelativeTimeFromIso(since)}`}
+        actions={
+          <Button variant="quiet" size="sm" onClick={onDismiss}>
             Got it
           </Button>
         }
       >
-        While you were away · since {formatRelativeTimeFromIso(since)}
-      </SectionLabel>
-      {lines.map((line) => (
-        <div
-          key={line.key}
-          className="font-book flex items-center gap-2 text-[13px]"
-        >
-          <span className={cn('min-w-0 flex-1 truncate', TONE[line.tone])}>
-            {line.text}
-          </span>
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => onOpenDoor(line.door)}
-          >
-            {doorLabel(line.door)}
-          </Button>
-        </div>
-      ))}
+        {lines.map((line) => (
+          <PanelRow key={line.key} className={styles.row}>
+            <span
+              className={cx('toneText', styles.rowText)}
+              data-tone={TONE[line.tone]}
+            >
+              {line.text}
+            </span>
+            <Button
+              variant="quiet"
+              size="sm"
+              className={styles.rowAction}
+              onClick={() => onOpenDoor(line.door)}
+            >
+              {doorLabel(line.door)}
+            </Button>
+          </PanelRow>
+        ))}
+      </Panel>
     </section>
   );
 }

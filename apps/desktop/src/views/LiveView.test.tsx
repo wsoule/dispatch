@@ -7,20 +7,14 @@ import {
   render,
   screen,
 } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { ReactNode } from 'react';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { progress, run, task } from '../components/live/fixtures.test-helper';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { TaskAttention } from '../lib/taskAttention';
-
-// The side pane mounts the task page, whose Review mode pulls in the Pierre diff; its
-// worker import only Vite resolves.
-void mock.module('@/components/runs/PierreWorkerPool', () => ({
-  PierreWorkerPool: ({ children }: { children: ReactNode }) => children,
-}));
-
-const { LiveView } = await import('./LiveView');
+import { LiveView } from './LiveView';
 
 beforeEach(() => window.localStorage.clear());
 afterEach(cleanup);
@@ -109,30 +103,74 @@ function dataWith(
   } as unknown as DispatchProjectData;
 }
 
+/** The scroller's padding above the first band: LIST_TOP in LiveView.tsx, the
+ * `.scroller` padding-top in LiveView.module.css. */
+const LIST_TOP = 8;
+
+function rectAt(top: number, height: number): DOMRect {
+  return {
+    x: 0,
+    y: top,
+    top,
+    left: 0,
+    right: 1200,
+    bottom: top + height,
+    width: 1200,
+    height,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
+
+/**
+ * Lays the band list out by hand, since happy-dom lays nothing out: a viewport
+ * `viewHeight` tall, and the band list starting under the scroller's top padding, moved
+ * up by the scroller's `scrollTop` the way a real scroll moves it. Bands measure 0, so
+ * every band takes its known height (`liveBandHeight`). A scroll event re-measures.
+ */
+function layOut(viewHeight: number): HTMLElement | null {
+  const scroller = document.querySelector<HTMLElement>(
+    '[role=group][aria-label="Live work"]'
+  );
+  const list = scroller?.querySelector<HTMLElement>(':scope > ul');
+  if (scroller == null || list == null) return null;
+  scroller.getBoundingClientRect = () => rectAt(0, viewHeight);
+  list.getBoundingClientRect = () => rectAt(LIST_TOP - scroller.scrollTop, 0);
+  act(() => {
+    fireEvent.scroll(scroller);
+  });
+  return scroller;
+}
+
 function mount(
   data: DispatchProjectData,
   dispatchTask: (taskId: string) => Promise<void> = () => Promise.resolve(),
-  showHeader?: boolean
+  onBack?: () => void,
+  viewHeight = 4000
 ) {
   const calls = { opened: [] as string[], peeked: [] as string[] };
   const view = (d: DispatchProjectData) => (
     <LiveView
       data={d}
-      projectName="demo"
       dispatchTask={dispatchTask}
       onDispatchFailed={() => {}}
       onOpenTask={(id, tab) =>
         calls.opened.push(tab === undefined ? id : `${id}:${tab}`)
       }
       onPeekTask={(id) => calls.peeked.push(id)}
-      showHeader={showHeader}
+      onBack={onBack}
     />
   );
   const result = render(view(data));
+  layOut(viewHeight);
   return {
     ...result,
     calls,
-    rerenderWith: (d: DispatchProjectData) => result.rerender(view(d)),
+    /** Renders the view again with new data (the project's next refresh). */
+    rerenderWith: (d: DispatchProjectData) => {
+      act(() => {
+        result.rerender(view(d));
+      });
+    },
   };
 }
 
@@ -147,6 +185,91 @@ const node = (id: string) =>
 const group = () => screen.getByRole('group', { name: 'Live work' });
 const press = (key: string) => fireEvent.keyDown(group(), { key });
 const cursor = () => group().getAttribute('aria-activedescendant');
+const bandHeight = (key: string) =>
+  Number.parseFloat(
+    document.querySelector<HTMLElement>(`[data-live-band="${key}"]`)?.style
+      .height ?? 'NaN'
+  );
+const gaps = () =>
+  Array.from(
+    document.querySelectorAll<HTMLElement>(
+      '[role=group][aria-label="Live work"] > ul > li[aria-hidden="true"]'
+    ),
+    (li) => Number.parseFloat(li.style.height)
+  );
+
+/** Twelve active fan-outs of eight unblocked tasks each: every band is one wave of the
+ * same height, several of them taller than an 800px viewport together. */
+function twelveBands(): {
+  tasks: TaskListItem[];
+  sessions: MilestoneProgress[];
+} {
+  const tasks: TaskListItem[] = [];
+  const sessions: MilestoneProgress[] = [];
+  for (let m = 0; m < 12; m++) {
+    const id = `m-${String(m).padStart(2, '0')}`;
+    tasks.push(task(id, { kind: 'milestone', title: `Milestone ${id}` }));
+    for (let i = 0; i < 8; i++) {
+      tasks.push(task(`${id}-t${i}`, { parent: id }));
+    }
+    sessions.push(progress(id, 'active'));
+  }
+  return { tasks, sessions };
+}
+
+/** m-00 … m-11, the twelve bands' keys in the order they draw while all are active. */
+const TWELVE = Array.from(
+  { length: 12 },
+  (_, m) => `m-${String(m).padStart(2, '0')}`
+);
+
+/**
+ * Checks the band list's windows against the bands' own heights, with no scroll since
+ * the last change. Walking the list's items in order, the mounted bands come in `order`
+ * and each gap stands for a run of the bands between them: it must be exactly as tall
+ * as that run (`heightOf`), so every mounted band sits where the bands before it end,
+ * as its culling offset (`top`, from `liveBandHeight`) says, and the list is as tall as
+ * every band together. No gap may reach into the viewport either (the scroller's
+ * `scrollTop` and its laid-out height): what shows is always drawn bands, never a blank.
+ */
+function expectGapsMatch(
+  order: readonly string[],
+  heightOf: (key: string) => number
+) {
+  const scroller = group();
+  const viewTop = scroller.scrollTop;
+  const viewBottom = viewTop + scroller.getBoundingClientRect().height;
+  const items = Array.from(
+    scroller.querySelectorAll<HTMLElement>(':scope > ul > li')
+  );
+  let next = 0;
+  let y = LIST_TOP;
+  for (const item of items) {
+    const key = item.getAttribute('data-row-id');
+    if (key !== null) {
+      expect(key).toBe(order[next] ?? '');
+      expect(bandHeight(key)).toBe(heightOf(key));
+      y += heightOf(key);
+      next++;
+      continue;
+    }
+    // A gap: the bands it stands for, from the next one on, add up to its height.
+    const px = Number.parseFloat(item.style.height);
+    let sum = 0;
+    const from = next;
+    while (sum < px - 0.5 && next < order.length) {
+      sum += heightOf(order[next] ?? '');
+      next++;
+    }
+    expect({ from, px }).toEqual({ from, px: sum });
+    expect({ from, blank: y < viewBottom && y + px > viewTop }).toEqual({
+      from,
+      blank: false,
+    });
+    y += px;
+  }
+  expect(next).toBe(order.length);
+}
 
 describe('LiveView', () => {
   test('draws a band per container in motion, running first, then paused, then the rest', () => {
@@ -168,10 +291,37 @@ describe('LiveView', () => {
     expect(node('l-1')?.getAttribute('data-state')).toBe('running');
   });
 
-  test('a host drawing its own header drops the page header, bands intact', () => {
-    mount(dataWith(), undefined, false);
-    expect(document.querySelector('[data-slot=page-header]')).toBeNull();
+  test('hosted by App, the head reads Runs › Live: the Runs back chip, then the h1 alone, bands intact', () => {
+    const backs: string[] = [];
+    mount(dataWith(), undefined, () => backs.push('back'));
+    const head = document.querySelector('[data-slot=page-header]');
+    expect(head).toBeTruthy();
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Live' })
+    ).toBeTruthy();
+    // No in-page trail: the topbar's reads project / Runs / Live.
+    expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).toBeNull();
+    expect(head?.querySelector('[aria-current]')).toBeNull();
+    // The back chip names its parent, Runs, and leads the head before the h1.
+    const back = screen.getByRole('button', { name: 'Back to runs' });
+    expect(back).toBe(screen.getByTestId('tasks-back'));
+    expect(back.textContent).toBe('Runs');
+    expect(
+      back.compareDocumentPosition(
+        screen.getByRole('heading', { level: 1, name: 'Live' })
+      ) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Back to tasks' })).toBeNull();
+    fireEvent.click(back);
+    expect(backs).toEqual(['back']);
     expect(bands()).toEqual(['m-1', '__loose', 'm-2', 'm-3']);
+    cleanup();
+    // On its own (no host) the head has no back chip, only the heading.
+    mount(dataWith());
+    expect(screen.queryByTestId('tasks-back')).toBeNull();
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Live' })
+    ).toBeTruthy();
   });
 
   test('the header adds every band up', () => {
@@ -185,15 +335,39 @@ describe('LiveView', () => {
     );
     const text = (slot: string) =>
       document.querySelector(`[data-slot=${slot}]`)?.textContent;
+    const header = document.querySelector('[data-slot=live-header]');
+    expect(header?.getAttribute('aria-label')).toBe('Live');
+    // The header's one-row strip (owner decision 2026-11-03), not the stats panel.
+    expect(header?.getAttribute('data-variant')).toBe('compact');
+    const slots = header?.querySelector(
+      '[data-slot=live-slots] [role=progressbar]'
+    );
+    expect(slots?.getAttribute('aria-label')).toBe('Agent slots');
+    expect(slots?.getAttribute('aria-valuetext')).toBe('1 of 4 slots in use');
+    // Each cell reads its label, then its value.
+    expect(text('live-running')).toBe('Running2');
+    expect(text('live-queued')).toBe('Queued1');
     expect(
       document
-        .querySelector('[data-slot=live-slots]')
-        ?.getAttribute('aria-label')
-    ).toBe('1 of 4 slots in use');
-    expect(text('live-running')).toBe('2running');
-    expect(text('live-queued')).toBe('1queued');
-    expect(text('live-teammate')).toBe('0waiting on teammates');
-    expect(text('live-spend')).toBe('$4 of $20 ceilings');
+        .querySelector('[data-slot=live-queued]')
+        ?.firstElementChild?.getAttribute('title')
+    ).toBe('Starts on its own as a fan-out slot frees');
+    expect(text('live-teammate')).toBe('Blocked on teammates0');
+    // With no spend today the value is the live fan-outs' settled spend ("Today" keys
+    // today's). What it is measured against is the note, in the cell's hint (owner
+    // decision 2026-11-04) and still in its text for a screen reader; the title says it
+    // in full and is the cell's accessible description.
+    const spend = document.querySelector('[data-slot=live-spend] > div');
+    expect(spend?.textContent).toBe('Spend$4of $20 ceilings');
+    expect(spend?.querySelector(':scope > .srOnly')?.textContent).toBe(
+      'of $20 ceilings'
+    );
+    const described = spend?.getAttribute('aria-describedby');
+    const title = described ? document.getElementById(described) : null;
+    expect(title?.hidden).toBe(true);
+    expect(title?.textContent).toBe(
+      '$4 settled in the live fan-outs, of their $20 ceilings'
+    );
   });
 
   test('j/k walk the nodes band after band, J/K jump a band', () => {
@@ -292,101 +466,39 @@ describe('LiveView', () => {
       expect(node('t-z')?.getAttribute('data-state')).toBe('blocked');
       expect(
         document.querySelector('[data-slot=live-teammate]')?.textContent
-      ).toBe('0waiting on teammates');
+      ).toBe('Blocked on teammates0');
     });
   });
 
-  test('Enter opens the task beside the bands, o its page, Space peeks', () => {
+  test('Enter and Space quick-look the task, o opens its page; nothing is drawn beside the bands', () => {
     const view = mount(dataWith());
     act(() => group().focus());
     press('Enter');
-    expect(document.querySelector('[data-slot=task-pane]')).not.toBeNull();
+    expect(view.calls.peeked).toEqual(['t-a']);
     press('o');
     press(' ');
     expect(view.calls.opened).toEqual(['t-a']);
-    expect(view.calls.peeked).toEqual(['t-a']);
-    press('Escape');
+    expect(view.calls.peeked).toEqual(['t-a', 't-a']);
     expect(document.querySelector('[data-slot=task-pane]')).toBeNull();
+    // Escape is left to the shell (which closes the drawer): not prevented here.
+    const escape = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      group().dispatchEvent(escape);
+    });
+    expect(escape.defaultPrevented).toBe(false);
   });
 
-  describe('the side pane', () => {
-    const paneTask = () =>
-      document
-        .querySelector('[data-slot=task-pane]')
-        ?.getAttribute('data-task-id') ?? null;
-    const rest = () =>
-      act(async () => {
-        await new Promise((done) => setTimeout(done, 300));
-      });
-    const click = (id: string) => act(() => node(id)?.click());
-
-    test('follows the cursor once it rests', async () => {
-      mount(dataWith());
-      act(() => group().focus());
-      press('Enter');
-      expect(paneTask()).toBe('t-a');
-      press('j');
-      await rest();
-      expect(paneTask()).toBe('t-b');
-    });
-
-    test('stays on its task when that task’s Loose run finishes', async () => {
-      const view = mount(dataWith());
-      click('l-1');
-      expect(paneTask()).toBe('l-1');
-      // A finished run waiting on a review is not Loose work, so l-1 leaves the view.
-      view.rerenderWith(
-        dataWith({
-          tasks: TASKS.map((t) =>
-            t.meta.id === 'l-1'
-              ? { ...t, meta: { ...t.meta, status: 'review' } }
-              : t
-          ),
-          runs: [run('t-b'), run('l-1', { state: 'finished' })],
-          attention: [
-            ['v-a', 'review'],
-            ['l-1', 'review'],
-          ],
-        })
-      );
-      expect(node('l-1')).toBeNull();
-      await rest();
-      expect(paneTask()).toBe('l-1');
-    });
-
-    test('stays on its task when its wave lands and folds', async () => {
-      const tasks = [
-        task('m-1', { kind: 'milestone', title: 'Checkout' }),
-        task('t-a', { parent: 'm-1', status: 'working' }),
-        task('t-b', { parent: 'm-1', blockedBy: ['t-a'] }),
-      ];
-      const sessions = [progress('m-1', 'active')];
-      const view = mount(
-        dataWith({ tasks, runs: [run('t-a')], sessions, attention: [] })
-      );
-      click('t-a');
-      expect(paneTask()).toBe('t-a');
-      view.rerenderWith(
-        dataWith({
-          tasks: tasks.map((t) =>
-            t.meta.id === 't-a'
-              ? { ...t, meta: { ...t.meta, status: 'landed' } }
-              : t
-          ),
-          runs: [
-            run('t-a', {
-              state: 'finished',
-              reviewedAt: '2026-09-20T01:00:00.000Z',
-            }),
-          ],
-          sessions,
-          attention: [],
-        })
-      );
-      expect(node('t-a')).toBeNull();
-      await rest();
-      expect(paneTask()).toBe('t-a');
-    });
+  test('a card click quick-looks its task and moves the cursor to it', () => {
+    const view = mount(dataWith());
+    act(() => node('l-1')?.click());
+    expect(view.calls.peeked).toEqual(['l-1']);
+    expect(group().getAttribute('aria-activedescendant')).toBe(
+      'flight-node-l-1'
+    );
   });
 
   test('a band links to its full Flight Plan', () => {
@@ -405,10 +517,15 @@ describe('LiveView', () => {
       document.querySelector<HTMLElement>('[data-slot=live-pause-all]')?.click()
     );
     expect(handlers.paused).toEqual([]);
-    await screen.findByText('Pause the fan-out?');
+    const confirm = await screen.findByRole('alertdialog', {
+      name: 'Pause the fan-out?',
+    });
+    expect(confirm.getAttribute('data-slot')).toBe('live-pause-all-confirm');
     await act(async () => {
       document
-        .querySelector<HTMLElement>('[data-slot=live-pause-all-confirm]')
+        .querySelector<HTMLElement>(
+          '[data-slot=live-pause-all-confirm] [data-confirm]'
+        )
         ?.click();
       await Promise.resolve();
     });
@@ -521,20 +638,210 @@ describe('LiveView', () => {
   });
 
   test('only the bands near the viewport mount', () => {
-    const tasks: TaskListItem[] = [];
-    const sessions: MilestoneProgress[] = [];
-    for (let m = 0; m < 12; m++) {
-      const id = `m-${String(m).padStart(2, '0')}`;
-      tasks.push(task(id, { kind: 'milestone', title: `Milestone ${id}` }));
-      for (let i = 0; i < 8; i++) {
-        tasks.push(task(`${id}-t${i}`, { parent: id }));
-      }
-      sessions.push(progress(id, 'active'));
-    }
-    mount(dataWith({ tasks, runs: [], sessions, attention: [] }));
+    const { tasks, sessions } = twelveBands();
+    mount(
+      dataWith({ tasks, runs: [], sessions, attention: [] }),
+      undefined,
+      undefined,
+      800
+    );
     const mounted = bands();
     expect(mounted.length).toBeGreaterThan(0);
     expect(mounted.length).toBeLessThan(12);
+    // The first bands, in order; the rest stand as one spacer item hidden from
+    // assistive tech, as tall as the bands it stands for (every band here is the same
+    // eight-card wave, so each is a mounted band's height).
+    expect(mounted).toEqual(
+      Array.from(
+        { length: mounted.length },
+        (_, m) => `m-${String(m).padStart(2, '0')}`
+      )
+    );
+    const height = bandHeight('m-00');
+    expect(height).toBeGreaterThan(0);
+    expect(gaps()).toEqual([(12 - mounted.length) * height]);
+    // The list is layout only: each band is its own labelled section, and a windowed
+    // list would announce a count of whichever bands happen to be mounted.
+    const list = group().querySelector(':scope > ul');
+    expect(list?.getAttribute('role')).toBe('presentation');
+    for (const item of Array.from(list?.children ?? [])) {
+      expect(item.getAttribute('role')).toBe('presentation');
+    }
+  });
+
+  test('every mounted band is its own compositing layer', () => {
+    // WebKit repaints every band that shares a backing when one mounts or unmounts, so
+    // each band's item holds a layer. bun loads a CSS module as an empty map, so the
+    // source and the sheet are read instead of the rendered class.
+    const source = readFileSync(join(import.meta.dir, 'LiveView.tsx'), 'utf8');
+    expect(source).toMatch(
+      /data-row-id=\{key\}\s+className=\{styles\.bandItem\}/
+    );
+    const sheet = readFileSync(
+      join(import.meta.dir, 'LiveView.module.css'),
+      'utf8'
+    );
+    expect(sheet).toMatch(/\.bandItem \{[^}]*will-change: transform;/);
+  });
+
+  test('J brings the next band’s title to the top of the list', () => {
+    mount(dataWith(), undefined, undefined, 300);
+    const scroller = group();
+    act(() => scroller.focus());
+    expect(cursor()).toBe('flight-node-t-a');
+    const first = bandHeight('m-1');
+    press('J');
+    expect(cursor()).toBe('flight-node-l-1');
+    expect(scroller.scrollTop).toBe(LIST_TOP + first);
+    expect(bands()).toContain('__loose');
+    const loose = bandHeight('__loose');
+    press('J');
+    expect(cursor()).toBe('flight-node-u-a');
+    expect(scroller.scrollTop).toBe(LIST_TOP + first + loose);
+    expect(bands()).toContain('m-2');
+  });
+
+  test('j into a band the window left out mounts it, so the cursor is always drawn', () => {
+    const { tasks, sessions } = twelveBands();
+    mount(
+      dataWith({ tasks, runs: [], sessions, attention: [] }),
+      undefined,
+      undefined,
+      800
+    );
+    const scroller = group();
+    act(() => scroller.focus());
+    expect(cursor()).toBe('flight-node-m-00-t0');
+    // Scroll far down by hand: the cursor's band stays mounted, its neighbour does not.
+    act(() => {
+      scroller.scrollTop = 6000;
+      fireEvent.scroll(scroller);
+    });
+    expect(bands()).toContain('m-00');
+    expect(bands()).not.toContain('m-01');
+    // Eight cards down the first band's one wave, then into the next band.
+    for (let i = 0; i < 8; i++) press('j');
+    expect(cursor()).toBe('flight-node-m-01-t0');
+    expect(bands()).toContain('m-01');
+    expect(document.getElementById(cursor() ?? '')).not.toBeNull();
+    const height = bandHeight('m-01');
+    expectGapsMatch(TWELVE, () => height);
+  });
+
+  test('a re-sort that moves the cursor’s band away keeps it drawn', () => {
+    const { tasks, sessions } = twelveBands();
+    const view = mount(
+      dataWith({ tasks, runs: [], sessions, attention: [] }),
+      undefined,
+      undefined,
+      800
+    );
+    act(() => group().focus());
+    press('j');
+    expect(cursor()).toBe('flight-node-m-00-t1');
+    // m-00's fan-out is paused: its band sorts after every active one, far below.
+    view.rerenderWith(
+      dataWith({
+        tasks,
+        runs: [],
+        sessions: sessions.map((s) =>
+          s.milestoneId === 'm-00'
+            ? progress('m-00', 'paused', { pausedReason: 'human' })
+            : s
+        ),
+        attention: [],
+      })
+    );
+    expect(cursor()).toBe('flight-node-m-00-t1');
+    expect(bands()).toContain('m-00');
+    expect(bands().at(-1)).toBe('m-00');
+    expect(document.getElementById(cursor() ?? '')).not.toBeNull();
+    const height = bandHeight('m-00');
+    expectGapsMatch([...TWELVE.slice(1), 'm-00'], () => height);
+  });
+
+  test('bands that grow re-window at once: every gap is the bands it stands for', () => {
+    const { tasks, sessions } = twelveBands();
+    const view = mount(
+      dataWith({ tasks, runs: [], sessions, attention: [] }),
+      undefined,
+      undefined,
+      800
+    );
+    const scroller = group();
+    act(() => {
+      scroller.scrollTop = 5000;
+      fireEvent.scroll(scroller);
+    });
+    const before = bandHeight(bands()[0] ?? '');
+    expectGapsMatch(TWELVE, () => before);
+    // Two more cards in every band: each band's wave is taller. No scroll follows.
+    const more = [...tasks];
+    for (let m = 0; m < 12; m++) {
+      const id = `m-${String(m).padStart(2, '0')}`;
+      for (let i = 0; i < 2; i++)
+        more.push(task(`${id}-x${i}`, { parent: id }));
+    }
+    view.rerenderWith(
+      dataWith({ tasks: more, runs: [], sessions, attention: [] })
+    );
+    const after = bandHeight(bands()[0] ?? '');
+    expect(after).toBeGreaterThan(before);
+    expectGapsMatch(TWELVE, () => after);
+  });
+
+  test('a fold re-windows at once, opening or closing', () => {
+    // Every band's first wave has landed (folded to a count); its second is running.
+    const tasks: TaskListItem[] = [];
+    const sessions: MilestoneProgress[] = [];
+    const runs: RunMeta[] = [];
+    for (let m = 0; m < 12; m++) {
+      const id = `m-${String(m).padStart(2, '0')}`;
+      tasks.push(task(id, { kind: 'milestone', title: `Milestone ${id}` }));
+      for (let i = 0; i < 6; i++) {
+        tasks.push(task(`${id}-a${i}`, { parent: id, status: 'landed' }));
+      }
+      tasks.push(
+        task(`${id}-b0`, {
+          parent: id,
+          status: 'working',
+          blockedBy: [`${id}-a0`],
+        })
+      );
+      runs.push(run(`${id}-b0`));
+      sessions.push(progress(id, 'active'));
+    }
+    mount(
+      dataWith({ tasks, runs, sessions, attention: [] }),
+      undefined,
+      undefined,
+      800
+    );
+    const folded = bandHeight('m-00');
+    // m-00's own height as drawn now; every other band stays folded.
+    const heights = () => {
+      const first = bandHeight('m-00');
+      return (key: string) => (key === 'm-00' ? first : folded);
+    };
+    expectGapsMatch(TWELVE, heights());
+    const fold = () =>
+      document.querySelector<HTMLElement>(
+        '[data-live-band=m-00] [data-slot=live-band-fold]'
+      );
+    expect(fold()?.getAttribute('aria-expanded')).toBe('false');
+    act(() => fold()?.click());
+    expect(fold()?.getAttribute('aria-expanded')).toBe('true');
+    expect(bandHeight('m-00')).toBeGreaterThan(folded);
+    expectGapsMatch(TWELVE, heights());
+    // A scroll while it is open windows the list at its full height; folding it again
+    // pulls every band below it up, and the windows follow before the next scroll.
+    act(() => {
+      fireEvent.scroll(group());
+    });
+    expectGapsMatch(TWELVE, heights());
+    act(() => fold()?.click());
+    expect(bandHeight('m-00')).toBe(folded);
+    expectGapsMatch(TWELVE, heights());
   });
 
   test('with nothing in flight, offers what is ready to start', () => {

@@ -1,16 +1,23 @@
+import {
+  Button,
+  Chip,
+  ChipButton,
+  cx,
+  Panel,
+  SectionHeader,
+  TextField,
+} from '@dispatch/ui';
 import { X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { problemText, sendProblem } from '../../lib/composer';
 import type { Post } from '../../lib/posts';
 import { UNDO_MS } from '../conversation/HomeComposer';
-import { IconButton } from '@/ui/ai/icon-button';
-import { NoticePill } from '@/ui/ai/notice-pill';
-import { Pill } from '@/ui/ai/pill';
-import { Button } from '@/ui/button';
-import { SectionLabel } from '@/ui/chrome';
-import { Input } from '@/ui/input';
+import styles from './posts.module.css';
 
+const dismissIcon = <X size={14} strokeWidth={1.8} aria-hidden />;
+
+// A message's time of day ("19:17"), or nothing for an unparseable stamp.
 function clock(iso: string): string {
   const date = new Date(iso);
   return Number.isNaN(date.getTime())
@@ -62,33 +69,39 @@ export function ForYouPosts({
     if (!holding) setShown(posts);
   }, [posts, holding]);
   const fresh = posts.filter((p) => !shown.some((s) => s.key === p.key)).length;
+  // Holding keeps new posts out, not the person's own dismissals: a post
+  // dismissed (or cleared) during an agent turn leaves the stream at once.
+  const dismiss = (post: Post) => {
+    onDismiss(post);
+    setShown((current) => current.filter((s) => s.key !== post.key));
+  };
+  const clearAll = () => {
+    onClearAll(shown);
+    setShown([]);
+  };
   if (shown.length === 0 && fresh === 0) return null;
   return (
     <section
       aria-label="For you"
       data-testid="for-you"
-      className="flex flex-col gap-1.5"
+      className={styles.stack}
     >
-      <h2 className="contents">
-        <SectionLabel
-          className="h-6"
-          trailing={
-            shown.length > 0 && (
-              <Button
-                variant="ghost"
-                size="xs"
-                className="ml-auto"
-                onClick={() => onClearAll(shown)}
-                data-testid="for-you-clear-all"
-              >
-                Clear all
-              </Button>
-            )
-          }
-        >
-          For you
-        </SectionLabel>
-      </h2>
+      <SectionHeader
+        as="h2"
+        name="For you"
+        actions={
+          shown.length > 0 && (
+            <Button
+              variant="quiet"
+              size="sm"
+              onClick={clearAll}
+              data-testid="for-you-clear-all"
+            >
+              Clear all
+            </Button>
+          )
+        }
+      />
       {shown.map((post) => (
         <ForYouPost
           key={post.key}
@@ -96,18 +109,22 @@ export function ForYouPosts({
           label={label}
           onOpen={onOpen}
           onReply={onReply}
-          onDismiss={onDismiss}
+          onDismiss={dismiss}
         />
       ))}
       {fresh > 0 && (
-        <NoticePill onClick={() => setShown(posts)} className="self-center">
-          {fresh} new
-        </NoticePill>
+        <div className={styles.fresh}>
+          <ChipButton tone="accent" onClick={() => setShown(posts)}>
+            {fresh} new
+          </ChipButton>
+        </div>
       )}
     </section>
   );
 }
 
+// One post: a card while unread (or while a reply is held, sent or being
+// written), else a single quiet line that opens it.
 function ForYouPost({
   post,
   label,
@@ -162,25 +179,27 @@ function ForYouPost({
   // A run writing about itself reads once, not "Title on Title".
   const byline = from === subject ? subject : `${from} on ${subject}`;
   const dismiss = (
-    <IconButton
-      label="Dismiss"
+    <Button
+      variant="quiet"
+      size="sm"
+      icon={dismissIcon}
+      aria-label="Dismiss"
       data-testid="for-you-post-dismiss"
       onClick={() => onDismiss(post)}
-    >
-      <X />
-    </IconButton>
+      className={styles.rowAction}
+    />
   );
   if (!post.unread && receipt === null && held === null && !replying) {
     return (
-      <div className="flex max-w-full min-w-0 items-center self-start">
+      <div className={styles.readRow}>
         <Button
-          variant="ghost"
-          size="xs"
+          variant="quiet"
+          size="sm"
           data-testid="for-you-post-read"
           onClick={() => onOpen(post)}
-          className="min-w-0 justify-start"
+          className={styles.readButton}
         >
-          <span className="truncate">
+          <span className={styles.truncate}>
             {byline} · {clock(post.latest.createdAt)}
           </span>
         </Button>
@@ -189,90 +208,104 @@ function ForYouPost({
     );
   }
   return (
-    <article
-      data-testid="for-you-post"
-      className="bg-background border-border rounded-card flex min-w-0 flex-col gap-1.5 border-[0.5px] px-3 py-2 text-[13px]"
-    >
-      <div className="text-muted-foreground flex items-center gap-2 text-[12px]">
-        <span className="text-foreground font-medium">{from}</span>
-        <Pill>{subject}</Pill>
-        {post.count > 1 && <span>{post.count} messages</span>}
-        <span className="flex-1" />
-        <span>{clock(post.latest.createdAt)}</span>
-        {dismiss}
-      </div>
-      <p className="line-clamp-3 text-(--text-secondary)">{post.latest.body}</p>
-      {receipt !== null ? (
-        <p role="status" className="text-muted-foreground text-[12px]">
-          {receipt}
-        </p>
-      ) : held !== null ? (
-        <div role="status" className="flex items-center gap-2 text-[12px]">
-          <span className="min-w-0 flex-1 truncate">Sending to {subject}…</span>
-          <Button
-            size="xs"
-            variant="outline"
-            onClick={() => {
-              setBody(held);
-              setHeld(null);
-              setReplying(true);
+    // An <article> per card, as before the Panel: each post is a
+    // self-contained item in the For you feed.
+    <article data-testid="for-you-post" className={styles.post}>
+      <Panel as="div">
+        <div className={styles.meta}>
+          <span className={styles.from} title={from}>
+            {from}
+          </span>
+          {/* A run writing about itself names itself once, as the byline does. */}
+          {from !== subject && (
+            <span className={styles.subject}>
+              <Chip title={subject}>
+                <span className={styles.subjectText}>{subject}</span>
+              </Chip>
+            </span>
+          )}
+          {post.count > 1 && (
+            <span className={styles.count}>{post.count} messages</span>
+          )}
+          <span className={styles.time}>{clock(post.latest.createdAt)}</span>
+          {dismiss}
+        </div>
+        <p className={styles.body}>{post.latest.body}</p>
+        {receipt !== null ? (
+          <p role="status" className={styles.status}>
+            {receipt}
+          </p>
+        ) : held !== null ? (
+          <div role="status" className={styles.hold}>
+            <span className={styles.rowText}>Sending to {subject}…</span>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setBody(held);
+                setHeld(null);
+                setReplying(true);
+              }}
+            >
+              Undo
+            </Button>
+          </div>
+        ) : replying ? (
+          <form
+            className={styles.replyForm}
+            onSubmit={(e) => {
+              e.preventDefault();
+              const text = body.trim();
+              if (text === '') return;
+              setError(null);
+              setReplying(false);
+              setBody('');
+              setHeld(text);
             }}
           >
-            Undo
-          </Button>
-        </div>
-      ) : replying ? (
-        <form
-          className="flex min-w-0 items-center gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const text = body.trim();
-            if (text === '') return;
-            setError(null);
-            setReplying(false);
-            setBody('');
-            setHeld(text);
-          }}
-        >
-          <Input
-            ref={replyInputRef}
-            aria-label={`${verb} ${subject}`}
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            placeholder={`${verb} ${subject}…`}
-            className="min-w-0 flex-1"
-          />
-          {/* A short label, so a long address never squeezes the input; the
+            <TextField
+              ref={replyInputRef}
+              size="sm"
+              aria-label={`${verb} ${subject}`}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              placeholder={`${verb} ${subject}…`}
+              className={styles.replyInput}
+            />
+            {/* A short label, so a long address never squeezes the input; the
               full one stays in the accessible name and the tooltip. */}
-          <Button
-            size="xs"
-            type="submit"
-            disabled={body.trim() === ''}
-            aria-label={`${asks ? 'Answer' : 'Send to'} ${subject}`}
-            title={`${asks ? 'Answer' : 'Send to'} ${subject}`}
-            className="shrink-0"
+            <Button
+              variant="primary"
+              size="sm"
+              type="submit"
+              disabled={body.trim() === ''}
+              aria-label={`${asks ? 'Answer' : 'Send to'} ${subject}`}
+              title={`${asks ? 'Answer' : 'Send to'} ${subject}`}
+              className={styles.rowAction}
+            >
+              {asks ? 'Answer' : 'Send'}
+            </Button>
+          </form>
+        ) : (
+          <div className={styles.actions}>
+            <Button size="sm" variant="secondary" onClick={() => onOpen(post)}>
+              Open
+            </Button>
+            <Button size="sm" variant="quiet" onClick={() => setReplying(true)}>
+              {asks ? 'Answer…' : 'Reply…'}
+            </Button>
+          </div>
+        )}
+        {error !== null && (
+          <p
+            role="alert"
+            className={cx('toneText', styles.error)}
+            data-tone="danger"
           >
-            {asks ? 'Answer' : 'Send'}
-          </Button>
-        </form>
-      ) : (
-        <div className="flex gap-2">
-          <Button size="xs" variant="outline" onClick={() => onOpen(post)}>
-            Open
-          </Button>
-          <Button size="xs" variant="ghost" onClick={() => setReplying(true)}>
-            {asks ? 'Answer…' : 'Reply…'}
-          </Button>
-        </div>
-      )}
-      {error !== null && (
-        <p
-          role="alert"
-          className="text-state-failed text-[12px] break-words whitespace-normal"
-        >
-          {error}
-        </p>
-      )}
+            {error}
+          </p>
+        )}
+      </Panel>
     </article>
   );
 }

@@ -423,7 +423,7 @@ describe('POST /api/tasks/draft and GET/DELETE /api/tasks/drafts', () => {
   });
 
   // The load-bearing round trip: a drafted task saves through the SAME
-  // POST /api/tasks (createTask) path a manual CreateTaskModal task uses, its
+  // POST /api/tasks (createTask) path a task made in the composer's Quick add uses, its
   // criteria landing in their own Acceptance Criteria section.
   it('saves the drafted task through the normal createTask path', async () => {
     await startWithPlanner(

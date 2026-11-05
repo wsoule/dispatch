@@ -1,0 +1,37 @@
+/* The blast-radius panel (ImpactPanel.tsx), inside the library Panel: the
+   source chip and its focusable caveat in the heading row; the body is the
+   summary line over the library StatsStrip (Direct, Downstream, Total) and
+   the quiet caveat lines. Tokens only. */
+.loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.source {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  color: var(--text-3);
+}
+
+/* The scanner caveat's trigger: focusable, rounded like the chip it holds so
+   the global focus ring follows its shape. */
+.caveat {
+  display: inline-flex;
+  border-radius: var(--r-chip);
+}
+
+.summary {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--lh-long);
+}
+
+.hint {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-2xs);
+}

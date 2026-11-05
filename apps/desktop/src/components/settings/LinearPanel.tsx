@@ -6,6 +6,7 @@ import type {
   LinearTeam,
   LinearViewer,
 } from '@dispatch/client';
+import { Button, Checkbox, cx, Select, TextField } from '@dispatch/ui';
 import { CheckCircle2, CircleAlert, RefreshCw, Upload } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -29,26 +30,13 @@ import { SettingsSwitch } from './fields';
 import { LinearCapacityGroup } from './LinearCapacityGroup';
 import { LinearCoverageGroup } from './LinearCoverageGroup';
 import { LinearExportDialog } from './LinearExportDialog';
+import styles from './LinearPanel.module.css';
 import {
   SettingsGroup,
   SettingsHint,
   SettingsRow,
   useGroupLocked,
 } from './SettingsGroup';
-import { cn } from '@/lib/utils';
-import { PillButton } from '@/ui/ai/pill';
-import { Alert, AlertDescription, AlertTitle } from '@/ui/alert';
-import { Button } from '@/ui/button';
-import { Checkbox } from '@/ui/checkbox';
-import { PanelRow } from '@/ui/chrome';
-import { Input } from '@/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/ui/select';
 
 const LINEAR_DIRECTIONS: { value: 'both' | 'pull' | 'push'; label: string }[] =
   [
@@ -57,7 +45,7 @@ const LINEAR_DIRECTIONS: { value: 'both' | 'pull' | 'push'; label: string }[] =
     { value: 'push', label: 'Push only (Dispatch → Linear)' },
   ];
 
-// A select value for "no status": native select values can't be empty.
+// A select value for "no status": an option's value can't be null.
 const NO_STATUS = '__none__';
 
 // Free-typed while focused, snapped back to the saved value on blur if it isn't a valid
@@ -78,22 +66,24 @@ function LinearIntervalRow({
       keywords="poll interval"
       htmlFor="linear-poll-interval"
       control={
-        <Input
-          id="linear-poll-interval"
-          aria-label="Poll interval"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => {
-            const n = Number(draft);
-            if (Number.isInteger(n) && n >= 30 && n !== value) {
-              onSave(n);
-            } else {
-              setDraft(String(value));
-            }
-          }}
-          inputMode="numeric"
-          className="w-20 text-right tabular-nums"
-        />
+        <span className={styles.intervalBox}>
+          <TextField
+            id="linear-poll-interval"
+            aria-label="Poll interval"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => {
+              const n = Number(draft);
+              if (Number.isInteger(n) && n >= 30 && n !== value) {
+                onSave(n);
+              } else {
+                setDraft(String(value));
+              }
+            }}
+            inputMode="numeric"
+            className={styles.interval}
+          />
+        </span>
       }
     />
   );
@@ -121,21 +111,15 @@ function StatusRoleRow({
       subtitle={subtitle}
       control={
         <Select
-          value={value ?? NO_STATUS}
-          onValueChange={(next) => onChange(next === NO_STATUS ? null : next)}
-        >
-          <SelectTrigger aria-label={`${title} status`} className="w-[180px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {optional && <SelectItem value={NO_STATUS}>None</SelectItem>}
-            {statuses.map((status) => (
-              <SelectItem key={status} value={status}>
-                {status}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          label={`${title} status`}
+          value={value ?? (optional ? NO_STATUS : null)}
+          options={[
+            ...(optional ? [{ value: NO_STATUS, label: 'None' }] : []),
+            ...statuses.map((status) => ({ value: status, label: status })),
+          ]}
+          className={styles.select}
+          onChange={(next) => onChange(next === NO_STATUS ? null : next)}
+        />
       }
     />
   );
@@ -174,21 +158,24 @@ function LinkedTeamRow({
           : undefined
       }
       control={
-        <span className="flex items-center gap-2">
+        <span className={styles.inline}>
           {at > 0 && (
-            <PillButton
+            <Button
+              variant="secondary"
+              size="sm"
               disabled={locked}
               onClick={() => onChange([team.id, ...others])}
             >
               Make primary
-            </PillButton>
+            </Button>
           )}
           <Checkbox
-            aria-label={`Link ${team.name}`}
+            label={`Link ${team.name}`}
+            hideLabel
             checked={at >= 0}
             disabled={locked}
-            onCheckedChange={(checked) =>
-              onChange(checked === true ? [...others, team.id] : others)
+            onChange={(checked) =>
+              onChange(checked ? [...others, team.id] : others)
             }
           />
         </span>
@@ -207,12 +194,14 @@ function FetchFailureRow({
   onRetry: () => void;
 }) {
   return (
-    <PanelRow className="flex-nowrap gap-3">
-      <span className="text-state-failed min-w-0 flex-1 text-[12px]">
+    <div className={styles.failureRow}>
+      <span className={cx('toneText', styles.failureText)} data-tone="danger">
         {describeFetchFailure(error)}
       </span>
-      <PillButton onClick={onRetry}>Retry</PillButton>
-    </PanelRow>
+      <Button variant="secondary" size="sm" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
   );
 }
 
@@ -384,17 +373,19 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
             locked={!canOperate}
             control={
               <>
-                <Input
-                  id="linear-api-key"
-                  type="password"
-                  autoComplete="off"
-                  placeholder="Linear API key"
-                  value={apiKey}
-                  disabled={!canOperate}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  className="max-w-xs"
-                />
+                <span className={styles.keyBox}>
+                  <TextField
+                    id="linear-api-key"
+                    type="password"
+                    autoComplete="off"
+                    placeholder="Linear API key"
+                    value={apiKey}
+                    disabled={!canOperate}
+                    onChange={(e) => setApiKey(e.target.value)}
+                  />
+                </span>
                 <Button
+                  variant="primary"
                   disabled={!canOperate || connecting || apiKey.trim() === ''}
                   onClick={() => void connect()}
                 >
@@ -404,7 +395,7 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
             }
           >
             {connectError !== null && (
-              <span className="text-state-failed text-[12px]">
+              <span className={cx('toneText', styles.error)} data-tone="danger">
                 {connectError}
               </span>
             )}
@@ -414,25 +405,33 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
         {linearStatus.connected && (
           <SettingsRow
             title={
-              <span className="flex items-center gap-1.5">
-                <CheckCircle2 className="text-state-review size-3.5 shrink-0" />
+              <span className={styles.connected}>
+                <CheckCircle2
+                  aria-hidden
+                  size={14}
+                  strokeWidth={1.8}
+                  data-tone="success"
+                  className={styles.connectedIcon}
+                />
                 Connected{viewer !== null ? ` as ${viewer.name}` : ''}
               </span>
             }
             locked={linearStatus.keySource === 'project' && !canOperate}
             control={
               linearStatus.keySource === 'project' ? (
-                <PillButton
+                <Button
+                  variant="secondary"
+                  size="sm"
                   disabled={!canOperate || disconnecting}
                   onClick={() => void disconnect()}
                 >
                   {disconnecting ? 'Disconnecting…' : 'Disconnect'}
-                </PillButton>
+                </Button>
               ) : undefined
             }
           >
             {disconnectError !== null && (
-              <span className="text-state-failed text-[12px]">
+              <span className={cx('toneText', styles.error)} data-tone="danger">
                 {disconnectError}
               </span>
             )}
@@ -468,26 +467,21 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
             title="Direction"
             control={
               <Select
+                label="Direction"
                 value={config.linear.direction}
-                onValueChange={(direction) =>
-                  void data.handleUpdateConfig({
-                    linear: {
-                      direction: direction as 'both' | 'pull' | 'push',
-                    },
-                  })
-                }
-              >
-                <SelectTrigger aria-label="Direction" className="w-[200px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {LINEAR_DIRECTIONS.map((d) => (
-                    <SelectItem key={d.value} value={d.value}>
-                      {d.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                options={LINEAR_DIRECTIONS}
+                className={styles.direction}
+                onChange={(next) => {
+                  const picked = LINEAR_DIRECTIONS.find(
+                    (d) => d.value === next
+                  );
+                  if (picked !== undefined) {
+                    void data.handleUpdateConfig({
+                      linear: { direction: picked.value },
+                    });
+                  }
+                }}
+              />
             }
           />
 
@@ -569,20 +563,28 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
           hint="Your statuses are the team’s workflow states, kept in step on every sync: linking moves each task onto the matching state (ready to Todo, working to In Progress, landed to Done, dropped to Canceled), and disconnecting keeps these names. Each role picks the one Dispatch writes as work moves; a role you change here is kept across syncs."
         >
           {roles.review === roles.dispatched && (
-            <PanelRow className="py-2.5">
-              <Alert
+            <div className={styles.calloutRow}>
+              <div
+                role="alert"
                 data-testid="linear-no-review-state"
-                className="rounded-card border-border border-[0.5px] px-3 py-2"
+                className={styles.callout}
               >
-                <CircleAlert className="text-muted-foreground size-3.5!" />
-                <AlertTitle className="text-[13px]">
-                  Your team has no review state
-                </AlertTitle>
-                <AlertDescription className="font-book text-[12px]">
-                  {`Finished runs stay in ${roles.dispatched} in Linear. Add an In Review state to the team’s workflow in Linear and the next sync picks it up.`}
-                </AlertDescription>
-              </Alert>
-            </PanelRow>
+                <CircleAlert
+                  aria-hidden
+                  size={14}
+                  strokeWidth={1.8}
+                  className={styles.calloutIcon}
+                />
+                <div className={styles.calloutText}>
+                  <p className={styles.calloutTitle}>
+                    Your team has no review state
+                  </p>
+                  <p className={styles.calloutBody}>
+                    {`Finished runs stay in ${roles.dispatched} in Linear. Add an In Review state to the team’s workflow in Linear and the next sync picks it up.`}
+                  </p>
+                </div>
+              </div>
+            </div>
           )}
           {STATUS_ROLE_ROWS.map((row) => (
             <StatusRoleRow
@@ -605,26 +607,39 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
           requires="none"
         >
           {offerExport && (
-            <PanelRow className="py-2.5">
-              <Alert
+            <div className={styles.calloutRow}>
+              <div
+                role="alert"
                 data-testid="linear-export-offer"
-                className="rounded-card border-border border-[0.5px] px-3 py-2"
+                className={styles.callout}
               >
-                <Upload className="text-muted-foreground size-3.5!" />
-                <AlertTitle className="text-[13px]">
-                  {`${heldBack.toLocaleString('en-US')} task${heldBack === 1 ? '' : 's'} here ${heldBack === 1 ? 'isn’t' : 'aren’t'} in Linear yet`}
-                </AlertTitle>
-                <AlertDescription className="font-book flex flex-col gap-2 text-[12px]">
-                  <p>
-                    Linking mirrors changes from now on. Export sends the tasks
-                    you already have.
+                <Upload
+                  aria-hidden
+                  size={14}
+                  strokeWidth={1.8}
+                  className={styles.calloutIcon}
+                />
+                <div className={styles.calloutText}>
+                  <p className={styles.calloutTitle}>
+                    {`${heldBack.toLocaleString('en-US')} task${heldBack === 1 ? '' : 's'} here ${heldBack === 1 ? 'isn’t' : 'aren’t'} in Linear yet`}
                   </p>
-                  <Button size="sm" onClick={() => setExportOpen(true)}>
-                    Export to Linear…
-                  </Button>
-                </AlertDescription>
-              </Alert>
-            </PanelRow>
+                  <div className={styles.calloutBody}>
+                    <p>
+                      Linking mirrors changes from now on. Export sends the
+                      tasks you already have.
+                    </p>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      className={styles.calloutAction}
+                      onClick={() => setExportOpen(true)}
+                    >
+                      Export to Linear…
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
 
           <SettingsRow
@@ -636,12 +651,14 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
             title="Import from Linear"
             subtitle="Sync only carries changes to linked tasks. Import brings in every issue, project and comment in the linked teams that isn't here yet."
             control={
-              <PillButton
+              <Button
+                variant="secondary"
+                size="sm"
                 disabled={importing || !configured}
                 onClick={() => void importFromLinear()}
               >
                 {importing ? 'Importing…' : 'Import from Linear'}
-              </PillButton>
+              </Button>
             }
           >
             {importProgress !== null && (
@@ -653,7 +670,7 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
               <SettingsHint>{formatSyncCounts(importResult)}</SettingsHint>
             )}
             {importError !== null && (
-              <span className="text-state-failed text-[12px]">
+              <span className={cx('toneText', styles.error)} data-tone="danger">
                 {importError}
               </span>
             )}
@@ -668,12 +685,14 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
             }
             keywords="push unlinked"
             control={
-              <PillButton
+              <Button
+                variant="secondary"
+                size="sm"
                 disabled={exportBlocked}
                 onClick={() => setExportOpen(true)}
               >
                 Export to Linear…
-              </PillButton>
+              </Button>
             }
           >
             {pullOnly && (
@@ -690,7 +709,11 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
               <SettingsHint>{exportOutcome}</SettingsHint>
             )}
             {lastExport?.errors.map((message) => (
-              <span key={message} className="text-state-failed text-[12px]">
+              <span
+                key={message}
+                className={cx('toneText', styles.error)}
+                data-tone="danger"
+              >
                 {message}
               </span>
             ))}
@@ -704,39 +727,47 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
                 : 'Not synced yet.'
             }
             control={
-              <PillButton
+              <Button
+                variant="secondary"
+                size="sm"
                 disabled={syncing || linearStatus.syncing || !configured}
                 onClick={() => void sync()}
+                icon={
+                  <RefreshCw
+                    size={14}
+                    strokeWidth={1.8}
+                    className={
+                      syncing || linearStatus.syncing ? styles.spin : undefined
+                    }
+                  />
+                }
               >
-                <RefreshCw
-                  className={cn(
-                    'size-3.5',
-                    (syncing || linearStatus.syncing) &&
-                      'animate-spin motion-reduce:animate-none'
-                  )}
-                />
                 {syncing || linearStatus.syncing ? 'Syncing…' : 'Sync now'}
-              </PillButton>
+              </Button>
             }
           >
             {linearStatus.lastError !== null && !lastErrorInSummary && (
-              <span className="text-state-failed text-[12px]">
+              <span className={cx('toneText', styles.error)} data-tone="danger">
                 {linearStatus.lastError}
               </span>
             )}
             {summary !== null && (
-              <div className="flex flex-col gap-1">
+              <div className={styles.summary}>
                 <SettingsHint>{formatSyncCounts(summary)}</SettingsHint>
                 {summary.errors.map((message, i) => (
                   <span
                     key={`${message}-${String(i)}`}
-                    className="text-state-failed text-[12px]"
+                    className={cx('toneText', styles.error)}
+                    data-tone="danger"
                   >
                     {message}
                   </span>
                 ))}
                 {summary.rateLimited && (
-                  <span className="text-state-failed text-[12px]">
+                  <span
+                    className={cx('toneText', styles.error)}
+                    data-tone="warning"
+                  >
                     Linear rate-limited this pass — it will retry on its own.
                   </span>
                 )}
@@ -744,12 +775,17 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
               </div>
             )}
             {usageLimited && !usageShown && (
-              <span className="text-state-failed text-[12px]">
+              <span
+                className={cx('toneText', styles.error)}
+                data-tone="warning"
+              >
                 {LINEAR_USAGE_LIMIT_MESSAGE}
               </span>
             )}
             {syncError !== null && (
-              <span className="text-state-failed text-[12px]">{syncError}</span>
+              <span className={cx('toneText', styles.error)} data-tone="danger">
+                {syncError}
+              </span>
             )}
           </SettingsRow>
 

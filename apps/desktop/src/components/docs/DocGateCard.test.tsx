@@ -69,6 +69,10 @@ describe('DocGateCard', () => {
     expect(screen.getByText('-old')).toBeTruthy();
     expect(screen.getByText('+new')).toBeTruthy();
     expect(screen.queryByText(/same/)).toBeNull();
+    // The diff well is a Tab stop, so it is a region with a name.
+    const diff = screen.getByRole('region', { name: 'Proposed changes' });
+    expect(diff.tabIndex).toBe(0);
+    expect(diff.textContent).toContain('+new');
     fireEvent.click(screen.getByRole('radio', { name: 'Approve' }));
     await waitFor(() => expect(onDecide).toHaveBeenCalledWith('approve', ''));
   });

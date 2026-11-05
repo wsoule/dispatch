@@ -1,6 +1,7 @@
 import type { ExecutorCommand } from '@dispatch-foo/core';
 import { agentEnv } from '@dispatch-foo/core';
 
+import { ignoreClosedPipe } from '../../closedPipe.js';
 import { FLOOR_COMMAND_ACTIONS } from '../../floor.js';
 import type {
   Executor,
@@ -93,7 +94,9 @@ export function buildArgv(
   return { argv, stdinPrompt: !usesPrompt };
 }
 
-function defaultSpawner(opts: CliSpawnOptions): CliSpawnResult {
+// Spawns the agent with Bun.spawn. Exported so a test can wrap the real
+// spawner, to hold the daemon back between the spawn and the prompt write.
+export function defaultSpawner(opts: CliSpawnOptions): CliSpawnResult {
   // The two cases are spawned separately rather than with a conditional
   // `stdin` option: Bun types the returned `stdin` from that option's literal
   // value, so a union of 'pipe' | 'ignore' gives back a handle that is not
@@ -128,12 +131,12 @@ function defaultSpawner(opts: CliSpawnOptions): CliSpawnResult {
     stderr: proc.stderr,
     exited: proc.exited,
     writeStdin(text: string) {
-      void proc.stdin.write(text);
+      ignoreClosedPipe(() => proc.stdin.write(text));
     },
     closeStdin() {
       // Closing is what tells an agent reading a piped prompt that the prompt
       // is complete; without it the agent waits for an EOF that never comes.
-      void proc.stdin.end();
+      ignoreClosedPipe(() => proc.stdin.end());
     },
     kill: () => proc.kill(),
   };

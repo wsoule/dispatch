@@ -1,0 +1,152 @@
+/* The sub-agent tree above a run's transcript (SubagentTree.tsx): a soft card whose
+   header folds a capped, scrolling list of one row per sub-agent. Tokens only. */
+
+.tree {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface-2);
+}
+
+/* The fold's trigger: the whole header row. */
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: var(--r);
+  color: var(--text);
+  text-align: start;
+}
+
+.header:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+@media (hover: hover) {
+  .header:hover {
+    background: var(--surface-3);
+  }
+}
+
+.icon {
+  flex: none;
+  color: var(--text-2);
+}
+
+/* The chevron turns down while the list shows. */
+.open {
+  transform: rotate(90deg);
+}
+
+.title {
+  font-size: var(--fs);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+.headline {
+  flex: none;
+  margin-inline-start: auto;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+/* While any sub-agent runs, the count takes the full text colour. */
+.headlineLive {
+  color: var(--text);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  max-height: 224px;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  border-top: 1px solid var(--divider);
+  list-style: none;
+}
+
+/* One sub-agent: what it was asked and its facts on the first line, its tail (what it is
+   doing, or how it ended) under them. The inline start padding steps in per level. */
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--s-3);
+  align-items: center;
+  padding: 4px 10px;
+  font-size: var(--fs);
+}
+
+.lead {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.type {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.facts {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+/* The status word, in a fixed column so the rows' words line up. */
+.status {
+  width: 56px;
+  text-align: end;
+}
+
+/* The tail sits under the label, past the 9px dot and its gap. */
+.tail {
+  grid-column: 1 / -1;
+  min-width: 0;
+  padding-inline-start: 17px;
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .header {
+    transition: background-color var(--dur) var(--ease);
+  }
+
+  .icon {
+    transition: transform var(--dur) var(--ease);
+  }
+}
+
+/* Forced colours: the card and the list's rule keep their edges. */
+@media (forced-colors: active) {
+  .tree,
+  .list {
+    border-color: CanvasText;
+  }
+}

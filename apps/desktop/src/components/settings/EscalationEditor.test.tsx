@@ -3,14 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import { EscalationEditor } from './EscalationEditor';
-
-// Base UI commits a select item on a click that began on it (a bare click is
-// treated as one that opened the list under the pointer), so press first.
-function chooseOption(name: string) {
-  const option = screen.getByRole('option', { name });
-  fireEvent.pointerDown(option);
-  fireEvent.click(option);
-}
+import { chooseOption, selectTrigger } from './fixtures.test-helper';
 
 const steps: EscalationStep[] = [
   { round: 1, strategy: 'resume', modelTier: 'standard' },
@@ -72,32 +65,26 @@ test('removing the last remaining step empties the list', () => {
 // they belong to, not a bare "Strategy" that repeats across every row.
 test('a row select carries its round in its accessible name', () => {
   render(<EscalationEditor steps={steps} onChange={() => {}} />);
-  expect(
-    screen.getByRole('combobox', { name: 'Round 1 strategy' })
-  ).toBeTruthy();
-  expect(
-    screen.getByRole('combobox', { name: 'Round 2 model tier' })
-  ).toBeTruthy();
+  expect(selectTrigger('Round 1 strategy')).toBeTruthy();
+  expect(selectTrigger('Round 2 model tier')).toBeTruthy();
 });
 
 // Changing a row's strategy select must patch only that row, in place,
 // without renumbering (renumbering is reserved for add/remove).
-test('changing a strategy select patches only that row', () => {
+test('changing a strategy select patches only that row', async () => {
   let next: EscalationStep[] = [];
   render(<EscalationEditor steps={steps} onChange={(s) => (next = s)} />);
-  fireEvent.click(screen.getByRole('combobox', { name: 'Round 1 strategy' }));
-  chooseOption('Fresh agent');
+  fireEvent.click(selectTrigger('Round 1 strategy'));
+  await chooseOption('Fresh agent');
   expect(next).toEqual([
     { round: 1, strategy: 'fresh', modelTier: 'standard' },
     { round: 2, strategy: 'fresh', modelTier: 'high' },
   ]);
 });
 
-// The ladder is its own settings group; the add control is the secondary pill.
-test('the editor is a sentence-case group with a pill Add round', () => {
+// The ladder is its own settings group with one Add round button.
+test('the editor is a sentence-case group with an Add round button', () => {
   render(<EscalationEditor steps={steps} onChange={() => {}} />);
   expect(screen.getByRole('heading', { name: 'Escalation' })).toBeDefined();
-  expect(
-    screen.getByRole('button', { name: 'Add round' }).getAttribute('data-slot')
-  ).toBe('pill-button');
+  expect(screen.getAllByRole('button', { name: 'Add round' })).toHaveLength(1);
 });

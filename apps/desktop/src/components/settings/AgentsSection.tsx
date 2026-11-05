@@ -13,6 +13,7 @@ import {
   runSettings,
 } from '@dispatch-foo/core/browser';
 import type { ApiClient, ExecutorsResponse } from '@dispatch/client';
+import { RadioGroup, Select } from '@dispatch/ui';
 
 import {
   DEFAULT_EFFORT_ID,
@@ -22,16 +23,10 @@ import {
   MODELS,
 } from '../../lib/models';
 import { CliAgents } from './AgentsMoreGroups';
+import styles from './AgentsSection.module.css';
 import { ChoiceSetting, ModeSetting, NumberSetting } from './fields';
 import { JudgmentStatusRow } from './JudgmentStatusRow';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/ui/select';
 
 interface AgentsSectionProps {
   config: DispatchConfig;
@@ -185,51 +180,33 @@ export function AgentsSection({
               control={
                 <>
                   <Select
+                    label={`${info.label} model`}
                     value={current}
-                    onValueChange={(id) =>
-                      void onSave({ models: { [role]: id } })
-                    }
-                  >
-                    <SelectTrigger
-                      aria-label={`${info.label} model`}
-                      className="w-[124px]"
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {modelChoices(current).map((m) => (
-                        <SelectItem key={m.id} value={m.id}>
-                          {m.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    options={modelChoices(current).map((m) => ({
+                      value: m.id,
+                      label: m.label,
+                    }))}
+                    className={styles.model}
+                    onChange={(id) => void onSave({ models: { [role]: id } })}
+                  />
                   {hasEffort(role) ? (
                     <Select
+                      label={`${info.label} effort`}
                       value={config.effort?.[role] ?? DEFAULT_EFFORT_ID}
-                      onValueChange={(id) =>
+                      options={effortOptions(undefined).map((o) => ({
+                        value: o.id,
+                        label: o.label,
+                      }))}
+                      className={styles.effort}
+                      onChange={(id) =>
                         void onSave({
                           effort: { [role]: effortFromId(id) ?? null },
                         })
                       }
-                    >
-                      <SelectTrigger
-                        aria-label={`${info.label} effort`}
-                        className="w-[112px]"
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {effortOptions(undefined).map((o) => (
-                          <SelectItem key={o.id} value={o.id}>
-                            {o.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    />
                   ) : (
                     // Holds the column so every model select lines up.
-                    <span aria-hidden className="w-[112px]" />
+                    <span aria-hidden className={styles.effort} />
                   )}
                 </>
               }
@@ -336,28 +313,18 @@ export function AgentsSection({
         >
           {/* Native radios: a real input keeps `getByLabelText(...).checked`
               meaningful in the tests. */}
-          <div
-            role="radiogroup"
-            aria-label="When an agent wants to run a command or edit a file"
-            className="grid gap-1.5"
-          >
-            {PERMISSION_MODES.map(([mode, label]) => (
-              <label
-                key={mode}
-                className="font-book flex items-center gap-2 text-[13px] text-(--text-secondary)"
-              >
-                <input
-                  type="radio"
-                  name="permission-mode"
-                  value={mode}
-                  checked={config.orchestrator.permissionMode === mode}
-                  onChange={() => void onSave({ permissionMode: mode })}
-                  className="accent-primary size-3.5"
-                />
-                <span>{label}</span>
-              </label>
-            ))}
-          </div>
+          <RadioGroup
+            label="When an agent wants to run a command or edit a file"
+            value={config.orchestrator.permissionMode}
+            options={PERMISSION_MODES.map(([mode, label]) => ({
+              value: mode,
+              label,
+            }))}
+            onChange={(next) => {
+              const mode = PERMISSION_MODES.find(([m]) => m === next)?.[0];
+              if (mode !== undefined) void onSave({ permissionMode: mode });
+            }}
+          />
           {!OFFERED_MODES.includes(config.orchestrator.permissionMode) && (
             <SettingsHint>
               Currently &ldquo;{config.orchestrator.permissionMode}&rdquo;, set

@@ -1,0 +1,41 @@
+/* A terminal screen (TerminalCanvas.tsx): selectable mono text on the
+   surface, one row per line. Cell colours are inline styles; this sets the
+   defaults they fall back to. */
+.screen {
+  height: 100%;
+  overflow: auto;
+  padding: var(--s-2) var(--s-3);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  white-space: pre;
+  scrollbar-width: thin;
+}
+
+/* An empty line still takes a full row's height. */
+.row {
+  min-height: 1.45em;
+}
+
+/* A scrollback search hit: an accent tint behind the cell's own colour, and
+   an accent rule along its foot so the hit is not told by colour alone. An
+   inset shadow rather than a border or an underline, so it never shifts the
+   mono grid or collides with an underlined cell. */
+.match {
+  border-radius: 2px;
+  background: var(--accent-soft);
+  box-shadow: inset 0 -2px 0 var(--accent);
+  color: inherit;
+}
+
+/* Forced colours: the system's own mark colours, so a hit stays visible. */
+@media (forced-colors: active) {
+  .match {
+    forced-color-adjust: none;
+    background: Mark;
+    box-shadow: none;
+    color: MarkText;
+  }
+}

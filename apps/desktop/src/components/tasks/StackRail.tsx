@@ -2,11 +2,12 @@ import type { TaskListItem } from '@dispatch-foo/core/browser';
 import { computeStack } from '@dispatch-foo/core/graph';
 import type { TaskStack } from '@dispatch-foo/core/graph';
 import type { RunMeta } from '@dispatch/client';
+import { ListItem } from '@dispatch/ui';
 import { GitPullRequest } from 'lucide-react';
 
 import { RunStatePill } from '../runs/RunStatePill';
+import styles from './StackRail.module.css';
 import { StatusIcon } from './StatusIcon';
-import { ListRow } from '@/ui/ai/list-row';
 
 interface StackRailProps {
   /** Full project task list — the stack is derived from it internally (see
@@ -81,9 +82,10 @@ export function getStackByTaskId(
 /**
  * The rail's companion to "Blocked by": the full chain of tasks this one is connected to
  * through blockedBy edges (its "stack"), topologically ordered blocker before dependent, as
- * 36px `ListRow`s — the first at the root, every later one nested a step in with the tree
- * connector so the chain reads top-down. Each row carries the status glyph, the title
- * (clickable when `onOpenTask` is given), and, if that task has ever had a run, the
+ * library `ListItem` rows — the first at the root, every later one nested a step in with the
+ * tree connector so the chain reads top-down. Each row carries the status glyph, the title
+ * with the task id after it in mono (a machine-read string), the whole row clickable when
+ * `onOpenTask` is given, and, if that task has ever had a run, the
  * compact run-state mark (plus a PR glyph once it has an open PR). The current task's own
  * row is the selected one. Renders nothing for a task with no stack — a lone task isn't a
  * "stack" of one.
@@ -100,7 +102,7 @@ export function StackRail({
   const byId = new Map(tasks.map((t) => [t.meta.id, t]));
 
   return (
-    <div data-slot="stack-rail" className="flex flex-col">
+    <div data-slot="stack-rail" className={styles.root}>
       {stack.order.map((id, i) => {
         const rowDoc = byId.get(id);
         // `order` only ever contains ids that were present in `tasks` when the stack was
@@ -110,24 +112,29 @@ export function StackRail({
         const isCurrent = id === taskId;
         const run = latestRunByTaskId.get(id);
         return (
-          <ListRow
+          <ListItem
             key={id}
             data-stack-id={id}
             indent={i === 0 ? 0 : 1}
             selected={isCurrent}
-            status={<StatusIcon status={rowDoc.meta.status} />}
+            leading={<StatusIcon status={rowDoc.meta.status} />}
             title={<span title={rowDoc.meta.title}>{rowDoc.meta.title}</span>}
+            crumb={<span className="mono">{id}</span>}
             trailing={
               run !== undefined ? (
-                <>
+                <span className={styles.marks}>
                   <RunStatePill meta={run} compact />
                   {run.prUrl !== undefined && (
-                    <span title="Has a pull request" className="flex">
-                      <GitPullRequest className="text-muted-foreground size-3.5" />
-                      <span className="sr-only">Has a pull request</span>
+                    <span title="Has a pull request" className={styles.pr}>
+                      <GitPullRequest
+                        size={14}
+                        strokeWidth={1.8}
+                        aria-hidden="true"
+                      />
+                      <span className="srOnly">Has a pull request</span>
                     </span>
                   )}
-                </>
+                </span>
               ) : undefined
             }
             onClick={
@@ -135,7 +142,6 @@ export function StackRail({
                 ? () => onOpenTask(id)
                 : undefined
             }
-            className="px-2"
           />
         );
       })}

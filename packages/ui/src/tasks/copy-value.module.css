@@ -1,0 +1,49 @@
+/* A value to copy: the value in a recessed well (--sunken, --r-sm, 12px,
+   --text: 4.5:1), then the small secondary Copy button. A long value
+   wraps anywhere so all of it can be read and selected; `truncate` keeps
+   it to one line with an ellipsis (the whole value in its title). */
+
+.copy {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.value {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-sm);
+  background: var(--sunken);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* Machine-read strings (tokens, codes, links) in Geist Mono. */
+.mono {
+  font-family: var(--font-mono);
+  letter-spacing: -0.01em;
+}
+
+.truncate .value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+/* The button keeps its size beside a long value. */
+.copy > :not(.value) {
+  flex: none;
+}
+
+/* Forced colours drop the well's fill: an edge keeps its shape. */
+@media (forced-colors: active) {
+  .value {
+    border: 1px solid CanvasText;
+  }
+}

@@ -1,5 +1,4 @@
 import {
-  ASSIGNEES,
   canonicalStatus,
   ConfigError,
   CredentialsUnreadableError,
@@ -93,8 +92,11 @@ import {
   listComments,
   updateComment,
 } from './api/comments.js';
+import { downloadTicketsFor } from './api/downloadTickets.js';
 import { fanoutTask } from './api/fanout.js';
 import {
+  downloadWithTicket,
+  issueDownloadTicket,
   listDirectory,
   rawFile,
   readFile as readWorkspaceFile,
@@ -528,9 +530,9 @@ export interface ApiContext {
 // the cli/server package boundary — cli is the one that depends on server
 // for `dispatch serve`, not the other way around, and this check is small
 // enough that duplicating it beats introducing a dependency edge for it.
-// Used for status (against the project's configured list), kind, priority,
-// and assignee (against core's fixed enums) — `undefined` means the field
-// was omitted, which every caller here treats as "no change requested."
+// Used for status (against the project's configured list), kind and priority
+// (against core's fixed enums) — `undefined` means the field was omitted,
+// which every caller here treats as "no change requested."
 function validateEnumField(
   value: unknown,
   allowed: readonly string[],
@@ -539,6 +541,21 @@ function validateEnumField(
   if (value === undefined) return null;
   if (typeof value !== 'string' || !allowed.includes(value)) {
     return `invalid ${label}: ${describeValue(value)} (expected ${allowed.join('|')})`;
+  }
+  return null;
+}
+
+// Validates an optional `assignee` against core's actor-ref grammar
+// (packages/core/src/actor.ts) rather than the legacy ASSIGNEES enum: `none`,
+// the bare `human`/`agent` kinds, and the named refs `human:<handle>` and
+// `agent:<operator>/<handle>` that the desktop's assignee picker sends and
+// Linear sync writes. The store applies the same gate at write (taskfile.ts),
+// so a value accepted here never fails later as a 500. Same message shape as
+// validateEnumField, with the grammar in place of a fixed list.
+function validateAssigneeField(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (typeof value !== 'string' || !isValidAssignee(value)) {
+    return `invalid assignee: ${describeValue(value)} (expected an actor ref: none, human, agent, human:<handle> or agent:<operator>/<handle>)`;
   }
   return null;
 }
@@ -708,11 +725,7 @@ function validateTaskFields(
     'priority'
   );
   if (priorityError) return priorityError;
-  const assigneeError = validateEnumField(
-    value.assignee,
-    ASSIGNEES,
-    'assignee'
-  );
+  const assigneeError = validateAssigneeField(value.assignee);
   if (assigneeError) return assigneeError;
   const parentError = validateStringOrNullField(value.parent, 'parent');
   if (parentError) return parentError;
@@ -4740,6 +4753,41 @@ function requiredTier(
   return 'request';
 }
 
+// Whether a request is a download-ticket redemption: `GET /api/files/raw`
+// with a `ticket` query parameter, whatever else it carries.
+function isTicketDownload(
+  method: string,
+  segments: readonly string[],
+  query: URLSearchParams
+): boolean {
+  return (
+    method === 'GET' &&
+    segments.length === 2 &&
+    segments[0] === 'files' &&
+    segments[1] === 'raw' &&
+    query.has('ticket')
+  );
+}
+
+/**
+ * Whether `presented` would still pass handleApi's gate for a route needing
+ * `tier`: a live run's token (which stands at the request tier), or a
+ * registry credential that is neither revoked nor expired and ranks at least
+ * that high. Download tickets run it when they are used, so a ticket never
+ * outlives the credential it was issued to.
+ */
+function credentialStillPasses(
+  ctx: ApiContext,
+  presented: string | null,
+  tier: AuthTier
+): boolean {
+  if (presented === null) return false;
+  const run = runCredential(ctx, presented);
+  if (run !== null) return run.live && tierAllows('request', tier);
+  const found = ctx.tokens.registry.lookup(presented);
+  return found.kind === 'valid' && tierAllows(found.identity.tier, tier);
+}
+
 // POST /api/daemon/shutdown: `dispatch serve` taking this project over. Only
 // this machine's own credentials (agent or app token, not a run's or a
 // teammate's), which could stop the process anyway, and never with work live.
@@ -4963,6 +5011,18 @@ export async function handleApi(
   // linked, not a daemon token (messaging/hubLink.ts).
   if (method === 'POST' && segments.length === 2 && segments[0] === 'hub-link')
     return await hubLinkRoute(req, daemonCtx, segments[1]);
+
+  // A download ticket is the one credential that rides in a URL, and only on
+  // this one route: it stands in for the bearer header a plain link cannot
+  // carry (api/downloadTickets.ts). Anywhere else a `ticket` parameter is
+  // ignored and the request needs a token like any other.
+  if (isTicketDownload(method, segments, url.searchParams)) {
+    return downloadWithTicket(
+      daemonCtx,
+      downloadTicketsFor(daemonCtx.tokens),
+      url.searchParams
+    );
+  }
 
   const presented = presentedCredential(req, daemonCtx.sessionOrigins);
 
@@ -5445,6 +5505,17 @@ export async function handleApi(
       }
       if (segments[1] === 'raw' && method === 'GET') {
         return rawFile(ctx, url.searchParams);
+      }
+      // The ticket is checked against the tier the raw route needs, with the
+      // credential that asked for it, again when it is used.
+      if (segments[1] === 'download-ticket' && method === 'POST') {
+        const rawTier = requiredTier('GET', ['files', 'raw']) ?? 'request';
+        return await issueDownloadTicket(
+          req,
+          ctx,
+          downloadTicketsFor(daemonCtx.tokens),
+          () => credentialStillPasses(daemonCtx, presented, rawTier)
+        );
       }
       if (segments[1] === 'search' && method === 'GET') {
         return await searchFiles(ctx, url.searchParams);

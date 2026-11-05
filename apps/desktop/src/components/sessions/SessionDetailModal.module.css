@@ -1,0 +1,107 @@
+/* SessionDetailModal: the body of the session's modal slide-over (the
+   SlideOver draws the header bar, title and scroll). Tokens only. */
+
+/* The panel's trail in its header bar: the Usage page (quiet), ›, then this session. */
+.crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.crumbRoot {
+  color: var(--text-2);
+}
+
+/* The loading state's decorative block shapes, rounded like SkeletonBlock's. */
+.skeletonBlock {
+  border-radius: var(--r);
+}
+
+.loading,
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+/* Status, agent, model, then the export control pushed to the end. */
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* The agent's 14px icon beside its name inside the chip. */
+.agent {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+.model {
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+
+.export {
+  margin-left: auto;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+}
+
+.summary {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+}
+
+.files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+/* The section heading voice, shared with the Usage page's section titles
+   (SessionsHubView.module.css .heading). */
+.heading {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-section);
+}
+
+.count {
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A file path is a machine-read string: Geist Mono, one line, the full
+   path in the title. */
+.path {
+  display: block;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}

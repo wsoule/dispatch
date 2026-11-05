@@ -6,13 +6,13 @@ import {
   isMaskedSecretUrl,
   NOTIFICATION_KINDS,
 } from '@dispatch-foo/core/browser';
+import { Button, cx, TextField } from '@dispatch/ui';
 import { useEffect, useState } from 'react';
 
 import { useSidePanelNotifications } from '../../hooks/useSidePanelNotifications';
 import { SettingsSwitch } from './fields';
+import kit from './settings.module.css';
 import { SettingsGroup, SettingsRow } from './SettingsGroup';
-import { PillButton } from '@/ui/ai/pill';
-import { Input } from '@/ui/input';
 
 interface NotificationsSectionProps {
   config: DispatchConfig;
@@ -164,8 +164,7 @@ export function NotificationsSection({
           <SettingsRow
             title={
               <>
-                Configured:{' '}
-                <span className="text-(--text-secondary)">{stored}</span>
+                Configured: <span className="muted">{stored}</span>
               </>
             }
             subtitle="Only the start of the address is shown, because the rest works like a password."
@@ -173,7 +172,9 @@ export function NotificationsSection({
             control={
               canOperate && (
                 <>
-                  <PillButton
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     onClick={() => {
                       setWebhook('');
                       setRefused(false);
@@ -181,14 +182,16 @@ export function NotificationsSection({
                     }}
                   >
                     Replace
-                  </PillButton>
-                  <PillButton
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     onClick={() =>
                       void onSave({ notifications: { webhook: null } })
                     }
                   >
                     Clear
-                  </PillButton>
+                  </Button>
                 </>
               )
             }
@@ -201,7 +204,7 @@ export function NotificationsSection({
             locked={!canOperate}
             stacked
             control={
-              <Input
+              <TextField
                 id="webhook-url"
                 disabled={!canOperate}
                 value={webhook}
@@ -212,7 +215,7 @@ export function NotificationsSection({
             }
           >
             {refused && (
-              <span className="text-state-failed text-[12px]">
+              <span className={cx('toneText', kit.error)} data-tone="danger">
                 That&rsquo;s the shortened address shown for a saved webhook.
                 Paste the full URL.
               </span>

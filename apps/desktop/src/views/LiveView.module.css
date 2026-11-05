@@ -1,0 +1,58 @@
+/* The Live view (LiveView): the page head, the header's stats strip, then
+   the band list, which scrolls on its own and holds the keyboard. Colours
+   and type come from @dispatch/ui's components and tokens; this sheet only
+   places them. */
+.view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.head {
+  flex: none;
+  padding: var(--s-4) var(--s-4) var(--s-2);
+}
+
+.loading {
+  flex: 1;
+  min-height: 0;
+  padding: var(--s-4);
+}
+
+/* The band list's scroller. Its padding-top is LIST_TOP in LiveView.tsx,
+   which every band's culling offset adds: change both together. The
+   focused card carries the cursor's ring, so the scroller's own ring is
+   inset (it would otherwise be clipped by the column). */
+.scroller {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding-top: 8px;
+  overflow-y: auto;
+}
+
+.scroller:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.bands {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A compositing layer per band, as the old virtual rows had: WebKit
+   repaints every band sharing a backing when one mounts or unmounts, so
+   each window change on a scroll would repaint the whole screenful. */
+.bandItem {
+  display: block;
+  will-change: transform;
+}
+
+/* The bands not mounted, standing at their exact height. */
+.gap {
+  display: block;
+}

@@ -1,5 +1,5 @@
 import type { NormalizedEntry } from '@dispatch/client';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import { WorkFold, workSpanMs } from './WorkFold';
@@ -28,6 +28,15 @@ test('a settled group folds closed behind a Worked-for line', () => {
   const trigger = screen.getByRole('button', { name: /Worked for 12s/ });
   expect(trigger.getAttribute('aria-expanded')).toBe('false');
   expect(trigger.textContent).toContain('3 steps');
+  expect(screen.queryByText('the rows')).toBeNull();
+  expect(trigger.querySelector('[data-shimmer]')).toBeNull();
+  expect(document.querySelector('[data-slot="work-fold"]')).not.toBeNull();
+  // Pressing the line opens the rows it folded, and pressing again folds them.
+  fireEvent.click(trigger);
+  expect(trigger.getAttribute('aria-expanded')).toBe('true');
+  expect(screen.getByText('the rows')).toBeDefined();
+  fireEvent.click(trigger);
+  expect(screen.queryByText('the rows')).toBeNull();
 });
 
 test('a live group stays open and says Working', () => {
@@ -39,6 +48,7 @@ test('a live group stays open and says Working', () => {
   const trigger = screen.getByRole('button', { name: /Working for 12s/ });
   expect(trigger.getAttribute('aria-expanded')).toBe('true');
   expect(screen.getByText('the rows')).toBeDefined();
+  expect(trigger.querySelector('[data-shimmer]')).not.toBeNull();
 });
 
 test('a short group shows its rows with no fold', () => {

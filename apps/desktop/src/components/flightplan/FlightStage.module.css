@@ -1,0 +1,30 @@
+/* The interactive half of the Flight Plan (FlightStage.tsx): the scrolling
+   canvas pane over the branch lane. */
+
+.stage {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+
+.column {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+/* The canvas pane holds keyboard focus (role=group, aria-activedescendant).
+   It scrolls, so its own ring is drawn inset, where the scroll edge cannot
+   clip it; the focused node draws its own ring as the cursor. */
+.canvas {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+.canvas:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}

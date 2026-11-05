@@ -1,0 +1,55 @@
+/* The Live view's empty state (LiveReady): the library EmptyState, then
+   the containers ready to start as a register, one column wide in the
+   middle of the page. Colours and type come from @dispatch/ui's components
+   and tokens; this sheet only places them. */
+.empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-4);
+  min-height: 0;
+  padding: var(--s-12) var(--s-4) var(--s-8);
+  overflow-y: auto;
+}
+
+.list {
+  width: 100%;
+  max-width: 640px;
+}
+
+/* The container's glyph and its title, the title clipping first. */
+.name {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The container's reference is read by machines and people alike (Q5). */
+.ref {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.ready {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}

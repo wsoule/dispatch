@@ -1,9 +1,17 @@
 import type { ReviewComment } from '@dispatch/client';
+import { Button, ChipButton, cx } from '@dispatch/ui';
 import type { CodeViewFileItem } from '@pierre/diffs';
 import { CodeView } from '@pierre/diffs/react';
 import { Check, CornerDownRight } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 
+import styles from './ReviewThread.module.css';
 import type { ApplySuggestionOutcome } from '@/lib/suggestionRange';
 import {
   canApplyNow,
@@ -12,19 +20,10 @@ import {
   submitAndApplyNow,
   suggestionForSubmit,
 } from '@/lib/suggestionRange';
-import { cn } from '@/lib/utils';
-import { PillButton } from '@/ui/ai/pill';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
-import { ScrollArea } from '@/ui/scroll-area';
-import { Textarea } from '@/ui/textarea';
 
-// The comment card: quaternary surface, 8px radius, half-pixel strong ring — the same
-// card an issue page's comments and its "Leave a comment…" composer sit in. Indented past
-// the diff gutter so the card hangs under the code it annotates.
-const COMMENT_CARD_CLASS =
-  'my-1.5 ml-[90px] rounded-card border-[0.5px] border-border-strong bg-surface-quaternary p-3';
-const META_CLASS = 'text-[12px] font-book text-muted-foreground';
+// The thread and the composer share one comment card (`styles.card`), the same card a task's
+// comments and its "Leave a comment…" composer sit in. Where it hangs (indented past a diff's
+// gutter, or flush in the thread index) is the caller's choice.
 
 /**
  * Where a note written here ends up: back to the agent on a run's own diff, or
@@ -204,56 +203,48 @@ export function ReviewThread({
   return (
     <div
       data-slot="review-thread"
-      className={cn(COMMENT_CARD_CLASS, comment.resolved && 'opacity-60')}
+      className={styles.card}
+      data-resolved={comment.resolved ? 'true' : undefined}
     >
-      <div className="flex items-center gap-2">
-        <span className="text-muted-foreground text-[12px] font-medium">
-          {comment.author}
-        </span>
+      <div className={styles.head}>
+        <span className={styles.author}>{comment.author}</span>
         {anchor === 'moved' && (
-          <span className={META_CLASS}>moved to line {comment.line}</span>
+          <span className={styles.meta}>moved to line {comment.line}</span>
         )}
         {anchor === 'outdated' && (
-          <span className={cn(META_CLASS, 'text-state-waiting')}>
+          <span className={cx(styles.meta, 'toneText')} data-tone="warning">
             outdated — the code here changed
           </span>
         )}
-        <span className="flex-1" />
+        <span className={styles.spacer} />
         {canResolve && (
           <Button
-            type="button"
-            variant="ghost"
-            size="xs"
+            variant="quiet"
+            size="sm"
             onClick={() => void toggleResolved()}
-            className={cn(
-              'h-auto px-0 text-[12px]',
-              comment.resolved && 'text-state-review hover:text-state-review'
-            )}
+            // Resolved reads in the success tone beside its tick; the word says it either way.
+            className={comment.resolved ? 'toneText' : undefined}
+            data-tone={comment.resolved ? 'success' : undefined}
+            icon={
+              comment.resolved ? (
+                <Check size={14} strokeWidth={1.8} aria-hidden="true" />
+              ) : undefined
+            }
           >
-            {comment.resolved ? (
-              <span className="inline-flex items-center gap-1">
-                <Check className="size-3" />
-                resolved
-              </span>
-            ) : (
-              'resolve'
-            )}
+            {comment.resolved ? 'resolved' : 'resolve'}
           </Button>
         )}
       </div>
 
-      <p className="font-book mt-1.5 text-[13px] leading-relaxed">
-        {comment.body}
-      </p>
+      <p className={styles.body}>{comment.body}</p>
 
       {comment.suggestion !== undefined && onApply !== undefined && (
-        <div className="mt-1.5 flex items-center gap-2">
+        <div className={styles.applyRow}>
           {/* A landed apply reads "Applied" and stops taking clicks: a second one would
               splice over the line the suggestion just replaced, and come back as 409
               anchor-drifted — "the code here has changed" — which is a baffling way to
               find out the first click worked. */}
           <Button
-            type="button"
             size="sm"
             disabled={
               applyState.status === 'applying' ||
@@ -269,7 +260,7 @@ export function ReviewThread({
                 : 'Apply'}
           </Button>
           {applyState.status === 'failed' && (
-            <span className="text-state-failed font-book text-[12px]">
+            <span className={cx(styles.message, 'toneText')} data-tone="danger">
               {applyState.message}
             </span>
           )}
@@ -277,13 +268,16 @@ export function ReviewThread({
       )}
 
       {comment.replies.map((r) => (
-        <div key={r.id} className="mt-2 flex gap-2">
-          <CornerDownRight className="text-muted-foreground mt-0.5 size-3 shrink-0" />
-          <div>
-            <span className="text-muted-foreground text-[12px] font-medium">
-              {r.author}
-            </span>
-            <p className="font-book text-[13px] leading-relaxed">{r.body}</p>
+        <div key={r.id} className={styles.reply}>
+          <CornerDownRight
+            className={styles.replyIcon}
+            size={14}
+            strokeWidth={1.8}
+            aria-hidden="true"
+          />
+          <div className={styles.replyText}>
+            <span className={styles.author}>{r.author}</span>
+            <p className={styles.body}>{r.body}</p>
           </div>
         </div>
       ))}
@@ -291,7 +285,8 @@ export function ReviewThread({
       {error !== null && (
         <p
           role="alert"
-          className="text-state-failed font-book mt-1.5 text-[12px]"
+          className={cx(styles.message, 'toneText')}
+          data-tone="danger"
         >
           {error}
         </p>
@@ -299,25 +294,88 @@ export function ReviewThread({
 
       {!comment.resolved &&
         (!canReply ? (
-          <p className={cn(META_CLASS, 'mt-2')}>{replyNote}</p>
+          <p className={cx(styles.message, styles.meta)}>{replyNote}</p>
         ) : (
-          // The inline "Leave a reply…" row: borderless, so it reads as part of the card.
-          <div className="mt-2 flex gap-2">
-            <Input
-              variant="borderless"
-              value={reply}
-              onChange={(e) => setReply(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void sendReply();
-              }}
-              aria-label="Reply"
-              placeholder={REPLY_PLACEHOLDER[destination]}
-              className="min-w-0 flex-1 text-[13px]"
-            />
-          </div>
+          // The inline "Leave a reply…" field at the card's foot; Enter sends it.
+          <input
+            type="text"
+            className={cx('input', styles.field)}
+            value={reply}
+            onChange={(e) => setReply(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void sendReply();
+            }}
+            aria-label="Reply"
+            placeholder={REPLY_PLACEHOLDER[destination]}
+          />
         ))}
     </div>
   );
+}
+
+/** What an open composer holds: the note, the suggestion typed into its editor, and whether a
+ * save is in flight with what last went wrong. */
+interface ComposerDraft {
+  body: string;
+  /** The suggestion editor's text and the seed it was edited from. It counts only while that
+   * seed is still the composer's: a new range, or contents that just arrived, start from their
+   * own seed. `null` until the reviewer types into the editor. */
+  suggestion: { seed: string; text: string } | null;
+  busy: boolean;
+  error: string | null;
+}
+
+const EMPTY_DRAFT: ComposerDraft = {
+  body: '',
+  suggestion: null,
+  busy: false,
+  error: null,
+};
+
+/** A composer's draft, held outside the composer so it outlives a remount. */
+export interface ComposerDraftStore {
+  get: () => ComposerDraft;
+  set: (patch: Partial<ComposerDraft>) => void;
+  subscribe: (listener: () => void) => () => void;
+  /** Back to an empty draft: the composer closed (saved or cancelled). */
+  reset: () => void;
+  /** The range (`file:start-line`) the note box last took the caret for, so a composer drawn
+   * again for the same range takes it back only when it went with the old one. */
+  focusedFor: string | null;
+}
+
+/**
+ * A draft store for one composer, read with `useSyncExternalStore`.
+ *
+ * `PierreReviewDiff` holds one and hands it to its `ReviewComposer`, because Pierre keys a
+ * file's annotation slots by position (threads, then findings, then the composer): a thread or
+ * finding landing on that file while the composer is open (a refetch, another reviewer, the
+ * comment `Apply now` just saved) shifts the composer one slot along, React mounts a fresh one
+ * there, and a draft kept in its own state would be gone. Its save also writes here, so a
+ * save that settles after such a remount still clears the new composer's `busy`.
+ */
+export function createComposerDraft(): ComposerDraftStore {
+  let draft = EMPTY_DRAFT;
+  const listeners = new Set<() => void>();
+  const store: ComposerDraftStore = {
+    get: () => draft,
+    set: (patch) => {
+      draft = { ...draft, ...patch };
+      for (const listener of listeners) listener();
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    reset: () => {
+      store.focusedFor = null;
+      store.set(EMPTY_DRAFT);
+    },
+    focusedFor: null,
+  };
+  return store;
 }
 
 interface ComposerProps {
@@ -361,6 +419,9 @@ interface ComposerProps {
     commentId: string,
     outcome: ApplySuggestionOutcome
   ) => void;
+  /** Where the draft lives (see `createComposerDraft`). Omitted, the composer keeps its own,
+   * which a remount loses. */
+  draft?: ComposerDraftStore;
 }
 
 /**
@@ -386,27 +447,50 @@ export function ReviewComposer({
   destination = 'agent',
   onApply,
   onApplyNowFailed,
+  draft,
 }: ComposerProps) {
-  const [body, setBody] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [ownDraft] = useState(createComposerDraft);
+  const store = draft ?? ownDraft;
+  const current = useSyncExternalStore(store.subscribe, store.get, store.get);
+  const { body, busy, error } = current;
   const start = startLine ?? line;
   // The composer only exists because the reviewer just asked to comment on this range, so
-  // the caret goes straight into the body — again if they re-aim it at another range.
+  // the caret goes straight into the body — again if they re-aim it at another range. Drawn
+  // again for the same range (a remount), it takes the caret back only if the caret went with
+  // the old composer, and puts it after the kept text; focus elsewhere stays where it is.
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
-    bodyRef.current?.focus();
-  }, [file, start, line]);
+    const box = bodyRef.current;
+    if (box === null) return;
+    const aim = `${file}:${start}-${line}`;
+    // Focus that went with the old composer leaves the body focused (or, in some DOMs, a
+    // detached element).
+    const active = document.activeElement;
+    const lost =
+      active === null || active === document.body || !active.isConnected;
+    if (store.focusedFor === aim && !lost) return;
+    store.focusedFor = aim;
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+  }, [store, file, start, line]);
   const seed = useMemo(
     () =>
       fileContents === null ? '' : seedFromRange(fileContents, start, line),
     [fileContents, start, line]
   );
-  // Tracks the suggestion editor's live text, reported by `CodeView`'s `onItemEditChange` on
-  // every keystroke. Reset to the seed whenever the target range changes (a fresh compose) —
-  // `seed` only changes value when contents resolve or the range moves, so this does not loop.
-  const [suggestionText, setSuggestionText] = useState(seed);
-  useEffect(() => setSuggestionText(seed), [seed]);
+  // The suggestion editor's live text, reported by `CodeView`'s `onItemEditChange` on every
+  // keystroke and kept with the seed it was typed over: a new seed (a fresh range, or the
+  // contents arriving) starts over from that seed.
+  const suggestionText =
+    current.suggestion !== null && current.suggestion.seed === seed
+      ? current.suggestion.text
+      : seed;
+  // What the editor opens with: the seed, or the text already typed over that same seed when
+  // this composer is drawn again. Read once per seed, so typing never resets the editor.
+  const opensWith = useMemo(() => {
+    const kept = store.get().suggestion;
+    return kept !== null && kept.seed === seed ? kept.text : seed;
+  }, [store, seed]);
 
   const suggestionItem: CodeViewFileItem | null = useMemo(() => {
     if (fileContents === null) return null;
@@ -414,11 +498,11 @@ export function ReviewComposer({
     return {
       id: cacheKey,
       type: 'file',
-      file: { name: file, contents: seed, cacheKey },
+      file: { name: file, contents: opensWith, cacheKey },
       edit: true,
       version: 1,
     };
-  }, [fileContents, file, seed, start, line]);
+  }, [fileContents, file, opensWith, start, line]);
 
   const suggestion = suggestionForSubmit(seed, suggestionText);
   // The anchor is the LAST line of the range, because that is the line
@@ -437,16 +521,15 @@ export function ReviewComposer({
   const handleSuggest = () => {
     const trimmed = body.trim();
     if (trimmed === '' || busy) return;
-    setBusy(true);
-    setError(null);
+    store.set({ busy: true, error: null });
     onSubmit(trimmed, suggestion, anchorText)
       .then(() => onSaved())
       .catch((err: unknown) => {
         // Nothing was created — the draft stays in the box for the reviewer to
         // retry, with what went wrong shown rather than swallowed.
-        setError(err instanceof Error ? err.message : SAVE_FAILED);
+        store.set({ error: err instanceof Error ? err.message : SAVE_FAILED });
       })
-      .finally(() => setBusy(false));
+      .finally(() => store.set({ busy: false }));
   };
 
   // `Apply now`: save, then immediately apply via `submitAndApplyNow`, which guarantees the
@@ -458,8 +541,7 @@ export function ReviewComposer({
     const trimmed = body.trim();
     if (trimmed === '' || busy || onApply === undefined) return;
     if (suggestion === undefined) return;
-    setBusy(true);
-    setError(null);
+    store.set({ busy: true, error: null });
     submitAndApplyNow(
       () => onSubmit(trimmed, suggestion, anchorText),
       onApply,
@@ -468,67 +550,72 @@ export function ReviewComposer({
       .then(() => onSaved())
       .catch((err: unknown) => {
         // The save itself failed — same as `handleSuggest`, nothing was created to apply.
-        setError(err instanceof Error ? err.message : SAVE_FAILED);
+        store.set({ error: err instanceof Error ? err.message : SAVE_FAILED });
       })
-      .finally(() => setBusy(false));
+      .finally(() => store.set({ busy: false }));
   };
 
   return (
     // The composer is the same card as a thread — Linear's "Leave a comment…" box — with the
     // line reference as its 12px heading and a borderless textarea for the body.
-    <div data-slot="review-composer" className={COMMENT_CARD_CLASS}>
-      <div className="text-muted-foreground text-[12px] font-medium">
+    <div data-slot="review-composer" className={styles.card}>
+      <div className={styles.author}>
         {startLine !== undefined && startLine !== line
           ? `Comment on lines ${startLine}–${line}`
           : `Comment on line ${line}`}
       </div>
-      <Textarea
+      <textarea
         ref={bodyRef}
-        variant="borderless"
+        className={cx('textarea', styles.field, styles.composerBody)}
         value={body}
-        onChange={(e) => setBody(e.target.value)}
+        onChange={(e) => store.set({ body: e.target.value })}
         onKeyDown={(e) => {
-          if (e.key === 'Escape') onCancel();
+          if (e.key === 'Escape') {
+            // Claimed, so the app's window-level Escape (which honours `defaultPrevented`)
+            // does not also close the task page: one press peels one layer.
+            e.preventDefault();
+            onCancel();
+          }
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && body.trim()) {
             handleSuggest();
           }
         }}
         aria-label={`Comment on line ${line}`}
         placeholder={COMPOSER_PLACEHOLDER[destination]}
-        className="mt-1.5 min-h-[52px] w-full resize-y text-[13px]"
       />
       {suggestionItem !== null && (
-        <ScrollArea
-          data-testid="suggestion-editor"
-          className="rounded-card border-border mt-1.5 max-h-40 border-[0.5px]"
-        >
+        <div data-testid="suggestion-editor" className={styles.suggestion}>
           <CodeView
             disableWorkerPool
             items={[suggestionItem]}
             onItemEditChange={(_item, changedFile) =>
-              setSuggestionText(changedFile.contents)
+              store.set({ suggestion: { seed, text: changedFile.contents } })
             }
-            className="text-[12px]"
+            className={styles.suggestionCode}
           />
-        </ScrollArea>
+        </div>
       )}
       {error !== null && (
-        <p role="alert" className="text-state-failed font-book text-[12px]">
+        <p
+          role="alert"
+          className={cx(styles.message, 'toneText')}
+          data-tone="danger"
+        >
           {error}
         </p>
       )}
-      <div className="mt-2 flex items-center justify-end gap-2">
-        <PillButton onClick={onCancel}>Cancel</PillButton>
+      <div className={styles.actions}>
+        <ChipButton onClick={onCancel}>Cancel</ChipButton>
         {canApplyNow(seed, suggestionText, onApply !== undefined) && (
-          <PillButton
+          <ChipButton
             disabled={body.trim() === '' || busy}
             onClick={handleApplyNow}
           >
             Apply now
-          </PillButton>
+          </ChipButton>
         )}
         <Button
-          type="button"
+          variant="primary"
           size="sm"
           disabled={body.trim() === '' || busy}
           onClick={handleSuggest}

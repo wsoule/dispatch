@@ -1,0 +1,398 @@
+/* The graph's key in Gr8r's quiet legend voice (the timeline's legend
+   line, grown into rows): no box, a sentence-case row name in --text-3
+   (Nodes, Edges, Paths, so the vocabularies never mix), then swatch + name
+   (--text-2, medium) + note (--text-3) per item. The swatches repeat the
+   graph's own marks: the cards in miniature, the frames, the connectors,
+   the rings and pills of the paths being read. */
+
+.legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px 14px;
+}
+
+.rowKey {
+  flex: 0 0 48px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 24px;
+}
+
+.list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 18px;
+  min-width: 0;
+}
+
+.item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 24px;
+}
+
+.label {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+
+.note {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+/* ---- swatches ----------------------------------------------------------- */
+
+/* A card in miniature: its edge in --border-strong so the plain card shows
+   on the page surface; the others as the graph draws them. */
+.node {
+  position: relative;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+}
+
+/* A host's own emphasis (GraphNodeTone accent): never a status. */
+.nodeAccent {
+  border: 2px solid var(--accent);
+}
+
+/* The status hues, as the graph draws them (§8.2): at risk / needs action
+   the 2px amber edge, overdue the red tint inside a 1px red edge. */
+.nodeWarning {
+  border: 2px solid var(--amber);
+}
+
+.nodeOverdue {
+  border-color: var(--red);
+  background: linear-gradient(var(--red-soft), var(--red-soft)) var(--surface);
+}
+
+.nodeExternal {
+  border-style: dashed;
+  border-color: var(--control-border);
+}
+
+/* Closed or inactive work: the quiet card, its fill recessed. */
+.nodeMuted {
+  background: var(--sunken);
+}
+
+/* The chain's focus (DependencyGraph focusId): the accent ring standing
+   off the card. */
+.nodeFocus {
+  margin: 0 3px;
+}
+
+.nodeFocus::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border: 2px solid var(--accent);
+  border-radius: 7px;
+}
+
+/* In a cycle: the danger hue's dashed outline around the card. */
+.nodeCycle {
+  margin: 0 3px;
+}
+
+.nodeCycle::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border: 2px dashed var(--red);
+  border-radius: 7px;
+}
+
+/* The Status highlight's boxes: ready the 1px green edge, blocked the
+   2px amber edge, stuck the 2px red edge (2px, as on the canvas: Chrome
+   draws 1.5px at 1px, and weight is what tells ready from blocked). */
+.nodeReady {
+  border-color: var(--green);
+}
+
+.nodeBlocked {
+  border: 2px solid var(--amber);
+}
+
+.nodeStuck {
+  border: 2px solid var(--red);
+}
+
+/* A cluster frame, as the graph draws it (.cluster): a wider, empty
+   rounded outline in --control-border; a paused one dashed in the
+   inactive grey. */
+.cluster {
+  flex-basis: 30px;
+  width: 30px;
+  height: 16px;
+  border-color: var(--control-border);
+  border-radius: 5px;
+  background: transparent;
+}
+
+.clusterMuted {
+  flex-basis: 30px;
+  width: 30px;
+  height: 16px;
+  border-style: dashed;
+  border-color: var(--gray);
+  border-radius: 5px;
+  background: transparent;
+}
+
+/* A box receding off the critical path: its edge to the divider. */
+.nodeFaded {
+  border-color: var(--divider);
+}
+
+/* The box being read: the soft accent tint under its 2px accent ring. */
+.pathActive {
+  margin: 0 2px;
+  background: linear-gradient(var(--accent-soft), var(--accent-soft))
+    var(--surface);
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+/* The locked box: the box being read's tint and ring plus its four
+   rounded accent corner ticks, as the graph draws them (.lockMark),
+   scaled to the swatch. */
+.pathLocked {
+  --tick: 5px;
+
+  margin: 0 2px;
+  background: linear-gradient(var(--accent-soft), var(--accent-soft))
+    var(--surface);
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+.pathLocked::after {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  border: 2px solid var(--accent);
+  border-radius: 2px;
+  mask: conic-gradient(
+      at var(--tick) var(--tick),
+      transparent 75%,
+      currentcolor 0
+    )
+    0 0 / calc(100% - var(--tick)) calc(100% - var(--tick));
+}
+
+/* The paths of the box you point at: a 2px ring outside the box, accent
+   for what it waits on, --text for what it holds up and the critical path
+   (the chain through it is drawn as the critical path's own ring). */
+.pathUp,
+.pathDown,
+.nodeChain,
+.pathChain {
+  margin: 0 2px;
+  outline: 2px solid var(--text);
+  outline-offset: 0;
+}
+
+.pathUp {
+  outline-color: var(--accent);
+}
+
+/* The critical path's step disc, at the box's corner as drawn. */
+.step {
+  position: absolute;
+  top: -7px;
+  left: -7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border: 1px solid var(--surface);
+  border-radius: var(--r-full);
+  background: var(--text);
+  color: var(--text-inv);
+  font-size: 8px;
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+}
+
+/* "Ready next": the green dot pill riding a box's top edge, as a dot. */
+.pathNext {
+  margin-top: 3px;
+}
+
+.next {
+  position: absolute;
+  top: -5px;
+  right: 2px;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--surface);
+  border-radius: var(--r-full);
+  background: var(--green);
+}
+
+.edge {
+  flex: 0 0 28px;
+  color: var(--text-2);
+}
+
+.edgeLine {
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.25;
+}
+
+.edgeArrow {
+  fill: currentcolor;
+}
+
+.edgeRisk {
+  color: var(--amber);
+}
+
+.edgeRisk .edgeLine {
+  stroke-width: 2;
+}
+
+.edgeCycle {
+  color: var(--red);
+}
+
+.edgeCycle .edgeLine {
+  stroke-dasharray: 6 3.5;
+}
+
+.edgeCross .edgeLine {
+  stroke-dasharray: 3 3;
+}
+
+.edgeResolved {
+  color: var(--text-3);
+}
+
+.edgeResolved .edgeLine,
+.edgeUnblocked .edgeLine {
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 0.1 4;
+}
+
+.edgeUnblocked {
+  color: var(--green);
+}
+
+.edgeChain {
+  color: var(--text);
+}
+
+.edgeChain .edgeLine {
+  stroke-width: 2.5;
+}
+
+/* The count pill on an edge. */
+.weight {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 4px;
+  border: 1px solid var(--text-3);
+  border-radius: 4px;
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (forced-colors: active) {
+  /* An SVG swatch keeps its author colour in forced colours (Chromium
+     gives an svg preserve-parent-color), while the graph's edges turn to
+     the system text colour: the swatches follow, keeping their dashes. */
+  .edge {
+    color: CanvasText;
+  }
+
+  .pathActive,
+  .pathLocked {
+    margin: 0 6px;
+    outline: 4px double CanvasText;
+    outline-offset: 2px;
+  }
+
+  .pathLocked::after {
+    forced-color-adjust: none;
+    border-color: Highlight;
+  }
+
+  .pathUp {
+    outline-color: Highlight;
+  }
+
+  .pathDown {
+    outline: 2px dashed CanvasText;
+  }
+
+  .nodeChain,
+  .pathChain {
+    outline-color: CanvasText;
+  }
+
+  .nodeFocus::after {
+    border-color: Highlight;
+  }
+
+  .nodeCycle::before {
+    border-color: CanvasText;
+  }
+
+  .step {
+    forced-color-adjust: none;
+    border-color: Canvas;
+    background: CanvasText;
+    color: Canvas;
+  }
+
+  .next {
+    forced-color-adjust: none;
+    border-color: Canvas;
+    background: CanvasText;
+  }
+}
+
+@media (width <= 1200px) {
+  .note {
+    display: none;
+  }
+}
+
+@media (width <= 640px) {
+  .row {
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .rowKey {
+    flex-basis: auto;
+  }
+
+  .list {
+    gap: 0 16px;
+  }
+}

@@ -1,4 +1,5 @@
 import type { ApiClient, MemoryEntryView } from '@dispatch/client';
+import { Button, cx, TextField } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
@@ -9,8 +10,7 @@ import {
   memoryQueryKey,
   memoryQueryRootKey,
 } from '../../lib/memory';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
+import styles from './MemoryEntryPanel.module.css';
 
 type EntryClient = Pick<
   ApiClient,
@@ -61,41 +61,35 @@ export function MemoryEntryPanel({
   }
   const revisions = read.data?.revisions ?? [];
   return (
-    <section
-      aria-label="Memory entry"
-      className="flex min-h-0 flex-col gap-3 overflow-auto p-4"
-    >
-      <div className="flex flex-col gap-1">
+    <section aria-label="Memory entry" className={styles.root}>
+      <div className={styles.head}>
         {/* Titles and bodies are agent- or teammate-written: plain text only. */}
-        <h2 className="text-foreground text-[15px] font-medium break-words">
-          {entry.title}
-        </h2>
-        <span className="text-muted-foreground text-[12px]">
-          {`${entry.handle} · ${entryProvenance(entry)}`}
+        <h2 className={styles.title}>{entry.title}</h2>
+        <span className={styles.meta}>
+          <span className={styles.mono}>{entry.handle}</span>
+          {` · ${entryProvenance(entry)}`}
         </span>
       </div>
-      <p className="text-foreground text-[13px] whitespace-pre-wrap">
-        {entry.body}
-      </p>
+      <p className={styles.body}>{entry.body}</p>
       {read.data !== undefined && (
-        <span className="text-muted-foreground text-[12px]">
+        <span className={cx(styles.meta, styles.num)}>
           {`Recalled ${read.data.recallCount} ${read.data.recallCount === 1 ? 'time' : 'times'}`}
         </span>
       )}
       {revisions.length > 0 && (
-        <ol aria-label="Revisions" className="flex flex-col gap-0.5">
+        <ol aria-label="Revisions" className={styles.revisions}>
           {revisions.map((r) => (
-            <li key={r.rev} className="text-muted-foreground text-[12px]">
+            <li key={r.rev} className={styles.meta}>
               {`rev ${r.rev}: ${r.cause} by ${r.by}, ${r.at.slice(0, 10)}`}
             </li>
           ))}
         </ol>
       )}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className={styles.actions}>
         {actions.pin && (
           <Button
             size="sm"
-            variant="ghost"
+            variant="quiet"
             disabled={busy}
             onClick={() =>
               void act(() => client.pinMemory(entry.id, !entry.pinned))
@@ -107,7 +101,7 @@ export function MemoryEntryPanel({
         {actions.confirm && (
           <Button
             size="sm"
-            variant="ghost"
+            variant="quiet"
             disabled={busy}
             onClick={() => void act(() => client.confirmMemory(entry.id))}
           >
@@ -119,7 +113,7 @@ export function MemoryEntryPanel({
             <Button
               key={scope}
               size="sm"
-              variant="ghost"
+              variant="quiet"
               disabled={busy}
               onClick={() =>
                 void act(() => client.promoteMemory(entry.id, scope))
@@ -132,7 +126,7 @@ export function MemoryEntryPanel({
           (deleting ? (
             <Button
               size="sm"
-              variant="destructive"
+              variant="danger"
               disabled={busy}
               onClick={() => void act(() => client.deleteMemory(entry.id))}
             >
@@ -141,7 +135,7 @@ export function MemoryEntryPanel({
           ) : (
             <Button
               size="sm"
-              variant="ghost"
+              variant="quiet"
               disabled={busy}
               onClick={() => setDeleting(true)}
             >
@@ -150,17 +144,18 @@ export function MemoryEntryPanel({
           ))}
       </div>
       {actions.retire && (
-        <div className="flex items-center gap-2">
-          <Input
+        <div className={styles.retire}>
+          <TextField
+            size="sm"
             aria-label="Why retire it"
             placeholder="Why it no longer holds"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            className="h-7 flex-1"
+            className={styles.reason}
           />
           <Button
             size="sm"
-            variant="outline"
+            variant="secondary"
             disabled={busy || reason.trim() === ''}
             onClick={() =>
               void act(() => client.retireMemory(entry.id, reason.trim()))
@@ -171,7 +166,11 @@ export function MemoryEntryPanel({
         </div>
       )}
       {error !== null && (
-        <span role="alert" className="text-red text-[12px]">
+        <span
+          role="alert"
+          className={cx('toneText', styles.error)}
+          data-tone="danger"
+        >
           {error}
         </span>
       )}

@@ -28,7 +28,7 @@ export function editableDraftFrom(
 }
 
 /** A draft is saveable once it has a title — the same single required field
- * `CreateTaskModal` enforces, so the two creation paths can't disagree about what a minimum
+ * the task composer enforces, so the two creation paths can't disagree about what a minimum
  * task is. */
 export function isDraftSaveable(draft: EditableTaskDraft): boolean {
   return draft.title.trim() !== '';
@@ -36,7 +36,7 @@ export function isDraftSaveable(draft: EditableTaskDraft): boolean {
 
 /**
  * Maps the edited draft onto the `CreateInput` that `handleCreate`/`POST /api/tasks` takes —
- * the same save path `CreateTaskModal` uses, so nothing about how a task is persisted depends
+ * the same save path the task composer uses, so nothing about how a task is persisted depends
  * on which creator produced it. `taskDraftToCreateInput` (client) does the title/description/
  * priority/acceptance-criteria fold; this adds the two view-owned fields on top and cleans up
  * what inline editing can leave behind: a title padded with whitespace, and blank criteria

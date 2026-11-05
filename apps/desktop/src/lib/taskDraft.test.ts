@@ -37,7 +37,7 @@ describe('editableDraftFrom', () => {
 });
 
 describe('isDraftSaveable', () => {
-  test('requires a non-blank title, matching CreateTaskModal', () => {
+  test('requires a non-blank title, matching the task composer', () => {
     expect(isDraftSaveable(editable())).toBe(true);
     expect(isDraftSaveable(editable({ title: '' }))).toBe(false);
     expect(isDraftSaveable(editable({ title: '   ' }))).toBe(false);

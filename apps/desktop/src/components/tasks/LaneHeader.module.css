@@ -1,0 +1,49 @@
+/* A board swim lane's header row (LaneHeader, MilestoneLaneHeader): the
+   SectionHeader at the old 36px lane height, its title a text button that
+   keeps the heading's ink and takes the focus ring. */
+.header {
+  min-height: 36px;
+}
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.name {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.titleButton {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.titleButton:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.titleText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (hover: hover) {
+  .titleButton:hover {
+    color: var(--text);
+  }
+}

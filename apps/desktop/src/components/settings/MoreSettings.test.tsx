@@ -1,6 +1,6 @@
 import type { ConfigPatch } from '@dispatch-foo/core/browser';
 import type { ReceiptsStatus } from '@dispatch/client';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import { argvFromLines, CliAgents } from './AgentsMoreGroups';
@@ -14,7 +14,7 @@ import {
   syncPlacePatch,
 } from './DaemonConfigGroups';
 import { OPERATOR_ONLY } from './fields';
-import { testConfig as config } from './fixtures.test-helper';
+import { testConfig as config, visibleText } from './fixtures.test-helper';
 import { PreviewsSection } from './PreviewsSection';
 import { moved, StatusesGroup, VerifyStepsList } from './ProjectGroups';
 import { QueueWeightsGroup } from './QueueWeightsGroup';
@@ -34,6 +34,15 @@ function recorder() {
     saved,
     onSave: (p: ConfigPatch) => Promise.resolve(void saved.push(p)),
   };
+}
+
+// Presses a form's submit and lets its save settle: the form empties itself a
+// microtask later, once the save says it landed, inside the act.
+async function submitted(button: HTMLElement): Promise<void> {
+  await act(async () => {
+    fireEvent.click(button);
+    await Promise.resolve();
+  });
 }
 
 function type(label: string, value: string) {
@@ -78,10 +87,10 @@ test('previews: below the operator tier the commands are read-only', () => {
   expect(screen.queryByRole('textbox', { name: 'Start command' })).toBeNull();
   // The reason is the lock's accessible name, not a printed sentence.
   expect(screen.getAllByLabelText(OPERATOR_ONLY).length).toBeGreaterThan(0);
-  expect(screen.queryByText(OPERATOR_ONLY)).toBeNull();
+  expect(visibleText(OPERATOR_ONLY)).toEqual([]);
 });
 
-test('remotes: a filled form adds one, and only a real port is accepted', () => {
+test('remotes: a filled form adds one, and only a real port is accepted', async () => {
   expect(
     remoteFromForm({
       host: ' box ',
@@ -104,13 +113,15 @@ test('remotes: a filled form adds one, and only a real port is accepted', () => 
   fireEvent.change(screen.getByLabelText('Checkout path'), {
     target: { value: '/srv/repo' },
   });
-  fireEvent.click(screen.getByRole('button', { name: /Add machine/ }));
+  await submitted(screen.getByRole('button', { name: /Add machine/ }));
   expect(r.saved).toEqual([
     { remotes: { box: { host: 'build-box', path: '/srv/repo' } } },
   ]);
+  // A landed save empties the form for the next machine.
+  expect(screen.getByLabelText<HTMLInputElement>('Name').value).toBe('');
 });
 
-test('statuses: a new one goes before the last, and they reorder and remove', () => {
+test('statuses: a new one goes before the last, and they reorder and remove', async () => {
   expect(moved(['a', 'b', 'c'], 1, -1)).toEqual(['b', 'a', 'c']);
   expect(moved(['a', 'b', 'c'], 2, 1)).toEqual(['a', 'b', 'c']);
 
@@ -120,7 +131,10 @@ test('statuses: a new one goes before the last, and they reorder and remove', ()
   fireEvent.change(screen.getByLabelText('Add a column'), {
     target: { value: 'QA' },
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+  await submitted(screen.getByRole('button', { name: 'Add' }));
+  expect(screen.getByLabelText<HTMLInputElement>('Add a column').value).toBe(
+    ''
+  );
   fireEvent.click(screen.getByRole('button', { name: 'Move ready up' }));
   fireEvent.click(screen.getByRole('button', { name: 'Remove draft' }));
   expect(r.saved).toEqual([
@@ -146,7 +160,7 @@ test('verify steps: added in order, and removing the last clears the list', () =
   expect(r.saved).toEqual([{ verifySteps: null }]);
 });
 
-test('agents: a CLI agent is declared from one argument per line', () => {
+test('agents: a CLI agent is declared from one argument per line', async () => {
   expect(argvFromLines('gemini\n  -p \n\n{prompt}\n')).toEqual([
     'gemini',
     '-p',
@@ -163,7 +177,8 @@ test('agents: a CLI agent is declared from one argument per line', () => {
   fireEvent.change(screen.getByLabelText('Model for coding runs'), {
     target: { value: 'gemini-2.5-pro' },
   });
-  fireEvent.click(screen.getByRole('button', { name: /Add agent/ }));
+  await submitted(screen.getByRole('button', { name: /Add agent/ }));
+  expect(screen.getByLabelText<HTMLInputElement>('Agent name').value).toBe('');
   expect(r.saved).toEqual([
     {
       executors: {
@@ -232,9 +247,9 @@ test('daemon: keeping the receipt log and its branch are the owner’s', () => {
     />
   );
   expect(
-    screen
-      .getByRole('switch', { name: 'Keep a receipt log' })
-      .hasAttribute('data-disabled')
+    screen.getByRole<HTMLButtonElement>('switch', {
+      name: 'Keep a receipt log',
+    }).disabled
   ).toBe(true);
   expect(screen.queryByRole('textbox', { name: 'Branch' })).toBeNull();
 });
@@ -261,9 +276,9 @@ test('board sync: turning sharing on and its branch are the owner’s', () => {
     />
   );
   expect(
-    screen
-      .getByRole('switch', { name: 'Share this board with teammates' })
-      .hasAttribute('data-disabled')
+    screen.getByRole<HTMLButtonElement>('switch', {
+      name: 'Share this board with teammates',
+    }).disabled
   ).toBe(true);
   expect(screen.queryByRole('textbox', { name: 'Branch' })).toBeNull();
 });
@@ -392,7 +407,7 @@ test('task files: committing to the main branch is the owner’s', () => {
   const toggle = screen.getByRole('switch', {
     name: 'Commit task files to the main branch',
   });
-  expect(toggle.hasAttribute('data-disabled')).toBe(true);
+  expect((toggle as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(screen.getByText('Commit task files to the main branch'));
   expect(r.saved).toEqual([]);
 });

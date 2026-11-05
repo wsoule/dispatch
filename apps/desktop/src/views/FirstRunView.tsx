@@ -1,12 +1,10 @@
 import type { DraftRecord } from '@dispatch/client';
+import { Button, Kbd, Notice, Spinner, TextArea } from '@dispatch/ui';
 import { Sparkles } from 'lucide-react';
 import { useRef, useState } from 'react';
 
 import { FailureNotice } from '../components/failure/FailureNotice';
-import { Button } from '@/ui/button';
-import { Kbd } from '@/ui/kbd';
-import { Spinner } from '@/ui/spinner';
-import { Textarea } from '@/ui/textarea';
+import styles from './FirstRunView.module.css';
 
 export interface FirstRunViewProps {
   projectName: string | null;
@@ -17,7 +15,8 @@ export interface FirstRunViewProps {
    *  matters: someone who opened the app to look around, not to describe
    *  work, must not be stuck behind a textarea. */
   onBrowseBoard: () => void;
-  /** Two views: set the prompt aside for a conversation with the agent. */
+  /** Sets the prompt aside for a conversation with the agent on the Overseer page;
+   *  omitted, the screen offers no way to. */
   onTalkToAgent?: () => void;
   /** False when the default agent can't draft from a sentence: a two-field form creates the task directly. */
   planner?: boolean;
@@ -99,15 +98,25 @@ export function FirstRunView({
     }
   }
 
+  // Drafting and creating are agent and daemon work, so a Spinner stands in
+  // for the button's icon. The button hides its icon from assistive tech, so
+  // the polite status line below says the same thing in words.
+  const busyIcon = <Spinner size="sm" label="" />;
+  const busyWords = submitting
+    ? useForm
+      ? 'Creating the task…'
+      : 'Drafting your task…'
+    : '';
+
   return (
-    <div className="flex h-full min-h-0 flex-col items-center justify-center px-6">
-      <div className="flex w-full max-w-2xl flex-col gap-4">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-lg font-medium">
+    <div className={styles.view}>
+      <div className={styles.column}>
+        <div className={styles.intro}>
+          <h1 className={styles.title}>
             What do you want to change
             {projectName === null ? '' : ` in ${projectName}`}?
           </h1>
-          <p className="text-text-secondary text-sm">
+          <p className={styles.lead}>
             {useForm
               ? "Write what should change and how you'll know it's done. You check the task, then an agent picks it up."
               : 'Describe it in a sentence. Dispatch drafts the task, you review it, then an agent picks it up.'}
@@ -116,25 +125,25 @@ export function FirstRunView({
 
         {useForm ? (
           <>
-            <Textarea
+            <TextArea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="Add a dark mode toggle to the settings page…"
               rows={3}
-              className="text-[15px]"
+              className={styles.prompt}
               aria-label="What should change?"
             />
-            <Textarea
+            <TextArea
               value={done}
               onChange={(e) => setDone(e.target.value)}
               placeholder="The toggle switches the theme and remembers the choice…"
               rows={3}
-              className="text-[15px]"
+              className={styles.prompt}
               aria-label="How will you know it's done?"
             />
           </>
         ) : (
-          <Textarea
+          <TextArea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={(e) => {
@@ -147,15 +156,15 @@ export function FirstRunView({
             }}
             placeholder="Add a dark mode toggle to the settings page…"
             rows={4}
-            className="text-[15px]"
+            className={styles.prompt}
             aria-label="What do you want to change?"
           />
         )}
 
         {error !== null && (
-          <p className="text-sm text-(--state-error-fg)" role="alert">
+          <Notice tone="danger" role="alert">
             {error}
-          </p>
+          </Notice>
         )}
 
         {failure !== undefined && (
@@ -166,37 +175,50 @@ export function FirstRunView({
           />
         )}
 
-        <div className="flex items-center gap-3">
+        {/* Always mounted, so a screen reader hears the words when they
+            arrive (a live region added with its text is often skipped). */}
+        <span role="status" className="srOnly">
+          {busyWords}
+        </span>
+
+        <div className={styles.actions}>
           {useForm ? (
             <Button
+              variant="primary"
+              icon={submitting ? busyIcon : undefined}
               onClick={() => void createFromForm()}
               disabled={prompt.trim() === '' || submitting}
             >
-              {submitting && <Spinner className="size-4" />}
               Create task
             </Button>
           ) : (
             <>
-              <Button onClick={() => void submit()} disabled={!canSubmit}>
-                {submitting ? (
-                  <Spinner className="size-4" />
-                ) : (
-                  <Sparkles aria-hidden />
-                )}
+              <Button
+                variant="primary"
+                icon={
+                  submitting ? (
+                    busyIcon
+                  ) : (
+                    <Sparkles size={14} strokeWidth={1.8} aria-hidden />
+                  )
+                }
+                onClick={() => void submit()}
+                disabled={!canSubmit}
+              >
                 {submitting ? 'Drafting…' : 'Draft task'}
               </Button>
-              <span className="text-text-secondary text-xs">
+              <span className={styles.hint}>
                 <Kbd>Enter</Kbd> to draft
               </span>
             </>
           )}
-          <div className="ml-auto flex items-center gap-1">
+          <div className={styles.escapes}>
             {onTalkToAgent !== undefined && (
-              <Button variant="ghost" onClick={onTalkToAgent}>
+              <Button variant="quiet" onClick={onTalkToAgent}>
                 Talk to the agent
               </Button>
             )}
-            <Button variant="ghost" onClick={onBrowseBoard}>
+            <Button variant="quiet" onClick={onBrowseBoard}>
               Browse the board
             </Button>
           </div>

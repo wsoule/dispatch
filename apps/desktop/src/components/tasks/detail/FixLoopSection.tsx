@@ -1,28 +1,17 @@
 import type { EscalationStep } from '@dispatch-foo/core/browser';
 import type { FixLoopState } from '@dispatch/client';
+import { Button, cx, SectionHeader, TaskDetailSection } from '@dispatch/ui';
 import { Loader2, ShieldAlert, Square, Wrench } from 'lucide-react';
 
-import type { FixLoopTone } from '../../../lib/fixLoopStatus';
 import {
   fixLoopStatusLabel,
   fixLoopStopDetail,
-  fixLoopTint,
   fixLoopTone,
   fixLoopTraceLabel,
+  fixLoopUiTone,
   willEscalateNextRound,
 } from '../../../lib/fixLoopStatus';
-import { MainSection } from './MainSection';
-import { cn } from '@/lib/utils';
-import { GroupHeader } from '@/ui/ai/group-header';
-import { PillButton } from '@/ui/ai/pill';
-
-// The bar's glyph takes the tone colour; the bar itself stays a neutral group
-// header whose left edge picks up the same tint.
-const FIX_LOOP_ICON_CLASS: Record<FixLoopTone, string> = {
-  waiting: 'text-state-waiting',
-  failed: 'text-red',
-  neutral: 'text-muted-foreground',
-};
+import styles from './sections.module.css';
 
 // What the start button offers, or null when the loop is mid-flight or done and
 // pressing anything would be a no-op. A loop that stopped at its cap can still
@@ -45,9 +34,10 @@ function startAction(
   return null;
 }
 
-// The fix loop as a 36px group-header bar — glyph, status line, pill buttons at
-// the right — with the trace, stop detail, hints and errors as muted 12px lines
-// beneath it.
+// The fix loop as a library SectionHeader bar (glyph, status line, small
+// buttons at the right; a loop waiting on a ruling or one that failed adds the
+// tone's diamond and left edge, the status line saying the same in words), with
+// the trace, stop detail, hints and errors as quiet 12px lines beneath it.
 export function FixLoopSection({
   fixLoop,
   escalation,
@@ -82,15 +72,19 @@ export function FixLoopSection({
     action !== null ||
     stoppable ||
     startError !== null;
+  const uiTone = fixLoopUiTone(tone);
   return (
-    <MainSection title="Fix loop">
-      <div className="flex flex-col gap-1.5">
-        <GroupHeader
-          tint={fixLoopTint(tone)}
+    <TaskDetailSection title="Fix loop" headingLevel={3}>
+      <div className={styles.fixLoop}>
+        <SectionHeader
+          as="div"
+          tone={uiTone}
           icon={
             <ShieldAlert
-              aria-hidden
-              className={cn('size-3.5', FIX_LOOP_ICON_CLASS[tone])}
+              size={14}
+              strokeWidth={1.8}
+              aria-hidden="true"
+              className={styles.barIcon}
             />
           }
           name={
@@ -99,39 +93,77 @@ export function FixLoopSection({
               : fixLoopStatusLabel(fixLoop)
           }
           actions={
-            <>
-              {action !== null && (
-                <PillButton disabled={starting} onClick={onStart}>
-                  {starting ? <Loader2 className="animate-spin" /> : <Wrench />}
-                  {action.label}
-                </PillButton>
-              )}
-              {stoppable && (
-                <PillButton onClick={onStop}>
-                  <Square />
-                  Stop
-                </PillButton>
-              )}
-            </>
+            action !== null || stoppable ? (
+              <>
+                {action !== null && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={starting}
+                    onClick={onStart}
+                    icon={
+                      starting ? (
+                        <Loader2
+                          size={14}
+                          strokeWidth={1.8}
+                          aria-hidden="true"
+                          className={styles.spin}
+                        />
+                      ) : (
+                        <Wrench
+                          size={14}
+                          strokeWidth={1.8}
+                          aria-hidden="true"
+                        />
+                      )
+                    }
+                  >
+                    {action.label}
+                  </Button>
+                )}
+                {stoppable && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={onStop}
+                    icon={
+                      <Square size={14} strokeWidth={1.8} aria-hidden="true" />
+                    }
+                  >
+                    Stop
+                  </Button>
+                )}
+              </>
+            ) : undefined
           }
         />
         {hasLines && (
-          <div className="text-muted-foreground font-book flex flex-col gap-0.5 px-2 text-[12px]">
-            {escalates && <p>Next round hands off to a fresh implementer.</p>}
-            {trace !== null && <p>Findings per pass: {trace}</p>}
-            {detail !== null && (
-              <p className="whitespace-pre-wrap text-(--text-secondary)">
-                {detail}
+          <div className={styles.lines}>
+            {escalates && (
+              <p className={styles.note}>
+                Next round hands off to a fresh implementer.
               </p>
             )}
-            {action !== null && <p>{action.hint}</p>}
-            {stoppable && (
-              <p>Stop caps the loop here; Review &amp; fix resumes it later.</p>
+            {trace !== null && (
+              <p className={styles.note}>Findings per pass: {trace}</p>
             )}
-            {startError !== null && <p className="text-red">{startError}</p>}
+            {detail !== null && (
+              <p className={cx(styles.note, styles.detail)}>{detail}</p>
+            )}
+            {action !== null && <p className={styles.note}>{action.hint}</p>}
+            {stoppable && (
+              <p className={styles.note}>
+                Stop caps the loop here; Review &amp; fix resumes it later.
+              </p>
+            )}
+            {startError !== null && (
+              <p className={cx('toneText', styles.note)} data-tone="danger">
+                {startError}
+              </p>
+            )}
           </div>
         )}
       </div>
-    </MainSection>
+    </TaskDetailSection>
   );
 }

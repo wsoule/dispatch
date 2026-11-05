@@ -7,6 +7,8 @@ import {
   findPane,
   listPanes,
   makePane,
+  MAX_RATIO,
+  MIN_RATIO,
   neighbourPane,
   setRatio,
   splitPane,
@@ -111,6 +113,18 @@ describe('setRatio', () => {
     const tree = splitPane(makePane('a'), 'a', 'row', 'b', 's1');
     expect(ratioOf(setRatio(tree, 's1', 0))).toBe(0.1);
     expect(ratioOf(setRatio(tree, 's1', 5))).toBe(0.9);
+  });
+
+  it('clamps to the exported bounds the divider announces', () => {
+    // The divider's aria-valuemin/max and its Home/End keys read these, so
+    // they must be the same numbers setRatio clamps to.
+    expect(MIN_RATIO).toBe(0.1);
+    expect(MAX_RATIO).toBe(0.9);
+    const tree = splitPane(makePane('a'), 'a', 'row', 'b', 's1');
+    expect(ratioOf(setRatio(tree, 's1', -1))).toBe(MIN_RATIO);
+    expect(ratioOf(setRatio(tree, 's1', 2))).toBe(MAX_RATIO);
+    expect(ratioOf(setRatio(tree, 's1', MIN_RATIO))).toBe(MIN_RATIO);
+    expect(ratioOf(setRatio(tree, 's1', MAX_RATIO))).toBe(MAX_RATIO);
   });
 });
 
