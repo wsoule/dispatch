@@ -1,7 +1,10 @@
 // Secrets this daemon may hold in its own environment (a preset decide-tier
-// app token, any DISPATCH_*TOKEN*) that no shell or agent it starts may read.
+// app token, any DISPATCH_*TOKEN* or DISPATCH_*SECRET*, such as the Linear
+// OAuth client secret) that no shell or agent it starts may read.
 function secret(key: string): boolean {
-  return key === 'DISPATCH_APP_TOKEN' || /^DISPATCH_\w*TOKEN/.test(key);
+  return (
+    key === 'DISPATCH_APP_TOKEN' || /^DISPATCH_\w*(?:TOKEN|SECRET)/.test(key)
+  );
 }
 
 /** This process's environment without its secrets, plus `extra`. */

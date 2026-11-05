@@ -67,6 +67,9 @@ export interface CredentialsFile {
   agents?: Record<string, string>;
   /** Per-project secrets, keyed by `normalizeProjectPath` of the project root. */
   projects?: Record<string, ProjectCredentials>;
+  /** This person's Linear sign-ins on this machine, by Linear organization
+   *  id; owned by linearAccounts.ts. */
+  linearAccounts?: Record<string, unknown>;
 }
 
 // The { apiKey } integrations, e.g. `'linear'`: not `'projects'`, and not
@@ -241,13 +244,15 @@ function tryLock(lock: string, mine: string): (() => void) | null {
   return null;
 }
 
-function lockPaths(): { lock: string; mine: string; deadline: number } {
-  const lock = `${credentialsPath()}.lock`;
+function lockPaths(
+  lock = `${credentialsPath()}.lock`,
+  waitMs = LOCK_WAIT_MS
+): { lock: string; mine: string; deadline: number } {
   mkdirSync(resolve(lock, '..'), { recursive: true });
   return {
     lock,
     mine: `${process.pid} ${randomBytes(16).toString('hex')}\n`,
-    deadline: Date.now() + LOCK_WAIT_MS,
+    deadline: Date.now() + waitMs,
   };
 }
 
@@ -267,16 +272,29 @@ function lockCredentials(): () => void {
   }
 }
 
-// As lockCredentials, but waits on timers: the daemon's writers never block
-// its event loop while another process holds the lock.
-async function lockCredentialsAsync(): Promise<() => void> {
-  const { lock, mine, deadline } = lockPaths();
+/**
+ * Takes the advisory lock file at `lockPath` (same `wx` open, "<pid> <nonce>"
+ * text and stale takeover as the credentials lock), waiting on timers for up
+ * to `waitMs`, and answers its release. Throws once the wait runs out. Used by
+ * sibling modules that need a lock of their own beside credentials.json.
+ */
+export async function acquireFileLockAsync(
+  lockPath: string,
+  waitMs: number
+): Promise<() => void> {
+  const { lock, mine, deadline } = lockPaths(lockPath, waitMs);
   for (;;) {
     const release = tryLock(lock, mine);
     if (release !== null) return release;
     if (Date.now() > deadline) throw heldElsewhere(lock);
     await new Promise((r) => setTimeout(r, 5));
   }
+}
+
+// As lockCredentials, but waits on timers: the daemon's writers never block
+// its event loop while another process holds the lock.
+function lockCredentialsAsync(): Promise<() => void> {
+  return acquireFileLockAsync(`${credentialsPath()}.lock`, LOCK_WAIT_MS);
 }
 
 // Every writer's read-modify-write, under the lock and on a fresh read. A file
@@ -298,6 +316,22 @@ function updateCredentials(
 
 /** `updateCredentials` for sibling modules that own their own slot. */
 export const updateCredentialsFile = updateCredentials;
+
+/** The daemon's `updateCredentials`, waiting on timers, for sibling modules. */
+export function updateCredentialsFileAsync(
+  change: (file: CredentialsFile) => CredentialsFile | null
+): Promise<void> {
+  return updateCredentialsAsync(change);
+}
+
+/** The credentials file's state, for sibling modules that read their own
+ *  slot and must tell an unreadable file from an absent one. */
+export function loadCredentialsFile():
+  | { kind: 'absent' }
+  | { kind: 'ok'; file: CredentialsFile }
+  | { kind: 'unreadable' } {
+  return loadCredentials();
+}
 
 // updateCredentials for the daemon: the same read-modify-write, waiting
 // asynchronously for the lock.

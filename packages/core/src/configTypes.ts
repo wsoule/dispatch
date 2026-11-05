@@ -624,6 +624,12 @@ export interface LinearConfig {
   /** Whether archiving a completed or canceled task archives its Linear issue
    *  too. Off: Linear's own auto-archive owns finished issues. */
   archiveFinished: boolean;
+  /** The Linear OAuth application people sign in through; not a secret.
+   *  DISPATCH_LINEAR_CLIENT_ID overrides it. Null: sign-in is not set up. */
+  oauthClientId: string | null;
+  /** The loopback port Linear redirects to after sign-in; the OAuth app's
+   *  callback URL must name it exactly. */
+  oauthCallbackPort: number;
 }
 
 export const LINEAR_DIRECTIONS = ['both', 'pull', 'push'] as const;
@@ -637,6 +643,8 @@ export const DEFAULT_LINEAR: LinearConfig = {
   direction: 'both',
   includeAcceptanceCriteria: true,
   archiveFinished: false,
+  oauthClientId: null,
+  oauthCallbackPort: 47823,
 };
 
 /** Per-role model ids. Each role is a distinct kind of agent work, so cheap
