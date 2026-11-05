@@ -38,6 +38,31 @@ async function openFromPalette(page: Page, label: string): Promise<void> {
 
 const FIXED_NOW = new Date('2026-10-09T12:00:00Z');
 
+// The shell's Setup banner reports this machine's toolchain, not the app: the
+// first setup step that is not ok (no agent CLI installed or signed in, no git
+// identity). A GitHub macOS runner has no agent CLI and a developer's Mac
+// usually does, so the banner, and the 33px it pushes every page down, would
+// make a baseline from one fail on the other. Each shot keeps the daemon's real
+// report but marks its steps ok, so no machine draws the banner.
+async function quietSetupBanner(page: Page): Promise<void> {
+  await page.route(
+    (url) => url.pathname === '/api/setup',
+    async (route) => {
+      const response = await route.fetch();
+      const report = (await response.json()) as {
+        steps: { status: string }[];
+      };
+      await route.fulfill({
+        response,
+        json: {
+          ...report,
+          steps: report.steps.map((step) => ({ ...step, status: 'ok' })),
+        },
+      });
+    }
+  );
+}
+
 // global-setup.ts resolves the daemon's per-run token before any test worker
 // starts and hands it over via the environment; this fails loudly rather than
 // letting a test silently visit an unauthenticated URL if that ever changes.
@@ -84,6 +109,7 @@ for (const view of VIEWS) {
     // Rows show ages like "78d ago"; a fixed clock keeps them from drifting
     // a day at a time out of the baseline.
     await page.clock.setFixedTime(FIXED_NOW);
+    await quietSetupBanner(page);
     await page.goto(authedUrl(baseURL));
     await assertFixtureDataLoaded(page);
     await view.open(page);
@@ -121,6 +147,7 @@ test.describe('review detail', () => {
 
   test('renders an open diff', async ({ page, baseURL }) => {
     await page.clock.setFixedTime(FIXED_NOW);
+    await quietSetupBanner(page);
     await page.goto(authedUrl(baseURL));
     await assertFixtureDataLoaded(page);
     await openDestination(page, 'Issues');
