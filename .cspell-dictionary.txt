@@ -34,6 +34,7 @@ backgrounding
 badgrant
 baselining
 basenames
+BCDFGHJKLMNPQRSTVWXZ
 bceb
 behaviour
 behavioural
@@ -150,6 +151,7 @@ dunder
 dupdup
 DWIM
 eabi
+EFGH
 elkjs
 emnapi
 emphasised
@@ -229,6 +231,7 @@ hbrevn
 hcaret
 headerless
 headlessly
+healthz
 hexdigit
 HIDEABLE
 hjkmnp
@@ -441,6 +444,7 @@ refmove
 refspec
 refspecs
 regate
+regid
 registrator
 rehome
 rehomed
@@ -473,6 +477,7 @@ restackable
 resynced
 retheme
 retuned
+reuid
 reusify
 revset
 rightless
@@ -488,7 +493,9 @@ rustls
 rustup
 sandboxing
 satteri
+setpriv
 sslip
+streamable
 subshell
 Sätteri
 scandir

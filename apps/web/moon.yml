@@ -1,0 +1,20 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+language: 'typescript'
+layer: 'application'
+
+# test/mesh.test.ts spawns the real machine hub from packages/mcp/dist; the
+# @dispatch-foo/mcp devDependency puts that build in the inherited `^:build`.
+
+tasks:
+  # Local server with DEV_LOGIN (sign in without GitHub) on http://localhost.
+  dev:
+    command: 'bun --watch src/main.ts'
+    env:
+      DEV_LOGIN: '1'
+      PORT: '8787'
+      DATA_DIR: './data'
+    options:
+      cache: false
+      persistent: true
+      runInCI: 'skip'
