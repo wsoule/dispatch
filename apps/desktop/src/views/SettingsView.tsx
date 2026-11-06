@@ -82,6 +82,7 @@ import { TeamSection } from '../components/settings/TeamSection';
 import { AgentStep } from '../components/setup/AgentStep';
 import { CliCommandStep } from '../components/setup/CliCommandStep';
 import { GitStep } from '../components/setup/GitStep';
+import { LinearStep } from '../components/setup/LinearStep';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { SETTINGS_PAGE_LABELS, type SettingsPage } from '../lib/appNav';
 import { isInsufficientTier } from '../lib/daemonAuth';
@@ -131,6 +132,8 @@ interface PageContext {
   canOperate: boolean;
   activeProject: { path: string; name: string };
   onOpenTask?: (taskId: string) => void;
+  /** Moves to another Settings page (Setup's Linear step opens Linear). */
+  selectPage: (page: SettingsPage) => void;
 }
 
 interface PageSpec {
@@ -184,6 +187,10 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
                 continueLabel="Save"
               />
             )}
+            <LinearStep
+              connected={ctx.data.linearStatus?.connected ?? null}
+              onConnect={() => ctx.selectPage('integrations')}
+            />
             <CliCommandStep />
           </>
         ),
@@ -600,6 +607,7 @@ export function SettingsView({
     canOperate: access.canOperate,
     activeProject,
     onOpenTask,
+    selectPage,
   };
 
   const navGroups: SettingsNavGroup[] = [

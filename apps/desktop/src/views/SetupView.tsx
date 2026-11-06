@@ -11,17 +11,21 @@ interface SetupViewProps {
   onProjectChosen: (path: string) => Promise<void>;
   /** The agent step, rendered by App once a project (and its daemon) exists. */
   agentStep?: ReactNode;
+  /** The optional Linear step, beside the agent step once the daemon exists. */
+  linearStep?: ReactNode;
 }
 
 /**
- * First-launch setup: Git, then your project, then your AI agent. Everything a new
- * user needs before their first task, each with its own fix button. App draws the
+ * First-launch setup: Git, then your project, then your AI agent, and Linear if you
+ * plan with it. Everything a new user needs before their first task, each with its
+ * own fix button. App draws the
  * signed-out frame (and its one <main>) around it, so this is only the centred column.
  */
 export function SetupView({
   projectPath,
   onProjectChosen,
   agentStep,
+  linearStep,
 }: SetupViewProps) {
   const [gitReady, setGitReady] = useState(false);
   const onGitReady = useCallback((ready: boolean) => setGitReady(ready), []);
@@ -56,6 +60,7 @@ export function SetupView({
               message="Your project is ready."
             />
             {agentStep}
+            {linearStep}
           </>
         )}
       </div>
