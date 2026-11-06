@@ -59,6 +59,7 @@ import { ThreadPeek } from './components/peek/ThreadPeek';
 import { PeopleProvider } from './components/people/PeopleContext';
 import { OverseerGrantsGroup } from './components/settings/OverseerGrantsGroup';
 import { AgentStep } from './components/setup/AgentStep';
+import { LinearStep } from './components/setup/LinearStep';
 import { SetupBanner, setupProblem } from './components/setup/SetupBanner';
 import { AddProjectDialog } from './components/shell/AddProjectDialog';
 import { CommandPalette } from './components/shell/CommandPalette';
@@ -1600,6 +1601,16 @@ function App() {
             onContinue={() => {
               writeSetupComplete();
               setSetupComplete(true);
+            }}
+          />
+        }
+        linearStep={
+          <LinearStep
+            connected={data.linearStatus?.connected ?? null}
+            onConnect={() => {
+              writeSetupComplete();
+              setSetupComplete(true);
+              dispatchNav({ type: 'openSettings', page: 'integrations' });
             }}
           />
         }
