@@ -2081,6 +2081,8 @@ export interface AllocationRunInput {
 
 export interface AllocationRunSummary {
   id: string;
+  /** Someone in the app, or the daemon's daily job. */
+  trigger: 'manual' | 'daily';
   at: string;
   by: string;
   mode: AllocationRunMode;

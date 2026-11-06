@@ -59,8 +59,12 @@ export interface AllocationRunInput {
   projects: AllocationRunProject[];
 }
 
+/** What started a run: someone in the app, or the daemon's daily job. */
+export type AllocationRunTrigger = 'manual' | 'daily';
+
 export interface AllocationRunSummary {
   id: string;
+  trigger: AllocationRunTrigger;
   /** ISO time the run was recorded. */
   at: string;
   /** Who ran it (a `human:<handle>` ref). */
@@ -185,6 +189,14 @@ export function parseAllocationRunInput(
   };
 }
 
+// A stored run; one logged before runs had a trigger reads as manual.
+function readRun(json: string): AllocationRun {
+  const run = JSON.parse(json) as Omit<AllocationRun, 'trigger'> & {
+    trigger?: AllocationRunTrigger;
+  };
+  return { ...run, trigger: run.trigger ?? 'manual' };
+}
+
 /** The allocation run log of one project, in its own SQLite file. */
 export class AllocationRunStore {
   private readonly db: Database;
@@ -211,9 +223,14 @@ export class AllocationRunStore {
   }
 
   /** Records a run, stamped with an id, the time and who ran it. */
-  record(input: AllocationRunInput, by: string): AllocationRun {
+  record(
+    input: AllocationRunInput,
+    by: string,
+    trigger: AllocationRunTrigger = 'manual'
+  ): AllocationRun {
     const run: AllocationRun = {
       id: `ar-${randomBytes(4).toString('hex')}`,
+      trigger,
       at: this.now().toISOString(),
       by,
       mode: input.mode,
@@ -243,7 +260,7 @@ export class AllocationRunStore {
     const row = this.db
       .query<{ json: string }, [string]>('SELECT json FROM runs WHERE id = ?')
       .get(id);
-    return row === null ? null : (JSON.parse(row.json) as AllocationRun);
+    return row === null ? null : readRun(row.json);
   }
 
   /** Applied runs recorded at or after `since` (ISO), newest first, whole. */
@@ -257,6 +274,6 @@ export class AllocationRunStore {
     return this.db
       .query<{ json: string }, []>('SELECT json FROM runs ORDER BY seq DESC')
       .all()
-      .map((row) => JSON.parse(row.json) as AllocationRun);
+      .map((row) => readRun(row.json));
   }
 }

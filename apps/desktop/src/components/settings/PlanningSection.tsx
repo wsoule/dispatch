@@ -8,7 +8,7 @@ import type {
 import { PROJECT_STATUSES, tuningFrom } from '@dispatch/planning';
 import { Checkbox, EmptyState } from '@dispatch/ui';
 
-import { NumberSetting } from './fields';
+import { ModeSetting, NumberSetting } from './fields';
 import styles from './PlanningSection.module.css';
 import { SettingsGroup, SettingsRow } from './SettingsGroup';
 
@@ -136,6 +136,19 @@ export function PlanningSection({ config, people, onSave }: Props) {
 
   return (
     <>
+      <SettingsGroup title="Allocation" keywords="daily automatic assign">
+        <ModeSetting
+          id="planning-allocation"
+          title="Allocate"
+          subtitle="Daily: the daemon applies the allocation once a day from 8:00, as you, and logs it on the Allocation page. Manual: only when someone presses Apply."
+          value={config.planning?.allocation ?? 'manual'}
+          choices={[
+            { value: 'manual', label: 'Manual' },
+            { value: 'daily', label: 'Daily' },
+          ]}
+          onSave={(allocation) => void onSave({ planning: { allocation } })}
+        />
+      </SettingsGroup>
       <SettingsGroup
         title="Risk"
         hint="Empty fields use the default shown in grey."
