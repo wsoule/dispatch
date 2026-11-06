@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+
 import { startTeamService } from './server.js';
 
 // The production entry for the dispatch-team service: config from the
@@ -15,6 +17,9 @@ const service = startTeamService({
   githubClientId: env.GITHUB_CLIENT_ID ?? null,
   githubClientSecret: env.GITHUB_CLIENT_SECRET ?? null,
   linearClientId: env.LINEAR_CLIENT_ID ?? null,
+  desktopDistDir:
+    env.DESKTOP_DIST_DIR ??
+    fileURLToPath(new URL('../../desktop/dist/', import.meta.url)),
   devLogin: env.DEV_LOGIN === '1' && !origin.startsWith('https://'),
   teamSecret: env.TEAM_SECRET ?? null,
 });

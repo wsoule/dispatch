@@ -6,8 +6,9 @@ import type { Connection } from './hub.js';
 import { deviceOfRow, TeamHubs } from './hub.js';
 import { LinearError, linearOp, TeamLinear } from './linear.js';
 import { mcpHandler } from './mcp.js';
+import { demoWorkspace, plannerHandler } from './planner/routes.js';
 import type { WebConfig } from './web.js';
-import { webHandler } from './web.js';
+import { webHandler, webUserOf } from './web.js';
 
 // The team service: GitHub and Linear sign-in and team pages, the device sign-in API,
 // the WebSocket machine hubs link over (/api/hub/connect), and the hosted MCP
@@ -21,6 +22,8 @@ export interface TeamServiceConfig extends WebConfig {
   teamSecret: string | null;
   /** Linear's API, swappable in tests. */
   linearFetch?: typeof fetch;
+  /** The desktop Vite bundle the hosted planner serves; null turns it off. */
+  desktopDistDir?: string | null;
 }
 
 export interface TeamService {
@@ -31,7 +34,11 @@ export interface TeamService {
   stop(): Promise<void>;
 }
 
-interface SocketData {
+// A machine hub's link to its team, or a planner page's live-update socket.
+type SocketData = HubSocket | { kind: 'planner' };
+
+interface HubSocket {
+  kind: 'hub';
   device: Device;
   login: string;
   replica: string;
@@ -64,6 +71,14 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
     linearSignIn: (config.linearClientId ?? null) !== null,
   });
 
+  const demo = demoWorkspace();
+  const planner = plannerHandler({
+    origin: config.origin,
+    distDir: config.desktopDistDir ?? null,
+    userOf: (req) => webUserOf(db, req)?.id ?? null,
+    workspace: (key) => (key === 'demo' ? demo : null),
+  });
+
   const server = Bun.serve<SocketData>({
     port: config.port,
     hostname: config.hostname,
@@ -87,7 +102,11 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
         if (!/^@hub-[0-9a-f]{8}$/.test(replica))
           return Response.json({ error: 'bad replica id' }, { status: 400 });
         const login = db.user(device.userId)?.login ?? '';
-        if (srv.upgrade(req, { data: { device, login, replica, conn: null } }))
+        if (
+          srv.upgrade(req, {
+            data: { kind: 'hub', device, login, replica, conn: null },
+          })
+        )
           return undefined;
         return Response.json(
           { error: 'upgrade to a WebSocket' },
@@ -144,6 +163,17 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
           );
         }
       }
+      // A planner page's live-update socket, for its view token.
+      const watch = /^\/w\/([a-z0-9-]{1,64})\/ws$/.exec(url.pathname);
+      if (
+        watch !== null &&
+        planner.watches(watch[1] ?? '', url.searchParams.get('token') ?? '')
+      )
+        return srv.upgrade(req, { data: { kind: 'planner' } })
+          ? undefined
+          : Response.json({ error: 'upgrade to a WebSocket' }, { status: 426 });
+      const fromPlanner = await planner.fetch(req);
+      if (fromPlanner !== null) return fromPlanner;
       const fromMcp = await mcp(req);
       if (fromMcp !== null) return fromMcp;
       const fromWeb = await web(req);
@@ -155,6 +185,7 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
       idleTimeout: 120,
       sendPings: true,
       open(ws) {
+        if (ws.data.kind !== 'hub') return;
         const hub = hubs.of(ws.data.device.teamId);
         ws.data.conn = hub.connect(
           ws.data.device,
@@ -169,6 +200,7 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
           ws.close(1008, 'another machine on this team links as that replica');
       },
       async message(ws, message) {
+        if (ws.data.kind !== 'hub') return;
         const conn = ws.data.conn;
         if (conn === null) return;
         // A device signed out while connected stops being heard at once.
@@ -184,7 +216,7 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
           );
       },
       close(ws) {
-        if (ws.data.conn !== null)
+        if (ws.data.kind === 'hub' && ws.data.conn !== null)
           hubs.of(ws.data.device.teamId).disconnect(ws.data.conn);
       },
     },
