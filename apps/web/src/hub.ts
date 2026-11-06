@@ -325,12 +325,10 @@ export class TeamHub {
         conn.reply(frame.id, true, { ok: true });
       } else if (frame.kind === 'mail') {
         const mail = frame.body as LinkMail;
-        if (!this.speaksFor(conn, mail.message?.from)) {
+        const reason = this.mailRefusal(conn, mail);
+        if (reason !== null) {
           if (typeof mail.message?.id === 'string')
-            conn.link?.refused(
-              mail.message.id,
-              `${conn.login}'s machine does not speak for ${String(mail.message?.from)}`
-            );
+            conn.link?.refused(mail.message.id, reason);
           conn.reply(frame.id, true, { status: 'refused' });
           return;
         }
@@ -470,6 +468,18 @@ export class TeamHub {
       agent.lastSeen !== undefined &&
       now - Date.parse(agent.lastSeen) <= ONLINE_MS
     );
+  }
+
+  // Why a machine's mail is refused, or null. Relay state is keyed by message
+  // id, so an id another machine already relayed stays that machine's: reusing
+  // it would route the new recipients' reports to the original sender.
+  private mailRefusal(conn: Connection, mail: LinkMail): string | null {
+    if (!this.speaksFor(conn, mail.message?.from))
+      return `${conn.login}'s machine does not speak for ${String(mail.message?.from)}`;
+    const relay = this.relayed.get(mail.message.id);
+    if (relay !== undefined && relay.from !== conn.device.id)
+      return `message id ${mail.message.id} is already in use`;
+    return null;
   }
 
   // A machine may speak only for agents it homes; the system's notices pass.
