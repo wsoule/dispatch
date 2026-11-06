@@ -1,6 +1,7 @@
 # The remote access relay (docs/specs/2026-11-06-remote-access-design.md).
-# Nothing deploys this yet: it is not in .railway/railway.ts. The intended home is a Railway
-# service at remote.dispatch.foo, which fronts it with TLS and injects PORT.
+# Deployed as the dispatch-remote Railway service at remote.dispatch.foo, which
+# fronts it with TLS and injects PORT. Set up in the dashboard, not yet in
+# .railway/railway.ts.
 #
 # The build context is the repo root, because the relay depends on the
 # workspace package @dispatch/remote, which is built to dist/ first.

@@ -116,9 +116,11 @@ Default: a Railway service in the existing project, built from
 daemon's built-in default. Railway fronts it with TLS. The relay keeps no state
 on disk, so a restart only makes both sides reconnect.
 
-Not set up yet. It is a new service with its own cost, so it waits for a yes.
-Until then `DISPATCH_REMOTE_RELAY=ws://…` points a daemon at a relay run locally
-(`bun run apps/remote-relay/src/main.ts`).
+It runs as the `dispatch-remote` service in the `dispatch` Railway project, set
+up in the dashboard and not yet in `.railway/railway.ts`. It deploys from this
+branch until the PR merges, then should follow `main`. Railway's health check
+hits `/health`. `DISPATCH_REMOTE_RELAY=ws://…` points a daemon at a relay run
+locally instead (`bun run apps/remote-relay/src/main.ts`).
 
 ## Known limits
 
