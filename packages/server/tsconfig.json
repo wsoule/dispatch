@@ -20,6 +20,9 @@
       "path": "../memory/tsconfig.json"
     },
     {
+      "path": "../planning/tsconfig.json"
+    },
+    {
       "path": "../protocol/tsconfig.json"
     }
   ]

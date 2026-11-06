@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS linear_watches (
 `;
 
 // AES-256-GCM under a key derived from the service secret.
-class Sealer {
+export class Sealer {
   private readonly key: Buffer;
   constructor(secret: string) {
     this.key = createHash('sha256')

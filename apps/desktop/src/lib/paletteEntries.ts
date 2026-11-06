@@ -83,6 +83,7 @@ const TASKS_PAGES: (PaletteView & { href: string })[] = [
   { id: 'files', label: 'Files', href: '#/files' },
   { id: 'terminals', label: 'Terminals', href: '#/terminals' },
   { id: 'projects', label: 'Projects', href: PROJECTS_HREF },
+  { id: 'allocation', label: 'Allocation', href: '#/allocation' },
   { id: 'live', label: 'Live', href: '#/live' },
 ];
 
@@ -224,6 +225,15 @@ export function buildPaletteEntries(
   );
   if (ctx.hasProject) {
     entries.push(
+      {
+        id: 'go-week',
+        label: 'Go to My week',
+        kind: 'go to',
+        section: 'navigation',
+        shortcut: 'G W',
+        href: hrefFor('week'),
+        run: () => actions.setProjectView('week'),
+      },
       {
         id: 'go-timeline',
         label: 'Go to Timeline',

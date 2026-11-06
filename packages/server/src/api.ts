@@ -11,6 +11,7 @@ import {
   KINDS,
   loadConfig,
   PRIORITIES,
+  resolvePeople,
   resolveStatusName,
   statusModelOf,
   syncPlace,
@@ -27,6 +28,7 @@ import type {
   FixLoopConfig,
   LinearConfig,
   ModelConfig,
+  PlanningConfig,
   QueueWeights,
   SyncConfig,
   TaskStoreBackend,
@@ -133,7 +135,7 @@ import {
 } from './api/legacyMilestone.js';
 import { isLinearWebhook, linearWebhook } from './api/linearWebhook.js';
 import { migrateMilestones } from './api/migrations.js';
-import { listPeople } from './api/people.js';
+import { listPeople, rosterMembers } from './api/people.js';
 import {
   a2aParentRefusal,
   decidingHuman,
@@ -287,6 +289,12 @@ import {
 } from './orchestrator/types.js';
 import type { NormalizedEntry, RunMeta } from './orchestrator/types.js';
 import type { VerificationRunner } from './orchestrator/verify.js';
+import {
+  type AllocationRunStore,
+  parseAllocationRunInput,
+} from './planning/allocationRuns.js';
+import { type PlanningAuditStore, planningChanges } from './planning/audit.js';
+import type { WarningStore } from './planning/warningRuns.js';
 import type { PresenceTracker } from './presence.js';
 import type { PreviewState, PreviewSupervisor } from './preview.js';
 import type { PreviewGateway } from './previewGateway.js';
@@ -381,6 +389,12 @@ export interface ApiContext {
   prWorktrees: PrWorktreeManager;
   mergeQueue: MergeQueue;
   noteStore: NoteStore;
+  /** The allocation run log; absent in a test context that does not need it. */
+  allocationRuns?: AllocationRunStore;
+  /** The daily digest's warning memory and log; absent in a test context. */
+  warningStore?: WarningStore;
+  /** Who changed which planning setting; absent in a test context. */
+  planningAudit?: PlanningAuditStore;
   inboxStore: InboxStore;
   findingStore: FindingStorePort;
   ledgerStore: LedgerStorePort;
@@ -1247,6 +1261,33 @@ function objectField(
   return { ok: true, value: value as Record<string, unknown> };
 }
 
+// The planning block as config.yml holds it now; undefined when it has none,
+// null when the file cannot be read (the save then decides what is wrong).
+function readPlanning(rootDir: string): PlanningConfig | undefined | null {
+  try {
+    return loadConfig(rootDir).planning;
+  } catch {
+    return null;
+  }
+}
+
+// Records what a planning patch changed, field by field, with who changed it.
+function auditPlanning(
+  ctx: ApiContext,
+  before: PlanningConfig | undefined,
+  after: DispatchConfig
+): void {
+  if (ctx.planningAudit === undefined) return;
+  const people = resolvePeople(after.people ?? [], rosterMembers(ctx.rootDir));
+  const changes = planningChanges(
+    before,
+    after.planning,
+    (ref) => people.find((person) => person.ref === ref)?.name ?? ref,
+    (taskId) => ctx.store.get(taskId)?.meta.title ?? taskId
+  );
+  ctx.planningAudit.record(changes, humanActor(ctx));
+}
+
 async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
@@ -1523,6 +1564,7 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     'remotes',
     'carto',
     'repoDigest',
+    'planning',
     'receipts',
     'sync',
     'preview',
@@ -1537,7 +1579,11 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
   }
 
   try {
+    // The planning block before the save, for the audit (null: unreadable).
+    const planningBefore =
+      patch.planning === undefined ? null : readPlanning(ctx.rootDir);
     const config = updateConfig(ctx.rootDir, patch);
+    if (planningBefore !== null) auditPlanning(ctx, planningBefore, config);
     // The owner chose where the board goes, which outranks an invite's pick.
     const syncPlaceSaved = patch.sync as Record<string, unknown> | undefined;
     if (
@@ -4014,6 +4060,42 @@ async function enqueueMergeQueueStack(
 
 // Routes every `/api/*` request. Called only for paths under `/api` — the
 // caller (index.ts) handles `/ws` upgrades and static file serving itself.
+// /api/planning/allocation-runs — the allocation run log. GET lists runs
+// (newest first, no items; `?appliedSince=<iso>` returns whole applied runs
+// instead, for My week's "New to you"), GET /:id one run whole, POST records
+// a dry run or an applied run the client computed and carried out.
+async function allocationRunsRoute(
+  req: Request,
+  ctx: ApiContext,
+  method: string,
+  rest: string[]
+): Promise<Response> {
+  const store = ctx.allocationRuns;
+  if (store === undefined) {
+    return errorResponse(503, 'allocation runs are not kept here');
+  }
+  if (rest.length === 0 && method === 'GET') {
+    const since = new URL(req.url).searchParams.get('appliedSince');
+    return jsonResponse(
+      since === null ? store.list() : store.appliedSince(since)
+    );
+  }
+  if (rest.length === 0 && method === 'POST') {
+    const parsed = await readJsonBody(req);
+    if (!parsed.ok) return parsed.response;
+    const input = parseAllocationRunInput(parsed.value);
+    if (!input.ok) return errorResponse(400, input.error);
+    return jsonResponse(store.record(input.input, humanActor(ctx)), 201);
+  }
+  if (rest.length === 1 && method === 'GET') {
+    const run = store.get(rest[0]);
+    return run === null
+      ? errorResponse(404, `no allocation run ${rest[0]}`)
+      : jsonResponse(run);
+  }
+  return errorResponse(405, 'method not allowed');
+}
+
 // POST /api/notes — create a note/triage/follow-up/todo. Used by the app's
 // Notes tab and (via the MCP `dispatch_note` tool) by agents flagging triage
 // they find mid-run. `createdByRunId` optionally records which agent added it.
@@ -6588,6 +6670,36 @@ export async function handleApi(
       if (segments.length === 1 && method === 'GET') {
         return jsonResponse(await ctx.orchestrator.listBranches());
       }
+    }
+
+    if (
+      segments[0] === 'planning' &&
+      segments[1] === 'audit' &&
+      segments.length === 2 &&
+      method === 'GET'
+    ) {
+      // GET /api/planning/audit — who changed which planning setting, when,
+      // and from what to what (Better Tracker's Settings → Audit), newest first.
+      return ctx.planningAudit === undefined
+        ? errorResponse(503, 'the planning audit is not kept here')
+        : jsonResponse(ctx.planningAudit.list());
+    }
+
+    if (
+      segments[0] === 'planning' &&
+      segments[1] === 'digests' &&
+      segments.length === 2 &&
+      method === 'GET'
+    ) {
+      // GET /api/planning/digests — the daily digests the daemon sent or
+      // logged, newest first (Better Tracker's Settings → Notifications).
+      return ctx.warningStore === undefined
+        ? errorResponse(503, 'digests are not kept here')
+        : jsonResponse(ctx.warningStore.digests());
+    }
+
+    if (segments[0] === 'planning' && segments[1] === 'allocation-runs') {
+      return await allocationRunsRoute(req, ctx, method, segments.slice(2));
     }
 
     if (segments[0] === 'notes') {

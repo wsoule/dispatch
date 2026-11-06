@@ -19,6 +19,8 @@ import {
   indexWorkspace,
   planAllocation,
 } from '@dispatch/planning';
+import { milestoneMetaFrom, tuningFrom } from '@dispatch/planning';
+import { buildEvalContext, buildWorkspaceData } from '@dispatch/planning';
 import {
   createContext,
   createElement,
@@ -28,18 +30,15 @@ import {
   useRef,
 } from 'react';
 
-import {
-  buildEvalContext,
-  buildWorkspaceData,
-} from '../adapters/workspaceData';
 import { taskHref } from '../lib/shellRoutes';
 import { useStatusModelOf } from '../lib/statusModel';
 import type { DispatchProjectData } from './useDispatchProject';
+import { useMilestoneBodies } from './useMilestoneBodies';
 import { useMinuteClock } from './useMinuteClock';
 
 // The planning chain over the open project, in the renderer: Dispatch's task
-// list synthesized into @dispatch/planning's WorkspaceData (adapters/
-// workspaceData), indexed, every milestone assessed, allocation planned, the
+// list synthesized into @dispatch/planning's WorkspaceData (its
+// buildWorkspaceData, which the daemon's daily allocation shares), indexed, every milestone assessed, allocation planned, the
 // timeline built and the dependency graph of any scope drawn on demand (the
 // milestone level of the whole workspace is the timeline's connectors; the
 // Graph destination asks for the scope on screen). One useMemo runs the whole chain, keyed
@@ -54,18 +53,21 @@ import { useMinuteClock } from './useMinuteClock';
 // once and hands the result down through PlanningContext to the timeline, the
 // graph, the sidebar's project marks and the task drawer's Milestone section.
 
-/** What the planning reads from `useDispatchProject`'s data. */
-export type PlanningInput = Pick<
-  DispatchProjectData,
-  | 'tasks'
-  | 'config'
-  | 'people'
-  | 'executors'
-  | 'me'
-  | 'linearLinks'
-  | 'latestRunByTaskId'
-  | 'milestoneProgressById'
->;
+/** What the planning reads from `useDispatchProject`'s data. The client
+ * fetches milestone bodies for the rubric; without one (a test) the rubric
+ * reads only bodies the task list already carries. */
+export type PlanningInput = Partial<Pick<DispatchProjectData, 'client'>> &
+  Pick<
+    DispatchProjectData,
+    | 'tasks'
+    | 'config'
+    | 'people'
+    | 'executors'
+    | 'me'
+    | 'linearLinks'
+    | 'latestRunByTaskId'
+    | 'milestoneProgressById'
+  >;
 
 /** The chain's results, one object per computation (stable between). */
 export interface Planning {
@@ -175,7 +177,7 @@ function useSessionStates(
 /**
  * The planning chain over the open project, memoized on its inputs (see the
  * file comment). For 500 tasks the whole chain takes well under 50 ms
- * (adapters/workspaceData.test.ts times it), so a recompute on a task change
+ * (adapters/fromDispatch.test.ts times it), so a recompute on a task change
  * is cheaper than a frame.
  */
 export function usePlanning(data: PlanningInput): Planning {
@@ -188,6 +190,16 @@ export function usePlanning(data: PlanningInput): Planning {
     [data.executors]
   );
   const { tasks, people, me, linearLinks } = data;
+  const bodies = useMilestoneBodies(data.client ?? null, tasks);
+  // The planning block changes rarely: keyed on it, not on the whole config.
+  const planningConfig = data.config?.planning;
+  const { tuning, meta } = useMemo(
+    () => ({
+      tuning: tuningFrom(planningConfig),
+      meta: milestoneMetaFrom(planningConfig),
+    }),
+    [planningConfig]
+  );
   return useMemo(() => {
     const workspace = buildWorkspaceData({
       tasks,
@@ -199,8 +211,9 @@ export function usePlanning(data: PlanningInput): Planning {
       latestRunByTaskId: runStarts,
       milestoneProgressById: sessions,
       hrefFor: taskHref,
+      bodies,
     });
-    const ctx = buildEvalContext(new Date(minute));
+    const ctx = buildEvalContext(new Date(minute), tuning, meta);
     const snapshot = indexWorkspace(workspace);
     const assessments = assessWorkspace(snapshot, ctx);
     const allocation = planAllocation(snapshot, ctx, assessments);
@@ -240,6 +253,9 @@ export function usePlanning(data: PlanningInput): Planning {
     runStarts,
     sessions,
     minute,
+    bodies,
+    tuning,
+    meta,
   ]);
 }
 

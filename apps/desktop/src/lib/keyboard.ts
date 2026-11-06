@@ -79,6 +79,7 @@ export type GlobalKeyCommand =
   | 'goto-inbox'
   | 'goto-threads'
   | 'goto-timeline'
+  | 'goto-week'
   | 'goto-graph'
   | 'goto-tasks'
   | 'goto-projects'
@@ -96,6 +97,7 @@ const G_CHORDS: Record<string, GlobalKeyCommand> = {
   m: 'goto-threads',
   t: 'goto-tasks',
   l: 'goto-timeline',
+  w: 'goto-week',
   // A second `g` completes the chord rather than re-arming it: the prefix is
   // held only while `pendingPrefix` is null, so `g g` is free for the Graph.
   g: 'goto-graph',

@@ -127,6 +127,7 @@ test('the rail groups every page, and the page title is the H1', () => {
     'Autonomy',
     'Memory',
     'Previews',
+    'Planning',
     'Notifications',
     'Members',
     'Board sync',

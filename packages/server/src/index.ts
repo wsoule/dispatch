@@ -13,6 +13,7 @@ import {
   loadConfig,
   MAX_HANDLE_BYTES,
   openProjectStores,
+  resolvePeople,
   SqliteTaskStore,
   syncPlace,
   syncSettings,
@@ -54,6 +55,7 @@ import {
 } from './api.js';
 import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
 import { goneFileBodyResponse } from './api/files.js';
+import { rosterMembers } from './api/people.js';
 import { closeAsksOfRevoked, speaksForRevoked } from './api/revoke.js';
 import { storageErrorResponse } from './api/storageErrors.js';
 import { installBlockingSpawner, spawnGitSync } from './blockingGit.js';
@@ -158,7 +160,13 @@ import {
   type OverseerStore,
 } from './orchestrator/overseerStore.js';
 import { OverseerToolRegistry } from './orchestrator/overseerTools.js';
-import { boardSyncDir, taskAuthorshipPath } from './orchestrator/paths.js';
+import {
+  allocationRunsPath,
+  boardSyncDir,
+  planningAuditPath,
+  planningWarningsPath,
+  taskAuthorshipPath,
+} from './orchestrator/paths.js';
 import { PlanManager } from './orchestrator/plan.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
@@ -181,6 +189,20 @@ import {
   TERMINAL_RUN_STATES,
 } from './orchestrator/types.js';
 import { VerificationRunner } from './orchestrator/verify.js';
+import { AllocationRunStore } from './planning/allocationRuns.js';
+import { PlanningAuditStore } from './planning/audit.js';
+import {
+  type AllocationDeps,
+  applyAllocation,
+  dailyRunDue,
+  startDailyJobs,
+} from './planning/dailyAllocation.js';
+import {
+  dailyWarningsDue,
+  runWarnings,
+  type WarningDeps,
+  WarningStore,
+} from './planning/warningRuns.js';
 import {
   policyActivityAppender,
   policyDecisionClassifier,
@@ -1483,6 +1505,53 @@ async function bootServer(
   const commentStore: CommentStorePort =
     stores.records?.comments ?? new FileCommentStore(rootDir);
 
+  // The allocation run log, the warning memory and digest log, and the
+  // daemon's daily planning jobs: the allocation (planning.allocation: daily)
+  // applied as the daemon's owner, and the digest of milestones at risk
+  // (planning.warnings: notify) sent to leads and watchers.
+  const allocationRuns = new AllocationRunStore(allocationRunsPath(rootDir));
+  const warningStore = new WarningStore(planningWarningsPath(rootDir));
+  const planningAudit = new PlanningAuditStore(planningAuditPath(rootDir));
+  const allocationDeps: AllocationDeps = {
+    rootDir,
+    store,
+    runs: allocationRuns,
+    actor: actorContext.humanRef,
+    comments: {
+      add: (input) => {
+        const comment = commentStore.add(input);
+        events.broadcast({
+          type: 'comment.changed',
+          taskId: input.taskId,
+          commentIds: [comment.id],
+        });
+        return comment;
+      },
+    },
+    people: () =>
+      resolvePeople(loadConfig(rootDir).people ?? [], rosterMembers(rootDir)),
+    changed: (ids) => {
+      cache.refresh(store, ids);
+      events.broadcast({ type: 'task.changed', ids });
+    },
+  };
+  const warningDeps: WarningDeps = {
+    ...allocationDeps,
+    warnings: warningStore,
+  };
+  const dailyPlanning = startDailyJobs([
+    {
+      name: 'daily allocation',
+      due: (now) => dailyRunDue(allocationDeps, now),
+      run: () => applyAllocation(allocationDeps),
+    },
+    {
+      name: 'daily digest',
+      due: (now) => dailyWarningsDue(warningDeps, now),
+      run: () => runWarnings(warningDeps),
+    },
+  ]);
+
   // The reverse-dependency map ReviewRunner scopes reviews with. Carto backs
   // it when available; the built-in scanner is the fallback. Source changes
   // re-sync carto's container before invalidating, so the next review reads a
@@ -2491,6 +2560,9 @@ async function bootServer(
     mergeQueue,
     startedAt,
     noteStore: new NoteStore(rootDir),
+    allocationRuns,
+    warningStore,
+    planningAudit,
     inboxStore,
     inboxTriage,
     findingStore,
@@ -2953,6 +3025,10 @@ async function bootServer(
       unsubscribeLinear();
       unsubscribeRevokedAsks();
       linearSignIn.stop();
+      dailyPlanning.stop();
+      allocationRuns.close();
+      warningStore.close();
+      planningAudit.close();
       await linearSync.stop();
       unsubscribeBoardSync();
       unsubscribeDocPublishes();

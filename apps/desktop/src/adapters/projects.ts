@@ -6,6 +6,7 @@ import type {
   TimelineView,
 } from '@dispatch/planning';
 import { graphScopeFor, NO_INITIATIVE_ID } from '@dispatch/planning';
+import { noProjectId } from '@dispatch/planning';
 import type { ChipTone, SegmentedOption, UiStatus, UiTone } from '@dispatch/ui';
 
 import { graphHref, taskHref, timelineHref } from '../lib/routes';
@@ -17,7 +18,6 @@ import {
   type ProgressTone,
   progressTone,
 } from './planningStatus';
-import { noProjectId } from './workspaceData';
 
 // The Projects register (the planner's lib/adapters/projects.ts, ported over
 // Dispatch's data): one row per lane of the planning's TimelineView (every

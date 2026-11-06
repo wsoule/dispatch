@@ -2046,6 +2046,112 @@ type MilestoneLandResult =
 // replaced the notes store. `createdByRunId` is how "an agent flagged this mid-run" survives.
 export type InboxKind = 'bug' | 'idea' | 'task' | 'note';
 
+// The allocation run log (GET/POST /api/planning/allocation-runs): what a
+// preview or an apply of the planning's allocation would do or did, item by
+// item. Mirrors packages/server/src/planning/allocationRuns.ts.
+export type AllocationRunMode = 'dry_run' | 'applied';
+
+export type AllocationItemOutcome = 'assigned' | 'would_assign' | 'failed';
+
+export interface AllocationRunItem {
+  issueId: string;
+  identifier: string;
+  title: string;
+  projectId: string;
+  projectName: string;
+  milestoneId: string;
+  milestoneName: string;
+  assigneeId: string;
+  assigneeName: string;
+  fromStatus: string;
+  /** null: the issue kept its status. */
+  toStatus: string | null;
+  outcome: AllocationItemOutcome;
+  note: string | null;
+}
+
+export interface AllocationRunProject {
+  projectId: string;
+  projectName: string;
+  outcome: string;
+  reason: string | null;
+  skipped: number;
+}
+
+export interface AllocationRunInput {
+  mode: AllocationRunMode;
+  items: AllocationRunItem[];
+  projects: AllocationRunProject[];
+}
+
+export interface AllocationRunSummary {
+  id: string;
+  /** Someone in the app, or the daemon's daily job. */
+  trigger: 'manual' | 'daily';
+  at: string;
+  by: string;
+  mode: AllocationRunMode;
+  counts: {
+    assigned: number;
+    wouldAssign: number;
+    failed: number;
+    blocked: number;
+    skipped: number;
+  };
+}
+
+export interface AllocationRun extends AllocationRunSummary {
+  items: AllocationRunItem[];
+  projects: AllocationRunProject[];
+}
+
+// GET /api/planning/digests: the daily digests of milestones at risk the
+// daemon sent (or logged), newest first. The digest is @dispatch/planning's
+// Digest, carried here with the fields a surface reads.
+export interface PlanningDigestItem {
+  notice: {
+    kind: 'overdue' | 'at_risk' | 'invalid_due_soon' | 'allocation_blocked';
+    subjectId: string;
+    projectId: string;
+    milestoneId: string | null;
+  };
+  projectName: string;
+  milestoneName: string | null;
+  openCount: number;
+  unassignedCount: number;
+  /** Why, in plain lines ("2 open issues unassigned"). */
+  lines: string[];
+}
+
+export interface PlanningDigest {
+  recipientId: string;
+  recipientName: string;
+  day: string;
+  items: PlanningDigestItem[];
+}
+
+export interface PlanningDigestRecord {
+  id: number;
+  at: string;
+  /** Posted to the notifications webhook, kept in the log only, or a failed post. */
+  delivery: 'webhook' | 'logged' | 'failed';
+  error: string | null;
+  digest: PlanningDigest;
+}
+
+// GET /api/planning/audit: who changed which planning setting, when, and
+// from what to what, newest first. Mirrors packages/server/src/planning/audit.ts.
+export interface PlanningAuditEntry {
+  id: number;
+  at: string;
+  by: string;
+  /** What changed, in words ("Warn ahead", "Weight of Beta"). */
+  what: string;
+  /** The value before and after, in words; null for none. */
+  before: string | null;
+  after: string | null;
+}
+
 export interface InboxItem {
   id: string;
   kind: InboxKind;
@@ -3873,6 +3979,17 @@ export interface ApiClient {
   // The brain-dump inbox. `addInbox` splits its text server-side into one item per line, so
   // the splitting rule has exactly one implementation. `convertInbox` reports per-item results
   // rather than throwing on a partial failure.
+  /** The allocation run log, newest first, without items. */
+  fetchAllocationRuns(): Promise<AllocationRunSummary[]>;
+  /** Applied runs recorded since `since` (ISO), whole: My week's "New to you". */
+  fetchAppliedAllocationRuns(since: string): Promise<AllocationRun[]>;
+  fetchAllocationRun(id: string): Promise<AllocationRun>;
+  /** Records a dry run or an applied run the client carried out. */
+  recordAllocationRun(input: AllocationRunInput): Promise<AllocationRun>;
+  /** The daily digests the daemon sent or logged, newest first. */
+  fetchPlanningDigests(): Promise<PlanningDigestRecord[]>;
+  /** Who changed which planning setting, newest first. */
+  fetchPlanningAudit(): Promise<PlanningAuditEntry[]>;
   fetchInbox(): Promise<InboxItem[]>;
   addInbox(input: {
     text: string;
@@ -4884,6 +5001,24 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         ...jsonBody({ confirmFork: input?.confirmFork === true }),
       }),
     fetchPrFindings: (number) => request(target, `/api/prs/${number}/findings`),
+    fetchAllocationRuns: () => request(target, '/api/planning/allocation-runs'),
+    fetchAppliedAllocationRuns: (since) =>
+      request(
+        target,
+        `/api/planning/allocation-runs?appliedSince=${encodeURIComponent(since)}`
+      ),
+    fetchAllocationRun: (id) =>
+      request(
+        target,
+        `/api/planning/allocation-runs/${encodeURIComponent(id)}`
+      ),
+    recordAllocationRun: (input) =>
+      request(target, '/api/planning/allocation-runs', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    fetchPlanningDigests: () => request(target, '/api/planning/digests'),
+    fetchPlanningAudit: () => request(target, '/api/planning/audit'),
     fetchInbox: () => request(target, '/api/inbox'),
     addInbox: (input) =>
       request(target, '/api/inbox', {

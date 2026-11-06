@@ -1,6 +1,7 @@
 # The hosted Dispatch service (app.dispatch.foo). Build context is the repo
-# root: the service imports @dispatch-foo/core and @dispatch-foo/protocol from
-# the workspace, built from source here.
+# root: the service imports @dispatch-foo/core, @dispatch-foo/protocol and
+# @dispatch/planning from the workspace, and serves apps/desktop's bundle as
+# the hosted planner, all built from source here.
 #
 # The build stage is node only to get pnpm through corepack; the runtime is
 # bun, which is what the service is.
@@ -10,13 +11,14 @@ WORKDIR /app
 # Keep this pin in step with .prototools and package.json's packageManager.
 RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
 COPY . .
-# Only the service and what it imports at runtime: `--filter-prod` follows
-# dependencies, not devDependencies (the tests' @dispatch-foo/mcp would pull in
-# the whole daemon). --ignore-scripts skips the root `prepare` (moon's git hooks:
-# no .git and no moon here) and astro's native postinstall scripts, which this
-# service never loads.
-RUN pnpm install --frozen-lockfile --ignore-scripts --filter-prod "@dispatch/web..."
-RUN pnpm --filter-prod "@dispatch/web^..." run build
+# Only the service and what it imports at runtime (`--filter-prod` follows
+# dependencies, not devDependencies: the tests' @dispatch-foo/mcp would pull in
+# the whole daemon), plus the desktop bundle the hosted planner serves.
+# --ignore-scripts skips the root `prepare` (moon's git hooks: no .git and no
+# moon here) and native postinstall scripts neither build needs.
+RUN pnpm install --frozen-lockfile --ignore-scripts \
+      --filter-prod "@dispatch/web..." --filter "@dispatch/desktop..."
+RUN pnpm --filter-prod "@dispatch/web^..." --filter "@dispatch/desktop..." run build
 
 # Debian slim, not alpine: the entrypoint drops root with util-linux's setpriv.
 FROM oven/bun:1.4.2-slim

@@ -59,6 +59,7 @@ import { ThreadPeek } from './components/peek/ThreadPeek';
 import { PeopleProvider } from './components/people/PeopleContext';
 import { OverseerGrantsGroup } from './components/settings/OverseerGrantsGroup';
 import { AgentStep } from './components/setup/AgentStep';
+import { LinearStep } from './components/setup/LinearStep';
 import { SetupBanner, setupProblem } from './components/setup/SetupBanner';
 import { AddProjectDialog } from './components/shell/AddProjectDialog';
 import { CommandPalette } from './components/shell/CommandPalette';
@@ -217,6 +218,7 @@ import { openRefWith, type RefAction } from './lib/threadSources';
 import { checkForUpdate, installUpdateAndRelaunch } from './lib/updater';
 import { applyZoomFactor, loadZoomFactor, stepZoomFactor } from './lib/zoom';
 import { AllAgentsView } from './views/AllAgentsView';
+import { AllocationView } from './views/AllocationView';
 import { DocsView } from './views/DocsView';
 import { DraftView } from './views/DraftView';
 import { FilesView } from './views/FilesView';
@@ -234,6 +236,7 @@ import { SetupView } from './views/SetupView';
 import { TerminalsView } from './views/TerminalsView';
 import { ThreadsView } from './views/ThreadsView';
 import { TimelineView } from './views/TimelineView';
+import { WeekView } from './views/WeekView';
 
 // The hosts a task page and a Flight Plan draw from, provided together so the shell's
 // provider stack stays one level deep.
@@ -1601,6 +1604,16 @@ function App() {
             }}
           />
         }
+        linearStep={
+          <LinearStep
+            connected={data.linearStatus?.connected ?? null}
+            onConnect={() => {
+              writeSetupComplete();
+              setSetupComplete(true);
+              dispatchNav({ type: 'openSettings', page: 'integrations' });
+            }}
+          />
+        }
       />
     ) : null;
 
@@ -1899,6 +1912,12 @@ function App() {
             onNavigate={navigate}
           />
         );
+      case 'allocation':
+        // What the planning's allocation would do now, and the run log.
+        return <AllocationView data={data} onBack={closeSidePage} />;
+      case 'week':
+        // One person's open issues by milestone, deadlines and attention.
+        return <WeekView me={data.me} client={data.client} port={data.port} />;
       case 'projects':
         // The projects register: every open project with its status, next
         // milestone, lead and allocation, grouped by initiative. Its rows and

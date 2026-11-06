@@ -94,6 +94,7 @@ export function dataWith(
     retryWhoami: () => {},
     tasks: [],
     runs: [],
+    people: [],
     me: null,
     ownerCredential: false,
     // No messaging: Memory's lessons browser stays a one-line explanation.

@@ -64,6 +64,7 @@ import {
   usePlanningContext,
 } from '../../../hooks/usePlanning';
 import { describeError } from '../../../lib/actionFeedback';
+import { doneMeansOf, withDoneMeans } from '../../../lib/doneMeans';
 import {
   isLinearConfigured,
   pushToLinearError,
@@ -73,6 +74,9 @@ import { useToasts } from '../../shell/Toasts';
 import type { TaskPageHost } from '../page/TaskPageHost';
 import styles from './taskDetailProps.module.css';
 import type { TaskDetailState } from './useTaskDetail';
+
+/** The longest "Done means…" outcome: one line someone can check against. */
+const DONE_MEANS_MAX = 280;
 
 // What the quick-look drawer (TaskDrawer) and the task page (page/TaskPageView) both
 // hand @dispatch/ui's TaskDetail for one task, built from useTaskDetail's state: the
@@ -416,9 +420,15 @@ function PlanningRow({
  */
 function MilestoneSections({
   section,
+  doneMeans,
+  weight,
   peek,
 }: {
   section: MilestoneSection;
+  /** The "Done means…" outcome: its editor, or the text when read-only. */
+  doneMeans: ReactNode;
+  /** The planner-only weight and its controls. */
+  weight: ReactNode;
   peek: (taskId: string) => void;
 }) {
   const { status, progress, next, muted } = section;
@@ -453,7 +463,14 @@ function MilestoneSections({
               </Button>
             </p>
           ) : null}
-          <Checklist label="Rubric" items={section.rubric} />
+          <div className={styles.doneMeans}>
+            <span className={styles.planningNote}>Done means…</span>
+            {doneMeans}
+          </div>
+          {weight}
+          <div className={styles.rubric}>
+            <Checklist label="Rubric" items={section.rubric} />
+          </div>
         </div>
       </TaskDetailSection>
       {section.waitsOn.length > 0 && (
@@ -883,11 +900,91 @@ export function useTaskDetailProps(
     [planning, kind, taskId]
   );
 
+  // The milestone's "Done means…" outcome, read from and written to its
+  // description's one line (lib/doneMeans), where the rubric reads it.
+  const doneMeansText = body === null ? '' : doneMeansOf(body.description);
+  const doneMeansField =
+    body === null ? null : canEdit ? (
+      <TextAreaEditor
+        label="Done means"
+        value={doneMeansText}
+        rows={2}
+        maxLength={DONE_MEANS_MAX}
+        emptyLabel="Not set. Say what finished looks like."
+        placeholder="A guest can pay with a card end to end"
+        onSave={(text) =>
+          state.saveDescription(withDoneMeans(body.description, text))
+        }
+      />
+    ) : (
+      <p className={styles.planningNote}>
+        {doneMeansText === '' ? 'Not set.' : doneMeansText}
+      </p>
+    );
+
+  // The milestone's planner-only weight (config.yml's planning.weights): a
+  // heavier one sorts first among milestones due alike. Saving it needs the
+  // decide tier, as every config save does.
+  const weight = project.config?.planning?.weights?.[taskId] ?? null;
+  const client = project.client;
+  const canWeigh = client !== null && project.myTier !== 'request';
+  const saveWeight = (next: number | null) => {
+    if (client === null) return;
+    client
+      .updateConfig({
+        planning: { weights: { [taskId]: next === 0 ? null : next } },
+      })
+      .catch((err: unknown) =>
+        toasts.push({
+          title: 'Weight not saved',
+          description: describeError(err),
+          tone: 'error',
+        })
+      );
+  };
+  const weightField = (
+    <p className={styles.planningNext}>
+      <span className={styles.planningNote}>
+        {weight === null || weight === 0
+          ? 'No weight'
+          : `Weight ${weight > 0 ? `+${weight}` : weight}`}
+      </span>
+      {canWeigh ? (
+        <>
+          <Button
+            variant="quiet"
+            size="sm"
+            onClick={() => saveWeight((weight ?? 0) + 1)}
+          >
+            Raise
+          </Button>
+          <Button
+            variant="quiet"
+            size="sm"
+            onClick={() => saveWeight((weight ?? 0) - 1)}
+          >
+            Lower
+          </Button>
+          {weight === null ? null : (
+            <Button variant="quiet" size="sm" onClick={() => saveWeight(null)}>
+              Clear
+            </Button>
+          )}
+        </>
+      ) : null}
+    </p>
+  );
+
   const related = state.relations.related;
   const duplicateOf = state.relations.duplicateOf;
   const planningSections =
     milestoneSection !== null ? (
-      <MilestoneSections section={milestoneSection} peek={peek} />
+      <MilestoneSections
+        section={milestoneSection}
+        doneMeans={doneMeansField}
+        weight={weightField}
+        peek={peek}
+      />
     ) : projectSection !== null ? (
       <ProjectSection project={projectSection} peek={peek} />
     ) : null;

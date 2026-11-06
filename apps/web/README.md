@@ -25,6 +25,16 @@ moonx web:test
 `test/mesh.test.ts` starts real machine hubs from `packages/mcp/dist`, which
 `^:build` builds first.
 
+## The hosted planner
+
+`/w/<key>/` serves the desktop's own bundle with its daemon pointed at
+`/w/<key>`, and `/w/<key>/api/*` answers as a read-only dispatchd built from a
+Linear workspace (`src/planner/`). `/w/demo/` is Better Tracker's showcase
+workspace, open to anyone. "Open a Linear workspace" on the home page keeps a
+read grant (sealed with `TEAM_SECRET`) and opens `/w/<urlKey>/`; only people
+with a grant see that workspace, each through their own grant. Granting needs
+both `TEAM_SECRET` and `LINEAR_CLIENT_ID`.
+
 ## Configuration
 
 | Variable                                    | Meaning                                                                                                                                                   |
@@ -36,6 +46,7 @@ moonx web:test
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | The GitHub OAuth app "Dispatch". Without them, GitHub sign-in answers 503.                                                                                |
 | `LINEAR_CLIENT_ID`                          | The public Linear OAuth app "Dispatch" (PKCE, no secret). Its redirect URIs must include `<PUBLIC_URL>/auth/linear/callback`. Unset hides Linear sign-in. |
 | `TEAM_SECRET`                               | Seals teams' Linear keys at rest. Changing it orphans every stored key.                                                                                   |
+| `DESKTOP_DIST_DIR`                          | The desktop bundle the hosted planner serves. Defaults to `apps/desktop/dist`, which the image builds.                                                    |
 | `DEV_LOGIN`                                 | `1` allows the dev sign-in. Ignored when `PUBLIC_URL` is `https://`.                                                                                      |
 
 ## Deploy

@@ -44,6 +44,19 @@
   color: var(--tone-ink);
 }
 
+/* The "Done means…" outcome: its label over the editor, full width. */
+.doneMeans {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  align-self: stretch;
+}
+
+/* The rubric spans the section whatever its notes' length. */
+.rubric {
+  align-self: stretch;
+}
+
 /* "Next" beside the quiet button naming the project's next milestone. */
 .planningNext {
   display: flex;

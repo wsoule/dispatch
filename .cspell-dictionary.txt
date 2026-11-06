@@ -4,6 +4,7 @@ acks
 ACMR
 acodex
 addext
+Adeyemi
 adminless
 affordances
 allowbuilds
@@ -39,6 +40,7 @@ bceb
 behaviour
 behavioural
 behaviours
+Bianchi
 bigmap
 Bingbot
 birpc
@@ -179,6 +181,7 @@ fastq
 favourite
 fdir
 fedcba
+Femi
 ffee
 fini
 fixloop
@@ -217,6 +220,7 @@ granularities
 greppable
 grpcurl
 hact
+Haddad
 hardlink
 hashery
 hbblocked
@@ -231,6 +235,7 @@ hbrevn
 hcaret
 headerless
 headlessly
+headphnes
 healthcheck
 healthz
 hexdigit
@@ -262,6 +267,7 @@ jridgewell
 jsdiff
 jsdiff's
 jsonpointer
+Kapoor
 katex
 keepalives
 keepme
@@ -356,6 +362,7 @@ nosuch
 NOSYSTEM
 notekind
 noul
+Novak
 nscurl
 numstat
 nvim
@@ -419,6 +426,7 @@ qwen
 RAII
 Railpack
 railwayignore
+Raman
 rcfile
 readdirp
 reask
@@ -559,6 +567,7 @@ syncer's
 syncers
 syscalls
 tailwindlabs
+Tanaka
 taskfile
 taskless
 taskview
@@ -574,6 +583,7 @@ textareas
 textful
 textconv
 theanshsonkar
+Theo
 thiserror
 timsort
 tinyexec

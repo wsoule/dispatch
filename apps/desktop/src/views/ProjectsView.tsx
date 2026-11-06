@@ -46,6 +46,9 @@ import styles from './ProjectsView.module.css';
 
 const ICON = { size: 14, strokeWidth: 1.8 } as const;
 
+/** The allocation preview and run log (views/AllocationView). */
+const ALLOCATION_HREF = '#/allocation';
+
 /* Seven columns readable down to a register 900px wide (stackWithin 900):
    each keeps a floor that fits its content (a "2 agents working" chip on
    one line, the end cell its three 26px ghost icon buttons and their two
@@ -146,6 +149,9 @@ function ProjectsLoaded({
         <p className={styles.receipts}>{page.receipts}</p>
         {page.total > 0 ? (
           <span className={styles.headActions}>
+            <Button href={ALLOCATION_HREF} variant="quiet" size="sm">
+              Allocation
+            </Button>
             <Button size="sm" onClick={newProject}>
               New project
             </Button>
