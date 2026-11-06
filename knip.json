@@ -52,6 +52,11 @@
       // imports it. Unreferenced here is the point, not dead code.
       "ignore": ["storefront-src/**"]
     },
+    "apps/remote-relay": {
+      // The relay's process entry, started by `bun run src/main.ts` on
+      // Railway and by its moon start task.
+      "entry": ["src/main.ts"]
+    },
     "apps/demo": {
       // daemon.ts is spawned as a subprocess (`bun src/daemon.ts --root ...`)
       // by the manager and by test/daemon.test.ts, never imported — no
