@@ -274,6 +274,8 @@ export interface TaskInspectorProps {
   onFitChain: (ids: ReadonlySet<string>) => void;
   onOpen: (id: string) => void;
   onClear: () => void;
+  /** The host's own verbs for this task (a plan's Send agent), after Open task. */
+  extraActions?: ReactNode;
 }
 
 /** A selected task: where it sits, its state, what it waits on and what it unblocks (direct
@@ -285,6 +287,7 @@ export function TaskInspector({
   onFitChain,
   onOpen,
   onClear,
+  extraActions,
 }: TaskInspectorProps) {
   const task = chart.tasks.get(id);
   if (task === undefined) return null;
@@ -321,6 +324,7 @@ export function TaskInspector({
           <Button size="sm" variant="primary" onClick={() => onOpen(id)}>
             Open task
           </Button>
+          {extraActions}
           <Button
             size="sm"
             variant="secondary"
@@ -390,6 +394,8 @@ export interface MilestoneInspectorProps {
   onOpenPlan: (id: string) => void;
   onShowTasks: (id: string) => void;
   onClear: () => void;
+  /** The host's own verbs for this milestone (a plan band's fan-out controls). */
+  extraActions?: ReactNode;
 }
 
 /** A selected milestone: progress, the milestones on either side with the task waits behind
@@ -408,6 +414,7 @@ export function MilestoneInspector({
   onOpenPlan,
   onShowTasks,
   onClear,
+  extraActions,
 }: MilestoneInspectorProps) {
   const health = HEALTH[status.health];
   const links = (
@@ -471,6 +478,7 @@ export function MilestoneInspector({
               Show its tasks
             </Button>
           )}
+          {extraActions}
           <Button size="sm" variant="quiet" onClick={onClear}>
             Clear
           </Button>
