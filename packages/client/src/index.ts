@@ -15,6 +15,13 @@ export {
   wsUrl,
 } from './api';
 export type {
+  AllocationItemOutcome,
+  AllocationRun,
+  AllocationRunInput,
+  AllocationRunItem,
+  AllocationRunMode,
+  AllocationRunProject,
+  AllocationRunSummary,
   A2AClientSummary,
   A2AListenerSettings,
   A2AListenerStatus,
