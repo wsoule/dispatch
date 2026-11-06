@@ -8,6 +8,7 @@ import {
   type MilestoneAssessment,
   type Snapshot,
 } from '@dispatch/planning';
+import { buildEvalContext, buildWorkspaceData } from '@dispatch/planning';
 import { describe, expect, test } from 'bun:test';
 
 import type { ContainerStatus } from '../lib/containerStatus';
@@ -25,7 +26,6 @@ import {
   projectMark,
   SHELL_DESTINATION_LABELS,
 } from './shell';
-import { buildEvalContext, buildWorkspaceData } from './workspaceData';
 
 const QUIET = {
   count: null,

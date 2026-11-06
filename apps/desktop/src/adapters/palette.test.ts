@@ -4,6 +4,7 @@ import type {
   TimelineLane,
   TimelineView,
 } from '@dispatch/planning';
+import { noProjectId } from '@dispatch/planning';
 import { describe, expect, test } from 'bun:test';
 import { ArrowRight, BookText, CircleDashed, Play, Zap } from 'lucide-react';
 import { createElement } from 'react';
@@ -20,7 +21,6 @@ import {
   paletteKeys,
   toPaletteItems,
 } from './palette';
-import { noProjectId } from './workspaceData';
 
 // Hand-built planning view models (Wed Oct 21, 2026): only the fields the
 // palette reads are meaningful.

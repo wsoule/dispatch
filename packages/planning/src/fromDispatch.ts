@@ -1,18 +1,17 @@
 import type {
   Person,
+  Priority,
   StatusModel,
   TaskListItem,
 } from '@dispatch-foo/core/browser';
 import {
   canonicalStatus,
+  parseLinearExternal,
   statusType,
   storedKind,
 } from '@dispatch-foo/core/browser';
-import type {
-  LinearIssueLink,
-  MilestoneProgress,
-  RunMeta,
-} from '@dispatch/client';
+
+import { DEFAULT_TUNING } from './config';
 import type {
   BlockingRelation,
   EvalContext,
@@ -28,14 +27,7 @@ import type {
   WorkflowState,
   WorkflowStateType,
   WorkspaceData,
-} from '@dispatch/planning';
-import { DEFAULT_TUNING } from '@dispatch/planning';
-
-import { resolveLinearLink } from '../lib/linearSettings';
-import { dayFromNow } from '../lib/taskDates';
-import { parseTaskSections, statusLabel } from '../lib/taskDisplay';
-import { AGENT_POOL, AGENT_POOL_LABEL, agentChoiceId } from './people';
-import { toTaskPriority } from './rows';
+} from './types';
 
 // Dispatch's task list → @dispatch/planning's WorkspaceData, the mirror the
 // planning core (indexWorkspace, assessWorkspace, planAllocation, the
@@ -113,19 +105,77 @@ export interface WorkspaceDataInput {
   me: string | null;
   /** `GET /api/linear/links`: issue UUID → identifier and URL, for the
    * identifier an issue is named by. */
-  linearLinks?: Readonly<Record<string, LinearIssueLink>>;
+  linearLinks?: Readonly<Record<string, { identifier: string; url: string }>>;
   /** Each task's latest run: its start is the issue's startedAt. */
-  latestRunByTaskId?: ReadonlyMap<string, Pick<RunMeta, 'createdAt'>>;
+  latestRunByTaskId?: ReadonlyMap<string, { createdAt: string }>;
   /** Fan-out progress per container: a paused session pauses the project. */
   milestoneProgressById?: ReadonlyMap<
     string,
-    Pick<MilestoneProgress, 'session'>
+    { session: { state: string } | null }
   >;
   /** Where a task opens (`taskHref`): the issue's and project's `url`. */
   hrefFor: (taskId: string) => string;
   /** Milestone bodies fetched beside the body-less list (useMilestoneBodies),
    * for the rubric's "Done means…" line. */
   bodies?: ReadonlyMap<string, string>;
+}
+
+/** The assignable pool of agents ("Any agent"): Dispatch's `agent` assignee. */
+export const AGENT_POOL = 'agent';
+export const AGENT_POOL_LABEL = 'Any agent';
+
+/**
+ * An executor as an assignee: `agent:<handle>/<executor>` when the window
+ * knows whose agents these are, else `agent:<executor>`.
+ */
+export function agentChoiceId(me: string | null, executor: string): string {
+  if (me === null) return `agent:${executor}`;
+  const colon = me.indexOf(':');
+  return `agent:${colon === -1 ? me : me.slice(colon + 1)}/${executor}`;
+}
+
+// Dispatch's priority words on Linear's 0–4 scale (0 none, 1 urgent … 4 low).
+const PRIORITY_SCALE: Record<Priority, 0 | 1 | 2 | 3 | 4> = {
+  none: 0,
+  urgent: 1,
+  high: 2,
+  medium: 3,
+  low: 4,
+};
+
+// A status name as words: `in-review` → "In review".
+function statusLabel(status: string): string {
+  const phrase = status
+    .split('-')
+    .filter((word) => word !== '')
+    .join(' ');
+  return phrase.charAt(0).toUpperCase() + phrase.slice(1);
+}
+
+// The `## Heading` sections of a task body, by heading.
+function sections(body: string): Map<string, string> {
+  const found = new Map<string, string>();
+  for (const part of body.split(/^## /m).slice(1)) {
+    const newline = part.indexOf('\n');
+    const heading = (newline === -1 ? part : part.slice(0, newline)).trim();
+    found.set(heading, newline === -1 ? '' : part.slice(newline + 1).trim());
+  }
+  return found;
+}
+
+// The Linear identifier (ENG-24) of a task linked to a Linear issue.
+function linkedIdentifier(
+  external: string | null,
+  links: Readonly<Record<string, { identifier: string }>>
+): string | null {
+  const ref = parseLinearExternal(external);
+  return ref === null ? null : (links[ref.id]?.identifier ?? null);
+}
+
+// `now`'s local calendar day as YYYY-MM-DD (what a dueDate is stored in).
+function localDay(now: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
 /** The containers above a task, nearest of each kind; null where none. */
@@ -234,7 +284,7 @@ function descriptionOf(
       ? doc.body
       : bodies?.get(doc.meta.id);
   if (body === undefined) return '';
-  return parseTaskSections(body).get('Description') ?? '';
+  return sections(body).get('Description') ?? '';
 }
 
 /**
@@ -328,7 +378,7 @@ export function buildWorkspaceData(input: WorkspaceDataInput): WorkspaceData {
           id: meta.id,
           name: meta.title,
           sortOrder: initiatives.length,
-          priority: toTaskPriority(meta.priority),
+          priority: PRIORITY_SCALE[meta.priority],
           targetDate: calendarDate(meta.dueDate),
         });
         break;
@@ -352,7 +402,7 @@ export function buildWorkspaceData(input: WorkspaceDataInput): WorkspaceData {
           name: meta.title,
           url: hrefFor(meta.id),
           leadId: lead !== null && userIds.has(lead) ? lead : null,
-          priority: toTaskPriority(meta.priority),
+          priority: PRIORITY_SCALE[meta.priority],
           sortOrder: projects.length,
           statusType: paused ? 'paused' : base,
           statusName: statusLabel(meta.status),
@@ -427,8 +477,7 @@ export function buildWorkspaceData(input: WorkspaceDataInput): WorkspaceData {
     const started = input.latestRunByTaskId?.get(meta.id)?.createdAt ?? null;
     issues.push({
       id: meta.id,
-      identifier:
-        resolveLinearLink(meta.external, links)?.identifier ?? meta.id,
+      identifier: linkedIdentifier(meta.external, links) ?? meta.id,
       title: meta.title,
       url: hrefFor(meta.id),
       teamId: PLANNING_TEAM_ID,
@@ -436,7 +485,7 @@ export function buildWorkspaceData(input: WorkspaceDataInput): WorkspaceData {
       milestoneId: up.milestoneId,
       assigneeId: assigneeId(meta.assignee),
       stateId: canonicalStatus(meta.status),
-      priority: toTaskPriority(meta.priority),
+      priority: PRIORITY_SCALE[meta.priority],
       createdAt: meta.created,
       updatedAt: meta.updated,
       startedAt: started ?? (type === 'started' ? meta.updated : null),
@@ -480,7 +529,7 @@ export function buildEvalContext(
   meta: ReadonlyMap<string, MilestoneMeta> = new Map()
 ): EvalContext {
   return {
-    today: dayFromNow(0, now),
+    today: localDay(now),
     now: now.toISOString(),
     tuning,
     meta,

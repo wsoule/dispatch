@@ -7,12 +7,9 @@ import {
   PLANNING_PROJECT_STATUSES,
   PLANNING_TUNING_NUMBERS,
 } from '@dispatch-foo/core/browser';
-import {
-  DEFAULT_TUNING,
-  type MilestoneMeta,
-  type ProjectStatusType,
-  type Tuning,
-} from '@dispatch/planning';
+
+import { DEFAULT_TUNING } from './config';
+import type { MilestoneMeta, ProjectStatusType, Tuning } from './types';
 
 // The project's `planning:` config block as @dispatch/planning reads it: the
 // tuning (each field set in config.yml overriding the planning's default) and

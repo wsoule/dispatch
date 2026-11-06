@@ -5,9 +5,9 @@ import type {
   PlanningProjectStatus,
   PlanningTuningNumber,
 } from '@dispatch-foo/core/browser';
+import { PROJECT_STATUSES, tuningFrom } from '@dispatch/planning';
 import { Checkbox, EmptyState } from '@dispatch/ui';
 
-import { PROJECT_STATUSES, tuningFrom } from '../../adapters/planningSettings';
 import { NumberSetting } from './fields';
 import styles from './PlanningSection.module.css';
 import { SettingsGroup, SettingsRow } from './SettingsGroup';
