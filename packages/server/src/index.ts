@@ -2469,6 +2469,9 @@ async function bootServer(
     }
   }, PREVIEW_SWEEP_INTERVAL_MS);
 
+  // The allocation run log's own SQLite file, closed with the daemon.
+  const allocationRuns = new AllocationRunStore(allocationRunsPath(rootDir));
+
   const apiCtx: ApiContext = {
     rootDir,
     store,
@@ -2492,7 +2495,7 @@ async function bootServer(
     mergeQueue,
     startedAt,
     noteStore: new NoteStore(rootDir),
-    allocationRuns: new AllocationRunStore(allocationRunsPath(rootDir)),
+    allocationRuns,
     inboxStore,
     inboxTriage,
     findingStore,
@@ -2955,6 +2958,7 @@ async function bootServer(
       unsubscribeLinear();
       unsubscribeRevokedAsks();
       linearSignIn.stop();
+      allocationRuns.close();
       await linearSync.stop();
       unsubscribeBoardSync();
       unsubscribeDocPublishes();
