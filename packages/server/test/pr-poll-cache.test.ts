@@ -147,6 +147,46 @@ function makeHarness(): Harness {
   return { rootDir: repo, orchestrator, store, cache, events, reviewComments };
 }
 
+describe('PrManager with a capability probe still running', () => {
+  test('reads as not capable until the probe settles, then as its answer', async () => {
+    const harness = makeHarness();
+    const runner = new FakeRunner([prListItem(9, 'sha-a')]);
+    let settle: (capable: boolean) => void = () => {};
+    const probe = new Promise<boolean>((resolve) => (settle = resolve));
+    const pr = new PrManager(harness, probe, runner.run);
+
+    expect(pr.capable).toBe(false);
+    settle(true);
+    expect(await pr.whenCapabilityKnown()).toBe(true);
+    expect(pr.capable).toBe(true);
+  });
+
+  test('a PR list asked for mid-probe waits for it instead of refusing', async () => {
+    const harness = makeHarness();
+    const runner = new FakeRunner([prListItem(9, 'sha-a')]);
+    let settle: (capable: boolean) => void = () => {};
+    const probe = new Promise<boolean>((resolve) => (settle = resolve));
+    const pr = new PrManager(harness, probe, runner.run);
+
+    const listed = pr.listRepoPrs();
+    settle(true);
+    expect((await listed).map((p) => p.number)).toEqual([9]);
+  });
+
+  test('a rejected probe counts as no capability', async () => {
+    const harness = makeHarness();
+    const runner = new FakeRunner([]);
+    const pr = new PrManager(
+      harness,
+      Promise.reject(new Error('no gh')),
+      runner.run
+    );
+
+    expect(await pr.whenCapabilityKnown()).toBe(false);
+    expect(pr.capable).toBe(false);
+  });
+});
+
 describe('PrManager poll cache', () => {
   test('pollOnce caches the repo PR list and broadcasts landing.changed only on a real delta', async () => {
     const harness = makeHarness();

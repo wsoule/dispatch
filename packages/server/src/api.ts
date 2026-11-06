@@ -416,10 +416,6 @@ export interface ApiContext {
   /** Which task parts the owner last set, so their own edits reach Linear
    *  with their sign-in (linear/personEdits.ts). */
   linearPersonEdits?: LinearPersonEdits;
-  // Cached once at boot (see pr.ts's detectPrCapability) — exposed at
-  // GET /api/health as `pr` so a client can hide/disable the PR action
-  // without probing per-run.
-  prCapability: boolean;
   // When this daemon process started, captured once in startServer — the
   // same value the daemon file records, surfaced at GET /api/health so a
   // client can tell which process is answering.
@@ -3968,7 +3964,7 @@ async function landMilestone(
   milestoneId: string
 ): Promise<Response> {
   const status = ctx.orchestrator.milestoneLandStatus(milestoneId);
-  if (ctx.prCapability && status.hasChanges) {
+  if (status.hasChanges && (await ctx.prManager.whenCapabilityKnown())) {
     const prUrl = await ctx.prManager.openMilestonePr(milestoneId);
     return jsonResponse({ mode: 'pr', prUrl }, 201);
   }
@@ -5327,7 +5323,8 @@ export async function handleApi(
         identity: identity.identity,
         // Phase 5 P1: whether this project can use the PR review action
         // (gh on PATH + a configured git remote), detected once at boot.
-        pr: ctx.prCapability,
+        // False while that probe is still running; `health.changed` follows.
+        pr: ctx.prManager.capable,
         // origin's browser URL when it is on GitHub, so a landed run can
         // link its commit. Absent with no remote or a non-GitHub one.
         originWebUrl: ctx.orchestrator.originWebUrl(),
