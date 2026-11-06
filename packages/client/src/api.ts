@@ -2817,7 +2817,7 @@ export interface LinearAccountView {
     | null;
   /** The exact callback URL to register in Linear; not a secret. */
   callbackUrl: string;
-  clientIdSource: 'env' | 'config' | null;
+  clientIdSource: 'env' | 'config' | 'builtin' | null;
   /** A sign-in is waiting for Linear's redirect (owner only). */
   pending: boolean;
   /** The signed-in person for this project's workspace (owner only),

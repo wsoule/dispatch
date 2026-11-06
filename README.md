@@ -228,7 +228,11 @@ ends the sign-in at Linear; it works even when Linear cannot be reached or the
 project's key stopped working, and if Linear could not confirm, the row says how
 to end it in Linear's own settings.
 
-Sign-in needs a one-time setup by a Linear workspace admin:
+Sign-in works in every project with no setup: Dispatch signs in through its own
+public Linear OAuth app, on the callback URL
+`http://127.0.0.1:47823/linear/callback`. To use your workspace's own OAuth
+application instead (or a different callback port), a Linear workspace admin
+sets it up once:
 
 1. In Linear, open Settings → Administration → API and create an OAuth
    application. On an Enterprise plan an owner may have to approve it.
@@ -254,9 +258,10 @@ What Save writes (47823 is the default port):
       oauthCallbackPort: 47823
 
 `DISPATCH_LINEAR_CLIENT_ID` in the daemon's environment overrides
-`linear.oauthClientId`. Only if Linear refuses the first sign-in for a missing
-secret, set `DISPATCH_LINEAR_CLIENT_SECRET` in that environment too; never
-commit it.
+`linear.oauthClientId`, which overrides Dispatch's built-in app; clear the
+client ID in **Edit setup** to go back to the built-in app. Only if Linear
+refuses the first sign-in for a missing secret, set
+`DISPATCH_LINEAR_CLIENT_SECRET` in that environment too; never commit it.
 
 ## Running more than one agent
 
