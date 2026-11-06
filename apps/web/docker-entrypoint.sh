@@ -6,7 +6,9 @@ set -eu
 data="${DATA_DIR:-/data}"
 if [ "$(id -u)" = "0" ]; then
   mkdir -p "$data"
-  find "$data" ! -user bun -exec chown bun:bun {} +
+  # -h: change a symlink itself, never what it points at, so a link planted in
+  # the volume cannot hand a system file to `bun`.
+  find "$data" ! -user bun -exec chown -h bun:bun {} +
   exec setpriv --reuid=bun --regid=bun --init-groups -- "$@"
 fi
 exec "$@"
