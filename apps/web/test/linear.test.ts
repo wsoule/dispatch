@@ -211,6 +211,36 @@ describe('team Linear', () => {
     );
   });
 
+  it('refuses a signed delivery with no fresh timestamp, so it cannot be replayed', async () => {
+    const post = (event: Record<string, unknown>) => {
+      const body = JSON.stringify(event);
+      return fetch(`${base}/api/linear/webhook/${teamId}`, {
+        method: 'POST',
+        headers: {
+          'linear-signature': createHmac('sha256', webhookSecret)
+            .update(body)
+            .digest('hex'),
+        },
+        body,
+      });
+    };
+    const event = {
+      type: 'Issue',
+      action: 'update',
+      data: { identifier: 'ENG-1', title: 'Fix auth' },
+    };
+    expect((await post(event)).status).toBe(401);
+    expect(
+      (await post({ ...event, webhookTimestamp: String(Date.now()) })).status
+    ).toBe(401);
+    expect(
+      (await post({ ...event, webhookTimestamp: Date.now() - 120_000 })).status
+    ).toBe(401);
+    expect(
+      (await post({ ...event, webhookTimestamp: Date.now() })).status
+    ).toBe(200);
+  });
+
   it('fences a comment so its text cannot pose as instructions', async () => {
     const hub = service.hubs.of(teamId);
     const watcher = 'agent:ada/claude.web-bbbbbb';

@@ -357,8 +357,10 @@ export class TeamLinear {
     } catch {
       return 400;
     }
+    // Linear stamps every delivery; one with no stamp, or an old one, is a
+    // replay of a signed body.
     if (
-      typeof event.webhookTimestamp === 'number' &&
+      typeof event.webhookTimestamp !== 'number' ||
       Math.abs(Date.now() - event.webhookTimestamp) > 60_000
     )
       return 401;
