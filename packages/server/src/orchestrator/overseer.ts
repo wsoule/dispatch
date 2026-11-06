@@ -123,6 +123,9 @@ export interface OverseerMessage {
   actionId?: string;
   /** `approval` entries: the OverseerApproval this entry reports on. */
   requestId?: string;
+  /** Applied `action` entries: the tasks the action created or dispatched,
+   *  in order, so a client can show them as a list it links to. */
+  taskIds?: string[];
   /**
    * `action` and `approval` entries only. `failed` means the human approved
    * an action but the effect itself threw — the action stays pending so it
@@ -1707,6 +1710,9 @@ export class OverseerManager {
       actionId: action.id,
       outcome,
       text: `${verb}: ${action.summary}`,
+      ...(outcome === 'applied' && action.taskIds !== undefined
+        ? { taskIds: action.taskIds }
+        : {}),
     });
     this.noteDecision(
       conversationId,

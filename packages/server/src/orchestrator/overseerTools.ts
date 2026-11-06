@@ -212,10 +212,15 @@ export interface OverseerMutatingTool<Input = unknown> {
     ctx: OverseerToolContext,
     input: Input,
     meta: ConfirmedBy
-  ): Promise<void> | void;
+  ): Promise<AppliedEffect | void> | AppliedEffect | void;
 }
 
 /** A mutating tool call awaiting (or past) human confirmation. */
+/** What an applied action reports back: the tasks it created or dispatched. */
+interface AppliedEffect {
+  taskIds?: string[];
+}
+
 export interface OverseerAction {
   id: string;
   /** The mutating tool this action would invoke. */
@@ -226,6 +231,8 @@ export interface OverseerAction {
   summary: string;
   createdAt: string;
   status: 'pending' | 'applied' | 'denied';
+  /** Once applied: the tasks it created or dispatched (AppliedEffect). */
+  taskIds?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -949,6 +956,7 @@ const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
       operator: confirmedOperator(ctx, meta),
       defaults: { executor: executorFor(ctx) },
     });
+    return { taskIds: [input.taskId] };
   },
 };
 
@@ -1328,7 +1336,7 @@ const createTask: OverseerMutatingTool<z.infer<typeof createTaskInput>> = {
       .join(' ');
   },
   apply(ctx, input) {
-    requireTasks(ctx).create({
+    const doc = requireTasks(ctx).create({
       title: input.title,
       ...(input.description !== undefined
         ? { description: input.description }
@@ -1337,6 +1345,7 @@ const createTask: OverseerMutatingTool<z.infer<typeof createTaskInput>> = {
       ...(input.priority !== undefined ? { priority: input.priority } : {}),
       ...(input.blockedBy !== undefined ? { blockedBy: input.blockedBy } : {}),
     });
+    return { taskIds: [doc.meta.id] };
   },
 };
 
@@ -1462,6 +1471,7 @@ const createPlan: OverseerMutatingTool<z.infer<typeof createPlanInput>> = {
         startedBy: ctx.ownerRef,
       });
     }
+    return { taskIds: created };
   },
 };
 
@@ -1720,7 +1730,8 @@ export class OverseerToolRegistry {
     // double-click this guard exists to stop.
     action.status = 'applied';
     try {
-      await tool.apply(this.ctx, action.input, meta);
+      const effect = await tool.apply(this.ctx, action.input, meta);
+      if (effect?.taskIds !== undefined) action.taskIds = effect.taskIds;
     } catch (err) {
       // Back to `pending` because the effect did not happen: leaving it
       // `applied` would lie, and `denied` would discard an action the human
