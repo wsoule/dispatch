@@ -544,12 +544,13 @@ impl DaemonSpawner for BunSpawner {
 /// release took the bundled-binary path or a dev build shelled out to `bun` —
 /// the two have entirely different failure modes. Only the `BunScript` case
 /// mentions `bun`/bun.sh, since a bundled release binary never touches `bun`.
+const BUN_HINT: &str = " — is bun installed? https://bun.sh";
+
 fn describe_launch(launch: &DaemonLaunch) -> String {
     match launch {
-        DaemonLaunch::BunScript(bin_path) => format!(
-            "launch: bun {} — is bun installed? https://bun.sh",
-            bin_path.display()
-        ),
+        DaemonLaunch::BunScript(bin_path) => {
+            format!("launch: bun {}{BUN_HINT}", bin_path.display())
+        }
         DaemonLaunch::Bundled { dispatchd, .. } => {
             format!("launch: bundled {}", dispatchd.display())
         }
@@ -787,13 +788,10 @@ impl Default for SpawnedAppTokens {
     }
 }
 
-// 15s, not 5s: a just-installed notarized release binary can pay Gatekeeper
-// or AV-scan latency on its very first launch (macOS re-verifying the
-// signature/notarization before it's allowed to execute at all), which can
-// blow well past a 5s budget even though the binary itself boots in well
-// under a second once that one-time check clears. POLL_INTERVAL stays as-is
-// since it only controls how often we recheck, not the overall budget.
-const POLL_TIMEOUT: Duration = Duration::from_secs(15);
+// 60s: a first launch can pay Gatekeeper/AV-scan latency, and a daemon on a
+// large repo spends ~20s in startup git calls before it binds its port.
+// POLL_INTERVAL only controls how often we recheck, not the overall budget.
+const POLL_TIMEOUT: Duration = Duration::from_secs(60);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 /// Recheck cadence while a just-spawned daemon boots: the window waits on it
 /// before anything can be sent, so a 200ms tick would add up to that per wait.
@@ -815,6 +813,12 @@ fn format_timeout_error(
     lines: &[String],
     log_path: &Path,
 ) -> String {
+    // A daemon that printed anything was started, so bun is not the problem.
+    let launch_desc = if lines.is_empty() {
+        launch_desc.to_string()
+    } else {
+        launch_desc.replace(BUN_HINT, "")
+    };
     let tail = if lines.is_empty() {
         "(no output)".to_string()
     } else {
@@ -1837,6 +1841,18 @@ mod tests {
         );
         assert!(msg.contains("Listening on port 4771\nerror: something exploded"));
         assert!(!msg.contains("(no output)"));
+    }
+
+    #[test]
+    fn format_timeout_error_drops_the_bun_hint_once_the_daemon_printed_output() {
+        let launch = describe_launch(&DaemonLaunch::BunScript(PathBuf::from("/repo/bin.ts")));
+        let log = Path::new("/home/user/.dispatch/logs/abc123.log");
+        let silent = format_timeout_error(Duration::from_secs(60), &launch, &[], log);
+        assert!(silent.contains("is bun installed"));
+        let lines = vec!["dispatchd: event loop stalled 5.0s".to_string()];
+        let talked = format_timeout_error(Duration::from_secs(60), &launch, &lines, log);
+        assert!(!talked.contains("is bun installed"));
+        assert!(talked.contains("launch: bun /repo/bin.ts"));
     }
 
     #[test]

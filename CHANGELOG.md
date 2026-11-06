@@ -9,10 +9,11 @@ holds what a user upgrading needs to know.
 
 - **Sign in with Linear.** In Settings → Linear, sign in with your own Linear
   account, so the changes you make in the app reach Linear as you instead of as
-  the project's API key. Needs a one-time OAuth app registration by a Linear
-  admin (README, "Signing in with Linear"). Sync, imports, agents, the CLI and
-  teammates still use the project's connection. An older desktop shows no
-  sign-in row; it keeps working through the connection.
+  the project's API key. Works in every project through Dispatch's own Linear
+  app; a workspace can register its own instead (README, "Signing in with
+  Linear"). Sync, imports, agents, the CLI and teammates still use the project's
+  connection. An older desktop shows no sign-in row; it keeps working through
+  the connection.
 - **The Overseer and run chats show the agent as it writes.** A running turn's
   text streams into the chat, the Overseer keeps what it says between tool calls
   as narration, and tool chips in both chats end done or failed. The Overseer's

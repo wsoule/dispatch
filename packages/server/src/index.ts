@@ -366,6 +366,8 @@ export interface StartServerOptions {
     endpoints?: OAuthEndpoints;
     fetchImpl?: typeof fetch;
     clientSecret?: string;
+    // Replaces Dispatch's built-in client ID; tests pass null to turn it off.
+    builtInClientId?: string | null;
   };
   // Replaces TypeSafe key lookup with a ready-made judgment client (or null
   // to disable judgments outright), so no test ever reaches the API.
@@ -2276,6 +2278,9 @@ async function bootServer(
     ...(linearOAuth.fetchImpl === undefined
       ? {}
       : { fetchImpl: linearOAuth.fetchImpl }),
+    ...(linearOAuth.builtInClientId === undefined
+      ? {}
+      : { builtInClientId: linearOAuth.builtInClientId }),
     onChange: () => events.broadcast({ type: 'config.changed' }),
   });
 

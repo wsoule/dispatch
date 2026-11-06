@@ -693,3 +693,44 @@ test('the Linear page keeps the group without a connection while a sign-in is st
   expect(screen.getByText('Your Linear account')).toBeDefined();
   expect(screen.getByRole('button', { name: 'Sign out' })).toBeDefined();
 });
+
+test('the built-in Linear app needs no setup, and an empty client ID keeps it', async () => {
+  const h = renderGroup({ ...SIGNED_OUT, clientIdSource: 'builtin' });
+  expect(
+    screen.getByText(/Sign-in uses Dispatch’s own Linear app/)
+  ).toBeDefined();
+  expect(
+    screen.getByRole('button', { name: 'Sign in with Linear' })
+  ).toBeDefined();
+  fireEvent.click(screen.getByRole('button', { name: 'Edit setup' }));
+  const dialog = await screen.findByRole('dialog');
+  expect(
+    within(dialog).getByText(
+      /Leave the client ID empty to use Dispatch’s own app/
+    )
+  ).toBeDefined();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(h.handleUpdateConfig).toHaveBeenCalledTimes(1));
+  expect(h.handleUpdateConfig.mock.calls[0]?.[0]).toEqual({
+    linear: { oauthClientId: null, oauthCallbackPort: 47823 },
+  });
+});
+
+test('clearing a saved client ID is allowed and saves null', async () => {
+  const h = renderGroup(SIGNED_OUT, {
+    config: {
+      ...testConfig,
+      linear: { ...testConfig.linear, oauthClientId: 'saved-client' },
+    },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Edit setup' }));
+  const dialog = await screen.findByRole('dialog');
+  fireEvent.change(within(dialog).getByLabelText('Client ID'), {
+    target: { value: '' },
+  });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(h.handleUpdateConfig).toHaveBeenCalledTimes(1));
+  expect(h.handleUpdateConfig.mock.calls[0]?.[0]).toEqual({
+    linear: { oauthClientId: null, oauthCallbackPort: 47823 },
+  });
+});

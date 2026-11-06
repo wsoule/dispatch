@@ -936,10 +936,11 @@ multiplayer needs the run half to cross machines.
     the system browser; Linear redirects to the daemon's loopback listener,
     which exchanges the code, checks that the token's workspace is the
     connection's (a token for another workspace is revoked at once and nothing
-    is stored), and stores the pair in `credentials.json`. Linear needs an OAuth
-    application registered by a workspace admin; its client ID comes from
-    `DISPATCH_LINEAR_CLIENT_ID` or `linear.oauthClientId` in `config.yml`, and
-    its callback URL must be exactly
+    is stored), and stores the pair in `credentials.json`. The client ID comes
+    from `DISPATCH_LINEAR_CLIENT_ID`, then `linear.oauthClientId` in
+    `config.yml`, then Dispatch's own public OAuth app
+    (`BUILT_IN_LINEAR_CLIENT_ID` in `linear/signIn.ts`, always on port 47823). A
+    project's own app's callback URL must be exactly
     `http://127.0.0.1:<linear.oauthCallbackPort>/linear/callback`.
   - **Which credential each write uses.** Issue updates and creates (with their
     relations, links and archive follow-ups), comments and "Share to Linear" go
