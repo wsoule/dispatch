@@ -4,6 +4,7 @@ import type {
   OverseerApproval,
   OverseerAttachment,
   OverseerRecordView,
+  RunMeta,
 } from '@dispatch/client';
 import {
   Button,
@@ -27,6 +28,12 @@ import { cardRaw } from '../../lib/cardContent';
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import { DEFAULT_EFFORT_ID, effortOptions, MODELS } from '../../lib/models';
 import {
+  appliedTaskCard,
+  isTaskTool,
+  proposedTaskCard,
+  type TaskCardModel,
+} from '../../lib/overseerTaskCard';
+import {
   buildOverseerThread,
   doorLabel,
   findInThread,
@@ -45,6 +52,7 @@ import { CardErrorBoundary } from '../shell/CardErrorBoundary';
 import { StreamingText } from '../transcript/StreamingText';
 import { ToolChip, ToolChipGroup } from '../transcript/ToolChip';
 import styles from './OverseerChat.module.css';
+import { OverseerTaskCard } from './OverseerTaskCard';
 import { PromptBar } from './PromptBar';
 
 // Ways into an empty Overseer: each fills the composer, so the question can be
@@ -275,6 +283,10 @@ interface OverseerConfirmCardProps {
    * disabling the others, their buttons stay live and eat the click. */
   locked: boolean;
   onDecide: (approve: boolean) => void;
+  /** The tasks a create_plan, create_task or dispatch_task proposes, listed in
+   * place of the summary sentence. */
+  card?: TaskCardModel | null;
+  onOpenTask?: (taskId: string) => void;
 }
 
 /** The shield every approval card leads with, in the card's warning ink. */
@@ -295,6 +307,8 @@ function OverseerConfirmCard({
   deciding,
   locked,
   onDecide,
+  card = null,
+  onOpenTask,
 }: OverseerConfirmCardProps) {
   return (
     <DecisionCard
@@ -335,7 +349,11 @@ function OverseerConfirmCard({
         </>
       }
     >
-      <p className={styles.summary}>{action.summary}</p>
+      {card === null ? (
+        <p className={styles.summary}>{action.summary}</p>
+      ) : (
+        <OverseerTaskCard card={card} onOpenTask={onOpenTask} />
+      )}
       {failure !== null && <ErrorLine>{failure}</ErrorLine>}
     </DecisionCard>
   );
@@ -771,6 +789,17 @@ interface OverseerChatProps {
   disabled?: boolean;
   /** Opens a show_tasks door; without it a door reads as a plain line. */
   onOpenDoor?: (door: OverseerDoor) => void;
+  /** The board and its runs, so the tasks an action proposes or sends out
+   * list as a card with each run's state; without it they stay sentences. */
+  work?: OverseerWork;
+}
+
+/** What the chat's task cards read: task titles, runs, and where a row opens. */
+interface OverseerWork {
+  tasks: readonly { meta: { id: string; title: string } }[];
+  runs: readonly RunMeta[];
+  /** Opens a task beside the talk; without it the rows do not open. */
+  onOpenTask?: (taskId: string) => void;
 }
 
 /**
@@ -787,6 +816,7 @@ export function OverseerChat({
   aboveComposer,
   disabled = false,
   onOpenDoor,
+  work,
 }: OverseerChatProps) {
   // The composer's text is the session's, not this component's: leaving the
   // Overseer page unmounts this chat, and the session outlives it. Only one of
@@ -827,6 +857,14 @@ export function OverseerChat({
   const decidingId = overseer.decidingActionId;
   const decidingRequestId = overseer.decidingRequestId;
   const decideError = overseer.decideError;
+
+  // A task's title by id, for the task cards; a task the board dropped keeps its id.
+  const titles = useMemo(
+    () => new Map(work?.tasks.map((t) => [t.meta.id, t.meta.title]) ?? []),
+    [work?.tasks]
+  );
+  const taskTitle = (taskId: string) => titles.get(taskId);
+  const runs = work?.runs ?? [];
 
   const fullThread = useMemo(
     () => buildOverseerThread(overseer.record, overseer.live),
@@ -1021,6 +1059,12 @@ export function OverseerChat({
             deciding={decidingId === item.action.id}
             locked={decidingId !== null}
             onDecide={(approve) => decide(item.action.id, approve)}
+            card={
+              work !== undefined && isTaskTool(item.action.tool)
+                ? proposedTaskCard(item.action, taskTitle, runs)
+                : null
+            }
+            onOpenTask={work?.onOpenTask}
           />
         );
       case 'approve':
@@ -1035,6 +1079,20 @@ export function OverseerChat({
           />
         );
       case 'outcome':
+        if (
+          work !== undefined &&
+          item.taskIds !== undefined &&
+          item.taskIds.length > 0
+        ) {
+          return (
+            <OverseerTaskCard
+              key={item.key}
+              className={styles.card}
+              card={appliedTaskCard(item.taskIds, taskTitle, runs)}
+              onOpenTask={work.onOpenTask}
+            />
+          );
+        }
         return (
           <OverseerOutcomeRow
             key={item.key}

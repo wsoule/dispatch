@@ -88,6 +88,7 @@ function Harness({
     port: 4321,
     portLoading: false,
     portError: false,
+    tasks: [],
     ...project,
   } as unknown as DispatchProjectData;
   return (
@@ -220,6 +221,7 @@ function FocusHarness({
     port: 4321,
     portLoading: false,
     portError: false,
+    tasks: [],
   } as unknown as DispatchProjectData;
   return (
     <QueryClientProvider client={queryClient}>

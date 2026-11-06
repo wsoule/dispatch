@@ -2,6 +2,7 @@ import type {
   OverseerAction,
   OverseerRecord,
   OverseerRecordView,
+  RunMeta,
 } from '@dispatch/client';
 import {
   act,
@@ -1658,4 +1659,74 @@ test('outcome lines are toned by what happened', () => {
   expect(denied.closest('[data-tone]')?.getAttribute('data-tone')).toBe(
     'muted'
   );
+});
+
+// A plan, a new task or a dispatch lists its tasks as one card: proposed on the
+// confirm card, then what it made, each row with its run and opening its task.
+test('task actions list their tasks as a card, proposed then started', async () => {
+  const opened: string[] = [];
+  const work = {
+    tasks: [
+      { meta: { id: 't-a', title: 'Schema' } },
+      { meta: { id: 't-b', title: 'UI' } },
+    ],
+    runs: [
+      {
+        id: 'r-a',
+        taskId: 't-a',
+        taskTitle: 'Schema',
+        state: 'running',
+        createdAt: '2026-08-10T00:00:06Z',
+        lastStep: { text: 'Editing src/db.ts', at: '2026-08-10T00:00:07Z' },
+      } as RunMeta,
+    ],
+    onOpenTask: (taskId: string) => opened.push(taskId),
+  };
+  const plan = overseerAction({
+    id: 'act-2',
+    tool: 'create_plan',
+    input: { tasks: [{ title: 'Docs' }, { title: 'Tests' }] },
+    summary: 'Create 2 tasks: "Docs", "Tests"',
+  });
+  render(
+    <OverseerChat
+      work={work}
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: overseerRecord({
+          messages: [
+            {
+              role: 'action',
+              tool: 'create_plan',
+              actionId: 'act-1',
+              outcome: 'applied',
+              text: 'Applied: Create 2 tasks',
+              at: '2026-08-10T00:00:05Z',
+              taskIds: ['t-a', 't-b'],
+            },
+            {
+              role: 'action',
+              tool: 'create_plan',
+              actionId: 'act-2',
+              outcome: 'pending',
+              text: 'Queued: Create 2 tasks',
+              at: '2026-08-10T00:00:08Z',
+            },
+          ],
+          pendingActions: [plan],
+        }),
+      })}
+    />
+  );
+  const [made, proposed] = screen.getAllByTestId('overseer-task-card');
+  expect(made.textContent).toContain('2 suggested tasks');
+  expect(made.textContent).toContain('1 started');
+  expect(made.textContent).toContain('Editing src/db.ts');
+  // The proposal lists its titles in place of the summary sentence; nothing opens yet.
+  expect(proposed.closest('[data-slot="overseer-confirm"]')).not.toBeNull();
+  expect(proposed.textContent).toContain('0 started');
+  expect(proposed.textContent).toContain('Docs');
+  expect(screen.queryByText('Create 2 tasks: "Docs", "Tests"')).toBeNull();
+  await clickAndSettle(screen.getByRole('button', { name: /^UI/ }));
+  expect(opened).toEqual(['t-b']);
 });

@@ -220,8 +220,39 @@ describe('buildOverseerThread', () => {
         outcome: 'applied',
         text: 'Applied: Cancel run r-1',
         at,
+        tool: 'cancel_run',
       },
     ]);
+  });
+
+  test('an applied task action keeps the tasks it made, and a denial never does', () => {
+    const items = buildOverseerThread(
+      makeRecord([
+        {
+          role: 'action',
+          tool: 'create_plan',
+          actionId: 'act-1',
+          outcome: 'applied',
+          text: 'Applied: Create 2 tasks',
+          at,
+          taskIds: ['t-a', 't-b'],
+        },
+        {
+          role: 'action',
+          tool: 'dispatch_task',
+          actionId: 'act-2',
+          outcome: 'denied',
+          text: 'Denied: Dispatch t-c',
+          at,
+          taskIds: ['t-c'],
+        },
+      ])
+    );
+    expect(items).toMatchObject([
+      { kind: 'outcome', tool: 'create_plan', taskIds: ['t-a', 't-b'] },
+      { kind: 'outcome', tool: 'dispatch_task' },
+    ]);
+    expect(items[1]).not.toHaveProperty('taskIds');
   });
 
   test('a denied action renders only its denial row', () => {
@@ -252,6 +283,7 @@ describe('buildOverseerThread', () => {
         outcome: 'denied',
         text: 'Denied: Cancel run r-1',
         at,
+        tool: 'cancel_run',
       },
     ]);
   });
