@@ -99,6 +99,7 @@ export {
   useRowWindows,
 } from './tasks/use-row-windows';
 export { TaskGroupTable } from './tasks/task-group-table';
+export { TaskListCard } from './tasks/task-list-card';
 export {
   pruneSelection,
   rangeIds,
@@ -164,6 +165,8 @@ export type {
   TaskGroupData,
   TaskGroupProgress,
   TaskGroupTableProps,
+  TaskListCardItem,
+  TaskListCardProps,
   TaskPriority,
   TaskRowData,
   TaskScrollParent,

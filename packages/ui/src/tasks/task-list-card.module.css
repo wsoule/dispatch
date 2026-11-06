@@ -1,0 +1,46 @@
+/* TaskListCard (task-list-card.tsx): a Panel with a banded head over
+   ListItem rows, ruled off by --divider, flush to the card's edges. */
+.card {
+  width: 100%;
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item:not(:last-child) {
+  border-bottom: 1px solid var(--divider);
+}
+
+/* The rows meet the card's edges, so their hover fill is square. */
+.item > [data-slot='list-item'] {
+  border-radius: 0;
+}
+
+/* A task nobody started yet steps down a tone; a started one stays in
+   --text, so what is moving reads first. */
+.item[data-live='false'] [data-slot='list-item-title'] {
+  color: var(--text-2);
+}
+
+/* The state dot and the chevron, in fixed boxes so every row's chevron
+   lines up whether or not it has a dot. */
+.end {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+}
+
+.chevron {
+  flex: none;
+  color: var(--text-3);
+}

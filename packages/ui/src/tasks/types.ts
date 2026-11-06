@@ -597,6 +597,11 @@ export interface PanelProps extends DataAttributes {
   /** A quiet count after the heading, in tabular figures (outside the
       heading element, so the heading's name stays its words). */
   count?: number;
+  /** A quiet phrase after the heading at the heading's size ("2 started"),
+      outside the heading element. */
+  note?: ReactNode;
+  /** Fills the heading row with --surface-2, a band above the rows. */
+  band?: boolean;
   /** Chips or quiet Buttons at the right end of the heading row. */
   actions?: ReactNode;
   /** A status tone: data-tone on the root and a 2px edge in the tone's
@@ -638,6 +643,37 @@ export interface PanelRowProps
       or Enter or Space typed on the row itself. */
   onActivate?: () => void;
   ref?: Ref<HTMLDivElement>;
+}
+
+/* ---- task list card ---------------------------------------------------- */
+
+/** One task in a TaskListCard. Its `data-*` hooks land on the row's `<li>`. */
+export interface TaskListCardItem extends DataAttributes {
+  /** The row's key. */
+  id: string;
+  title: ReactNode;
+  /** The muted line under the title: what its run is doing right now. */
+  status?: ReactNode;
+  /** A small state dot at the row's end (the host's own mark, with its
+      own accessible name when the row's words do not say the state). */
+  mark?: ReactNode;
+  /** Started: the title stays in --text instead of stepping down. */
+  live?: boolean;
+  /** Opens the task or run: the row becomes a button with a chevron. */
+  onOpen?: () => void;
+}
+
+/**
+ * Tasks someone proposed or sent out, as one card: a banded head (the
+ * heading, a quiet note after it) over a row per task.
+ */
+export interface TaskListCardProps extends DataAttributes {
+  /** "3 suggested tasks". */
+  heading: ReactNode;
+  /** The quiet phrase after it: "2 started". */
+  note?: ReactNode;
+  items: readonly TaskListCardItem[];
+  className?: string;
 }
 
 /* ---- stats ------------------------------------------------------------- */
