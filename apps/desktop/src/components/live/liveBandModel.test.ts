@@ -74,69 +74,12 @@ function specOf(
 }
 
 describe('buildLiveBand', () => {
-  test('folds the finished leading waves to a count and draws the rest from wave 3', () => {
-    const tasks = milestone();
-    const band = buildLiveBand(specOf(tasks), shared(tasks), {
-      expanded: false,
-    });
-    expect(band.plan.waves.map((w) => `${w.done}/${w.total}`)).toEqual([
-      // a, b, h (Maya's, unstarted) are wave 1 — h keeps it open.
-      '2/3',
-      '1/2',
-      '0/2',
-      '0/1',
-    ]);
-    // Wave 1 still holds Maya's task, so nothing folds.
-    expect(band.finishedWaves).toEqual({ waves: 0, tasks: 0 });
-    expect(band.waveOffset).toBe(0);
-  });
-
-  test('once the leading waves land they fold, and the columns renumber', () => {
-    const tasks = milestone({
-      't-h': { status: 'landed' },
-      't-g': { status: 'landed' },
-    });
-    const band = buildLiveBand(specOf(tasks), shared(tasks), {
-      expanded: false,
-    });
-    expect(band.finishedWaves).toEqual({ waves: 2, tasks: 5 });
-    expect(band.waveOffset).toBe(2);
-    expect(band.layout.columns.map((c) => c.wave)).toEqual([0, 1]);
-    expect([...band.layout.boxes.keys()].sort()).toEqual(['t-d', 't-e', 't-f']);
-    // Reading order: wave by wave, each top to bottom.
-    expect(band.order).toEqual(['t-d', 't-e', 't-f']);
-
-    const open = buildLiveBand(specOf(tasks), shared(tasks), {
-      expanded: true,
-    });
-    expect(open.waveOffset).toBe(0);
-    expect(open.finishedWaves).toEqual({ waves: 2, tasks: 5 });
-    expect(open.layout.boxes.size).toBe(8);
-  });
-
-  test('the last wave always stays drawn', () => {
-    const tasks = milestone(
-      Object.fromEntries(
-        ['t-d', 't-e', 't-f', 't-g', 't-h'].map((id) => [
-          id,
-          { status: 'landed' },
-        ])
-      )
-    );
-    const band = buildLiveBand(specOf(tasks), shared(tasks, { flying: [] }), {
-      expanded: false,
-    });
-    expect(band.waveOffset).toBe(3);
-    expect(band.order).toEqual(['t-f']);
-  });
-
   test('tallies running, queued under an active fan-out, teammates and landing', () => {
     const tasks = milestone();
     const session = progress('m', 'active', { concurrency: 3 });
     const band = buildLiveBand(
       specOf(tasks, session),
-      shared(tasks, { sessions: [session], landing: ['t-b'] }),
-      { expanded: false }
+      shared(tasks, { sessions: [session], landing: ['t-b'] })
     );
     expect(band.stats).toEqual({
       running: 1,
@@ -164,8 +107,7 @@ describe('buildLiveBand', () => {
       const session = progress('m', 'active', { startedBy: 'human:maya' });
       return buildLiveBand(
         specOf(tasks, session),
-        shared(tasks, { sessions: [session] }),
-        { expanded: false }
+        shared(tasks, { sessions: [session] })
       ).stats.waitingOnTeammate;
     };
     expect(
@@ -178,39 +120,33 @@ describe('buildLiveBand', () => {
     const session = progress('m', 'paused');
     const band = buildLiveBand(
       specOf(tasks, session),
-      shared(tasks, { sessions: [session] }),
-      { expanded: false }
+      shared(tasks, { sessions: [session] })
     );
     expect(band.stats.queued).toBe(0);
     expect(band.activity.session).toBe('paused');
   });
 
-  test('keeps the layout across a status change, and lays out again for a new blocker', () => {
+  test('keeps the waves across a status change, and works them out again for a new blocker', () => {
     const cache: LiveGeometryCache = new Map();
     const before = milestone();
-    const first = buildLiveBand(specOf(before), shared(before), {
-      expanded: false,
-      cache,
-    });
+    buildLiveBand(specOf(before), shared(before), { cache });
+    const first = cache.get('m')?.waves;
     const moved = milestone({ 't-d': { status: 'working' } });
     const second = buildLiveBand(
       specOf(moved),
       shared(moved, { flying: ['t-e', 't-d'] }),
-      { expanded: false, cache }
+      { cache }
     );
-    expect(second.layout).toBe(first.layout);
+    expect(cache.get('m')?.waves).toBe(first);
     expect(second.plan.nodes.find((n) => n.task.meta.id === 't-d')?.state).toBe(
       'running'
     );
     const rewired = milestone({ 't-f': { blockedBy: ['t-e'] } });
-    const third = buildLiveBand(specOf(rewired), shared(rewired), {
-      expanded: false,
-      cache,
-    });
-    expect(third.layout).not.toBe(first.layout);
+    buildLiveBand(specOf(rewired), shared(rewired), { cache });
+    expect(cache.get('m')?.waves).not.toBe(first);
   });
 
-  test('Loose work fills a grid three cards tall, with no waves', () => {
+  test('Loose work has no waves', () => {
     const loose = ['l-1', 'l-2', 'l-3', 'l-4', 'l-5'].map((id) =>
       task(id, { status: 'working' })
     );
@@ -222,14 +158,9 @@ describe('buildLiveBand', () => {
         progress: null,
         scope: { nodes: loose, bands: null, bandOf: new Map() },
       },
-      shared(loose, { flying: loose.map((t) => t.meta.id) }),
-      { expanded: false }
+      shared(loose, { flying: loose.map((t) => t.meta.id) })
     );
     expect(band.showWaves).toBe(false);
-    expect(band.nav.columns).toEqual([
-      ['l-1', 'l-2', 'l-3'],
-      ['l-4', 'l-5'],
-    ]);
     expect(band.stats.running).toBe(5);
   });
 });
@@ -240,8 +171,7 @@ describe('liveTotals', () => {
     const active = progress('m', 'active', { concurrency: 3 });
     const band = buildLiveBand(
       specOf(tasks, active),
-      shared(tasks, { sessions: [active], landing: ['t-b'] }),
-      { expanded: false }
+      shared(tasks, { sessions: [active], landing: ['t-b'] })
     );
     expect(
       liveTotals(

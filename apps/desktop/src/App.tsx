@@ -1263,6 +1263,9 @@ function App() {
   const flightPlanHost = useMemo<FlightPlanHost>(
     () => ({
       data,
+      bucketOf,
+      asksByTask: needs.byTask,
+      projectKey: activeProject?.path ?? '',
       dispatchTask: cockpitDispatch,
       onDispatchFailed: onCockpitDispatchFailed,
       onOpenTask: openTaskView,
@@ -1272,6 +1275,9 @@ function App() {
     }),
     [
       data,
+      bucketOf,
+      needs.byTask,
+      activeProject?.path,
       cockpitDispatch,
       onCockpitDispatchFailed,
       openTaskView,
@@ -1905,6 +1911,9 @@ function App() {
         return (
           <LiveView
             data={data}
+            bucketOf={bucketOf}
+            asksByTask={needs.byTask}
+            projectKey={activeProject?.path ?? ''}
             dispatchTask={cockpitDispatch}
             onDispatchFailed={onCockpitDispatchFailed}
             onOpenTask={openTaskView}
