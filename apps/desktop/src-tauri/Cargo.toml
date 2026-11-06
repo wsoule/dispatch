@@ -40,6 +40,7 @@ reqwest = { version = "0.12", features = [
 ], default-features = false }
 tokio = { version = "1", features = [
   "rt-multi-thread",
+  "sync",
   "time",
   "fs",
   "macros",

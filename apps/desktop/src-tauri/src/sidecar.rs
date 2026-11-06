@@ -793,6 +793,9 @@ impl Default for SpawnedAppTokens {
 // POLL_INTERVAL only controls how often we recheck, not the overall budget.
 const POLL_TIMEOUT: Duration = Duration::from_secs(60);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
+/// Recheck cadence while a just-spawned daemon boots: the window waits on it
+/// before anything can be sent, so a 200ms tick would add up to that per wait.
+const BOOT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// Pure formatting half of the health-wait timeout error, split out from
 /// `ensure_dispatchd` so it's unit-testable without actually spawning a
@@ -869,7 +872,7 @@ async fn wait_for_app_token(slot: &AppTokenSlot, timeout: Duration) -> Option<St
         if Instant::now() >= deadline {
             return None;
         }
-        tokio::time::sleep(POLL_INTERVAL).await;
+        tokio::time::sleep(BOOT_POLL_INTERVAL).await;
     }
 }
 
@@ -1080,7 +1083,7 @@ async fn wait_for_generation(
         if Instant::now() >= deadline {
             return GenerationOutcome::TimedOut;
         }
-        tokio::time::sleep(POLL_INTERVAL).await;
+        tokio::time::sleep(BOOT_POLL_INTERVAL).await;
     }
 }
 
@@ -1286,7 +1289,7 @@ pub fn has_dispatch(root: &str) -> bool {
 /// `--init`, so that the daemon creates the database and its boot-time import
 /// can repopulate it. Keying on the marker would skip init there and serve an
 /// empty board. Mirrors bin.ts's `--init` handling on the daemon side.
-fn needs_init(root: &str) -> bool {
+pub(crate) fn needs_init(root: &str) -> bool {
     let dispatch = Path::new(root).join(".dispatch");
     // File backend: the markdown tracker is present.
     if dispatch.join("tasks").is_dir() {

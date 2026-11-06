@@ -24,6 +24,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import {
+  COMPILE_FLAGS,
+  SIDECARS,
+} from '../apps/desktop/scripts/build-sidecars.ts';
+
 // `bun build --compile` (at least on Bun 1.3.14) leaves a stray
 // `.<hash>-00000000.bun-build` staging file behind in its invocation cwd
 // even on a successful build — gitignored (see .gitignore), but there is no
@@ -51,7 +56,17 @@ mkdirSync(outDir, { recursive: true });
 // --target/--compile-executable-path cross-compile flags.
 const build = spawnSync(
   'bun',
-  ['build', '--compile', entry, '--outfile', outfile],
+  // The desktop sidecar's flags and Worker entries, so this smoke boot covers
+  // what ships (without the entries the git worker never starts).
+  [
+    'build',
+    '--compile',
+    ...COMPILE_FLAGS,
+    entry,
+    ...(SIDECARS[0].extraEntries ?? []),
+    '--outfile',
+    outfile,
+  ],
   { cwd: repoRoot, stdio: 'inherit' }
 );
 cleanupBunBuildArtifacts(repoRoot);

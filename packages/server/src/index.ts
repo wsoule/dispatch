@@ -1949,7 +1949,14 @@ async function bootServer(
   // request — a project's gh/remote setup essentially never changes while
   // dispatchd is running, and re-shelling-out to `gh --version` on every
   // health check or review action would be wasted work.
-  const prCapability = await detectPrCapability(rootDir, opts.prCommandRunner);
+  // Not awaited: `gh --version` alone costs a few hundred ms, and nothing at
+  // boot needs the answer. PrManager awaits it; health refetches on the event.
+  const prCapability = detectPrCapability(rootDir, opts.prCommandRunner).catch(
+    () => false
+  );
+  void prCapability.then(
+    (capable) => capable && events.broadcast({ type: 'health.changed' })
+  );
   // Built ahead of both PrManager (syncPrComments/pushPrReview read and
   // write a PR target's comments) and ReviewRunner below, which shares this
   // same instance — a review run's comments and a human's land in the same
@@ -2478,7 +2485,6 @@ async function bootServer(
     prManager,
     prWorktrees,
     mergeQueue,
-    prCapability,
     startedAt,
     noteStore: new NoteStore(rootDir),
     inboxStore,

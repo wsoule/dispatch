@@ -69,6 +69,9 @@ export type ServerEvent =
   | { type: 'review.changed'; runId: string }
   // .dispatch/config.yml changed through the Settings screen.
   | { type: 'config.changed' }
+  // A GET /api/health field settled after boot (the `pr` capability is probed
+  // once the daemon is already listening); refetch health.
+  | { type: 'health.changed' }
   // A terminal session produced output, or ended. Both carry only the id, on
   // the same "go refetch" contract as run.changed — a client holds a byte
   // cursor and pulls the increment from GET /api/terminals/:id/output, so it

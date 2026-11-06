@@ -2024,6 +2024,9 @@ export function useDispatchProject(
           void queryClient.invalidateQueries({
             queryKey: linearAccountQueryKey,
           });
+        } else if (event.type === 'health.changed') {
+          // The daemon's `pr` probe settles after it starts listening.
+          void queryClient.invalidateQueries({ queryKey: healthQueryKey });
         } else if (event.type === 'run.survey') {
           // Same cache-read reason as message.new above. This is the
           // only signal that a terminal run left uncommitted work behind.
@@ -2202,6 +2205,7 @@ export function useDispatchProject(
     linearDetailsQueryKey,
     linearAccountQueryKey,
     syncStatusQueryKey,
+    healthQueryKey,
     port,
     onRecordInbox,
     auth,

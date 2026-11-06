@@ -1249,6 +1249,8 @@ export type ServerEvent =
     }
   | { type: 'review.changed'; runId: string }
   | { type: 'config.changed' }
+  // A GET /api/health field settled after boot; refetch health.
+  | { type: 'health.changed' }
   // A task draft changed state or was dismissed — no id, refetch the list.
   | { type: 'draft.changed' }
   // A finding's verdict/ruling changed, or a review run raised a new one.

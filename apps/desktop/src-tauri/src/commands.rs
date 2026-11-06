@@ -7,6 +7,7 @@ use chrono::{Duration, NaiveDate, Utc};
 use serde::Serialize;
 use std::path::Path;
 use std::process::Command;
+use std::sync::Arc;
 use tauri::State;
 
 /// Width of the Dashboard's GitHub-style activity heatmap, in days.
@@ -500,8 +501,14 @@ pub async fn ensure_dispatchd(
     app: tauri::AppHandle,
     children: State<'_, sidecar::DispatchdChildren>,
     app_tokens: State<'_, sidecar::SpawnedAppTokens>,
+    prewarm: State<'_, DaemonPrewarm>,
     root: String,
 ) -> Result<sidecar::DaemonConnection, String> {
+    // A launch-time start for this root may still be booting: wait for it, so
+    // this pass attaches to that daemon rather than racing it with a second.
+    if let Some(pending) = prewarm.pending_for(&root) {
+        let _ = pending.lock().await;
+    }
     let launch = resolve_daemon_launch(&app)?;
     sidecar::ensure_dispatchd(
         &sidecar::BunSpawner,
@@ -512,6 +519,67 @@ pub async fn ensure_dispatchd(
         false,
     )
     .await
+}
+
+/// The daemon start `prewarm_dispatchd` kicks off at launch, keyed by its root.
+/// The lock is held until that start settles; `ensure_dispatchd` waits on it.
+#[derive(Default)]
+pub struct DaemonPrewarm(std::sync::Mutex<Option<(String, Arc<tokio::sync::Mutex<()>>)>>);
+
+impl DaemonPrewarm {
+    fn pending_for(&self, root: &str) -> Option<Arc<tokio::sync::Mutex<()>>> {
+        let root = sidecar::normalize_root(root).ok()?;
+        let slot = self.0.lock().unwrap();
+        slot.as_ref()
+            .filter(|(warm_root, _)| *warm_root == root)
+            .map(|(_, lock)| Arc::clone(lock))
+    }
+}
+
+/// Starts the launch project's dispatchd from `setup`, before the webview has
+/// even parsed its bundle, so the daemon's boot overlaps the page's instead of
+/// following it. Skipped for a project that still needs onboarding (`--init`),
+/// which the setup screen drives itself. A failure is only logged: the page's
+/// own `ensure_dispatchd` call runs next and reports it.
+pub fn prewarm_dispatchd(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let Ok(Some(root)) = current_project_root() else {
+        return;
+    };
+    let Ok(root) = sidecar::normalize_root(&root) else {
+        return;
+    };
+    if !sidecar::has_dispatch(&root) || sidecar::needs_init(&root) {
+        return;
+    }
+    let Ok(launch) = resolve_daemon_launch(app) else {
+        return;
+    };
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    let Ok(guard) = Arc::clone(&lock).try_lock_owned() else {
+        return;
+    };
+    *app.state::<DaemonPrewarm>().0.lock().unwrap() = Some((root.clone(), lock));
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let _held_until_settled = guard;
+        let children = app.state::<sidecar::DispatchdChildren>();
+        let app_tokens = app.state::<sidecar::SpawnedAppTokens>();
+        let started = std::time::Instant::now();
+        match sidecar::ensure_dispatchd(
+            &sidecar::BunSpawner,
+            &children,
+            &app_tokens,
+            launch,
+            &root,
+            false,
+        )
+        .await
+        {
+            Ok(_) => log::info!("dispatchd prewarm ready in {:?}", started.elapsed()),
+            Err(error) => log::warn!("dispatchd prewarm for {root} failed: {error}"),
+        }
+    });
 }
 
 /// Replaces the dispatchd serving `root` with one this app spawns itself, so it

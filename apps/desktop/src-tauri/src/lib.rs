@@ -87,6 +87,8 @@ pub fn run() {
       app.manage(summarize::HttpClient(reqwest::Client::new()));
       app.manage(sidecar::DispatchdChildren::new());
       app.manage(sidecar::SpawnedAppTokens::new());
+      app.manage(commands::DaemonPrewarm::default());
+      commands::prewarm_dispatchd(app.handle());
 
       watcher::start(app.handle().clone());
       spawn_idle_sweep(app.handle().clone());
