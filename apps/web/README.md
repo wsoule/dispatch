@@ -54,10 +54,16 @@ without these settings `railway up` falls back to Railpack and fails with "No
 start command detected". Restart policy is accepted but does not read back
 through the API or IaC.
 
-From a clean checkout of the commit to ship, at the repo root:
+Deploy from an export of the commit to ship, outside any checkout. The Railway
+CLI uploads the folder its link resolves to, and in a worktree under the main
+checkout's `.claude/worktrees/` that is the main checkout itself. The main
+checkout's `.gitignore` also skips `.claude/*`, so the worktree's files never
+reach the upload:
 
 ```bash
-railway up --service dispatch-team --detach
+git archive <commit> | tar -x -C /tmp/team-deploy
+cd /tmp/team-deploy
+railway up --project 25cb87e4-83ce-4feb-afcf-8fb36c6f4f7e --environment production --service dispatch-team --detach
 ```
 
 Check `https://app.dispatch.foo/healthz` afterwards. Moving the service's
