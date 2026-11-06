@@ -2960,7 +2960,7 @@ export class Orchestrator {
         // predates closeSupersededPredecessors, or if the walk stopped short),
         // and clearing it out of the queue is housekeeping, not a verdict on
         // the landed work.
-        // A run whose task was deleted is still discardable: there is no
+        // A run whose task was deleted can still be discarded: there is no
         // task left to reopen, only the branch and the run record.
         const task = this.ctx.store.get(meta.taskId);
         if (task !== null) {

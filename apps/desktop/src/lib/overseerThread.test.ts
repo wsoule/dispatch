@@ -632,6 +632,33 @@ describe('show_tasks doors', () => {
     expect(items[1].kind).toBe('tool');
   });
 
+  test('a show_page result is a door to its page; a bad page is no door', () => {
+    const items = buildOverseerThread(
+      makeRecord([
+        {
+          role: 'tool',
+          tool: 'show_page',
+          text: JSON.stringify({ door: { url: 'http://localhost:5173' } }),
+          at: 'a',
+        },
+        {
+          role: 'tool',
+          tool: 'show_page',
+          text: JSON.stringify({ door: { url: 'file:///etc/passwd' } }),
+          at: 'b',
+        },
+      ])
+    );
+    expect(items[0]).toMatchObject({
+      kind: 'door',
+      door: { url: 'http://localhost:5173/' },
+    });
+    expect(items[1].kind).toBe('tool');
+    expect(doorLabel({ url: 'http://localhost:5173/' })).toBe(
+      'Open localhost:5173 in the browser →'
+    );
+  });
+
   test('the label names what the door opens', () => {
     expect(doorLabel({})).toBe('Show in tasks →');
     expect(doorLabel({ preset: 'ready' })).toBe('Show Ready in tasks →');

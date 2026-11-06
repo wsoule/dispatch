@@ -336,6 +336,7 @@ describe('overseer tool sets', () => {
       'open_questions',
       'pending_approvals',
       'read_conversation',
+      'show_page',
       'show_tasks',
       'task_details',
     ]);
@@ -1546,6 +1547,19 @@ describe('the agent reaches into Tasks', () => {
     expect(() =>
       h.registry.callStatusTool('show_tasks', { milestoneId: task.meta.id })
     ).toThrow('not a milestone');
+  });
+
+  it('show_page leaves a door to an http(s) page and refuses anything else', () => {
+    const h = makeHarness();
+    expect(
+      h.registry.callStatusTool('show_page', { url: 'http://localhost:5173' })
+    ).toMatchObject({ door: { url: 'http://localhost:5173/' } });
+    expect(() =>
+      h.registry.callStatusTool('show_page', { url: 'file:///etc/passwd' })
+    ).toThrow('not an http(s) page');
+    expect(() =>
+      h.registry.callStatusTool('show_page', { url: 'localhost' })
+    ).toThrow('not a URL');
   });
 
   it('task_details fences the body as data', () => {

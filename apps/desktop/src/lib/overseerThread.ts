@@ -7,6 +7,7 @@ import type {
   OverseerRecord,
 } from '@dispatch/client';
 
+import { normalizeBrowserUrl } from './browserPane';
 import { TASKS_PRESETS, type TasksPreset } from './tasksPresets';
 
 // One rendered row of a overseer conversation, flattened from the record's
@@ -78,11 +79,12 @@ export type OverseerThreadItem =
 /** A tool call's chip: still running, ended, or failed. */
 export type ToolCallState = 'running' | 'done' | 'failed';
 
-/** Where a show_tasks door opens Tasks. */
+/** Where a show_tasks door opens Tasks, or the page a show_page door opens in the browser pane. */
 export interface OverseerDoor {
   preset?: TasksPreset;
   taskId?: string;
   milestoneId?: string;
+  url?: string;
 }
 
 // The door a show_tasks result recorded, or null for an error or a shape this build does not know.
@@ -95,7 +97,11 @@ function doorOf(text: string): OverseerDoor | null {
   }
   const door = (parsed as { door?: unknown } | null)?.door;
   if (typeof door !== 'object' || door === null) return null;
-  const { preset, taskId, milestoneId } = door as Record<string, unknown>;
+  const { preset, taskId, milestoneId, url } = door as Record<string, unknown>;
+  if (typeof url === 'string') {
+    const page = normalizeBrowserUrl(url);
+    return page === null ? null : { url: page };
+  }
   const presets: readonly string[] = TASKS_PRESETS.map((p) => p.id);
   return {
     ...(typeof preset === 'string' && presets.includes(preset)
@@ -108,6 +114,9 @@ function doorOf(text: string): OverseerDoor | null {
 
 /** The door's button text. */
 export function doorLabel(door: OverseerDoor): string {
+  if (door.url !== undefined) {
+    return `Open ${new URL(door.url).host} in the browser →`;
+  }
   const target =
     door.taskId ??
     door.milestoneId ??
@@ -276,7 +285,10 @@ function buildRow(
       at: message.at,
     };
   }
-  if (message.role === 'tool' && message.tool === 'show_tasks') {
+  if (
+    message.role === 'tool' &&
+    (message.tool === 'show_tasks' || message.tool === 'show_page')
+  ) {
     const door = doorOf(message.text);
     if (door !== null) return { kind: 'door', key, door, at: message.at };
   }

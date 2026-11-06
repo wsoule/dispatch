@@ -714,6 +714,38 @@ const showTasksTool: OverseerStatusTool<z.infer<typeof showTasksInput>> = {
   },
 };
 
+const showPageInput = z.strictObject({
+  url: z
+    .string()
+    .describe(
+      'The http(s) page to open, such as a dev server at http://localhost:5173.'
+    ),
+});
+
+// Leaves a door that opens `url` in the app's browser pane, beside the talk.
+const showPageTool: OverseerStatusTool<z.infer<typeof showPageInput>> = {
+  name: 'show_page',
+  description:
+    'Put an "Open in the browser" door under your answer, opening an http(s) page (a dev server, a preview) in the browser pane beside this conversation. ' +
+    "It never switches the human's view: they open it when they want.",
+  inputSchema: showPageInput,
+  read(_ctx, input) {
+    let url: URL;
+    try {
+      url = new URL(input.url);
+    } catch {
+      throw new OverseerToolError(`not a URL: ${input.url}`);
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new OverseerToolError(`not an http(s) page: ${input.url}`);
+    }
+    return {
+      door: { url: url.href },
+      note: 'An "Open in the browser" door is under your answer. The human\'s view did not change.',
+    };
+  },
+};
+
 const taskDetailsInput = z.strictObject({
   taskId: z.string().describe('The task (t-…) to read.'),
 });
@@ -879,6 +911,7 @@ export const OVERSEER_STATUS_TOOLS: readonly OverseerStatusTool[] = [
   docListTool,
   docReadTool,
   showTasksTool,
+  showPageTool,
   taskDetailsTool,
   milestoneStatusTool,
   readConversationTool,
