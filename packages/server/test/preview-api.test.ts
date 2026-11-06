@@ -120,3 +120,12 @@ it('the proxy path does not fall through to the API router', async () => {
   expect(res.status).toBe(404);
   expect(await res.text()).toBe('no preview for this run');
 });
+
+it('the proxy pins what it serves to an opaque origin', async () => {
+  // Whatever frame navigates here, agent code must not run as the daemon.
+  const res = await rawFetch(`${baseUrl}/preview/r-nothing/`);
+
+  expect(res.headers.get('content-security-policy')).toBe(
+    'sandbox allow-scripts allow-forms allow-popups'
+  );
+});
