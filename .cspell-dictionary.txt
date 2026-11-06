@@ -231,6 +231,7 @@ hbrevn
 hcaret
 headerless
 headlessly
+healthcheck
 healthz
 hexdigit
 HIDEABLE

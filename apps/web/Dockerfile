@@ -13,7 +13,7 @@ COPY . .
 # Only the service and what it imports at runtime: `--filter-prod` follows
 # dependencies, not devDependencies (the tests' @dispatch-foo/mcp would pull in
 # the whole daemon). --ignore-scripts skips the root `prepare` (moon's git hooks:
-# no .git and no moon here) and astro's native postinstalls, which this
+# no .git and no moon here) and astro's native postinstall scripts, which this
 # service never loads.
 RUN pnpm install --frozen-lockfile --ignore-scripts --filter-prod "@dispatch/web..."
 RUN pnpm --filter-prod "@dispatch/web^..." run build
@@ -27,7 +27,7 @@ ENV NODE_ENV=production \
 COPY --from=build /app /app
 COPY apps/web/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN mkdir -p /data && chown bun:bun /data
-# Railway bans VOLUME in Dockerfiles; the volume is attached to the service at
+# Railway bans VOLUME in a Dockerfile; the volume is attached to the service at
 # /data. The entrypoint hands it to the `bun` user and drops root.
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s CMD bun -e "fetch('http://127.0.0.1:' + (process.env.PORT ?? 8080) + '/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
