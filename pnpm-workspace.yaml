@@ -110,6 +110,12 @@ catalog:
   '@happy-dom/global-registrator': '20.11.1'
   '@modelcontextprotocol/sdk': '1.29.0'
   '@moonrepo/cli': '2.5.4'
+  # @dispatch/remote's end-to-end encryption between a phone and its daemon:
+  # X25519, ChaCha20-Poly1305 and HKDF in pure JS, so the same code runs in
+  # Bun and in the iOS app's Hermes runtime (no node:crypto there).
+  '@noble/ciphers': '2.4.0'
+  '@noble/curves': '2.4.0'
+  '@noble/hashes': '2.4.0'
   '@pierre/diffs': '1.3.1'
   '@pierre/trees': '1.0.0-beta.5'
   '@playwright/test': '1.62.0'

@@ -45,6 +45,15 @@ catalogs:
     '@moonrepo/cli':
       specifier: 2.5.4
       version: 2.5.4
+    '@noble/ciphers':
+      specifier: 2.4.0
+      version: 2.4.0
+    '@noble/curves':
+      specifier: 2.4.0
+      version: 2.4.0
+    '@noble/hashes':
+      specifier: 2.4.0
+      version: 2.4.0
     '@pierre/diffs':
       specifier: 1.3.1
       version: 1.3.1
@@ -400,6 +409,25 @@ importers:
         specifier: 'catalog:'
         version: 8.1.4(@types/node@24.13.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0)
 
+  apps/remote-relay:
+    dependencies:
+      '@dispatch/remote':
+        specifier: workspace:*
+        version: link:../../packages/remote
+    devDependencies:
+      '@dispatch-foo/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@dispatch/server':
+        specifier: workspace:*
+        version: link:../../packages/server
+      '@types/bun':
+        specifier: 'catalog:'
+        version: 1.3.12
+      typescript:
+        specifier: 5.9.2
+        version: 5.9.2
+
   apps/site:
     devDependencies:
       '@astrojs/markdown-satteri':
@@ -658,6 +686,28 @@ importers:
         specifier: 5.9.2
         version: 5.9.2
 
+  packages/remote:
+    dependencies:
+      '@noble/ciphers':
+        specifier: 'catalog:'
+        version: 2.4.0
+      '@noble/curves':
+        specifier: 'catalog:'
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 'catalog:'
+        version: 2.4.0
+    devDependencies:
+      '@types/bun':
+        specifier: 'catalog:'
+        version: 1.3.12
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.15.11(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(@typescript/native-preview@7.0.0-dev.20260128.1)(oxc-resolver@11.24.2)(typescript@5.9.2)
+      typescript:
+        specifier: 5.9.2
+        version: 5.9.2
+
   packages/server:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
@@ -681,6 +731,9 @@ importers:
       '@dispatch/memory':
         specifier: workspace:*
         version: link:../memory
+      '@dispatch/remote':
+        specifier: workspace:*
+        version: link:../remote
       '@typesafe-ai/sdk':
         specifier: 'catalog:'
         version: 0.6.0
@@ -1728,6 +1781,18 @@ packages:
     peerDependencies:
       '@emnapi/core': ^1.7.1 || ^2.0.0-alpha.4
       '@emnapi/runtime': ^1.7.1 || ^2.0.0-alpha.4
+
+  '@noble/ciphers@2.4.0':
+    resolution: {integrity: sha512-AnjFn0Jv92laAkvMrghlFZq4qQCIN/4DxFV/eooqtC2YTjB7kBeLMS2T9KJX4Dn+ZVXLOwK0lSgqDtx9gvxtiw==}
+    engines: {node: '>= 20.19.0'}
+
+  '@noble/curves@2.4.0':
+    resolution: {integrity: sha512-P4/62zrgfH33CneE3Dn4WhJVA22YUU0eR51wKIan4NVRvwsA0YnPTwWGpNbpuacSujmSFLvyzpyuR30+fbq2Ew==}
+    engines: {node: '>= 20.19.0'}
+
+  '@noble/hashes@2.4.0':
+    resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
+    engines: {node: '>= 20.19.0'}
 
   '@nodelib/fs.scandir@2.1.5':
     resolution: {integrity: sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g==}
@@ -5988,6 +6053,14 @@ snapshots:
       '@emnapi/runtime': 1.11.3
       '@tybys/wasm-util': 0.10.3
     optional: true
+
+  '@noble/ciphers@2.4.0': {}
+
+  '@noble/curves@2.4.0':
+    dependencies:
+      '@noble/hashes': 2.4.0
+
+  '@noble/hashes@2.4.0': {}
 
   '@nodelib/fs.scandir@2.1.5':
     dependencies:
