@@ -5,6 +5,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
+import { urlFromParams } from '../src/pairing';
 import { useRemote } from '../src/remote';
 import { Body, Button, Card, Row, Title, usePalette } from '../src/ui';
 
@@ -12,20 +13,6 @@ import { Body, Button, Card, Row, Title, usePalette } from '../src/ui';
 // it, and nothing is trusted until the person taps Pair. A link opened from
 // the system camera lands here too, with the same confirm step, so a link
 // sent by someone else can never pair this phone on its own.
-
-const PARAMS = ['v', 'r', 'd', 'k', 'o', 'c', 'n'] as const;
-
-/** The pairing URL rebuilt from a deep link's query parameters. */
-function urlFromParams(
-  params: Partial<Record<string, string | string[]>>
-): string | null {
-  const query = new URLSearchParams();
-  for (const name of PARAMS) {
-    const value = params[name];
-    if (typeof value === 'string') query.set(name, value);
-  }
-  return query.has('c') ? `dispatch-remote://pair?${query.toString()}` : null;
-}
 
 export default function PairScreen() {
   const { pair, paired } = useRemote();
