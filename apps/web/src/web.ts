@@ -15,6 +15,7 @@ import {
   teamPage,
 } from './pages.js';
 import type { LiveSession } from './pages.js';
+import type { GrantTokens, LinearGrants } from './planner/grants.js';
 
 // The browser side of the team service (GitHub and Linear sign-in, account
 // linking, teams, invites, the device approval page) and the device-code API an
@@ -40,6 +41,9 @@ export interface WebDeps {
   linear?: TeamLinear;
   /** Called when a device is signed out, so its connection drops. */
   deviceRevoked?: (deviceId: string, teamId: string) => void;
+  /** People's Linear read grants, for the hosted planner; absent when the
+   * server cannot seal them. */
+  grants?: LinearGrants;
   /** GitHub's and Linear's endpoints, swappable in tests. */
   fetch?: typeof fetch;
 }
@@ -50,9 +54,10 @@ const LINEAR_STATE_COOKIE = 'dt_oauth_linear';
 const LINEAR_AUTHORIZE = 'https://linear.app/oauth/authorize';
 const LINEAR_API = 'https://api.linear.app';
 
-// What an OAuth round trip is for: signing in, or adding the provider to the
-// account already signed in (only ever started from a form on /account).
-type OAuthMode = 'signin' | 'link';
+// What an OAuth round trip is for: signing in, adding the provider to the
+// account signed in (only ever started from a form on /account), or opening a
+// Linear workspace in the hosted planner (which keeps a read grant).
+type OAuthMode = 'signin' | 'link' | 'workspace';
 
 function cookies(req: Request): Map<string, string> {
   const out = new Map<string, string>();
@@ -282,12 +287,18 @@ export function webHandler(
     return { id: gh.id, login: gh.login, name: gh.name ?? null };
   }
 
-  // Trades the code for a token, reads who it belongs to, then revokes it:
-  // sign-in needs only the identity, so no Linear token is kept.
-  async function linearIdentity(
+  // Trades the code for a token and reads who and which workspace it belongs
+  // to. A sign-in needs only the identity, so the token is revoked unless
+  // `keep` (opening a workspace, where it becomes the person's read grant).
+  async function linearAuthorize(
     code: string,
-    verifier: string
-  ): Promise<{ id: string; displayName: string; name: string | null }> {
+    verifier: string,
+    keep: boolean
+  ): Promise<{
+    viewer: { id: string; displayName: string; name: string | null };
+    organization: { id: string; name: string; urlKey: string } | null;
+    tokens: GrantTokens;
+  }> {
     const tokenRes = await github(`${LINEAR_API}/oauth/token`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -299,32 +310,88 @@ export function webHandler(
         code_verifier: verifier,
       }).toString(),
     });
-    const { access_token } = (await tokenRes.json()) as {
+    const token = (await tokenRes.json()) as {
       access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
     };
-    if (access_token === undefined) throw new Error('no access token');
-    const auth = { authorization: `Bearer ${access_token}` };
+    if (token.access_token === undefined) throw new Error('no access token');
+    const auth = { authorization: `Bearer ${token.access_token}` };
+    let kept = false;
     try {
       const res = await github(`${LINEAR_API}/graphql`, {
         method: 'POST',
         headers: { ...auth, 'content-type': 'application/json' },
-        body: JSON.stringify({ query: '{ viewer { id name displayName } }' }),
+        body: JSON.stringify({
+          query:
+            '{ viewer { id name displayName } organization { id name urlKey } }',
+        }),
       });
       const { data } = (await res.json()) as {
         data?: {
           viewer?: { id?: string; name?: string | null; displayName?: string };
+          organization?: { id?: string; name?: string; urlKey?: string };
         };
       };
       const v = data?.viewer;
       if (typeof v?.id !== 'string' || typeof v.displayName !== 'string')
         throw new Error('no Linear user');
-      return { id: v.id, displayName: v.displayName, name: v.name ?? null };
+      const o = data?.organization;
+      const organization =
+        typeof o?.id === 'string' &&
+        typeof o.name === 'string' &&
+        typeof o.urlKey === 'string' &&
+        /^[a-z0-9-]{1,64}$/.test(o.urlKey)
+          ? { id: o.id, name: o.name, urlKey: o.urlKey }
+          : null;
+      kept = keep && organization !== null;
+      return {
+        viewer: { id: v.id, displayName: v.displayName, name: v.name ?? null },
+        organization,
+        tokens: {
+          accessToken: token.access_token,
+          refreshToken: token.refresh_token ?? null,
+          expiresAt:
+            typeof token.expires_in === 'number'
+              ? Date.now() + token.expires_in * 1000
+              : null,
+        },
+      };
     } finally {
-      await github(`${LINEAR_API}/oauth/revoke`, {
-        method: 'POST',
-        headers: auth,
-      }).catch(() => undefined);
+      if (!kept)
+        await github(`${LINEAR_API}/oauth/revoke`, {
+          method: 'POST',
+          headers: auth,
+        }).catch(() => undefined);
     }
+  }
+
+  // Finishes "Open a Linear workspace": keeps the read grant for the account
+  // signed in, or signs the Linear user in first, then opens the planner. The
+  // Linear identity joins a signed-in account when no other account holds it.
+  function openWorkspace(
+    req: Request,
+    authorized: Awaited<ReturnType<typeof linearAuthorize>>
+  ): Response {
+    const { viewer, organization, tokens } = authorized;
+    if (organization === null || deps.grants === undefined)
+      return html(
+        messagePage(
+          null,
+          'Could not open the workspace',
+          'Linear did not name a workspace. Try again.'
+        ),
+        502
+      );
+    const current = signedIn(req);
+    const user =
+      current ??
+      db.upsertLinearUser(viewer.id, viewer.displayName, viewer.name);
+    if (current !== null && !db.identities(current.id).linear)
+      db.linkIdentity(current.id, { provider: 'linear', id: viewer.id });
+    deps.grants.save(user.id, organization, viewer.id, tokens);
+    const to = `/w/${organization.urlKey}/`;
+    return current === null ? signIn(user, to) : redirect(to);
   }
 
   // Finishes a link flow: the identity joins the account signed in now. A flow
@@ -410,6 +477,18 @@ export function webHandler(
     // ---- sign-in ----
     if (path === '/auth/github' && method === 'GET')
       return startGithub(safeNext(url.searchParams.get('next')), 'signin');
+    if (path === '/auth/linear/workspace' && method === 'GET') {
+      if (deps.grants === undefined)
+        return html(
+          messagePage(
+            null,
+            'Workspaces are not set up',
+            'This server cannot hold Linear grants: it has no TEAM_SECRET or no Linear app.'
+          ),
+          503
+        );
+      return startLinear('/', 'workspace');
+    }
     if (path === '/auth/linear' && method === 'GET')
       return startLinear(safeNext(url.searchParams.get('next')), 'signin');
     if (
@@ -465,9 +544,13 @@ export function webHandler(
         !stateMatches(state, url.searchParams.get('state'))
       )
         return expired();
-      let viewer: { id: string; displayName: string; name: string | null };
+      let authorized: Awaited<ReturnType<typeof linearAuthorize>>;
       try {
-        viewer = await linearIdentity(code, verifier);
+        authorized = await linearAuthorize(
+          code,
+          verifier,
+          mode === 'workspace'
+        );
       } catch {
         return html(
           messagePage(
@@ -478,8 +561,10 @@ export function webHandler(
           502
         );
       }
+      const { viewer } = authorized;
       if (mode === 'link')
         return link(req, { provider: 'linear', id: viewer.id }, 'Linear');
+      if (mode === 'workspace') return openWorkspace(req, authorized);
       return signIn(
         db.upsertLinearUser(viewer.id, viewer.displayName, viewer.name),
         safeNext(next ?? null)
@@ -542,7 +627,12 @@ export function webHandler(
       // One team: that is where you are going.
       if (teams.length === 1 && url.searchParams.get('all') === null)
         return redirect(`/teams/${teams[0]?.id ?? ''}`);
-      return html(homePage(user, teams));
+      return html(
+        homePage(user, teams, {
+          workspaces: deps.grants?.workspacesOf(user.id) ?? [],
+          canOpen: deps.grants !== undefined,
+        })
+      );
     }
     if (path === '/teams' && method === 'POST') {
       const name = ((await form(req)).get('name') ?? '').trim().slice(0, 80);

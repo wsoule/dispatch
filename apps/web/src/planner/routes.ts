@@ -3,9 +3,8 @@ import { existsSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 
 import { plannerResponse } from './api.js';
-import { createShowcaseWorkspace } from './linear/showcase.js';
+import { GrantGone } from './grants.js';
 import type { DaemonModel } from './toDispatch.js';
-import { toDispatch } from './toDispatch.js';
 
 // The hosted planner's HTTP surface. `/w/<key>/` serves the desktop's own
 // bundle with a connection injected (as apps/demo does), pointing its daemon
@@ -16,9 +15,12 @@ import { toDispatch } from './toDispatch.js';
 /** Where a workspace's data comes from, and who may open it. */
 export interface WorkspaceSource {
   name: string;
-  /** The person ref the viewer appears as, or null when they may not open it. */
-  viewerFor(userId: string | null): string | null;
-  load(): Promise<DaemonModel>;
+  /** Who a signed-in user (or nobody) is in this workspace; null when they
+   * may not open it. */
+  viewerFor(userId: string | null): { linearUserId: string | null } | null;
+  /** The workspace as this user may see it (Linear shows each person only
+   * the teams they belong to). */
+  load(userId: string | null): Promise<DaemonModel>;
 }
 
 export interface PlannerDeps {
@@ -36,20 +38,6 @@ const VIEW_TOKEN_MS = 12 * 3_600_000;
 const MAX_VIEW_TOKENS = 10_000;
 const CACHE_MS = 60_000;
 const BUNDLE_ROOT_FILES = new Set(['/favicon.svg', '/icons.svg']);
-
-/** The public demo workspace: Better Tracker's showcase, dated to today. */
-export function demoWorkspace(now: () => number = Date.now): WorkspaceSource {
-  return {
-    name: 'Northwind (demo)',
-    viewerFor: () => 'human:guest',
-    load: () => {
-      const iso = new Date(now()).toISOString();
-      return Promise.resolve(
-        toDispatch(createShowcaseWorkspace(iso.slice(0, 10)), iso)
-      );
-    },
-  };
-}
 
 function json(body: unknown, status: number): Response {
   return Response.json(body, {
@@ -93,32 +81,55 @@ export function plannerHandler(deps: PlannerDeps): Planner {
   const now = deps.now ?? Date.now;
   const tokens = new Map<
     string,
-    { key: string; viewer: string; expires: number }
+    {
+      key: string;
+      userId: string | null;
+      linearUserId: string | null;
+      expires: number;
+    }
   >();
   const cache = new Map<string, { at: number; model: Promise<DaemonModel> }>();
 
-  function mint(key: string, viewer: string): string {
+  function mint(
+    key: string,
+    userId: string | null,
+    linearUserId: string | null
+  ): string {
     const at = now();
     if (tokens.size >= MAX_VIEW_TOKENS)
       for (const [t, v] of tokens) if (v.expires <= at) tokens.delete(t);
     if (tokens.size >= MAX_VIEW_TOKENS)
       tokens.delete(tokens.keys().next().value ?? '');
     const token = randomBytes(24).toString('base64url');
-    tokens.set(token, { key, viewer, expires: at + VIEW_TOKEN_MS });
+    tokens.set(token, {
+      key,
+      userId,
+      linearUserId,
+      expires: at + VIEW_TOKEN_MS,
+    });
     return token;
   }
 
-  // One fetch per workspace a minute, shared by every request in between.
-  function model(key: string, source: WorkspaceSource): Promise<DaemonModel> {
-    const hit = cache.get(key);
+  // One fetch a minute per workspace and person, shared by every request in
+  // between. Per person, because Linear shows each one a different workspace.
+  function model(
+    key: string,
+    userId: string | null,
+    source: WorkspaceSource
+  ): Promise<DaemonModel> {
+    const slot = `${key}\u0000${userId ?? ''}`;
+    const hit = cache.get(slot);
     if (hit !== undefined && now() - hit.at < CACHE_MS) return hit.model;
-    const loading = source.load();
-    cache.set(key, { at: now(), model: loading });
-    loading.catch(() => cache.delete(key));
+    const loading = source.load(userId);
+    cache.set(slot, { at: now(), model: loading });
+    loading.catch(() => cache.delete(slot));
     return loading;
   }
 
-  function valid(key: string, token: string): { viewer: string } | null {
+  function valid(
+    key: string,
+    token: string
+  ): { userId: string | null; linearUserId: string | null } | null {
     const grant = tokens.get(token);
     return grant === undefined || grant.expires <= now() || grant.key !== key
       ? null
@@ -160,17 +171,29 @@ export function plannerHandler(deps: PlannerDeps): Planner {
       if (grant === null || source === null)
         return json({ error: 'Open the planner again to continue.' }, 401);
       try {
-        const data = await model(key, source);
+        const data = await model(key, grant.userId, source);
+        const viewer =
+          data.people.find(
+            (p) => p.external === `linear:${grant.linearUserId ?? ''}`
+          )?.ref ?? 'human:guest';
         return plannerResponse(rest + url.search, req.method, {
           key,
           model: data,
-          viewer: grant.viewer,
+          viewer,
         });
-      } catch {
-        return json(
-          { error: 'Linear did not answer. Try again in a minute.' },
-          502
-        );
+      } catch (err) {
+        return err instanceof GrantGone
+          ? json(
+              {
+                error:
+                  'Your Linear access ended. Open the workspace from app.dispatch.foo again.',
+              },
+              401
+            )
+          : json(
+              { error: 'Linear did not answer. Try again in a minute.' },
+              502
+            );
       }
     }
     if (rest === '/ws')
@@ -179,7 +202,8 @@ export function plannerHandler(deps: PlannerDeps): Planner {
     if (rest !== '/' || req.method !== 'GET') return null;
 
     // A workspace you may not open looks the same as one that does not exist.
-    const viewer = source?.viewerFor(deps.userOf(req)) ?? null;
+    const userId = deps.userOf(req);
+    const viewer = source?.viewerFor(userId) ?? null;
     if (source === null || viewer === null)
       return json({ error: 'No such workspace.' }, 404);
     if (dist === null || !existsSync(join(dist, 'index.html')))
@@ -189,7 +213,7 @@ export function plannerHandler(deps: PlannerDeps): Planner {
       injected(html, {
         baseUrl: `${deps.origin}/w/${key}`,
         root: `/w/${key}`,
-        agentToken: mint(key, viewer),
+        agentToken: mint(key, userId, viewer.linearUserId),
         appToken: null,
         hosted: { workspace: source.name },
       }),

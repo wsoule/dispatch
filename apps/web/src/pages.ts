@@ -108,6 +108,7 @@ export function signInPage(
         ? ` <a class="btn" href="/auth/linear?next=${encodeURIComponent(next)}">Sign in with Linear</a>`
         : ''
     }</p>
+<p class="meta">Or <a href="/w/demo/">try the planner on a demo workspace</a>, no sign-in needed.</p>
 ${devLogin ? `<form method="get" action="/auth/dev" class="inline" style="margin-top:16px"><input name="login" placeholder="dev login"><input type="hidden" name="next" value="${esc(next)}"><button>Dev sign-in</button></form>` : ''}`
   );
 }
@@ -145,9 +146,31 @@ export function accountPage(
   );
 }
 
+/** The hosted planner's part of the home page: your Linear workspaces. */
+export interface PlannerLinks {
+  workspaces: { urlKey: string; name: string }[];
+  /** Whether this server can hold a new Linear grant. */
+  canOpen: boolean;
+}
+
+function plannerBox(planner: PlannerLinks): string {
+  const rows = planner.workspaces
+    .map(
+      (w) =>
+        `<div class="row"><a href="/w/${esc(w.urlKey)}/">${esc(w.name)}</a><span class="meta">Linear</span></div>`
+    )
+    .join('');
+  return `<div class="label">Planner</div><div class="box">${rows}<div class="row"><a href="/w/demo/">Northwind (demo)</a><span class="meta">Try it</span></div>${
+    planner.canOpen
+      ? '<div class="row"><span>Your timeline, projects and dependency graph, from Linear.</span><a class="btn small" href="/auth/linear/workspace">Open a Linear workspace</a></div>'
+      : ''
+  }</div>`;
+}
+
 export function homePage(
   user: User,
-  teams: (Team & { role: string })[]
+  teams: (Team & { role: string })[],
+  planner: PlannerLinks = { workspaces: [], canOpen: false }
 ): string {
   const list =
     teams.length === 0
@@ -166,7 +189,7 @@ export function homePage(
       teams.length === 0
         ? 'Name it, then connect your agents with one command and invite the people you work with. Joining someone else’s team? Open the invite link they sent.'
         : 'Pick a team, or start another.'
-    }</p>${list}
+    }</p>${list}${plannerBox(planner)}
 <div class="label">New team</div><div class="box pad"><form method="post" action="/teams" class="inline"><input name="name" required maxlength="80" placeholder="Team name" autofocus><button class="primary">Create</button></form></div>`
   );
 }

@@ -4,9 +4,11 @@ import { TeamDb } from './db.js';
 import type { Device } from './db.js';
 import type { Connection } from './hub.js';
 import { deviceOfRow, TeamHubs } from './hub.js';
-import { LinearError, linearOp, TeamLinear } from './linear.js';
+import { LinearError, linearOp, Sealer, TeamLinear } from './linear.js';
 import { mcpHandler } from './mcp.js';
-import { demoWorkspace, plannerHandler } from './planner/routes.js';
+import { LinearGrants } from './planner/grants.js';
+import { plannerHandler } from './planner/routes.js';
+import { demoWorkspace, linearWorkspace } from './planner/sources.js';
 import type { WebConfig } from './web.js';
 import { webHandler, webUserOf } from './web.js';
 
@@ -56,8 +58,22 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
     config.origin,
     config.linearFetch
   );
+  // People's Linear read grants need both the seal and the public Linear app.
+  const linearClientId = config.linearClientId ?? null;
+  const grants =
+    config.teamSecret === null ||
+    config.teamSecret === '' ||
+    linearClientId === null
+      ? undefined
+      : new LinearGrants(
+          db.db,
+          new Sealer(config.teamSecret),
+          linearClientId,
+          config.linearFetch
+        );
   const web = webHandler({
     db,
+    ...(grants === undefined ? {} : { grants }),
     config,
     linear,
     sessions: (teamId) => hubs.sessions(teamId),
@@ -76,7 +92,13 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
     origin: config.origin,
     distDir: config.desktopDistDir ?? null,
     userOf: (req) => webUserOf(db, req)?.id ?? null,
-    workspace: (key) => (key === 'demo' ? demo : null),
+    workspace: (key) => {
+      if (key === 'demo') return demo;
+      const org = grants?.workspace(key) ?? null;
+      return org === null || grants === undefined
+        ? null
+        : linearWorkspace(grants, org, config.linearFetch);
+    },
   });
 
   const server = Bun.serve<SocketData>({

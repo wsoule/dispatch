@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { WorkspaceSource } from '../../src/planner/routes.js';
-import { demoWorkspace, plannerHandler } from '../../src/planner/routes.js';
+import { plannerHandler } from '../../src/planner/routes.js';
+import { demoWorkspace } from '../../src/planner/sources.js';
 
 // Who may open which hosted workspace, and what the page and its daemon
 // routes give them.
@@ -17,10 +18,11 @@ const demo = demoWorkspace(() => Date.parse('2026-11-06T12:00:00Z'));
 // A private workspace only user `usr_ada` may open.
 const acme: WorkspaceSource = {
   name: 'Acme',
-  viewerFor: (userId) => (userId === 'usr_ada' ? 'human:ada' : null),
-  load: () => {
+  viewerFor: (userId) =>
+    userId === 'usr_ada' ? { linearUserId: 'user-ana' } : null,
+  load: (userId) => {
     loads++;
-    return demo.load();
+    return demo.load(userId);
   },
 };
 
@@ -97,9 +99,24 @@ describe('hosted planner routes', () => {
     expect((await open(p, 'nope', 'usr_ada')).status).toBe(404);
     const ada = await open(p, 'acme', 'usr_ada');
     expect(ada.status).toBe(200);
-    expect(
-      await (await api(p, 'acme', ada.config!.agentToken))!.json()
-    ).toMatchObject({ ref: 'human:ada' });
+    // The member appears as their own Linear user's person.
+    const who = (await (await api(
+      p,
+      'acme',
+      ada.config!.agentToken
+    ))!.json()) as { ref: string };
+    const people = (await (await api(
+      p,
+      'acme',
+      ada.config!.agentToken,
+      '/api/people'
+    ))!.json()) as {
+      people: { ref: string; external: string }[];
+    };
+    expect(who.ref).toBe(
+      people.people.find((x) => x.external === 'linear:user-ana')?.ref ??
+        'missing'
+    );
   });
 
   it("never lets one workspace's token read another's", async () => {

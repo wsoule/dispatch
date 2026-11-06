@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createHash } from 'node:crypto';
 
 import { TeamDb } from '../src/db.js';
+import { Sealer } from '../src/linear.js';
+import { LinearGrants } from '../src/planner/grants.js';
 import { webHandler } from '../src/web.js';
 
 // Sign-in with Linear (PKCE on the public "Dispatch" app) and linking GitHub
@@ -12,6 +14,8 @@ let db: TeamDb;
 let handle: (req: Request) => Promise<Response | null>;
 let viewer: { id: string; name: string; displayName: string };
 let ghUser: { id: number; login: string };
+let grants: LinearGrants;
+const ORG = { id: 'org-1', name: 'Acme', urlKey: 'acme' };
 const seen: { url: string; body: string; auth: string | null }[] = [];
 
 const fakeFetch = ((input: string | URL | Request, init?: RequestInit) => {
@@ -21,10 +25,17 @@ const fakeFetch = ((input: string | URL | Request, init?: RequestInit) => {
   seen.push({ url, body, auth });
   if (url === 'https://api.linear.app/oauth/token')
     return Promise.resolve(
-      Response.json({ access_token: 'lin-token', token_type: 'Bearer' })
+      Response.json({
+        access_token: 'lin-token',
+        token_type: 'Bearer',
+        refresh_token: 'lin-refresh',
+        expires_in: 86_399,
+      })
     );
   if (url === 'https://api.linear.app/graphql')
-    return Promise.resolve(Response.json({ data: { viewer } }));
+    return Promise.resolve(
+      Response.json({ data: { viewer, organization: ORG } })
+    );
   if (url === 'https://api.linear.app/oauth/revoke')
     return Promise.resolve(new Response(null, { status: 200 }));
   if (url === 'https://github.com/login/oauth/access_token')
@@ -36,7 +47,14 @@ const fakeFetch = ((input: string | URL | Request, init?: RequestInit) => {
 
 function setup(linearClientId: string | null): void {
   db = new TeamDb(':memory:');
+  grants = new LinearGrants(
+    db.db,
+    new Sealer('secret'),
+    'lin-client',
+    fakeFetch
+  );
   handle = webHandler({
+    grants,
     db,
     config: {
       origin: ORIGIN,
@@ -235,5 +253,58 @@ describe('linking accounts', () => {
       db.identities(db.webSessionUser(session.slice('dt_session='.length))!.id)
         .linear
     ).toBe(false);
+  });
+});
+
+describe('opening a Linear workspace', () => {
+  it('signs a newcomer in with Linear and keeps a sealed read grant', async () => {
+    const start = await call('/auth/linear/workspace');
+    const target = new URL(start.headers.get('location') ?? '');
+    expect(target.searchParams.get('scope')).toBe('read');
+    const done = await complete(start, 'linear');
+    expect(done.status).toBe(303);
+    expect(done.headers.get('location')).toBe('/w/acme/');
+    const session = cookieOf(done);
+    const user = db.webSessionUser(session.slice('dt_session='.length));
+    expect(user?.login).toBe('grace');
+    expect(grants.member(user!.id, 'org-1')).toEqual({
+      linearUserId: 'lin-grace',
+    });
+    expect(await grants.accessToken(user!.id, 'org-1')).toBe('lin-token');
+    // This token is the grant: it is kept, not revoked.
+    expect(
+      seen.some((x) => x.url === 'https://api.linear.app/oauth/revoke')
+    ).toBe(false);
+  });
+
+  it('adds the grant to the account already signed in', async () => {
+    const session = cookieOf(
+      await complete(await call('/auth/github'), 'github')
+    );
+    const done = await complete(
+      await call('/auth/linear/workspace'),
+      'linear',
+      session
+    );
+    expect(done.headers.get('location')).toBe('/w/acme/');
+    const ada = db.webSessionUser(session.slice('dt_session='.length))!;
+    expect(ada.login).toBe('grace-gh');
+    expect(grants.member(ada.id, 'org-1')).toEqual({
+      linearUserId: 'lin-grace',
+    });
+    // Its Linear identity was free, so it joins the account too.
+    expect(db.identities(ada.id)).toEqual({ github: true, linear: true });
+  });
+
+  it('lists your workspaces and the demo on the home page', async () => {
+    const session = cookieOf(
+      await complete(await call('/auth/linear/workspace'), 'linear')
+    );
+    const home = await (
+      await call('/?all=1', { headers: { cookie: session } })
+    ).text();
+    expect(home).toContain('href="/w/acme/"');
+    expect(home).toContain('href="/w/demo/"');
+    expect(home).toContain('href="/auth/linear/workspace"');
   });
 });
