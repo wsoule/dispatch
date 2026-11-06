@@ -169,10 +169,15 @@ export class LinearGrants {
     return body.access_token;
   }
 
-  private forget(userId: string, orgId: string): never {
+  /** Drops a person's grant (Linear stopped honouring it). */
+  revoke(userId: string, orgId: string): void {
     this.db
       .query('DELETE FROM linear_grants WHERE user_id = ? AND org_id = ?')
       .run(userId, orgId);
+  }
+
+  private forget(userId: string, orgId: string): never {
+    this.revoke(userId, orgId);
     throw new GrantGone('Linear revoked this grant');
   }
 }

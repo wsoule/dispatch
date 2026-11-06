@@ -1,4 +1,6 @@
+import { GrantGone } from './grants.js';
 import type { LinearGrants } from './grants.js';
+import { LinearApiError } from './linear/gateway.js';
 import { createLinearGateway } from './linear/linear-gateway.js';
 import { createShowcaseWorkspace } from './linear/showcase.js';
 import type { WorkspaceSource } from './routes.js';
@@ -11,6 +13,7 @@ import { toDispatch } from './toDispatch.js';
 export function demoWorkspace(now: () => number = Date.now): WorkspaceSource {
   return {
     name: 'Northwind (demo)',
+    shared: true,
     viewerFor: () => ({ linearUserId: null }),
     load: () => {
       const iso = new Date(now()).toISOString();
@@ -34,11 +37,20 @@ export function linearWorkspace(
       userId === null ? null : grants.member(userId, org.orgId),
     load: async (userId) => {
       const accessToken = await grants.accessToken(userId ?? '', org.orgId);
-      const data = await createLinearGateway({
-        accessToken,
-        fetch: fetchImpl,
-      }).fetchWorkspace();
-      return toDispatch(data, new Date(now()).toISOString());
+      try {
+        const data = await createLinearGateway({
+          accessToken,
+          fetch: fetchImpl,
+        }).fetchWorkspace();
+        return toDispatch(data, new Date(now()).toISOString());
+      } catch (err) {
+        // Revoked in Linear before it expired: forget it, ask them to reopen.
+        if (err instanceof LinearApiError && err.kind === 'unauthorized') {
+          grants.revoke(userId ?? '', org.orgId);
+          throw new GrantGone('Linear no longer accepts this grant');
+        }
+        throw err;
+      }
     },
   };
 }

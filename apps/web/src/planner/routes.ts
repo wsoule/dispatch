@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 
@@ -21,6 +21,8 @@ export interface WorkspaceSource {
   /** The workspace as this user may see it (Linear shows each person only
    * the teams they belong to). */
   load(userId: string | null): Promise<DaemonModel>;
+  /** Everyone sees the same workspace (the demo), so one copy serves all. */
+  shared?: boolean;
 }
 
 export interface PlannerDeps {
@@ -35,7 +37,6 @@ export interface PlannerDeps {
 }
 
 const VIEW_TOKEN_MS = 12 * 3_600_000;
-const MAX_VIEW_TOKENS = 10_000;
 const CACHE_MS = 60_000;
 const BUNDLE_ROOT_FILES = new Set(['/favicon.svg', '/icons.svg']);
 
@@ -72,68 +73,95 @@ function injected(html: string, config: Record<string, unknown>): string {
 export interface Planner {
   /** Answers the planner's routes; null for any other path. */
   fetch: (req: Request) => Promise<Response | null>;
-  /** Whether `token` may open `/w/<key>/ws`, the live-update socket. The
-   * hosted planner sends no events yet; an open socket stops the app retrying. */
-  watches: (key: string, token: string) => boolean;
+  /** Whether `token` may open `/w/<key>/ws`, the live-update socket, for
+   * this request's session. The hosted planner sends no events yet; an open
+   * socket stops the app retrying. */
+  watches: (key: string, token: string, req: Request) => boolean;
 }
 
 export function plannerHandler(deps: PlannerDeps): Planner {
   const now = deps.now ?? Date.now;
-  const tokens = new Map<
-    string,
-    {
-      key: string;
-      userId: string | null;
-      linearUserId: string | null;
-      expires: number;
-    }
-  >();
   const cache = new Map<string, { at: number; model: Promise<DaemonModel> }>();
+  let swept = 0;
+  // View tokens are signed, not stored: nothing to fill or evict, and they
+  // die with the process (a restarted server asks pages to reopen).
+  const signingKey = randomBytes(32);
+  const sign = (payload: string): string =>
+    createHmac('sha256', signingKey).update(payload).digest('base64url');
 
   function mint(
     key: string,
     userId: string | null,
     linearUserId: string | null
   ): string {
-    const at = now();
-    if (tokens.size >= MAX_VIEW_TOKENS)
-      for (const [t, v] of tokens) if (v.expires <= at) tokens.delete(t);
-    if (tokens.size >= MAX_VIEW_TOKENS)
-      tokens.delete(tokens.keys().next().value ?? '');
-    const token = randomBytes(24).toString('base64url');
-    tokens.set(token, {
-      key,
-      userId,
-      linearUserId,
-      expires: at + VIEW_TOKEN_MS,
-    });
-    return token;
+    const payload = Buffer.from(
+      JSON.stringify({
+        k: key,
+        u: userId,
+        l: linearUserId,
+        e: now() + VIEW_TOKEN_MS,
+      })
+    ).toString('base64url');
+    return `${payload}.${sign(payload)}`;
   }
 
   // One fetch a minute per workspace and person, shared by every request in
-  // between. Per person, because Linear shows each one a different workspace.
+  // between. Per person, because Linear shows each one a different workspace
+  // (a shared source is one copy for all). Stale entries are swept a minute
+  // at a time, so the cache holds only workspaces read in the last minute.
   function model(
     key: string,
     userId: string | null,
     source: WorkspaceSource
   ): Promise<DaemonModel> {
-    const slot = `${key}\u0000${userId ?? ''}`;
+    const at = now();
+    if (at - swept >= CACHE_MS) {
+      swept = at;
+      for (const [slot, entry] of cache)
+        if (at - entry.at >= CACHE_MS) cache.delete(slot);
+    }
+    const slot = source.shared === true ? key : `${key}\u0000${userId ?? ''}`;
     const hit = cache.get(slot);
-    if (hit !== undefined && now() - hit.at < CACHE_MS) return hit.model;
+    if (hit !== undefined && at - hit.at < CACHE_MS) return hit.model;
     const loading = source.load(userId);
-    cache.set(slot, { at: now(), model: loading });
-    loading.catch(() => cache.delete(slot));
+    const entry = { at, model: loading };
+    cache.set(slot, entry);
+    loading.catch(() => {
+      if (cache.get(slot) === entry) cache.delete(slot);
+    });
     return loading;
   }
 
+  // A token is good for its workspace until it expires, and a signed-in
+  // viewer's only while the request carries that same person's session: signing
+  // out ends an open page's reads.
   function valid(
     key: string,
-    token: string
+    token: string,
+    req: Request
   ): { userId: string | null; linearUserId: string | null } | null {
-    const grant = tokens.get(token);
-    return grant === undefined || grant.expires <= now() || grant.key !== key
-      ? null
-      : grant;
+    const [payload, mac] = token.split('.');
+    if (payload === undefined || mac === undefined) return null;
+    const expected = Buffer.from(sign(payload));
+    const given = Buffer.from(mac);
+    if (expected.length !== given.length || !timingSafeEqual(expected, given))
+      return null;
+    let grant: { k?: unknown; u?: unknown; l?: unknown; e?: unknown };
+    try {
+      grant = JSON.parse(
+        Buffer.from(payload, 'base64url').toString('utf8')
+      ) as typeof grant;
+    } catch {
+      return null;
+    }
+    if (grant.k !== key || typeof grant.e !== 'number' || grant.e <= now())
+      return null;
+    const userId = typeof grant.u === 'string' ? grant.u : null;
+    if (userId !== null && deps.userOf(req) !== userId) return null;
+    return {
+      userId,
+      linearUserId: typeof grant.l === 'string' ? grant.l : null,
+    };
   }
 
   const fetch = async (req: Request): Promise<Response | null> => {
@@ -166,7 +194,8 @@ export function plannerHandler(deps: PlannerDeps): Planner {
       const header = req.headers.get('authorization') ?? '';
       const grant = valid(
         key,
-        header.startsWith('Bearer ') ? header.slice(7) : ''
+        header.startsWith('Bearer ') ? header.slice(7) : '',
+        req
       );
       if (grant === null || source === null)
         return json({ error: 'Open the planner again to continue.' }, 401);
@@ -226,5 +255,8 @@ export function plannerHandler(deps: PlannerDeps): Planner {
     );
   };
 
-  return { fetch, watches: (key, token) => valid(key, token) !== null };
+  return {
+    fetch,
+    watches: (key, token, req) => valid(key, token, req) !== null,
+  };
 }

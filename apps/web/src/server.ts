@@ -189,7 +189,11 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
       const watch = /^\/w\/([a-z0-9-]{1,64})\/ws$/.exec(url.pathname);
       if (
         watch !== null &&
-        planner.watches(watch[1] ?? '', url.searchParams.get('token') ?? '')
+        planner.watches(
+          watch[1] ?? '',
+          url.searchParams.get('token') ?? '',
+          req
+        )
       )
         return srv.upgrade(req, { data: { kind: 'planner' } })
           ? undefined

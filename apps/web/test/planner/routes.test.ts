@@ -55,15 +55,21 @@ async function open(p: ReturnType<typeof planner>, key: string, user?: string) {
   };
 }
 
+// A daemon call from the page: its view token, plus the browser's session
+// (as `x-user`, which the test's userOf reads) when someone is signed in.
 function api(
   p: ReturnType<typeof planner>,
   key: string,
   token: string,
-  path = '/api/whoami'
+  path = '/api/whoami',
+  user?: string
 ) {
   return p.fetch(
     new Request(`${ORIGIN}/w/${key}${path}`, {
-      headers: { authorization: `Bearer ${token}` },
+      headers: {
+        authorization: `Bearer ${token}`,
+        ...(user === undefined ? {} : { 'x-user': user }),
+      },
     })
   );
 }
@@ -103,13 +109,16 @@ describe('hosted planner routes', () => {
     const who = (await (await api(
       p,
       'acme',
-      ada.config!.agentToken
+      ada.config!.agentToken,
+      '/api/whoami',
+      'usr_ada'
     ))!.json()) as { ref: string };
     const people = (await (await api(
       p,
       'acme',
       ada.config!.agentToken,
-      '/api/people'
+      '/api/people',
+      'usr_ada'
     ))!.json()) as {
       people: { ref: string; external: string }[];
     };
@@ -124,8 +133,9 @@ describe('hosted planner routes', () => {
     const page = await open(p, 'demo');
     expect((await api(p, 'acme', page.config!.agentToken))!.status).toBe(401);
     expect((await api(p, 'demo', 'made-up'))!.status).toBe(401);
-    expect(p.watches('demo', page.config!.agentToken)).toBe(true);
-    expect(p.watches('acme', page.config!.agentToken)).toBe(false);
+    const req = new Request(`${ORIGIN}/w/demo/ws`);
+    expect(p.watches('demo', page.config!.agentToken, req)).toBe(true);
+    expect(p.watches('acme', page.config!.agentToken, req)).toBe(false);
   });
 
   it('expires view tokens after 12 hours', async () => {
@@ -147,10 +157,10 @@ describe('hosted planner routes', () => {
       '/api/people',
       '/api/linear/links',
     ])
-      expect((await api(p, 'acme', token, path))!.status).toBe(200);
+      expect((await api(p, 'acme', token, path, 'usr_ada'))!.status).toBe(200);
     expect(loads).toBe(1);
     clock.now = 60_001;
-    await api(p, 'acme', token, '/api/tasks');
+    await api(p, 'acme', token, '/api/tasks', 'usr_ada');
     expect(loads).toBe(2);
   });
 
@@ -162,5 +172,45 @@ describe('hosted planner routes', () => {
       await p.fetch(new Request(`${ORIGIN}/assets/%2e%2e/index.html`))
     ).toBeNull();
     expect(await p.fetch(new Request(`${ORIGIN}/teams`))).toBeNull();
+  });
+
+  it('never lets a flood of demo visits sign a member out', async () => {
+    const p = planner();
+    const ada = (await open(p, 'acme', 'usr_ada')).config!.agentToken;
+    for (let i = 0; i < 10_050; i++) await open(p, 'demo');
+    expect((await api(p, 'acme', ada, '/api/whoami', 'usr_ada'))!.status).toBe(
+      200
+    );
+  }, 30_000);
+
+  it('stops a signed-in page reading once its session ends', async () => {
+    const p = planner();
+    const ada = (await open(p, 'acme', 'usr_ada')).config!.agentToken;
+    expect((await api(p, 'acme', ada))!.status).toBe(401);
+    expect((await api(p, 'acme', ada, '/api/whoami', 'usr_eve'))!.status).toBe(
+      401
+    );
+  });
+
+  it('loads a shared workspace once for every visitor', async () => {
+    let shared = 0;
+    const p = plannerHandler({
+      origin: ORIGIN,
+      distDir: dist,
+      userOf: (req) => req.headers.get('x-user'),
+      workspace: () => ({
+        ...demo,
+        shared: true,
+        load: (userId) => {
+          shared++;
+          return demo.load(userId);
+        },
+      }),
+    });
+    const one = (await open(p, 'demo', 'usr_ada')).config!.agentToken;
+    const two = (await open(p, 'demo')).config!.agentToken;
+    await api(p, 'demo', one, '/api/tasks', 'usr_ada');
+    await api(p, 'demo', two, '/api/tasks');
+    expect(shared).toBe(1);
   });
 });
