@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "Dispatch",
+    "slug": "dispatch",
+    "version": "0.1.0",
+    "scheme": "dispatch-remote",
+    "orientation": "portrait",
+    "platforms": ["ios"],
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "foo.dispatch.mobile",
+      "supportsTablet": false,
+      "config": {
+        "usesNonExemptEncryption": false
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Dispatch uses the camera to scan the pairing code your Mac shows.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ]
+    ],
+    "updates": {
+      "enabled": false
+    }
+  }
+}

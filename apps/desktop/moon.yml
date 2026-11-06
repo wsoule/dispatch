@@ -88,6 +88,7 @@ tasks:
       - 'memory:build'
       - 'federation:build'
       - 'a2a:build'
+      - 'remote:build'
     # Cached by everything that changes the compiled binaries: the script,
     # the packages it compiles, and the signing identity plus the
     # entitlements it signs with (a signed run must never hydrate unsigned
@@ -105,6 +106,7 @@ tasks:
       - '/packages/mcp/src/**/*'
       - '/packages/memory/src/**/*'
       - '/packages/protocol/src/**/*'
+      - '/packages/remote/src/**/*'
       - '/packages/server/src/**/*'
       - '/pnpm-lock.yaml'
     outputs:

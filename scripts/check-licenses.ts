@@ -38,6 +38,12 @@ const EXPECTED: Record<string, string> = {
   '@dispatch/sandbox': 'FSL-1.1-ALv2',
   '@dispatch/desktop': 'FSL-1.1-ALv2',
   '@dispatch/site': 'FSL-1.1-ALv2',
+  // The phone link: the protocol both ends speak is open, so anyone can
+  // check what the relay can and cannot read; the relay and the app are the
+  // product's.
+  '@dispatch/remote': 'MIT',
+  '@dispatch/remote-relay': 'FSL-1.1-ALv2',
+  '@dispatch/mobile': 'FSL-1.1-ALv2',
 };
 
 // Folders inside a package under a license of their own — the GitLab `ee/`

@@ -165,6 +165,9 @@ function makeClient(getRun: (id: string) => Promise<RunDetail>): ApiClient {
     switchTransport: () => Promise.reject(new Error('not used')),
     getContentE2e: () => Promise.reject(new Error('not used')),
     enableContentE2e: () => Promise.reject(new Error('not used')),
+    getRemoteAccess: () => Promise.reject(new Error('not used')),
+    pairPhone: () => Promise.reject(new Error('not used')),
+    unpairPhone: () => Promise.reject(new Error('not used')),
   };
 }
 

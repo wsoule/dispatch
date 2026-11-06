@@ -1,0 +1,6 @@
+# Expo and native build output
+.expo/
+expo-env.d.ts
+ios/
+android/
+dist/

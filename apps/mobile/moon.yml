@@ -1,0 +1,14 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+language: 'typescript'
+layer: 'application'
+
+tasks:
+  # The iOS build itself needs Xcode, so CI typechecks the app and bundles
+  # its JavaScript for iOS, which is where a Hermes or Metro problem shows.
+  export:
+    command: 'expo export --platform ios --output-dir dist'
+    deps:
+      - '^:build'
+    options:
+      runInCI: 'skip'

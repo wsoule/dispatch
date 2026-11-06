@@ -52,6 +52,12 @@
       // imports it. Unreferenced here is the point, not dead code.
       "ignore": ["storefront-src/**"]
     },
+    "apps/mobile": {
+      // bun runs test/*.test.ts, but the app has no bun dependency for knip's
+      // bun plugin to notice (its tsconfig is React Native's), so the tests
+      // need naming here.
+      "entry": ["test/**/*.test.ts"]
+    },
     "apps/demo": {
       // daemon.ts is spawned as a subprocess (`bun src/daemon.ts --root ...`)
       // by the manager and by test/daemon.test.ts, never imported — no
