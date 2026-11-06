@@ -34,6 +34,54 @@ export interface OrchestratorConfig {
  *  dispatch dialog can clamp its own input against it. */
 export const MAX_CONCURRENCY_HARD_CAP = 32;
 
+/** The numeric planning tuning fields, by @dispatch/planning's `Tuning`
+ * names (core cannot import that package, so the names are mirrored and the
+ * desktop checks they still match). */
+export const PLANNING_TUNING_NUMBERS = [
+  'warnLeadDays',
+  'paceWindowDays',
+  'stallDays',
+  'overdueRepeatDays',
+  'newBadgeDays',
+  'timelineDaysBack',
+  'timelineDaysAhead',
+] as const;
+
+export type PlanningTuningNumber = (typeof PLANNING_TUNING_NUMBERS)[number];
+
+/** Project statuses the planning may count as active (its ProjectStatusType). */
+export const PLANNING_PROJECT_STATUSES = [
+  'backlog',
+  'planned',
+  'started',
+  'paused',
+  'completed',
+  'canceled',
+] as const;
+
+export type PlanningProjectStatus = (typeof PLANNING_PROJECT_STATUSES)[number];
+
+/**
+ * The `planning:` block: the milestone planner's settings (Better Tracker's
+ * Settings → Schedule and Watchers). `tuning` holds only the fields set, each
+ * overriding the planning's default; `watchers` are `human:<handle>` refs who
+ * hear about every at-risk milestone besides its project's lead.
+ */
+export interface PlanningConfig {
+  tuning: Partial<Record<PlanningTuningNumber, number>> & {
+    activeProjectStatuses?: PlanningProjectStatus[];
+  };
+  watchers: string[];
+  /** Milestone task id → its weight: a heavier milestone sorts first among
+   * milestones due alike (Better Tracker's planner-only weight). */
+  weights: Record<string, number>;
+  /** `daily`: the daemon applies the allocation once a day on its own;
+   * `manual` (default): only when someone presses Apply. */
+  allocation: PlanningAllocationMode;
+}
+
+export type PlanningAllocationMode = 'manual' | 'daily';
+
 export interface RepoDigestConfig {
   /** False stops all generation; the cache still serves what is on disk. */
   enabled: boolean;
@@ -204,6 +252,8 @@ export interface DispatchConfig {
   verify?: VerifyConfig;
   carto: CartoConfig;
   repoDigest: RepoDigestConfig;
+  /** The milestone planner's settings; absent means the planning defaults. */
+  planning?: PlanningConfig;
   notifications: NotificationsConfig;
   messaging: MessagingConfig;
   /** Optional only so hand-built fixtures stay valid; `loadConfig` always
@@ -874,6 +924,16 @@ export interface ConfigPatch {
   remotes?: Record<string, RemoteConfig | null>;
   carto?: { enabled?: CartoMode };
   repoDigest?: { enabled?: boolean; cooldownHours?: number | null };
+  /** Field by field; null clears a field back to the planning's default. */
+  planning?: {
+    tuning?: Partial<Record<PlanningTuningNumber, number | null>> & {
+      activeProjectStatuses?: PlanningProjectStatus[] | null;
+    };
+    watchers?: string[] | null;
+    /** Per milestone; null clears one milestone's weight. */
+    weights?: Record<string, number | null>;
+    allocation?: PlanningAllocationMode | null;
+  };
   receipts?: {
     enabled?: boolean;
     dir?: string | null;
