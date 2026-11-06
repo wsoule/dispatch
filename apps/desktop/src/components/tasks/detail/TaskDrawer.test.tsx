@@ -528,6 +528,29 @@ describe('the planning sections of a container', () => {
     expect(within(open).getByText('Ready, unassigned')).toBeTruthy();
   });
 
+  test('a milestone shows its "Done means…" outcome and rewrites that line on save', async () => {
+    const log = newLog();
+    mountContainer('ms-1', log);
+    const dialog = screen.getByRole('dialog', { name: 'Beta' });
+    const section = within(dialog).getByRole('region', { name: 'Milestone' });
+    await waitFor(() =>
+      expect(within(section).getByText('it ships.')).toBeTruthy()
+    );
+    await settle(() =>
+      fireEvent.click(within(section).getByRole('button', { name: /^Edit/ }))
+    );
+    const field = within(section).getByRole('textbox', { name: 'Done means' });
+    fireEvent.change(field, { target: { value: 'a guest can pay' } });
+    await settled(() =>
+      fireEvent.click(within(section).getByRole('button', { name: 'Save' }))
+    );
+    await waitFor(() => expect(log.updates).toHaveLength(1));
+    expect(JSON.stringify(log.updates[0])).toContain(
+      'Done means: a guest can pay'
+    );
+    expect(JSON.stringify(log.updates[0])).not.toContain('it ships');
+  });
+
   test('a project gets its milestones, marked by the next one', () => {
     const log = newLog();
     mountContainer('p-1', log);

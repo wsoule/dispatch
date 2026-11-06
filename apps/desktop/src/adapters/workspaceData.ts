@@ -123,6 +123,9 @@ export interface WorkspaceDataInput {
   >;
   /** Where a task opens (`taskHref`): the issue's and project's `url`. */
   hrefFor: (taskId: string) => string;
+  /** Milestone bodies fetched beside the body-less list (useMilestoneBodies),
+   * for the rubric's "Done means…" line. */
+  bodies?: ReadonlyMap<string, string>;
 }
 
 /** The containers above a task, nearest of each kind; null where none. */
@@ -219,11 +222,19 @@ function assigneeId(assignee: string | null | undefined): string | null {
     : assignee;
 }
 
-/** The body's `## Description` section, for the rubric's "Done means…" line;
- * '' for a list item (no body) or a body without one. */
-function descriptionOf(doc: TaskListItem): string {
-  if (!('body' in doc) || typeof doc.body !== 'string') return '';
-  return parseTaskSections(doc.body).get('Description') ?? '';
+/** The body's `## Description` section, for the rubric's "Done means…" line:
+ * the doc's own body, else one fetched beside the list; '' when neither has
+ * one. */
+function descriptionOf(
+  doc: TaskListItem,
+  bodies: ReadonlyMap<string, string> | undefined
+): string {
+  const body =
+    'body' in doc && typeof doc.body === 'string'
+      ? doc.body
+      : bodies?.get(doc.meta.id);
+  if (body === undefined) return '';
+  return parseTaskSections(body).get('Description') ?? '';
 }
 
 /**
@@ -358,7 +369,7 @@ export function buildWorkspaceData(input: WorkspaceDataInput): WorkspaceData {
           id: meta.id,
           projectId: '',
           name: meta.title,
-          description: descriptionOf(doc),
+          description: descriptionOf(doc, input.bodies),
           targetDate: calendarDate(meta.dueDate),
           sortOrder: milestones.length,
         });
