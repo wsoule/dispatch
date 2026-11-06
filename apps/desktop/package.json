@@ -34,6 +34,7 @@
     "@tauri-apps/plugin-process": "catalog:",
     "@tauri-apps/plugin-updater": "catalog:",
     "dompurify": "catalog:",
+    "elkjs": "catalog:",
     "katex": "catalog:",
     "lucide-react": "catalog:",
     "pele": "catalog:",

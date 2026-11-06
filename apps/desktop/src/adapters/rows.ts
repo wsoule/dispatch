@@ -158,10 +158,9 @@ const BUCKET_CHIP: Partial<Record<TaskBucket, TaskChipData>> = {
 /**
  * The overlay chip of a bucket, or none. The working bucket also covers a
  * started status with no run (a person moved it): "Agent working" is only
- * claimed over a live run, the state glyph says "Working" either way. The
- * one table for the list's rows and the graph's boxes (graphOverlay.ts).
+ * claimed over a live run, the state glyph says "Working" either way.
  */
-export function bucketChip(
+function bucketChip(
   bucket: TaskBucket | null,
   live: RunState | undefined
 ): TaskChipData | undefined {
@@ -180,7 +179,7 @@ const RUN_STATE_CHIP: Partial<Record<RunState, string>> = {
 
 /** A live run's state as a quiet word, where it says more than the bucket
  * chip does ("Provisioning", "Awaiting approval"); none for `running`. */
-export function liveRunWord(live: RunState | undefined): string | undefined {
+function liveRunWord(live: RunState | undefined): string | undefined {
   return live === undefined ? undefined : RUN_STATE_CHIP[live];
 }
 

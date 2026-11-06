@@ -4,9 +4,9 @@ import { APP_TOKEN } from './paths';
 import { navLink, openDestination, waitForShell } from './shell';
 
 // The Graph destination end to end: the sidebar row opens the dependency
-// graph at the workspace's milestone level, the level tabs switch the scope,
-// a fixture milestone is a box, and a second press on a locked box
-// quick-looks its task in the drawer.
+// chart on the fixture's milestones, the view switch draws the tasks, a click
+// on a task traces it and fills the inspector, and Open task quick-looks it
+// in the drawer.
 
 // global-setup.ts resolves the daemon's per-run token before any test worker
 // starts and hands it over via the environment.
@@ -28,7 +28,7 @@ function authedUrl(baseURL: string | undefined): string {
   return `${baseURL}&token=${requireToken()}&appToken=${APP_TOKEN}`;
 }
 
-test('the Graph draws the fixture’s milestones, switches level and quick-looks a box', async ({
+test('the Graph charts the fixture’s milestones, traces a task and quick-looks it', async ({
   page,
   baseURL,
 }, testInfo) => {
@@ -42,44 +42,31 @@ test('the Graph draws the fixture’s milestones, switches level and quick-looks
     view.getByRole('heading', { level: 1, name: 'Dependencies' })
   ).toBeVisible();
 
-  // The drawing's summary, and the fixture's milestones as milestone boxes (every
-  // box opens a task, so each is a button).
+  // The fixture's milestones as cards on the milestone map.
   await expect(
-    view.getByRole('img', { name: /^Milestone dependency graph/ })
+    view.getByRole('group', { name: 'Milestone map' })
   ).toBeVisible();
-  const checkout = view.getByRole('button', { name: /^Checkout rewrite\b/ });
-  await expect(checkout).toBeVisible();
   await expect(
-    view.getByRole('button', { name: /^Search relevance\b/ })
+    view.getByRole('button', { name: /Checkout rewrite, / })
   ).toBeVisible();
 
-  // The level tabs: Issues draws the tasks instead.
-  const tabs = view.getByRole('navigation', { name: 'Graph level' });
-  await expect(tabs.getByRole('link', { name: 'Milestones' })).toHaveAttribute(
-    'aria-current',
-    'page'
-  );
-  await tabs.getByRole('link', { name: 'Issues' }).click();
+  // The view switch draws the tasks; a click traces one and the inspector
+  // names it.
+  await view.getByRole('radio', { name: 'Tasks' }).click();
   await expect(
-    view.getByRole('img', { name: /^Issue dependency graph/ })
+    view.getByRole('group', { name: 'Task dependencies' })
   ).toBeVisible();
-  await expect(
-    view.getByRole('button', { name: /^Persist the cart across devices\b/ })
-  ).toBeVisible();
-  await view
-    .getByRole('navigation', { name: 'Graph level' })
-    .getByRole('link', { name: 'Milestones' })
-    .click();
-
-  // Enter locks the box (its action strip appears); Enter again opens it:
-  // the task drawer, closed by Escape.
-  await checkout.focus();
-  await page.keyboard.press('Enter');
-  await expect(checkout).toHaveAttribute('aria-pressed', 'true');
-  await page.keyboard.press('Enter');
-  const drawer = page.getByRole('dialog', { name: 'Checkout rewrite' });
+  const cart = view.getByRole('button', {
+    name: /Persist the cart across devices, /,
+  });
+  await cart.click();
+  await expect(cart).toHaveAttribute('aria-current', 'true');
+  const inspector = view.getByTestId('chart-inspector');
+  await inspector.getByRole('button', { name: 'Open task' }).click();
+  const drawer = page.getByRole('dialog', {
+    name: 'Persist the cart across devices',
+  });
   await expect(drawer).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(drawer).toHaveCount(0);
-  await expect(checkout).toBeVisible();
 });

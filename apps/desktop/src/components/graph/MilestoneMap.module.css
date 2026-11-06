@@ -1,0 +1,122 @@
+/* The Graph view's dependency chart (MilestoneMap.tsx): one dense toolbar
+   (the view switch, Find, the highlight chips, then the summary, Display,
+   the inspector toggle and the Mermaid copy), and under it the canvas with
+   the inspector beside it when the chart is wide enough, under it when not.
+   Controls and type come from @dispatch/ui; this sheet places them. */
+
+.root {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: clip;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  container: chart / inline-size;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-height: 44px;
+  padding: 6px 8px 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.find {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.presets {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.count {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.summary {
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.display {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-1) 0;
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.empty {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  min-height: 0;
+  padding: var(--s-6);
+}
+
+.emptyActions {
+  display: inline-flex;
+  gap: var(--s-2);
+}
+
+.tooLarge {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--s-4);
+  overflow: auto;
+}
+
+.inspector {
+  flex-shrink: 0;
+  max-height: 42%;
+  padding: var(--s-4);
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+}
+
+@container chart (min-width: 880px) {
+  .body {
+    flex-direction: row;
+  }
+
+  .inspector {
+    width: 320px;
+    max-height: none;
+    border-top: 0;
+    border-left: 1px solid var(--border);
+  }
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

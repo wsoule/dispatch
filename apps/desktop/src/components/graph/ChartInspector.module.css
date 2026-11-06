@@ -1,0 +1,191 @@
+/* The dependency chart's inspector (ChartInspector.tsx): a kicker, a title
+   and its chips, the actions, then sections of 26px task rows (quiet library
+   Buttons). Dense on purpose: it sits in a 320px column beside the canvas. */
+
+.frame {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.kicker {
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  line-height: 1.35;
+  text-wrap: balance;
+}
+
+.titleId {
+  font-family: var(--font-mono);
+  font-weight: var(--fw-regular);
+  color: var(--text-3);
+}
+
+.meta,
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.meta {
+  margin-top: 6px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: var(--lh);
+  color: var(--text-3);
+}
+
+.list,
+.pairs {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pairs {
+  padding-left: var(--s-2);
+}
+
+.link {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* A row with nothing to pick: the same line as a button row. */
+.row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  font-size: var(--fs-xs);
+}
+
+.rowIconGap {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 12px;
+}
+
+.rowBody {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  font-size: var(--fs-xs);
+}
+
+.rowId {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  color: var(--text-3);
+}
+
+.rowTitle,
+.linkTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.rowTitle[data-missing] {
+  color: var(--text-3);
+}
+
+.linkTitle {
+  font-weight: var(--fw-medium);
+}
+
+.rowNote {
+  flex-shrink: 0;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- overview ------------------------------------------------------------- */
+
+.howTo {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  line-height: 18px;
+  color: var(--text-2);
+}
+
+.howTo p {
+  margin: 0;
+}
+
+.up {
+  font-weight: var(--fw-semibold);
+  color: var(--amber);
+}
+
+.down {
+  font-weight: var(--fw-semibold);
+  color: var(--teal);
+}
+
+.keys {
+  color: var(--text-3);
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s-2) var(--s-3);
+  margin: 0;
+}
+
+.fact {
+  min-width: 0;
+}
+
+.fact dt {
+  overflow: hidden;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.fact dd {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  line-height: 24px;
+  font-variant-numeric: tabular-nums;
+}
