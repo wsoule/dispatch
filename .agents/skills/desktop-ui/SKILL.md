@@ -13,8 +13,8 @@ description:
 element and repeated pattern comes from it, or from a Dispatch product component
 built on it. Icons come from `lucide-react`. `packages/ui/README.md` is the
 reference: Styles (page mode; scoped mode is for other hosts), Theme, Fonts,
-Status vocabulary, Components, Lists, Graph and timeline options, Shell options
-for a desktop host, Task detail slots, the workspace switcher, Edit controls,
+Status vocabulary, Components, Lists, Timeline options, Shell options for a
+desktop host, Task detail slots, the workspace switcher, Edit controls,
 Controls, Browser behaviour hosts should know about, Server rendering, Checks.
 
 ## The app shell

@@ -23,8 +23,7 @@ a component the host injects.
   `*.module.css` files next to each component. Vite handles both natively (Next
   would need `transpilePackages: ['@dispatch/ui']`). The `'use client'`
   directives are for Next and are ignored by Vite.
-- **Runtime dependencies** `lucide-react` (icons) and `@dagrejs/dagre` (graph
-  layout), installed with the package.
+- **Runtime dependency** `lucide-react` (icons), installed with the package.
 - **TypeScript.** The host type-checks this source with its own compiler and
   flags. It passes TypeScript 5.9 with Dispatch's `apps/desktop` settings (not
   strict, so `strictNullChecks` is off; `lib: ["ES2023", "DOM"]` without
@@ -39,8 +38,8 @@ a component the host injects.
 ## Installing
 
 The package is a private workspace package (`packages/ui`): a host in this
-repository adds `"@dispatch/ui": "workspace:*"` and imports the source. Its two
-runtime dependencies (`lucide-react`, `@dagrejs/dagre`) come from the catalog in
+repository adds `"@dispatch/ui": "workspace:*"` and imports the source. Its one
+runtime dependency (`lucide-react`) comes from the catalog in
 `pnpm-workspace.yaml`, and the host's own `react` and `react-dom` satisfy the
 peer dependencies, so there is one React and Vite needs no `resolve.dedupe`.
 `test/package-manifest.test.ts` keeps the manifest in that shape. (Before the
@@ -436,26 +435,6 @@ The other shared vocabularies:
 - `ShellNavItem.countTone`: `accent` (new, unread) turns the count into the
   solid accent pill; a status tone (e.g. `warning` for blocked projects) into
   its tinted pill.
-- Graph: `GraphNodeTone` (any `UiTone`: `danger` / `warning` / `success` /
-  `info` draw a 2px edge in the hue, `muted` a quiet box: `--text-3` words, a
-  done one keeping its solid neutral done diamond, any other status diamond
-  turning `--gray` with its shape kept (a missing input stays dotted), `accent`
-  a purple edge for a host's own emphasis, never a status), `GraphNodeTag` (a
-  sentence-case word drawn as a `Chip`: `Unassigned` tinted amber, `Overdue` a
-  red dot pill (and under Risk the box's `--red-soft` tint inside a red edge),
-  `Cycle` tinted red with a dashed red outline round the box, `On a cycle` /
-  `Cycle inside` tinted red, `No lead` an amber dot pill, `Inactive` quiet text,
-  or any string, neutral), `GraphEdgeKind` (`default`, `risk` amber, `cycle`
-  long red dashes, `cross` short dashes, `resolved` dots). `GraphLegendMark`
-  adds `node-warning` (the amber edge), the Status highlight's `node-ready` (1px
-  green edge), `node-blocked` (2px amber) and `node-stuck` (2px red), the
-  Critical path's `node-chain` (`--text` ring and step disc) and `node-faded`,
-  the edges `edge-unblocked` (green dots) and `edge-chain` (2.5px `--text`), the
-  Paths row's `path-active` (the accent tint under the ring of the box being
-  read), `path-locked` (that tint and ring plus the lock's four rounded accent
-  corner ticks), `path-up` (accent ring), `path-down` (`--text` ring),
-  `path-next` (the green "Ready next" dot pill) and `path-chain` (as
-  `node-chain`), and the frames `cluster` and `cluster-muted`.
 - `ToastKind`: `info`, `error`, `success` (a green check, spoken politely like
   `info`; its default lead-in is "Done"). A `ToastInput` may carry `label: ''`
   to show the sentence with no lead-in word (screen readers still hear the
@@ -511,8 +490,6 @@ the types for the rest.
 |          | `SignedOutFrame` (`chromeAttributes` for a desktop host, below), `PropertyList`, `AlertStrip`                                                                                                                                                  | see `shell/types.ts`                                                |
 |          | `Skeleton*`, `Kbd`, `KbdKeys`                                                                                                                                                                                                                  | see `shell/types.ts`                                                |
 | timeline | `TimelineChart` (Gantt)                                                                                                                                                                                                                        | `today`, `windowStart`, `windowEnd`, `zoom`, `groups`, `onOpenBar`  |
-| graph    | `DependencyGraph`                                                                                                                                                                                                                              | `nodes`, `edges`, `ariaSummary`, `emptyMessage`                     |
-|          | `GraphLegend`, `MermaidSource`                                                                                                                                                                                                                 | see `graph/types.ts`                                                |
 | task     | `TaskDetail` (`layout="drawer"` or `"page"`)                                                                                                                                                                                                   | `taskKey`, `title`, `status`, `properties`                          |
 |          | `TaskSlideOver` (TaskDetail in a SlideOver)                                                                                                                                                                                                    | the above plus `open`, `onClose`                                    |
 |          | `TaskDescription`, `TaskRelationList`, `TaskCommentList`, `TaskActivityList`, `TaskCrumbs`                                                                                                                                                     | see `task/types.ts`                                                 |
@@ -529,13 +506,11 @@ the types for the rest.
 |          | `Menu` (actions, radio rows, groups, separators, submenus; it and each open submenu are layers of the overlay stack)                                                                                                                           | `label`, `trigger` (spread its props onto a `Button`), `items`      |
 
 Pure helpers are exported too: the timeline's date scale (`createScale`,
-`xForDate`, …), the graph layout (`layoutGraph`, `upstreamChain`, …), the
-graph's path walks (`pathContext`, `nodePaths`, `longestChains`, `longestChain`,
-`describePaths`, …), the palette's `fuzzyMatch`, the collapsed-group storage
-helpers, the row-window arithmetic and `useRowWindows` (Lists below), the
-progress pie's `PIE_DASH` and `pieDashOffset`, and the selection helpers
-(`toggleId`, `rangeIds`, `setIds`, `pruneSelection`: pure, never mutating, and
-returning the same set when nothing changes).
+`xForDate`, …), the palette's `fuzzyMatch`, the collapsed-group storage helpers,
+the row-window arithmetic and `useRowWindows` (Lists below), the progress pie's
+`PIE_DASH` and `pieDashOffset`, and the selection helpers (`toggleId`,
+`rangeIds`, `setIds`, `pruneSelection`: pure, never mutating, and returning the
+same set when nothing changes).
 
 **Helpers.** `cx(...names)` joins class names and drops `undefined`, `null`,
 `false` and `''` (a CSS-module lookup can be undefined, and "undefined" never
@@ -1385,241 +1360,8 @@ the page.
 `href` (a host that navigates itself and shows the change at once); a modified
 or middle click still opens the link.
 
-### Graph and timeline options
+### Timeline options
 
-- `DependencyGraph` `layout`: a `GraphLayout` the host computed with
-  `layoutGraph` from the same `nodes`, `edges` and options. It is used as is, so
-  a server render can lay the graph out once and the client (a phone included)
-  never runs dagre; `direction`, `cluster` and the layout of `clusters` are then
-  ignored (pass the same `clusters` anyway: the names use them). `layoutGraph`
-  is pure and carries no `'use client'`, so it runs on a server.
-- `DependencyGraph` `clusters` (and `layoutGraph`'s `clusters` option): a graph
-  of every item, framed by parent. Each `GraphClusterData` (`id`, `label`,
-  `parent`, `muted`, `external`) is a labelled frame, nested through `parent`;
-  `GraphNodeData.cluster` names a node's innermost frame (unknown or none: the
-  top level). Inside each frame the nodes and frames on an arrow flow along the
-  direction by dagre, over that frame's own items only, with the ends of arrows
-  that leave it drifting to its far side; the nodes on no arrow pack into a
-  compact grid under the flow (done and empty ones last; two or more nodes get
-  at least two columns), and frames on no arrow onto shelves under that. When
-  frames in a flow would chain into a row longer than `CLUSTER_METRICS.flowMax`
-  (2400px, or 1.25 times their shelf width), they go onto shelves in flow order
-  instead and their arrows are drawn without a dagre route; when the flow's
-  longest chain alone (`flowChain`, a lower bound on dagre's own acyclic graph)
-  already passes that, dagre is not run for it at all. After dagre, when the
-  band above a flow's first rank is at least `CLUSTER_METRICS.liftMin` (a box)
-  tall, each rank rises by the space above it and above every rank before it, so
-  a frame starts in its top-left corner even when a later rank stacks higher
-  (dagre centres ranks on each other); arrow points move with their rank, and a
-  route end not on its box's facing side is found again on the border. A thinner
-  band stays, since moving ranks bends the arrows between them. dagre's edge
-  weights are whole numbers: a fractional one can leave network-simplex pivoting
-  forever. Arrows between frames leave the blocker's far side and enter the
-  waiting box's near side, following dagre's lane to the far side of each frame
-  they leave and from the near side of each they enter, running level to that
-  side before crossing to the next frame when the run passes no box (in a flow
-  small enough for network-simplex the frame's ports rank after and before its
-  whole flow; in a bigger one they sit beside their own items, to keep its cost
-  down), so they pass the other boxes there instead of running behind them;
-  arrows inside one frame keep their dagre route. Then each arrow between
-  frames, and an arrow inside one whose route would pass a box, turns round
-  every box in its way (and each frame title's patch) by the box's nearer side,
-  6px out, and where its smooth curve would still cut behind a box it is eased
-  into straight runs with rounded bends (`routeAround`), so an arrow is not lost
-  behind a box it does not join. Top to bottom, a frame's grid sits under its
-  flow, in the way of the arrows leaving it, so frames read best left to right
-  (every host uses `LR`). Given at all, even empty, `clusters` also packs the
-  loose top-level nodes, so a host with no frames for a level (the planner's
-  initiative level) still gets no long column. Frames are drawn decoratively
-  (`data-graph-cluster`, `data-depth`, `data-muted`, `data-external`): a 1px
-  `--control-border` edge with `--r-lg` corners, a sentence-case 12px semibold
-  title in the top-left on a patch of the canvas above the arrows (`--text-2` at
-  the top level, `--text-3` nested), dashed `--gray` when muted, dashed when
-  external; each node's accessible name says the frames it sits in ("in Beta,
-  Orion"). The layout carries `clustered: true`; its nodes come in reading order
-  (frame by frame) and the arrow keys move to the nearest box that way. The
-  legend draws frames as `cluster` and `cluster-muted`. Flows of more than
-  `CLUSTER_METRICS.simplexItems` items or `simplexLinks` links rank with dagre's
-  tight-tree instead of network-simplex, which keeps one big, dense frame near
-  0.5 s for 500 nodes and 800 edges (network-simplex: about 5 s).
-- `DependencyGraph` `focusId`: the node the graph is about (one issue's chain,
-  say). It gets a 2px accent ring standing 3px off its box and lights nothing,
-  unlike `selectedId` (the accent tint inside a 2px accent edge); its accessible
-  name ends with `focusLabel` (default "focus"), and Tab lands on it until a
-  node is focused or selected. On the first paint the frame (never the page)
-  scrolls so the focus, else the selected node, sits in its middle. With
-  neither, it opens where the flow starts rather than on dagre's empty top-left
-  corner: at the drawing's start along the flow, and across it at the band,
-  starting at a box, where the most boxes of that first frame-length show whole
-  (the earliest on a tie). A framed layout (`clusters`) opens on its first
-  frame, which the packing puts at the top-left: it stays at the origin while
-  that frame shows a box whole there, and otherwise slides to the band of that
-  frame's own boxes, never to a later frame. A drawing that fits the frame
-  across does not move. The legend draws the mark as `node-focus`.
-- `DependencyGraph` `coveredRight`: the width of a panel fixed along the
-  window's right edge that is open over the graph (pass `SLIDE_OVER_WIDTH` while
-  a `SlideOver` the page opened on arrival is open, and nothing once it closes).
-  The frame then keeps right padding for the part the panel covers, so the first
-  paint brings the focus or selection into the part the panel leaves uncovered,
-  even in a drawing narrower than the frame: centred there, or scrolled only as
-  far as it takes to show the whole box when that is less, so what it waits on
-  (to its left) stays in view. When the panel would leave less than 240px of the
-  frame (a phone's full-width sheet) nothing moves.
-- `DependencyGraph` `highlight`: what the drawing emphasises. `risk` (the
-  default, so a host that passes nothing keeps its look) draws the risk tones:
-  the red overdue tint, the 2px edge in a node's `tone`, amber risk chains.
-  `status` tones each node by its readiness instead: a 1px green edge when
-  ready, a 2px amber edge when blocked, red when stuck, quiet when done (its
-  solid neutral done diamond kept), empty or paused (its mark in `--gray`), and
-  unblocked edges as green dots. `critical` numbers the critical path and lets
-  the rest recede. Switching never moves a box: the layout ignores the
-  highlight, so one `layout` serves all three. The frame carries
-  `data-highlight` (and `data-locked` while a node is locked); nodes carry
-  `data-state` (`active`, `lit`, `down`, `chain`, `dim`), `data-pointed` (the
-  box being read), `data-locked`, `data-readiness`, `data-next` and `data-step`.
-- `GraphNodeData.readiness` (`GraphNodeReadiness`: `state` ready, blocked, done,
-  independent or empty (a box nothing counts toward, walked like done but read
-  as its `statusLabel` or "No issues", never "Done"); the chip `label`, "Ready",
-  "Blocked by 2", "Clear", `''` when done or empty; an independent node (on no
-  relation at all) has the word "No dependencies" in its name and readout but no
-  chip, and draws neutral; the Status `tone`; `blockedBy`; `unblocks`;
-  `canStart`). Count `blockedBy` (open blockers) and `unblocks` (what finishing
-  it alone frees) over all of your data, not only what is drawn: the readout
-  says the difference is "not drawn". Set `canStart: false` on a box whose open
-  work all waits inside it, so "start with" never points at it. The readiness
-  chip leads a node's chips in every highlight (toned only under Status), so
-  measure with `measureNode` or `layoutGraph` from the same data. Without
-  `readiness` the Status highlight falls back to `tone` and the walks to the
-  drawn edges. `GraphNodeData.key` (an id such as "ENG-23") is how the readout
-  names a node; else its label.
-- Edges: the `resolved` kind means one end is done (the blocker, or the node
-  that waited), so it no longer blocks; it is drawn as dots and never walked.
-  `GraphEdgeData.cross` marks an edge that crosses a project (or owner) boundary
-  whatever its kind; Status and Critical path dash it while it blocks and is not
-  a cycle.
-- Paths: hover, keyboard focus, the lock or the selection lights what the node
-  transitively waits on (an accent ring and accent lines) and what waits on it
-  (a `--text` ring and `--text` lines), over the drawn edges; a `pathWords.next`
-  tag ("Ready next", a green dot pill riding the box's top edge) marks each node
-  that finishing it alone would unblock. The node being read (hover, keyboard
-  focus, the lock; not the selection) gets the soft accent tint under an accent
-  ring on every input, with a 4px double `CanvasText` outline in forced colours
-  (the selected node gets one too, its tint being dropped there). Receding nodes
-  set `--text-3` on their words directly and nothing but the fills and the rings
-  fades, so a hover stays cheap on hundreds of nodes. Accessible names give the
-  same counts ("waits on 1, holds up 3; done would unblock 2"; "waits on 1,
-  holds up 0 in this graph; done would unblock 1 (1 not drawn)" when your
-  readiness counts more than is drawn), transitive while `V × (V + E)` stays
-  within `PATH_NAME_BUDGET` (V counting only the nodes on a blocking edge, so a
-  graph of every item with few arrows stays transitive) and direct above it, so
-  a host with no draw limit never runs a quadratic walk in render.
-- The critical path is the longest chain of blocking drawn edges, a cycle
-  counted as one step weighing its member count, ties going to display order;
-  with a node active, the longest chain through it; in a chain graph at rest,
-  the one through `focusId`. It is computed in O(V + E) per edge list, shown
-  only when it holds two or more nodes, and its names carry "step k of s on the
-  critical path". Entering `critical` (a new `highlight`, or the first paint
-  with no `focusId` or `selectedId` to centre) scrolls the frame to step 1 of
-  the path shown at rest unless one of its steps already shows whole or a node
-  is locked. With a node on an open chain locked, the path shown at rest (and
-  the one the step control walks) is the chain through it. A step control over
-  the frame's bottom-left corner (`data-graph-steps`: ‹, "3 steps" / "Step 2 of
-  3", ›) and the keys `]` / `[` walk that path: the walked step is the box being
-  read (the accent tint and ring, the readout) and the frame centres it; Escape,
-  a tap on the background, a press on a box or another highlight drops it (it
-  lights over a lock until then).
-- `DependencyGraph` `readout`: one plain (not live) line, the graph panel's last
-  row, names the node being read and its paths ("ENG-23 · Blocked by 1 · Waits
-  on 1 open, start with ENG-12 · Holds up 1 · Done would unblock 1: OPS-20");
-  with nothing active it shows this text (your summary for the highlight) and
-  how to trace a node (`hint` / `tapHint`, or `hintCritical` / `tapHintCritical`
-  under Critical path: "show the longest chain through it"). With nothing drawn
-  waiting on the node it says "Nothing here waits on it" (`holdsUpNone`). `null`
-  hides the line. `pathWords` (`Partial<GraphPathWords>`, defaults in
-  `defaultGraphPathWords`) rewords any part, the tag included.
-- Lock on (`lockedId`, `onLockChange`): a click, a tap, Enter or Space on a node
-  locks it, so its paths, tags and readout stay lit while the reader pans (a
-  drag from the background, or from a box past 8px, which also drops the trace
-  the press's focus gave that box), scrolls, zooms, fits or switches the
-  highlight. While a node is locked, pointing at or focusing another moves
-  nothing (CSS gives a hovered box off the lock's paths the `--surface-2` hover
-  fill and a thin neutral ring, 1px `--control-border` 2px out, a box on them
-  keeps its path ring, the locked box itself keeps its accent tint under the
-  pointer, and no state is set, so a locked graph does not re-render on hover).
-  A second press on the locked node opens it (`onSelect`, else its link; a node
-  that opens nothing is unlocked instead). `onSelect` may be called again for
-  the node already open (a third click, Open pressed twice), so a host must
-  open, never toggle (the planner's panel used to close). A mouse's second click
-  waits out `DOUBLE_CLICK_MS` (500 ms, the longest common double-click time) and
-  a tap's `DOUBLE_PRESS_MS` (300 ms) when the node has a `drillHref`, so a
-  double-click never opens it on the way, and a key opens at once. The locked
-  node gets its own mark (`data-locked`, `data-lock-mark`: four rounded 2px
-  accent corner ticks inside the box, over the tint and ring of the node being
-  read, never a ring of its own, so the keyboard focus ring still shows on it
-  and a focus preview, a lock and a focused lock look different; in forced
-  colours the double rule of the node being read plus `Highlight` ticks) and an
-  action strip riding the box (`data-graph-lock-strip`: a small floating
-  `--surface` bar with `--r` corners and `--shadow-pop` holding Gr8r buttons in
-  sentence case, Open the one primary, Open graph a secondary when it has a
-  `drillHref`, an × Unlock icon button; `data-lock-action` on each), drawn in
-  the canvas at the box's zoomed place but its own size (26px tall buttons, at
-  least 32px wide on a coarse pointer), 4px out (room for the path and focus
-  rings). `lockStripPlace` (exported for hosts' tests) puts it under the box,
-  over it, or beside it on the right or the left (a side none of the box's own
-  arrows use), the first that fits whole on screen (the frame's visible part,
-  clipped to the visual viewport and clear of bars marked
-  `data-ui-edge-bar="top"` / `"bottom"`, as the shell's top bar and phone tab
-  bar are) and meets no blocked control (the step control), covering the fewest
-  words (`data-graph-words` on each box's words and group titles, and the frame
-  titles); with none, the one most on screen. It slides to stay inside the frame
-  but never off the box's side, and is placed again on every scroll of the frame
-  or the page and every resize without a re-render, finding the frame from its
-  own element (so a lock from the first render is placed too). The strip follows
-  the boxes in the DOM, so Tab from the box reaches it. The readout leads with
-  `pathWords.locked` ("Locked on", semibold in `--accent-ink`) and the same
-  actions as small inline buttons (`open` the primary, `openItsGraph` and
-  `unlock` secondaries, so the three read as one group of controls), then a
-  short vertical rule (`aria-hidden`, a border so forced colours keep it) in
-  place of the facts' first " · ", then the facts. Escape (from anywhere on the
-  page, heard on the window after every nearer handler, so an open panel's or
-  menu's own Escape, or one typed into a field, goes first), a click on the
-  background (never the end of a pan), Unlock, or a press on another node (which
-  moves the lock) drops it; while locked, a new `selectedId` from the host moves
-  the lock to it. A polite `role="status"` line says the lock once ("Locked on
-  ENG-23 Typo tolerance.", "Unlocked."); a button node exposes it as
-  `aria-pressed` (no longer the selection), a link or plain node as
-  `aria-current`. Leave `lockedId` undefined and the graph keeps its own lock;
-  pass it to keep the lock yourself (the planner keeps it in `?lock=`). The
-  first paint centres the locked node, before `focusId` and `selectedId`. On a
-  touch press a tap locks, a second tap opens, two taps within `DOUBLE_PRESS_MS`
-  drill down, and a tap on the background unlocks (the focus a tap gives a
-  button in Chromium never traces on its own).
-- Drill down (`GraphNodeData.drillHref`, `GraphClusterData.drillHref`,
-  `onDrill`, `drillHrefFor`): a double-click, a double tap or Shift + Enter on a
-  node follows its `drillHref` (its own graph, one level down, in the planner;
-  on a node with none they lock and open it, as a second press would), and a
-  double-click on the title of a frame with one follows the frame's (the title
-  gets a zoom-in cursor and `data-graph-drill`, and a single click on it does
-  nothing). The locked node's strip and readout offer it as a link, so it is
-  never reachable only by a double-click. `drillHrefFor` rewrites every drill
-  href before it is drawn or followed (the planner adds the highlight on
-  screen); `onDrill` follows a double-click (default: `window.location.assign`).
-  A double-click selects no text (boxes and drilling titles are
-  `user-select: none`, and the second press's mousedown is prevented), and the
-  frame is `touch-action: manipulation`, so a double tap never zooms the page.
-  Without a `hint`, the toolbar says "Click to lock · Double-click to drill in ·
-  Drag to pan · Ctrl + wheel to zoom" (the drill part only when something
-  drills).
-- **Cap what you draw.** Without `clusters` one layout costs about 0.45 s at 200
-  nodes and 300 edges (dagre network-simplex; edges dominate) and grows fast
-  past that (about 1.3 s at 400 and 600). With `clusters` (measured 2026-10-23
-  after the review fixes on workspace-shaped graphs: frames per project and
-  milestone, a fifth of the issues done) the layout alone is about 0.1 s at 200
-  and 300, 0.3 s at 500 and 800 and 0.35–0.75 s at 700 and 1000 whatever the
-  shape, from one milestone holding everything (0.64 s) to 140 projects; a hover
-  at 700 nodes still costs about a tenth of a second of frames on a slow
-  machine. Decide a limit in the host and offer a narrower graph instead of
-  drawing a bigger one, or part of one.
 - `TimelineGroup.link` (`TimelineGroupLink`: `label`, `href`, optional
   `ariaLabel`): a quiet link in a ghost button's look with a group's "N
   projects", rendered through the host `<Link>`: in the chart's group row it
@@ -2186,10 +1928,6 @@ touches none of it.
   `[data-shell-tabbar='true']` on phones, as the toasts do; while it is up it
   publishes its height to `useBulkBarHeight()` (null when it goes) and the
   toasts stack above it.
-- `DependencyGraph`, while a node is locked, listens for Escape, scroll and
-  resize on `window` and for scroll and resize on `window.visualViewport`, and
-  reads the rects of `[data-ui-edge-bar]` elements (which `AppShell` puts on its
-  top bar and phone tab bar) to keep the lock's strip on screen.
 - `useElementWidth(target, { measureOnMount })` and
   `useWidthBelow(target, px, { measureOnMount })` are for a host's own
   responsive switches (a board's lane headers sized to its visible width, a page

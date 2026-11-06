@@ -16,8 +16,8 @@ import type { SlideOverProps } from './types';
 const EXIT_MS = 260;
 
 /** The panel's width on a wide window, in px (slide-over.module.css
-    `min(620px, 100vw)`): what a page passes as DependencyGraph's
-    `coveredRight` while a slide-over is open over the graph. */
+    `min(620px, 100vw)`), for a page that keeps its own content clear of an
+    open slide-over. */
 export const SLIDE_OVER_WIDTH = 620;
 
 /**
