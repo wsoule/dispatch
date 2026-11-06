@@ -40,7 +40,8 @@ const DEFAULT_CALLBACK_PORT = 47823;
  *  nor the project config names one, so every project can sign in with no
  *  setup. Not a secret: sign-in is PKCE. Its registered callback is
  *  http://127.0.0.1:47823/linear/callback. */
-export const BUILT_IN_LINEAR_CLIENT_ID: string | null = null;
+export const BUILT_IN_LINEAR_CLIENT_ID: string | null =
+  '796cca6c4836cceedddb5200c7bfd9a9';
 
 /** How long a started sign-in waits for Linear's redirect. */
 const SIGN_IN_TTL_MS = 10 * 60_000;
