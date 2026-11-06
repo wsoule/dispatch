@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import { browserRefusal, normalizeBrowserUrl } from './browserPane';
 
@@ -54,4 +56,17 @@ describe('browserRefusal', () => {
       browserRefusal('http://localhost:5173/', { ...origins, daemon: null })
     ).toBeNull();
   });
+});
+
+// `browserRefusal` only sees the address the pane sets; a framed page that
+// navigates itself onto the packaged app is stopped by this policy instead.
+// The dev server's matching header is proven in e2e/browser-pane-frames.spec.ts.
+test("the packaged app's CSP refuses every frame", () => {
+  const conf = JSON.parse(
+    readFileSync(
+      resolve(import.meta.dir, '../../src-tauri/tauri.conf.json'),
+      'utf8'
+    )
+  ) as { app: { security: { csp: Record<string, string> } } };
+  expect(conf.app.security.csp['frame-ancestors']).toBe("'none'");
 });

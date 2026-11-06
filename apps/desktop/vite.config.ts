@@ -28,9 +28,9 @@ const polyfills = readFileSync(
 // tokens.css follows the OS live. transformIndexHtml runs for the dev server
 // and the build alike, so the daemon-served dist and Tauri get it too. An
 // inline script is allowed in both hosts: Tauri's CSP sets only img-src and
-// leaves script-src unmodified (src-tauri/tauri.conf.json:28-31), and the
-// daemon sets no CSP on index.html (serveIndexHtml in
-// packages/server/src/index.ts injects its own inline token script). A
+// frame-ancestors and leaves script-src unmodified (src-tauri/tauri.conf.json),
+// and the daemon's CSP on index.html is frame-ancestors alone (serveIndexHtml
+// in packages/server/src/index.ts injects its own inline token script). A
 // script-src policy added later would need this script's hash.
 const themeBeforePaint: Plugin = {
   name: 'dispatch-theme',
@@ -43,9 +43,16 @@ const themeBeforePaint: Plugin = {
   ],
 };
 
+// The app's origin may not be framed. The browser pane frames pages with
+// `allow-same-origin`, and a page there can navigate itself onto this origin;
+// tauri.conf.json's CSP says the same for the packaged app.
+const NO_FRAMING = { 'Content-Security-Policy': "frame-ancestors 'none'" };
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), themeBeforePaint],
+  server: { headers: NO_FRAMING },
+  preview: { headers: NO_FRAMING },
   resolve: {
     alias: {
       // App modules import from `@/…`; map it to src/.

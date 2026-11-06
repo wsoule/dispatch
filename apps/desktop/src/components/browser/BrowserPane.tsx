@@ -9,8 +9,10 @@ const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
 
 /**
  * The pane's sandbox. `allow-same-origin` lets a dev server keep its cookies,
- * storage and HMR socket; that is safe only because `browserRefusal` keeps
- * the frame off the app's own origin and the daemon's.
+ * storage and HMR socket; that is safe only because the frame never lands on
+ * the app's origin or the daemon's: `browserRefusal` checks the address set
+ * here, and for a page that navigates itself there, the app and daemon shell
+ * answer `frame-ancestors 'none'` and daemon previews a CSP sandbox.
  */
 const BROWSER_SANDBOX =
   'allow-scripts allow-forms allow-popups allow-same-origin allow-modals';
