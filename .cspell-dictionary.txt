@@ -836,3 +836,6 @@ blackhole
 nonblocking
 waitable
 scroller
+chacha
+Diffie
+Pressable
