@@ -14,6 +14,7 @@ const service = startTeamService({
   origin,
   githubClientId: env.GITHUB_CLIENT_ID ?? null,
   githubClientSecret: env.GITHUB_CLIENT_SECRET ?? null,
+  linearClientId: env.LINEAR_CLIENT_ID ?? null,
   devLogin: env.DEV_LOGIN === '1' && !origin.startsWith('https://'),
   teamSecret: env.TEAM_SECRET ?? null,
 });

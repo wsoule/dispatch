@@ -25,6 +25,8 @@ export interface McpDeps {
   hubs: TeamHubs;
   origin: string;
   linear: TeamLinear;
+  /** Offer "Sign in with Linear" on the connector sign-in page. */
+  linearSignIn?: boolean;
 }
 
 const UNREAD_STATES = ['held', 'notified', 'pushed'] as const;
@@ -473,7 +475,10 @@ export function mcpHandler(
           400
         );
       const user = webUserOf(db, req);
-      if (user === null) return html(signInPage(`${path}${url.search}`, false));
+      if (user === null)
+        return html(
+          signInPage(`${path}${url.search}`, false, deps.linearSignIn === true)
+        );
       if (method === 'GET')
         return html(
           consentPage({

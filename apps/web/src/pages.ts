@@ -74,7 +74,7 @@ function page(title: string, user: User | null, body: string): string {
 <div class="bar"><a href="/">Dispatch / Teams</a>${
     user === null
       ? '<a href="https://dispatch.foo">dispatch.foo</a>'
-      : `<form method="post" action="/auth/logout"><span class="who">${esc(user.login)}</span><button class="small">Sign out</button></form>`
+      : `<form method="post" action="/auth/logout"><a class="who" href="/account">${esc(user.login)}</a><button class="small">Sign out</button></form>`
   }</div>
 <main>${body}<p class="foot">Dispatch · agents that work together, whatever they run on</p></main></body></html>`;
 }
@@ -93,14 +93,55 @@ export const APP_JS = `document.addEventListener('click', (e) => {
   });
 });`;
 
-export function signInPage(next: string, devLogin: boolean): string {
+export function signInPage(
+  next: string,
+  devLogin: boolean,
+  linear = false
+): string {
   return page(
     'Sign in',
     null,
     `<h1>Your agents, talking to your team's agents.</h1>
 <p class="lede">Claude Code, Codex, Cursor, Gemini and Claude on the web: every session on every teammate's machine can find, message and hand work to every other, and work your Linear together.</p>
-<p><a class="btn primary" href="/auth/github?next=${encodeURIComponent(next)}">Sign in with GitHub</a></p>
+<p><a class="btn primary" href="/auth/github?next=${encodeURIComponent(next)}">Sign in with GitHub</a>${
+      linear
+        ? ` <a class="btn" href="/auth/linear?next=${encodeURIComponent(next)}">Sign in with Linear</a>`
+        : ''
+    }</p>
 ${devLogin ? `<form method="get" action="/auth/dev" class="inline" style="margin-top:16px"><input name="login" placeholder="dev login"><input type="hidden" name="next" value="${esc(next)}"><button>Dev sign-in</button></form>` : ''}`
+  );
+}
+
+/** The ways an account signs in, and buttons to connect the others. */
+export function accountPage(
+  user: User,
+  identities: { github: boolean; linear: boolean },
+  available: { github: boolean; linear: boolean }
+): string {
+  const row = (
+    label: string,
+    connected: boolean,
+    offered: boolean,
+    action: string
+  ): string =>
+    `<div class="row"><span>${label}</span>${
+      connected
+        ? '<span class="meta">Connected</span>'
+        : offered
+          ? `<form method="post" action="${action}" style="margin:0"><button class="small">Connect ${label}</button></form>`
+          : '<span class="meta">Not set up on this server</span>'
+    }</div>`;
+  return page(
+    'Account',
+    user,
+    `<h1>${esc(user.login)}</h1>
+<p class="lede">Either one signs you in to this account. Your agents keep the address agent:${esc(user.login)}/… whichever you use.</p>
+<div class="label">Sign-in</div><div class="box">${row('GitHub', identities.github, available.github, '/auth/github/link')}${row(
+      'Linear',
+      identities.linear,
+      available.linear,
+      '/auth/linear/link'
+    )}</div>`
   );
 }
 
@@ -175,7 +216,7 @@ export function teamPage(input: {
 <div class="step"><div class="n">3</div><div><h3>Bring your team</h3>
 ${
   role === 'admin'
-    ? `<p>Each invite link works once, for 7 days. They sign in with GitHub, join, and run the same command.</p>${
+    ? `<p>Each invite link works once, for 7 days. They sign in, join, and run the same command.</p>${
         invite === null
           ? `<form method="post" action="/teams/${esc(team.id)}/invites"><button>New invite link</button></form>`
           : cmd(`${origin}/join/${invite}`)

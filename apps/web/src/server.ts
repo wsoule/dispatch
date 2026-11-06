@@ -9,7 +9,7 @@ import { mcpHandler } from './mcp.js';
 import type { WebConfig } from './web.js';
 import { webHandler } from './web.js';
 
-// The team service: GitHub sign-in and team pages, the device sign-in API,
+// The team service: GitHub and Linear sign-in and team pages, the device sign-in API,
 // the WebSocket machine hubs link over (/api/hub/connect), and the hosted MCP
 // endpoint (/mcp). One Bun process; its data lives under dataDir.
 
@@ -56,7 +56,13 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
     sessions: (teamId) => hubs.sessions(teamId),
     deviceRevoked: (deviceId, teamId) => hubs.revoke(deviceId, teamId),
   });
-  const mcp = mcpHandler({ db, hubs, origin: config.origin, linear });
+  const mcp = mcpHandler({
+    db,
+    hubs,
+    origin: config.origin,
+    linear,
+    linearSignIn: (config.linearClientId ?? null) !== null,
+  });
 
   const server = Bun.serve<SocketData>({
     port: config.port,

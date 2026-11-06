@@ -1,8 +1,9 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
-import type { TeamDb, User } from './db.js';
+import type { Identity, TeamDb, User } from './db.js';
 import type { TeamLinear } from './linear.js';
 import {
+  accountPage,
   APP_JS,
   devicePage,
   homePage,
@@ -15,14 +16,17 @@ import {
 } from './pages.js';
 import type { LiveSession } from './pages.js';
 
-// The browser side of the team service (GitHub sign-in, teams, invites, the
-// device approval page) and the device-code API an MCP server signs in with.
+// The browser side of the team service (GitHub and Linear sign-in, account
+// linking, teams, invites, the device approval page) and the device-code API an
+// MCP server signs in with.
 
 export interface WebConfig {
   /** The public origin, e.g. https://team.dispatch.foo. */
   origin: string;
   githubClientId: string | null;
   githubClientSecret: string | null;
+  /** The public Linear OAuth app (PKCE, no secret). Null hides Linear sign-in. */
+  linearClientId?: string | null;
   /** Lets /auth/dev sign anyone in by name: tests and local runs only. */
   devLogin: boolean;
 }
@@ -36,12 +40,19 @@ export interface WebDeps {
   linear?: TeamLinear;
   /** Called when a device is signed out, so its connection drops. */
   deviceRevoked?: (deviceId: string, teamId: string) => void;
-  /** GitHub's endpoints, swappable in tests. */
+  /** GitHub's and Linear's endpoints, swappable in tests. */
   fetch?: typeof fetch;
 }
 
 const SESSION_COOKIE = 'dt_session';
 const STATE_COOKIE = 'dt_oauth';
+const LINEAR_STATE_COOKIE = 'dt_oauth_linear';
+const LINEAR_AUTHORIZE = 'https://linear.app/oauth/authorize';
+const LINEAR_API = 'https://api.linear.app';
+
+// What an OAuth round trip is for: signing in, or adding the provider to the
+// account already signed in (only ever started from a form on /account).
+type OAuthMode = 'signin' | 'link';
 
 function cookies(req: Request): Map<string, string> {
   const out = new Map<string, string>();
@@ -127,6 +138,7 @@ export function webHandler(
   const { db, config } = deps;
   const secure = config.origin.startsWith('https://');
   const github = deps.fetch ?? fetch;
+  const linearClientId = config.linearClientId ?? null;
 
   function signedIn(req: Request): User | null {
     return webUserOf(db, req);
@@ -147,6 +159,199 @@ export function webHandler(
         secure
       ),
     });
+  }
+
+  function expired(): Response {
+    return html(
+      messagePage(
+        null,
+        'Sign-in failed',
+        'The sign-in link expired or did not match. Try again.'
+      ),
+      400
+    );
+  }
+
+  function stateMatches(
+    expected: string | undefined,
+    got: string | null
+  ): boolean {
+    return expected !== undefined && expected !== '' && got === expected;
+  }
+
+  function notSetUp(provider: string): Response {
+    return html(
+      messagePage(
+        null,
+        'Sign-in is not set up',
+        `This server has no ${provider} OAuth app configured.`
+      ),
+      503
+    );
+  }
+
+  function startGithub(next: string, mode: OAuthMode): Response {
+    if (config.githubClientId === null) return notSetUp('GitHub');
+    const state = randomBytes(16).toString('base64url');
+    const target = new URL('https://github.com/login/oauth/authorize');
+    target.searchParams.set('client_id', config.githubClientId);
+    target.searchParams.set(
+      'redirect_uri',
+      `${config.origin}/auth/github/callback`
+    );
+    target.searchParams.set('scope', 'read:user');
+    target.searchParams.set('state', state);
+    return redirect(target.toString(), {
+      'set-cookie': cookie(
+        STATE_COOKIE,
+        `${state} ${next} ${mode}`,
+        600,
+        secure
+      ),
+    });
+  }
+
+  // Linear's public "Dispatch" app has no client secret, so the code is bound
+  // to this browser by PKCE: the verifier rides in the flow's HttpOnly cookie
+  // and only its S256 challenge goes to Linear.
+  function startLinear(next: string, mode: OAuthMode): Response {
+    if (linearClientId === null) return notSetUp('Linear');
+    const state = randomBytes(16).toString('base64url');
+    const verifier = randomBytes(32).toString('base64url');
+    const target = new URL(LINEAR_AUTHORIZE);
+    target.searchParams.set('client_id', linearClientId);
+    target.searchParams.set(
+      'redirect_uri',
+      `${config.origin}/auth/linear/callback`
+    );
+    target.searchParams.set('response_type', 'code');
+    target.searchParams.set('scope', 'read');
+    target.searchParams.set('state', state);
+    target.searchParams.set(
+      'code_challenge',
+      createHash('sha256').update(verifier).digest('base64url')
+    );
+    target.searchParams.set('code_challenge_method', 'S256');
+    return redirect(target.toString(), {
+      'set-cookie': cookie(
+        LINEAR_STATE_COOKIE,
+        `${state} ${next} ${mode} ${verifier}`,
+        600,
+        secure
+      ),
+    });
+  }
+
+  async function githubIdentity(
+    code: string
+  ): Promise<{ id: number; login: string; name: string | null }> {
+    const tokenRes = await github(
+      'https://github.com/login/oauth/access_token',
+      {
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          client_id: config.githubClientId,
+          client_secret: config.githubClientSecret,
+          code,
+          redirect_uri: `${config.origin}/auth/github/callback`,
+        }),
+      }
+    );
+    const { access_token } = (await tokenRes.json()) as {
+      access_token?: string;
+    };
+    if (access_token === undefined) throw new Error('no access token');
+    const userRes = await github('https://api.github.com/user', {
+      headers: {
+        authorization: `Bearer ${access_token}`,
+        accept: 'application/vnd.github+json',
+        'user-agent': 'dispatch-team',
+      },
+    });
+    const gh = (await userRes.json()) as {
+      id?: number;
+      login?: string;
+      name?: string | null;
+    };
+    if (typeof gh.id !== 'number' || typeof gh.login !== 'string')
+      throw new Error('no GitHub user');
+    return { id: gh.id, login: gh.login, name: gh.name ?? null };
+  }
+
+  // Trades the code for a token, reads who it belongs to, then revokes it:
+  // sign-in needs only the identity, so no Linear token is kept.
+  async function linearIdentity(
+    code: string,
+    verifier: string
+  ): Promise<{ id: string; displayName: string; name: string | null }> {
+    const tokenRes = await github(`${LINEAR_API}/oauth/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: `${config.origin}/auth/linear/callback`,
+        client_id: linearClientId ?? '',
+        code_verifier: verifier,
+      }).toString(),
+    });
+    const { access_token } = (await tokenRes.json()) as {
+      access_token?: string;
+    };
+    if (access_token === undefined) throw new Error('no access token');
+    const auth = { authorization: `Bearer ${access_token}` };
+    try {
+      const res = await github(`${LINEAR_API}/graphql`, {
+        method: 'POST',
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify({ query: '{ viewer { id name displayName } }' }),
+      });
+      const { data } = (await res.json()) as {
+        data?: {
+          viewer?: { id?: string; name?: string | null; displayName?: string };
+        };
+      };
+      const v = data?.viewer;
+      if (typeof v?.id !== 'string' || typeof v.displayName !== 'string')
+        throw new Error('no Linear user');
+      return { id: v.id, displayName: v.displayName, name: v.name ?? null };
+    } finally {
+      await github(`${LINEAR_API}/oauth/revoke`, {
+        method: 'POST',
+        headers: auth,
+      }).catch(() => undefined);
+    }
+  }
+
+  // Finishes a link flow: the identity joins the account signed in now. A flow
+  // that outlived its session links nothing, and an identity another account
+  // holds is refused, naming that account.
+  function link(req: Request, identity: Identity, provider: string): Response {
+    const user = signedIn(req);
+    if (user === null)
+      return html(
+        messagePage(
+          null,
+          'Signed out',
+          `Sign in again, then connect ${provider} from your account page.`
+        ),
+        401
+      );
+    const result = db.linkIdentity(user.id, identity);
+    if (!result.ok)
+      return html(
+        messagePage(
+          user,
+          `That ${provider} account is taken`,
+          `It already signs in to the Dispatch account ${result.owner.login}. Sign in with ${provider} to use that account instead.`
+        ),
+        409
+      );
+    return redirect('/account');
   }
 
   return async (req) => {
@@ -203,86 +408,35 @@ export function webHandler(
     }
 
     // ---- sign-in ----
-    if (path === '/auth/github' && method === 'GET') {
-      if (config.githubClientId === null)
+    if (path === '/auth/github' && method === 'GET')
+      return startGithub(safeNext(url.searchParams.get('next')), 'signin');
+    if (path === '/auth/linear' && method === 'GET')
+      return startLinear(safeNext(url.searchParams.get('next')), 'signin');
+    if (
+      (path === '/auth/github/link' || path === '/auth/linear/link') &&
+      method === 'POST'
+    ) {
+      const user = signedIn(req);
+      if (user === null) return redirect('/');
+      if (!sameOrigin(req))
         return html(
-          messagePage(
-            null,
-            'Sign-in is not set up',
-            'This server has no GitHub OAuth app configured.'
-          ),
-          503
+          messagePage(user, 'Refused', 'That form came from another site.'),
+          403
         );
-      const state = randomBytes(16).toString('base64url');
-      const next = safeNext(url.searchParams.get('next'));
-      const target = new URL('https://github.com/login/oauth/authorize');
-      target.searchParams.set('client_id', config.githubClientId);
-      target.searchParams.set(
-        'redirect_uri',
-        `${config.origin}/auth/github/callback`
-      );
-      target.searchParams.set('scope', 'read:user');
-      target.searchParams.set('state', state);
-      return redirect(target.toString(), {
-        'set-cookie': cookie(STATE_COOKIE, `${state} ${next}`, 600, secure),
-      });
+      return path === '/auth/github/link'
+        ? startGithub('/account', 'link')
+        : startLinear('/account', 'link');
     }
     if (path === '/auth/github/callback' && method === 'GET') {
-      const [state, next] = (cookies(req).get(STATE_COOKIE) ?? '').split(' ');
+      const [state, next, mode] = (cookies(req).get(STATE_COOKIE) ?? '').split(
+        ' '
+      );
       const code = url.searchParams.get('code');
-      if (
-        code === null ||
-        state === undefined ||
-        state === '' ||
-        url.searchParams.get('state') !== state
-      )
-        return html(
-          messagePage(
-            null,
-            'Sign-in failed',
-            'The sign-in link expired or did not match. Try again.'
-          ),
-          400
-        );
+      if (code === null || !stateMatches(state, url.searchParams.get('state')))
+        return expired();
+      let gh: { id: number; login: string; name: string | null };
       try {
-        const tokenRes = await github(
-          'https://github.com/login/oauth/access_token',
-          {
-            method: 'POST',
-            headers: {
-              accept: 'application/json',
-              'content-type': 'application/json',
-            },
-            body: JSON.stringify({
-              client_id: config.githubClientId,
-              client_secret: config.githubClientSecret,
-              code,
-              redirect_uri: `${config.origin}/auth/github/callback`,
-            }),
-          }
-        );
-        const { access_token } = (await tokenRes.json()) as {
-          access_token?: string;
-        };
-        if (access_token === undefined) throw new Error('no access token');
-        const userRes = await github('https://api.github.com/user', {
-          headers: {
-            authorization: `Bearer ${access_token}`,
-            accept: 'application/vnd.github+json',
-            'user-agent': 'dispatch-team',
-          },
-        });
-        const gh = (await userRes.json()) as {
-          id?: number;
-          login?: string;
-          name?: string | null;
-        };
-        if (typeof gh.id !== 'number' || typeof gh.login !== 'string')
-          throw new Error('no GitHub user');
-        return signIn(
-          db.upsertGithubUser(gh.id, gh.login, gh.name ?? null),
-          safeNext(next ?? null)
-        );
+        gh = await githubIdentity(code);
       } catch {
         return html(
           messagePage(
@@ -293,6 +447,43 @@ export function webHandler(
           502
         );
       }
+      if (mode === 'link')
+        return link(req, { provider: 'github', id: gh.id }, 'GitHub');
+      return signIn(
+        db.upsertGithubUser(gh.id, gh.login, gh.name),
+        safeNext(next ?? null)
+      );
+    }
+    if (path === '/auth/linear/callback' && method === 'GET') {
+      const [state, next, mode, verifier] = (
+        cookies(req).get(LINEAR_STATE_COOKIE) ?? ''
+      ).split(' ');
+      const code = url.searchParams.get('code');
+      if (
+        code === null ||
+        verifier === undefined ||
+        !stateMatches(state, url.searchParams.get('state'))
+      )
+        return expired();
+      let viewer: { id: string; displayName: string; name: string | null };
+      try {
+        viewer = await linearIdentity(code, verifier);
+      } catch {
+        return html(
+          messagePage(
+            null,
+            'Sign-in failed',
+            'Linear did not confirm the sign-in. Try again.'
+          ),
+          502
+        );
+      }
+      if (mode === 'link')
+        return link(req, { provider: 'linear', id: viewer.id }, 'Linear');
+      return signIn(
+        db.upsertLinearUser(viewer.id, viewer.displayName, viewer.name),
+        safeNext(next ?? null)
+      );
     }
     if (path === '/auth/dev' && method === 'GET' && config.devLogin) {
       const login = url.searchParams.get('login') ?? '';
@@ -320,6 +511,7 @@ export function webHandler(
     // ---- pages that need a signed-in person ----
     const isPage =
       path === '/' ||
+      path === '/account' ||
       path === '/teams' ||
       path.startsWith('/teams/') ||
       path.startsWith('/join/') ||
@@ -328,7 +520,9 @@ export function webHandler(
     const user = signedIn(req);
     if (user === null) {
       if (method !== 'GET') return redirect('/');
-      return html(signInPage(path + url.search, config.devLogin));
+      return html(
+        signInPage(path + url.search, config.devLogin, linearClientId !== null)
+      );
     }
     if (method === 'POST' && !sameOrigin(req))
       return html(
@@ -336,6 +530,13 @@ export function webHandler(
         403
       );
 
+    if (path === '/account' && method === 'GET')
+      return html(
+        accountPage(user, db.identities(user.id), {
+          github: config.githubClientId !== null,
+          linear: linearClientId !== null,
+        })
+      );
     if (path === '/' && method === 'GET') {
       const teams = db.teamsOf(user.id);
       // One team: that is where you are going.
