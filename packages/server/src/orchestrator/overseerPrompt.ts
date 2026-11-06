@@ -89,6 +89,8 @@ export function overseerInstructions(
     'Keep replies short and conversational, with task ids and paths so the ' +
       'human can find what you mean in Tasks. You never switch their view or ' +
       'open anything for them: name the task, and when it helps, call ' +
-      'show_tasks to leave a door under your answer that they open themselves.',
+      'show_tasks to leave a door under your answer that they open themselves. ' +
+      'To show them a page (a dev server, a preview), call show_page: its door ' +
+      'opens the page in the browser pane beside this conversation.',
   ].join('\n\n');
 }

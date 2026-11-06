@@ -7,9 +7,10 @@ import {
   SlideOver,
   Tooltip,
 } from '@dispatch/ui';
-import { LockIcon, Minus, PowerOff } from 'lucide-react';
+import { Globe, LockIcon, Minus, PowerOff } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
+import { BrowserPane } from '../components/browser/BrowserPane';
 import { DockedConversation } from '../components/chat/DockedConversation';
 import { OverseerChat } from '../components/chat/OverseerChat';
 import {
@@ -25,6 +26,7 @@ import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { OverseerSession } from '../hooks/useOverseerSession';
 import { revokedLocksComposer } from '../lib/agentPresence';
+import { useBrowserPane } from '../lib/browserPane';
 import { docked, restored, useOverseerDock } from '../lib/overseerDock';
 import type { OverseerDoor } from '../lib/overseerThread';
 import styles from './OverseerView.module.css';
@@ -65,6 +67,8 @@ export interface OverseerViewProps {
   onOpenDoor: (door: OverseerDoor) => void;
   /** An empty project's first-run prompt, shown in place of a fresh conversation. */
   firstRun?: ReactNode;
+  /** Opens a page in the default browser, from the browser pane. */
+  onOpenExternal?: (url: string) => void;
 }
 
 const isSlash = (text: string) => text.trimStart().startsWith('/');
@@ -106,6 +110,7 @@ export function OverseerView({
   renderFocus,
   onOpenDoor,
   firstRun,
+  onOpenExternal = (url) => window.open(url, '_blank', 'noopener'),
 }: OverseerViewProps) {
   // Whatever a side column opened takes the middle; Esc hands it back to the
   // talk. In the app the global keyboard claims Escape first and closes the
@@ -192,6 +197,12 @@ export function OverseerView({
     overseer.open(id);
   };
   const close = (id: string) => setDock((d) => d.filter((x) => x !== id));
+  const browser = useBrowserPane(projectPath);
+  // A show_page door opens its page in the pane; the rest go to Tasks.
+  const openDoor = (door: OverseerDoor) => {
+    if (door.url !== undefined) browser.openAt(door.url);
+    else onOpenDoor(door);
+  };
 
   // A message Jev reads as a new subject opens its own conversation and sets
   // the current one aside; anything else, or no reading, stays put.
@@ -286,9 +297,14 @@ export function OverseerView({
   );
 
   return (
-    <div data-testid="overseer-view" className={styles.root}>
-      {/* Wide views read left to right: what comes to you, the talk, what leaves. */}
-      {inflow}
+    <div
+      data-testid="overseer-view"
+      className={cx(styles.root, browser.open && styles.browsing)}
+    >
+      {/* Wide views read left to right: what comes to you, the talk, what
+          leaves. An open browser takes the columns' place beside the talk;
+          their doors over the composer stay. */}
+      {!browser.open && inflow}
       {focused !== null && (
         <div
           ref={focusRef}
@@ -309,8 +325,20 @@ export function OverseerView({
         )}
         hidden={focused !== null}
       >
-        {open !== null && (
-          <div className={styles.talkBar}>
+        <div className={styles.talkBar}>
+          <Tooltip side="bottom" content="A browser beside the conversation">
+            <Button
+              variant="quiet"
+              size="sm"
+              icon={<Globe {...ICON} />}
+              aria-pressed={browser.open}
+              onClick={browser.toggle}
+              data-testid="overseer-browser-toggle"
+            >
+              Browser
+            </Button>
+          </Tooltip>
+          {open !== null && (
             <Tooltip
               side="bottom"
               content="Set this conversation aside and start another"
@@ -325,8 +353,8 @@ export function OverseerView({
                 Set aside
               </Button>
             </Tooltip>
-          </div>
-        )}
+          )}
+        </div>
         {setAside !== null && (
           <div role="status" className={styles.setAside}>
             <span className={styles.setAsideText}>
@@ -406,11 +434,20 @@ export function OverseerView({
               revokedLocksComposer({ revoked, conversationId: open }) ||
               attached
             }
-            onOpenDoor={onOpenDoor}
+            onOpenDoor={openDoor}
           />
         )}
       </div>
-      {outflow}
+      {browser.open && focused === null && (
+        <BrowserPane
+          url={browser.url}
+          onNavigate={browser.setUrl}
+          onClose={browser.close}
+          daemonBaseUrl={data.daemonBaseUrl}
+          onOpenExternal={onOpenExternal}
+        />
+      )}
+      {!browser.open && outflow}
       {/* Modal, as the legacy sheet was (a press on the scrim closes it), on
           the right for both columns (Q8), as wide as a column. Its title names
           the column and its count; the column inside draws no head of its own.

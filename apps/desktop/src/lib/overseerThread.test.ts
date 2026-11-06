@@ -188,7 +188,7 @@ describe('buildOverseerThread', () => {
         text: 'cancel r-1',
         at,
       },
-      { kind: 'confirm', key: 'w-1-confirm-act-1', action, failure: null },
+      { kind: 'confirm', key: 'w-1-confirm-act-1', action },
     ]);
   });
 
@@ -256,48 +256,35 @@ describe('buildOverseerThread', () => {
     ]);
   });
 
-  test('a failed approval moves the confirm card to the failure row and carries its text', () => {
-    // The server restores a failed-apply action to pending and appends a
-    // `failed` lifecycle row — the card should sit at that newest row, once,
-    // with the failure surfaced for the retry.
+  test('a failed approval is an outcome row, not a card to retry from', () => {
     const action = makeAction();
     const items = buildOverseerThread(
-      makeRecord(
-        [
-          {
-            role: 'action',
-            tool: action.tool,
-            actionId: action.id,
-            outcome: 'pending',
-            text: action.summary,
-            at,
-          },
-          { role: 'assistant', text: 'Queued the cancel.', at },
-          {
-            role: 'action',
-            tool: action.tool,
-            actionId: action.id,
-            outcome: 'failed',
-            text: 'Failed: Cancel run r-1 — run already terminal',
-            at,
-          },
-        ],
-        { pendingActions: [action] }
-      )
+      makeRecord([
+        {
+          role: 'action',
+          tool: action.tool,
+          actionId: action.id,
+          outcome: 'pending',
+          text: action.summary,
+          at,
+        },
+        {
+          role: 'action',
+          tool: action.tool,
+          actionId: action.id,
+          outcome: 'failed',
+          text: 'Failed: Cancel run r-1 — run already terminal',
+          at,
+        },
+      ])
     );
     expect(items).toEqual([
       {
-        kind: 'message',
+        kind: 'outcome',
         key: 'w-1-msg-1',
-        role: 'assistant',
-        text: 'Queued the cancel.',
+        outcome: 'failed',
+        text: 'Failed: Cancel run r-1 — run already terminal',
         at,
-      },
-      {
-        kind: 'confirm',
-        key: 'w-1-confirm-act-1',
-        action,
-        failure: 'Failed: Cancel run r-1 — run already terminal',
       },
     ]);
   });
@@ -317,7 +304,7 @@ describe('buildOverseerThread', () => {
         text: 'cancel it',
         at,
       },
-      { kind: 'confirm', key: 'w-1-confirm-act-1', action, failure: null },
+      { kind: 'confirm', key: 'w-1-confirm-act-1', action },
     ]);
   });
 
@@ -471,13 +458,11 @@ describe('buildOverseerThread', () => {
         kind: 'confirm',
         key: 'w-1-confirm-act-1',
         action: first,
-        failure: null,
       },
       {
         kind: 'confirm',
         key: 'w-1-confirm-act-2',
         action: second,
-        failure: null,
       },
     ]);
   });
@@ -647,6 +632,33 @@ describe('show_tasks doors', () => {
     expect(items[1].kind).toBe('tool');
   });
 
+  test('a show_page result is a door to its page; a bad page is no door', () => {
+    const items = buildOverseerThread(
+      makeRecord([
+        {
+          role: 'tool',
+          tool: 'show_page',
+          text: JSON.stringify({ door: { url: 'http://localhost:5173' } }),
+          at: 'a',
+        },
+        {
+          role: 'tool',
+          tool: 'show_page',
+          text: JSON.stringify({ door: { url: 'file:///etc/passwd' } }),
+          at: 'b',
+        },
+      ])
+    );
+    expect(items[0]).toMatchObject({
+      kind: 'door',
+      door: { url: 'http://localhost:5173/' },
+    });
+    expect(items[1].kind).toBe('tool');
+    expect(doorLabel({ url: 'http://localhost:5173/' })).toBe(
+      'Open localhost:5173 in the browser →'
+    );
+  });
+
   test('the label names what the door opens', () => {
     expect(doorLabel({})).toBe('Show in tasks →');
     expect(doorLabel({ preset: 'ready' })).toBe('Show Ready in tasks →');
@@ -684,10 +696,10 @@ describe('groupConfirmRows', () => {
     const b = makeAction({ id: 'b', summary: 'Dispatch t-2' });
     const c = makeAction({ id: 'c', summary: 'Cancel r-9' });
     const items = groupConfirmRows([
-      { kind: 'confirm', key: 'k-a', action: a, failure: null },
-      { kind: 'confirm', key: 'k-b', action: b, failure: null },
+      { kind: 'confirm', key: 'k-a', action: a },
+      { kind: 'confirm', key: 'k-b', action: b },
       { kind: 'pending', key: 'p' },
-      { kind: 'confirm', key: 'k-c', action: c, failure: 'boom' },
+      { kind: 'confirm', key: 'k-c', action: c },
     ]);
     expect(items.map((i) => i.kind)).toEqual([
       'confirms',
@@ -696,7 +708,7 @@ describe('groupConfirmRows', () => {
     ]);
     expect(items[0]).toMatchObject({
       key: 'k-a',
-      actions: [{ action: { id: 'a' } }, { action: { id: 'b' } }],
+      actions: [{ id: 'a' }, { id: 'b' }],
     });
   });
 });

@@ -56,9 +56,21 @@
   margin-inline: auto;
 }
 
-/* No conversation yet: the composer sits at the bottom, as it will after. */
+/* No conversation yet: the composer sits at the bottom, as it will after,
+   and the bar stays on top. */
 .talkAtEnd {
   justify-content: flex-end;
+}
+
+.talkAtEnd .talkBar {
+  margin-bottom: auto;
+}
+
+/* The browser pane is open: the talk gives up its centring and shares the
+   width with the pane (BrowserPane.module.css). */
+.browsing .talk {
+  flex: 1 1 0;
+  margin-inline: 0;
 }
 
 .talkBar {
@@ -141,5 +153,16 @@
   .columnDoors,
   .narrowOnly {
     display: none;
+  }
+
+  /* With the browser open the columns are not beside the talk, so what
+     stands in for them comes back. */
+  .browsing .columnDoors,
+  .browsing .dockChips {
+    display: flex;
+  }
+
+  .browsing .narrowOnly:not(.dockChips) {
+    display: block;
   }
 }

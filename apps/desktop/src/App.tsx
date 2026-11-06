@@ -205,6 +205,7 @@ import {
   isTauri,
   listProjects,
   listRegisteredProjects,
+  openUrl,
   touchProjectOpened,
 } from './lib/tauri';
 import {
@@ -2443,6 +2444,10 @@ function App() {
           revoked={overseer.revoked}
           onShowAsks={() => dispatchNav({ type: 'showTasks' })}
           onOpenDoor={openDoor}
+          onOpenExternal={(url) => {
+            if (isTauri()) void openUrl(url);
+            else window.open(url, '_blank', 'noopener');
+          }}
           firstRun={
             showFirstRun ? (
               <FirstRunView

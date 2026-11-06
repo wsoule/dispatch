@@ -408,8 +408,10 @@ export class MergeQueue {
         entry.reason = truncateReason(entry.reason);
       }
     }
-    this.history.push(...persisted.history);
-    this.history.length = Math.min(this.history.length, HISTORY_LIMIT);
+    // Newest first on disk, so the reverse walk leaves each run's latest row.
+    for (const entry of [...persisted.history].reverse()) {
+      this.fileToHistory(entry);
+    }
 
     const runsById = new Map(
       this.ctx.orchestrator.list().map((meta) => [meta.id, meta])
@@ -491,6 +493,14 @@ export class MergeQueue {
     this.setEntryState(entry, 'failed');
     entry.reason = reason;
     entry.finishedAt = new Date().toISOString();
+    this.fileToHistory(entry);
+  }
+
+  // Puts `entry` at the head of history, replacing any older row for the same
+  // run: a run re-enqueued after a failure shows its latest outcome once.
+  private fileToHistory(entry: MergeQueueEntry): void {
+    const previous = this.history.findIndex((e) => e.runId === entry.runId);
+    if (previous !== -1) this.history.splice(previous, 1);
     this.history.unshift(entry);
     this.history.length = Math.min(this.history.length, HISTORY_LIMIT);
   }
@@ -1794,8 +1804,7 @@ export class MergeQueue {
       );
     }
     entry.finishedAt = new Date().toISOString();
-    this.history.unshift(entry);
-    this.history.length = Math.min(this.history.length, HISTORY_LIMIT);
+    this.fileToHistory(entry);
     if (state === 'merged' && mergedBaseBranch !== undefined) {
       this.mergedSinceIdle += 1;
       this.lastMergeBase = mergedBaseBranch;

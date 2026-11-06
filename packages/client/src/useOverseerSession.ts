@@ -232,10 +232,11 @@ export interface OverseerSession {
    *
    * Owns the whole decide cycle — the lock, the failure, and the re-entrancy
    * guard — for the same reason `submit` owns the send cycle. Never rejects:
-   * the outcome is readable on `decidingActionId` and `decideError`. A second
-   * call while one is in flight is a no-op rather than a second request.
+   * resolves false when the decision did not go through or the approved
+   * effect failed, so a caller deciding several in a row can stop. A second
+   * call while one is in flight is a no-op that resolves false.
    */
-  confirmAction: (actionId: string, approve: boolean) => Promise<void>;
+  confirmAction: (actionId: string, approve: boolean) => Promise<boolean>;
   /**
    * Decides one built-in tool call the running turn is parked on (see
    * `OverseerRecord.pendingApprovals`) by answering its `tool-approval` gate.
@@ -671,10 +672,10 @@ export function useOverseerSession(
       // surface that renders one is unmounted by an ordinary tab flip, so a
       // component-local guard would come back open on remount and let a second
       // click 404 against an action the server already claimed.
-      if (decidingActionId !== null) return;
+      if (decidingActionId !== null) return false;
       if (client === null || conversationId === null) {
         setDecideError('no overseer conversation open');
-        return;
+        return false;
       }
       // Held for the whole call, including the reconciling refetch below, so
       // every card stays locked and the deciding one keeps its spinner even if
@@ -700,10 +701,23 @@ export function useOverseerSession(
         await queryClient.invalidateQueries({
           queryKey: overseerKey(port, conversationId),
         });
+        // An approved-but-failed effect is a `failed` row in the transcript,
+        // not an error from the reply.
+        const record = queryClient.getQueryData<OverseerRecord>(
+          overseerKey(port, conversationId)
+        );
+        return !(
+          record?.messages.some(
+            (m) =>
+              m.role === 'action' &&
+              m.actionId === actionId &&
+              m.outcome === 'failed'
+          ) ?? false
+        );
       } catch (err) {
-        // An approved-but-failed effect shows as a failure row on the card, so
-        // this reports a gate that is gone or a transport-level failure.
+        // A gate that is gone or a transport-level failure.
         setDecideError(err instanceof Error ? err.message : String(err));
+        return false;
       } finally {
         setDecidingActionId(null);
       }

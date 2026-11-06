@@ -1763,7 +1763,7 @@ export interface OverseerAction {
   /** One sentence, safe to render verbatim in the chat UI. */
   summary: string;
   createdAt: string;
-  status: 'pending' | 'applied' | 'denied';
+  status: 'pending' | 'applied' | 'denied' | 'failed';
 }
 
 // Mirrors OverseerRecord in packages/server/src/orchestrator/overseer.ts — the
