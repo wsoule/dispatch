@@ -216,6 +216,7 @@ import { openRefWith, type RefAction } from './lib/threadSources';
 import { checkForUpdate, installUpdateAndRelaunch } from './lib/updater';
 import { applyZoomFactor, loadZoomFactor, stepZoomFactor } from './lib/zoom';
 import { AllAgentsView } from './views/AllAgentsView';
+import { AllocationView } from './views/AllocationView';
 import { DocsView } from './views/DocsView';
 import { DraftView } from './views/DraftView';
 import { FilesView } from './views/FilesView';
@@ -1893,9 +1894,12 @@ function App() {
             onNavigate={navigate}
           />
         );
+      case 'allocation':
+        // What the planning's allocation would do now, and the run log.
+        return <AllocationView data={data} onBack={closeSidePage} />;
       case 'week':
         // One person's open issues by milestone, deadlines and attention.
-        return <WeekView me={data.me} />;
+        return <WeekView me={data.me} client={data.client} port={data.port} />;
       case 'projects':
         // The projects register: every open project with its status, next
         // milestone, lead and allocation, grouped by initiative. Its rows and

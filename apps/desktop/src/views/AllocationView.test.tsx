@@ -1,0 +1,287 @@
+import type { TaskListItem, UpdatePatch } from '@dispatch-foo/core/browser';
+import type {
+  AllocationRun,
+  AllocationRunInput,
+  ApiClient,
+  MilestoneProgress,
+  RunMeta,
+} from '@dispatch/client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
+import { afterEach, describe, expect, test } from 'bun:test';
+
+import { recentAllocationsFrom, runRow } from '../adapters/allocation';
+import { ShellActionsProvider } from '../components/shell/ShellActionsContext';
+import { ToastProvider } from '../components/shell/Toasts';
+import { SHELL } from '../components/tasks/page/pageHost.test-helper';
+import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { type PlanningInput, PlanningProvider } from '../hooks/usePlanning';
+import { dayFromNow } from '../lib/taskDates';
+import { taskDoc } from '../lib/taskDoc.test-helper';
+import { AllocationView } from './AllocationView';
+
+// The Allocation page over a fixture planning: Storefront (lead Ana) has a
+// next milestone with one unassigned backlog issue; Search has no lead, so it
+// is blocked. A fake client records what the page asks the daemon to do.
+
+afterEach(cleanup);
+
+const DONE_MEANS = '## Description\n\nDone means: it ships.\n';
+
+function fixture(): TaskListItem[] {
+  return [
+    taskDoc({
+      id: 'p-store',
+      title: 'Storefront',
+      kind: 'project',
+      status: 'working',
+      assignee: 'human:ana',
+    }),
+    taskDoc(
+      {
+        id: 'ms-beta',
+        title: 'Beta',
+        kind: 'milestone',
+        parent: 'p-store',
+        dueDate: dayFromNow(9),
+      },
+      DONE_MEANS
+    ),
+    taskDoc({
+      id: 't-pay',
+      title: 'Take payments',
+      parent: 'ms-beta',
+      status: 'backlog',
+      assignee: 'none',
+    }),
+    taskDoc({
+      id: 't-cart',
+      title: 'Persist the cart',
+      parent: 'ms-beta',
+      status: 'working',
+      assignee: 'human:ana',
+    }),
+    taskDoc({
+      id: 'p-search',
+      title: 'Search',
+      kind: 'project',
+      status: 'working',
+      assignee: 'none',
+    }),
+  ];
+}
+
+interface FakeLog {
+  updates: { id: string; patch: UpdatePatch }[];
+  comments: string[];
+  recorded: AllocationRunInput[];
+}
+
+function fakeClient(log: FakeLog, refuse: string[] = []): ApiClient {
+  const runs: AllocationRun[] = [];
+  return {
+    fetchAllocationRuns: () => Promise.resolve(runs),
+    fetchAllocationRun: (id: string) =>
+      Promise.resolve(runs.find((run) => run.id === id)),
+    recordAllocationRun: (input: AllocationRunInput) => {
+      log.recorded.push(input);
+      const run: AllocationRun = {
+        ...input,
+        id: `ar-${runs.length}`,
+        at: new Date().toISOString(),
+        by: 'human:ana',
+        counts: {
+          assigned: input.items.filter((i) => i.outcome === 'assigned').length,
+          wouldAssign: input.items.filter((i) => i.outcome === 'would_assign')
+            .length,
+          failed: input.items.filter((i) => i.outcome === 'failed').length,
+          blocked: input.projects.filter((p) => p.outcome === 'blocked').length,
+          skipped: 0,
+        },
+      };
+      runs.unshift(run);
+      return Promise.resolve(run);
+    },
+    updateTask: (id: string, patch: UpdatePatch) => {
+      if (refuse.includes(id)) return Promise.reject(new Error('locked'));
+      log.updates.push({ id, patch });
+      return Promise.resolve({});
+    },
+    addTaskComment: (_id: string, input: { body: string }) => {
+      log.comments.push(input.body);
+      return Promise.resolve({});
+    },
+  } as unknown as ApiClient;
+}
+
+function planningInput(): PlanningInput {
+  return {
+    tasks: fixture(),
+    config: null,
+    people: [{ ref: 'human:ana', name: 'Ana' }],
+    executors: null,
+    me: 'human:ana',
+    linearLinks: {},
+    latestRunByTaskId: new Map<string, RunMeta>(),
+    milestoneProgressById: new Map<string, MilestoneProgress>(),
+  };
+}
+
+function mount(log: FakeLog, tier: 'operator' | 'request' = 'operator') {
+  const data = {
+    client: fakeClient(log),
+    port: 1,
+    portLoading: false,
+    portError: false,
+    portErrorDetail: null,
+    retryEnsureDispatchd: () => {},
+    myTier: tier,
+  } as unknown as DispatchProjectData;
+  return render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ToastProvider>
+        <ShellActionsProvider value={SHELL}>
+          <PlanningProvider data={planningInput()}>
+            <AllocationView data={data} />
+          </PlanningProvider>
+        </ShellActionsProvider>
+      </ToastProvider>
+    </QueryClientProvider>
+  );
+}
+
+function newLog(): FakeLog {
+  return { updates: [], comments: [], recorded: [] };
+}
+
+describe('AllocationView', () => {
+  test('previews the issue it would assign and the blocked project', () => {
+    mount(newLog());
+    expect(
+      screen.getByText('1 issue to assign in 1 project · 1 project blocked')
+    ).toBeTruthy();
+    const store = screen.getByRole('region', { name: 'Storefront' });
+    expect(within(store).getByText('Allocating 1')).toBeTruthy();
+    expect(within(store).getByText('Take payments')).toBeTruthy();
+    expect(within(store).getByText('Ana')).toBeTruthy();
+    const search = screen.getByRole('region', { name: 'Search' });
+    expect(within(search).getByText('Blocked')).toBeTruthy();
+  });
+
+  test('records a dry run without changing anything', async () => {
+    const log = newLog();
+    mount(log);
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Record dry run' }));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(log.recorded).toHaveLength(1));
+    expect(log.recorded[0]?.mode).toBe('dry_run');
+    expect(log.recorded[0]?.items.map((i) => i.outcome)).toEqual([
+      'would_assign',
+    ]);
+    expect(log.updates).toEqual([]);
+    await waitFor(() =>
+      expect(screen.getByText('1 would assign')).toBeTruthy()
+    );
+  });
+
+  test('applies after confirming: assigns, moves out of Backlog, comments, records', async () => {
+    const log = newLog();
+    mount(log);
+    fireEvent.click(screen.getByRole('button', { name: 'Apply 1 change' }));
+    await act(async () => {
+      fireEvent.click(
+        within(screen.getByRole('alertdialog')).getByRole('button', {
+          name: 'Apply',
+        })
+      );
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(log.recorded).toHaveLength(1));
+    expect(log.updates).toHaveLength(1);
+    expect(log.updates[0]?.id).toBe('t-pay');
+    expect(log.updates[0]?.patch.assignee).toBe('human:ana');
+    expect(log.updates[0]?.patch.status).toBeDefined();
+    expect(log.comments[0]).toContain('you lead Storefront');
+    expect(log.recorded[0]?.mode).toBe('applied');
+    expect(log.recorded[0]?.items[0]?.outcome).toBe('assigned');
+  });
+
+  test('a request-tier window only previews', () => {
+    mount(newLog(), 'request');
+    expect(screen.queryByRole('button', { name: /^Apply/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Record dry run' })).toBeTruthy();
+  });
+});
+
+describe('the run log helpers', () => {
+  const run: AllocationRun = {
+    id: 'ar-1',
+    at: '2026-11-06T10:00:00.000Z',
+    by: 'human:ana',
+    mode: 'applied',
+    counts: { assigned: 2, wouldAssign: 0, failed: 1, blocked: 1, skipped: 0 },
+    projects: [],
+    items: [
+      {
+        issueId: 't-1',
+        identifier: 't-1',
+        title: 'One',
+        projectId: 'p',
+        projectName: 'P',
+        milestoneId: 'm',
+        milestoneName: 'M',
+        assigneeId: 'human:ana',
+        assigneeName: 'Ana',
+        fromStatus: 'backlog',
+        toStatus: 'ready',
+        outcome: 'assigned',
+        note: null,
+      },
+      {
+        issueId: 't-2',
+        identifier: 't-2',
+        title: 'Two',
+        projectId: 'p',
+        projectName: 'P',
+        milestoneId: 'm',
+        milestoneName: 'M',
+        assigneeId: 'human:ana',
+        assigneeName: 'Ana',
+        fromStatus: 'backlog',
+        toStatus: 'ready',
+        outcome: 'failed',
+        note: 'locked',
+      },
+    ],
+  };
+
+  test('a row says what the run did', () => {
+    const row = runRow(run, () => 'Ana');
+    expect(row.summary).toBe('2 assigned · 1 failed');
+    expect(row.modeLabel).toBe('Applied');
+    expect(row.by).toBe('Ana');
+  });
+
+  test('only assigned items of applied runs count as recent allocations', () => {
+    expect(recentAllocationsFrom([run])).toEqual([
+      {
+        issueId: 't-1',
+        assigneeId: 'human:ana',
+        projectId: 'p',
+        milestoneId: 'm',
+        at: run.at,
+      },
+    ]);
+    expect(recentAllocationsFrom([{ ...run, mode: 'dry_run' }])).toEqual([]);
+  });
+});

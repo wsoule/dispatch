@@ -213,6 +213,7 @@ const UNLISTED_PAGE_TITLES: Partial<Record<HostedView, string>> = {
   files: 'Files',
   terminals: 'Terminals',
   projects: 'Projects',
+  allocation: 'Allocation',
 };
 
 /** Whether a hosted page is one of the sidebar's rows (Threads, Timeline,
