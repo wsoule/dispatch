@@ -46,15 +46,15 @@ dispatch-relay's `.railway/railway.ts` (partial `relay`), not this repo's. The
 image builds from the repo root with `apps/web/Dockerfile`. The entrypoint hands
 a root-owned volume to the `bun` user and drops root.
 
-Once, before the first deploy from this repo, set the service's config-as-code
-path (Settings → Config-as-code) to `apps/web/railway.json`. That file carries
-the Dockerfile path, the `/healthz` deploy gate and the restart policy, which
-the relay's own `railway.json` used to carry. Neither the IaC partial nor the
-image's `HEALTHCHECK` sets them: Railway ignores the latter, and restart policy
-does not round-trip through IaC. Railway deprecates `railway.json` after
-2026-12-01, so move these settings into IaC before then.
+The build and deploy settings live on the service itself (set 2026-11-06):
+Dockerfile builder with `apps/web/Dockerfile`, healthcheck `/healthz` with a
+30-second timeout, and restart on failure up to 10 times. Railway no longer lets
+a service without one opt in to a `railway.json`, and the repo root has none, so
+without these settings `railway up` falls back to Railpack and fails with "No
+start command detected". Restart policy is accepted but does not read back
+through the API or IaC.
 
-Then, from a clean checkout of the commit to ship, at the repo root:
+From a clean checkout of the commit to ship, at the repo root:
 
 ```bash
 railway up --service dispatch-team --detach
