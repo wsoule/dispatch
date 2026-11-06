@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "start": "bun src/main.ts",
-    "dev": "DEV_LOGIN=1 bun --watch src/main.ts",
+    "dev": "DEV_LOGIN=1 PORT=8787 DATA_DIR=./data bun --watch src/main.ts",
     "test": "bun test",
     "tsc": "tsgo --noEmit --pretty"
   },

@@ -44,12 +44,13 @@ dispatch-relay's `.railway/railway.ts` (partial `relay`), not this repo's. The
 image builds from the repo root with `apps/web/Dockerfile`. The entrypoint hands
 a root-owned volume to the `bun` user and drops root.
 
-Once, before the first deploy from this repo, point the service at the
-Dockerfile:
-
-```bash
-railway variables --service dispatch-team --set RAILWAY_DOCKERFILE_PATH=apps/web/Dockerfile
-```
+Once, before the first deploy from this repo, set the service's config-as-code
+path (Settings → Config-as-code) to `apps/web/railway.json`. That file carries
+the Dockerfile path, the `/healthz` deploy gate and the restart policy, which
+the relay's own `railway.json` used to carry. Neither the IaC partial nor the
+image's `HEALTHCHECK` sets them: Railway ignores the latter, and restart policy
+does not round-trip through IaC. Railway deprecates `railway.json` after
+2026-12-01, so move these settings into IaC before then.
 
 Then, from a clean checkout of the commit to ship, at the repo root:
 

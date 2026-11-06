@@ -1,5 +1,5 @@
 #!/bin/sh
-# Starts the relay as the unprivileged `bun` user. A Railway volume mounts at
+# Starts the service as the unprivileged `bun` user. A Railway volume mounts at
 # /data owned by root, so when started as root this hands the data dir to
 # `bun` first, then drops privileges; started as any other user it just runs.
 set -eu
