@@ -1730,3 +1730,53 @@ test('task actions list their tasks as a card, proposed then started', async () 
   await clickAndSettle(screen.getByRole('button', { name: /^UI/ }));
   expect(opened).toEqual(['t-b']);
 });
+
+// Several actions in one turn: a task action's row lists its tasks, the rest keep their sentence.
+test('a batch lists a task action as a card beside a plain one', () => {
+  const plan = overseerAction({
+    id: 'act-1',
+    tool: 'create_task',
+    input: { title: 'Spec the 403' },
+    summary: 'Create task "Spec the 403"',
+  });
+  const cancel = overseerAction({ id: 'act-2' });
+  render(
+    <OverseerChat
+      work={{ tasks: [], runs: [] }}
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: overseerRecord({
+          messages: [
+            {
+              role: 'action',
+              tool: 'create_task',
+              actionId: 'act-1',
+              outcome: 'pending',
+              text: 'Queued',
+              at: '2026-08-10T00:00:02Z',
+            },
+            {
+              role: 'action',
+              tool: 'cancel_run',
+              actionId: 'act-2',
+              outcome: 'pending',
+              text: 'Queued',
+              at: '2026-08-10T00:00:03Z',
+            },
+          ],
+          pendingActions: [plan, cancel],
+        }),
+      })}
+    />
+  );
+  const batch = screen.getByTestId('overseer-confirm-batch');
+  const card = batch.querySelector('[data-testid="overseer-task-card"]');
+  expect(card?.textContent).toContain('1 suggested task');
+  expect(card?.textContent).toContain('Spec the 403');
+  expect(batch.textContent).toContain('Cancel run r-1');
+  expect(screen.queryByText('Create task "Spec the 403"')).toBeNull();
+  // Each row keeps its own answers.
+  expect(
+    screen.getByRole('button', { name: 'Approve: Create task "Spec the 403"' })
+  ).toBeDefined();
+});
