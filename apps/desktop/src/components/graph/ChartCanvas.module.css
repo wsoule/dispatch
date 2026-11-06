@@ -1,0 +1,276 @@
+/* The dependency chart's stage (ChartCanvas.tsx): a dotted, recessed canvas
+   (--sunken, Gr8r's board well) panned and zoomed by a CSS transform on the
+   layer, the routed edges in one SVG under the DOM nodes, and two floating
+   controls (zoom, legend). Trace colours: amber back through what a task
+   waits on, teal forward through what it unblocks, the ink for a
+   highlighted set. */
+
+.stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  background-color: var(--sunken);
+  background-image: radial-gradient(
+    var(--border-strong) 1.1px,
+    transparent 1.1px
+  );
+  background-size: 22px 22px;
+}
+
+.stage:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.svg {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+
+/* ---- arrowheads ---------------------------------------------------------- */
+
+.marker path {
+  fill: var(--text-4);
+}
+
+.marker[data-marker='up'] path {
+  fill: var(--amber);
+}
+
+.marker[data-marker='down'] path {
+  fill: var(--teal);
+}
+
+.marker[data-marker='set'] path {
+  fill: var(--text);
+}
+
+/* ---- milestone boxes ----------------------------------------------------- */
+
+.group rect {
+  fill: var(--surface-2);
+  fill-opacity: 0.7;
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+
+.group[data-loose] rect {
+  stroke-dasharray: 5 4;
+}
+
+.group text {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  fill: var(--text-2);
+}
+
+/* ---- edges --------------------------------------------------------------- */
+
+.edge {
+  --edge-width: 1.3;
+
+  color: var(--text-4);
+}
+
+.edge[data-tone='up'] {
+  --edge-width: 2.4;
+
+  color: var(--amber);
+}
+
+.edge[data-tone='down'] {
+  --edge-width: 2.4;
+
+  color: var(--teal);
+}
+
+.edge[data-tone='set'] {
+  --edge-width: 2.2;
+
+  color: var(--text);
+}
+
+.edgeLine {
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: var(--edge-width);
+  transition:
+    opacity 150ms,
+    stroke 150ms;
+}
+
+.edge[data-tone='dim'] .edgeLine {
+  opacity: 0.08;
+}
+
+.edgeHit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  cursor: pointer;
+}
+
+/* The count pill on a milestone line: neutral at rest, amber when it leads
+   from a milestone that needs attention, the line's own colour while
+   traced. */
+.edgePill {
+  transition: opacity 150ms;
+}
+
+.edgePill[data-clickable] {
+  cursor: pointer;
+}
+
+.edgePill rect {
+  fill: var(--surface);
+  stroke: currentcolor;
+  stroke-width: 1;
+}
+
+.edgePill text {
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  fill: currentcolor;
+}
+
+.edge[data-tone='idle'] .edgePill,
+.edge[data-tone='dim'] .edgePill {
+  color: var(--text-2);
+}
+
+.edge[data-tone='idle'] .edgePill rect,
+.edge[data-tone='dim'] .edgePill rect {
+  stroke: var(--border-strong);
+}
+
+.edge[data-tone='attention'] .edgePill {
+  color: var(--amber);
+}
+
+.edge[data-tone='dim'] .edgePill {
+  opacity: 0.15;
+}
+
+.edgePill:focus-visible {
+  outline: 2px solid var(--focus-ring);
+}
+
+/* ---- nodes --------------------------------------------------------------- */
+
+/* A faded node comes back to full strength while it holds focus, so its
+   focus ring is never drawn at a fifth of its strength. */
+.node {
+  position: absolute;
+  transition: opacity 150ms;
+}
+
+.node[data-trace='dim'] {
+  opacity: 0.18;
+}
+
+.node[data-trace='dim']:focus-within {
+  opacity: 1;
+}
+
+/* ---- floating controls --------------------------------------------------- */
+
+.zoom {
+  position: absolute;
+  top: var(--s-3);
+  right: var(--s-3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+}
+
+.legend {
+  position: absolute;
+  bottom: var(--s-3);
+  left: var(--s-3);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1) var(--s-3);
+  max-width: calc(100% - 24px);
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font-size: var(--fs-2xs);
+  color: var(--text-2);
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+}
+
+.legendItem {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.legendHint {
+  color: var(--text-3);
+}
+
+.message {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  pointer-events: none;
+}
+
+/* ---- swatches ------------------------------------------------------------ */
+
+.traceSwatch {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 16px;
+  height: 0;
+  border-top: 2px solid var(--amber);
+}
+
+.traceSwatch[data-dir='down'] {
+  border-top-color: var(--teal);
+}
+
+.pillSwatch {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 14px;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-full);
+  font-size: 10px;
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  background: var(--surface);
+}
+
+.pillSwatch[data-attention] {
+  border-color: var(--amber);
+  color: var(--amber);
+}

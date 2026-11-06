@@ -1,16 +1,19 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
-import type { MilestoneProgress, RunMeta, RunState } from '@dispatch/client';
+import type { MilestoneProgress, RunMeta } from '@dispatch/client';
 import type { GraphScope } from '@dispatch/planning';
 import {
   cleanup,
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { type ReactNode, useReducer } from 'react';
+import { useReducer } from 'react';
 
+import { TASK_DRAW_CAP } from '../components/graph/MilestoneMap';
+import { testConfig } from '../components/settings/fixtures.test-helper';
 import { ShellActionsProvider } from '../components/shell/ShellActionsContext';
 import { SHELL } from '../components/tasks/page/pageHost.test-helper';
 import { type PlanningInput, PlanningProvider } from '../hooks/usePlanning';
@@ -27,10 +30,12 @@ import { GraphView, type GraphViewProps } from './GraphView';
 
 // The Graph page over a fixture planning (PlanningProvider runs the chain
 // over the task list below): two projects, three milestones and issues whose
-// blocking relations cross the milestones, so the milestone level has arrows
-// and a risk chain. Dates are relative to today so the overdue milestone
-// stays overdue. Where the view is lives in App's nav reducer, so the harness
-// (GraphHost) runs one and hands the page's scope back to the view.
+// blocking relations cross the milestones, so the milestone chart has lines.
+// The chart itself (components/graph/MilestoneMap) has its own tests; these
+// cover what the page adds: the tasks grouped by milestone, a route's scope
+// narrowing them, the drawer, and the draw cap. Where the view is lives in
+// App's nav reducer, so the harness (GraphHost) runs one and hands the page's
+// scope back to the view.
 
 afterEach(cleanup);
 
@@ -122,7 +127,7 @@ function fixture(): TaskListItem[] {
   ];
 }
 
-/** One project, one milestone and `count` issues: past the draw limit. */
+/** One project, one milestone and `count` issues in one chain. */
 function oversized(count: number): TaskListItem[] {
   const tasks = [
     taskDoc({
@@ -177,14 +182,12 @@ function input(tasks: TaskListItem[]): PlanningInput {
 interface MountOptions {
   tasks?: TaskListItem[];
   peekTask?: (taskId: string) => void;
-  bucketOf?: GraphViewProps['bucketOf'];
-  selectedId?: string | null;
-  readyIds?: Set<string>;
-  liveRunStateByTaskId?: Map<string, RunState>;
-  /** The scope the page opens on; the workspace's milestones by default. */
+  /** The scope the page opens on; the workspace by default. */
   scope?: GraphScope;
   /** Every nav action the view dispatches, in order. */
   log?: NavAction[];
+  /** No project config yet (the window still loading). */
+  noConfig?: boolean;
 }
 
 type HostProps = Omit<GraphViewProps, 'scope' | 'nodeId' | 'onNavigate'> & {
@@ -219,405 +222,120 @@ function GraphHost({ scope, log, ...rest }: HostProps) {
   );
 }
 
-function Providers({
-  data,
-  peekTask,
-  children,
-}: {
-  data: PlanningInput;
-  peekTask: (taskId: string) => void;
-  children: ReactNode;
-}) {
-  return (
-    <ShellActionsProvider value={{ ...SHELL, peekTask }}>
-      <PlanningProvider data={data}>{children}</PlanningProvider>
-    </ShellActionsProvider>
-  );
-}
-
-/** The view under its providers, over one fixture planning. */
-function tree(
-  options: MountOptions,
-  tasks: TaskListItem[],
-  planning: PlanningInput
-) {
-  return (
-    <Providers data={planning} peekTask={options.peekTask ?? (() => {})}>
-      <GraphHost
-        data={{
-          tasks,
-          readyIds: options.readyIds ?? new Set(),
-          liveRunStateByTaskId: options.liveRunStateByTaskId ?? new Map(),
-          latestRunByTaskId: planning.latestRunByTaskId,
-        }}
-        bucketOf={options.bucketOf ?? (() => null)}
-        selectedId={options.selectedId ?? null}
-        scope={options.scope ?? DEFAULT_GRAPH_SCOPE}
-        log={options.log ?? []}
-      />
-    </Providers>
-  );
-}
-
-/** Renders the view; `rerender(next)` re-renders it with changed options
- * over the same planning (the drawer closing, say). */
 function mount(options: MountOptions = {}) {
   const tasks = options.tasks ?? fixture();
   const planning = input(tasks);
   const log = options.log ?? [];
-  const withLog = { ...options, log };
-  const utils = render(tree(withLog, tasks, planning));
-  return {
-    ...utils,
-    log,
-    rerender: (next: MountOptions) =>
-      utils.rerender(tree({ ...withLog, ...next }, tasks, planning)),
-  };
+  const utils = render(
+    <ShellActionsProvider
+      value={{ ...SHELL, peekTask: options.peekTask ?? (() => {}) }}
+    >
+      <PlanningProvider data={planning}>
+        <GraphHost
+          data={{
+            tasks,
+            milestones: tasks.filter(
+              (task) =>
+                task.meta.kind !== undefined && task.meta.kind !== 'task'
+            ),
+            config: options.noConfig === true ? null : testConfig,
+          }}
+          bucketOf={(): TaskBucket | null => null}
+          asksByTask={new Map()}
+          projectKey="graph-test"
+          scope={options.scope ?? DEFAULT_GRAPH_SCOPE}
+          log={log}
+        />
+      </PlanningProvider>
+    </ShellActionsProvider>
+  );
+  return { ...utils, log };
 }
 
-function box(name: RegExp): HTMLElement {
-  return screen.getByRole('button', { name });
-}
-
-/** The graph's frame, by the data attributes the canvas sets on it. */
-function frame(): HTMLElement {
-  const el = document.querySelector('[data-highlight]');
-  if (!(el instanceof HTMLElement)) throw new Error('no graph frame');
-  return el;
+// The chart lays out asynchronously (elkjs): its nodes appear after the first render, and
+// the first layout in a process also loads the ELK bundle.
+async function milestoneTitles(): Promise<string[]> {
+  const nodes = await screen.findAllByTestId(
+    'milestone-node',
+    {},
+    { timeout: 10_000 }
+  );
+  return nodes.map((node) => node.getAttribute('title') ?? '');
 }
 
 describe('GraphView', () => {
-  test('opens on the workspace’s milestones: a box per milestone, framed by project, with the level tabs', () => {
+  test('opens on the milestone chart, a card per milestone', async () => {
     mount();
+    const view = screen.getByTestId('graph-view');
     expect(
-      screen.getByRole('heading', { level: 1, name: 'Dependencies' })
+      within(view).getByRole('heading', { level: 1, name: 'Dependencies' })
     ).toBeTruthy();
-    expect(screen.getByText(/^3 milestones in 2 projects; /)).toBeTruthy();
-    expect(
-      screen.getByRole('img', { name: /^Milestone dependency graph/ })
-    ).toBeTruthy();
-    expect(box(/^Beta\b/)).toBeTruthy();
-    expect(box(/^Launch\b/)).toBeTruthy();
-    expect(box(/^Index\b/)).toBeTruthy();
-    // Each box's name ends its context with the frame it sits in.
-    expect(box(/^Beta\b/).getAttribute('aria-label')).toContain(
-      'in Storefront'
-    );
-    // Projects / Milestones / Issues (no initiatives in this workspace).
-    const tabs = screen.getByRole('navigation', { name: 'Graph level' });
-    expect(
-      within(tabs)
-        .getAllByRole('link')
-        .map((link) => link.textContent)
-    ).toEqual(['Projects', 'Milestones', 'Issues']);
-    expect(
-      within(tabs)
-        .getByRole('link', { name: 'Milestones' })
-        .getAttribute('aria-current')
-    ).toBe('page');
-  });
-
-  test('the level tabs are routes whose plain click moves the scope through the reducer', () => {
-    const { log } = mount();
-    const tabs = screen.getByRole('navigation', { name: 'Graph level' });
-    const issues = within(tabs).getByRole('link', { name: 'Issues' });
-    expect(issues.getAttribute('href')).toBe('#/graph?level=issue');
-    // A modified click is the browser's (a new tab on the same route).
-    expect(fireEvent.click(issues, { metaKey: true })).toBe(true);
-    expect(log).toEqual([]);
-    expect(fireEvent.click(issues)).toBe(false);
-    expect(log).toEqual([
-      { type: 'openGraph', scope: { level: 'issue' }, nodeId: null },
+    expect((await milestoneTitles()).sort()).toEqual([
+      'Search › Index',
+      'Storefront › Beta',
+      'Storefront › Launch',
     ]);
     expect(
-      screen.getByRole('img', { name: /^Issue dependency graph/ })
-    ).toBeTruthy();
-    expect(box(/^Persist the cart\b/)).toBeTruthy();
-    expect(box(/^Rank exact matches first\b/)).toBeTruthy();
-    expect(
-      within(screen.getByRole('navigation', { name: 'Graph level' }))
-        .getByRole('link', { name: 'Issues' })
-        .getAttribute('aria-current')
-    ).toBe('page');
-    fireEvent.click(
-      within(screen.getByRole('navigation', { name: 'Graph level' })).getByRole(
-        'link',
-        { name: 'Projects' }
-      )
-    );
-    expect(box(/^Storefront\b/)).toBeTruthy();
-    expect(box(/^Search\b/)).toBeTruthy();
-  });
-
-  test('the Risk highlight (the default) tints the overdue box and marks the risk chain; the pick is remembered', () => {
-    mount();
-    expect(frame().getAttribute('data-highlight')).toBe('risk');
-    // Index is overdue: red under Risk, and its name says so.
-    const index = box(/^Index\b/);
-    expect(index.getAttribute('data-tone')).toBe('danger');
-    expect(index.getAttribute('aria-label')).toContain('overdue');
-    // Beta waits on it: a risk chain, said in the receipts and the legend.
-    expect(screen.getByText(/^3 milestones .* 2 on a risk chain/)).toBeTruthy();
-    const legend = screen.getByRole('group', { name: 'Graph legend: Risk' });
-    expect(within(legend).getByText('Risk chain')).toBeTruthy();
-
-    const switcher = screen.getByRole('radiogroup', { name: 'Highlight' });
-    fireEvent.click(within(switcher).getByRole('radio', { name: 'Status' }));
-    expect(frame().getAttribute('data-highlight')).toBe('status');
-    expect(window.localStorage.getItem('dispatch:graph-highlight')).toBe(
-      'status'
-    );
-    cleanup();
-    mount();
-    expect(frame().getAttribute('data-highlight')).toBe('status');
-  });
-
-  test('a press locks a box and a second press quick-looks its task through the shell', () => {
-    const peekTask = mock((_id: string) => {});
-    mount({ peekTask });
-    const beta = box(/^Beta\b/);
-    fireEvent.keyDown(beta, { key: 'Enter' });
-    expect(beta.getAttribute('aria-pressed')).toBe('true');
-    expect(frame().hasAttribute('data-locked')).toBe(true);
-    expect(peekTask).not.toHaveBeenCalled();
-    fireEvent.keyDown(beta, { key: 'Enter' });
-    expect(peekTask).toHaveBeenLastCalledWith('ms-beta');
-    // Open again: the host opens, never toggles.
-    fireEvent.keyDown(beta, { key: 'Enter' });
-    expect(peekTask).toHaveBeenCalledTimes(2);
-  });
-
-  test('the peeked task is the graph’s selection and the drawer’s width is kept clear', () => {
-    mount({ selectedId: 'ms-index' });
-    expect(box(/^Index\b/).getAttribute('data-state')).toBe('active');
-  });
-
-  test('Escape unlocks a locked box before the shell hears it; unlocked, the key goes on to the shell', () => {
-    mount();
-    // A stand-in for the shell's window listener (useGlobalKeyboard), which
-    // ignores a key something nearer already handled.
-    const shell = mock((_prevented: boolean) => {});
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') shell(event.defaultPrevented);
-    };
-    window.addEventListener('keydown', onKey);
-    try {
-      const beta = box(/^Beta\b/);
-      fireEvent.keyDown(beta, { key: 'Enter' });
-      expect(beta.getAttribute('aria-pressed')).toBe('true');
-      // Focus left the graph (a click beside the frame): Escape still only
-      // drops the lock.
-      fireEvent.keyDown(document.body, { key: 'Escape' });
-      expect(beta.getAttribute('aria-pressed')).toBe('false');
-      expect(shell).toHaveBeenLastCalledWith(true);
-      // Nothing locked: the shell gets the key (it closes the drawer).
-      fireEvent.keyDown(document.body, { key: 'Escape' });
-      expect(shell).toHaveBeenLastCalledWith(false);
-      // From inside the graph the frame's own handler takes it first.
-      fireEvent.keyDown(beta, { key: 'Enter' });
-      fireEvent.keyDown(beta, { key: 'Escape' });
-      expect(beta.getAttribute('aria-pressed')).toBe('false');
-      expect(shell).toHaveBeenLastCalledWith(true);
-    } finally {
-      window.removeEventListener('keydown', onKey);
-    }
-  });
-
-  test('an open drawer’s Escape goes before the lock: the drawer closes first, the next Escape unlocks', () => {
-    // Beta is quick-looked: the graph's selection, and the drawer is open.
-    const { rerender } = mount({ selectedId: 'ms-beta' });
-    const beta = box(/^Beta\b/);
-    fireEvent.keyDown(beta, { key: 'Enter' });
-    expect(beta.getAttribute('aria-pressed')).toBe('true');
-    // A stand-in for the task drawer (a SlideOver: a dialog that is not
-    // modal on a desktop, with its own document-level Escape added after
-    // the graph mounted).
-    const panel = document.createElement('div');
-    panel.setAttribute('role', 'dialog');
-    document.body.append(panel);
-    const closed = mock((_prevented: boolean) => {});
-    const onPanelKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      closed(event.defaultPrevented);
-      if (!event.defaultPrevented) {
-        event.preventDefault();
-        panel.remove();
-      }
-    };
-    document.addEventListener('keydown', onPanelKey);
-    try {
-      fireEvent.keyDown(panel, { key: 'Escape' });
-      // The drawer took the key; the lock (and its lit paths) stayed.
-      expect(closed).toHaveBeenLastCalledWith(false);
-      expect(beta.getAttribute('aria-pressed')).toBe('true');
-      // The drawer closed: nothing is quick-looked, and the next Escape
-      // drops the lock.
-      rerender({ selectedId: null });
-      fireEvent.keyDown(document.body, { key: 'Escape' });
-      expect(beta.getAttribute('aria-pressed')).toBe('false');
-    } finally {
-      document.removeEventListener('keydown', onPanelKey);
-      panel.remove();
-    }
-  });
-
-  test('drilling into a project moves the scope and the trail', () => {
-    mount();
-    fireEvent.click(
-      within(screen.getByRole('navigation', { name: 'Graph level' })).getByRole(
-        'link',
-        { name: 'Projects' }
-      )
-    );
-    // Shift + Enter follows the box's own graph: the project's milestones.
-    fireEvent.keyDown(box(/^Storefront\b/), { key: 'Enter', shiftKey: true });
-    expect(
-      screen.getByRole('heading', { level: 1, name: /Storefront/ })
-    ).toBeTruthy();
-    const trail = screen.getByRole('navigation', { name: 'Graph scope' });
-    expect(
-      within(trail)
-        .getAllByRole('listitem')
-        .map((item) => item.textContent?.replace(/^\//, ''))
-    ).toEqual(['Workspace', 'Storefront']);
-    expect(box(/^Beta\b/)).toBeTruthy();
-    expect(box(/^Launch\b/)).toBeTruthy();
-    // Index is one relation away: drawn outside the scope.
-    expect(box(/^Index\b/).getAttribute('aria-label')).toContain(
-      'outside this scope'
-    );
-    // A project offers two levels, so the tabs are Milestones / Issues.
-    expect(
-      within(screen.getByRole('navigation', { name: 'Graph level' }))
-        .getAllByRole('link')
-        .map((link) => link.textContent)
-    ).toEqual(['Milestones', 'Issues']);
-    // The trail's Workspace crumb drills back up, in place.
-    fireEvent.click(within(trail).getByRole('link', { name: 'Workspace' }));
-    expect(
-      screen.queryByRole('navigation', { name: 'Graph scope' })
+      screen.queryByRole('button', { name: 'Whole workspace' })
     ).toBeNull();
-    expect(box(/^Storefront\b/)).toBeTruthy();
   });
 
-  test('a scoped route opens on that project’s milestones', () => {
-    mount({ scope: { level: 'milestone', projectId: 'p-search' } });
-    expect(box(/^Index\b/).getAttribute('aria-label')).not.toContain(
-      'outside this scope'
+  test('a scoped route draws only its tasks and those they wait on; Whole workspace leaves it', async () => {
+    const { log } = mount({
+      scope: { level: 'issue', milestoneId: 'ms-launch' },
+    });
+    // Launch's announcement waits on Beta's cart work: Beta comes along, Index does not.
+    await waitFor(async () =>
+      expect((await milestoneTitles()).sort()).toEqual([
+        'Storefront › Beta',
+        'Storefront › Launch',
+      ])
     );
-    // Beta waits on Index: drawn one hop away, outside the scope.
-    expect(box(/^Beta\b/).getAttribute('aria-label')).toContain(
-      'outside this scope'
-    );
-    expect(screen.queryByRole('button', { name: /^Launch\b/ })).toBeNull();
-    expect(
-      within(screen.getByRole('navigation', { name: 'Graph scope' }))
-        .getAllByRole('listitem')
-        .map((item) => item.textContent?.replace(/^\//, ''))
-    ).toEqual(['Workspace', 'Search']);
-  });
-
-  test('the Dispatch overlay chips the issue boxes with their bucket and the ready set', () => {
-    const bucketOf = (task: TaskListItem): TaskBucket | null =>
-      task.meta.id === 't-cart' ? 'need-you' : null;
-    mount({ bucketOf, readyIds: new Set(['t-rank']) });
-    fireEvent.click(
-      within(screen.getByRole('navigation', { name: 'Graph level' })).getByRole(
-        'link',
-        { name: 'Issues' }
-      )
-    );
-    const cart = box(/^Persist the cart\b/);
-    expect(cart.getAttribute('aria-label')).toContain('needs you');
-    expect(cart.getAttribute('data-tone')).toBe('warning');
-    // Containers carry the planning facts alone.
-    fireEvent.click(
-      within(screen.getByRole('navigation', { name: 'Graph level' })).getByRole(
-        'link',
-        { name: 'Milestones' }
-      )
-    );
-    expect(box(/^Beta\b/).getAttribute('aria-label')).not.toContain(
-      'needs you'
-    );
-  });
-
-  test('past the draw limit the notice and the narrower graphs stand where the canvas would', () => {
-    const { log } = mount({ tasks: oversized(701) });
-    fireEvent.click(
-      within(screen.getByRole('navigation', { name: 'Graph level' })).getByRole(
-        'link',
-        { name: 'Issues' }
-      )
-    );
-    const block = screen.getByRole('region', { name: 'Too many to draw' });
-    expect(
-      within(block).getByText(/^Too many to draw: 701 issues/)
-    ).toBeTruthy();
-    expect(within(block).getByText(/draws at most 700 boxes/)).toBeTruthy();
-    expect(screen.queryByRole('img')).toBeNull();
-    // Narrow to a project, a graph link followed in place; inside it, to
-    // its milestone.
-    const rows = within(block).getByRole('list', { name: 'Narrow to' });
-    const row = within(rows).getByRole('link', { name: 'Big: 701 on edges' });
-    expect(row.getAttribute('href')).toBe('#/graph?project=p-big');
-    fireEvent.click(row);
+    expect(screen.getByText(/Showing Launch/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Whole workspace' }));
     expect(log.at(-1)).toEqual({
       type: 'openGraph',
-      scope: { level: 'issue', projectId: 'p-big' },
+      scope: DEFAULT_GRAPH_SCOPE,
       nodeId: null,
     });
-    expect(screen.getByRole('heading', { level: 1, name: /Big/ })).toBeTruthy();
-    const inside = within(
-      screen.getByRole('region', { name: 'Too many to draw' })
-    ).getByRole('link', { name: /^Everything: / });
-    expect(inside.getAttribute('href')).toBe('#/graph?milestone=ms-big');
+    await waitFor(async () => expect(await milestoneTitles()).toHaveLength(3));
   });
 
-  test('the Mermaid toggle shows the source for the highlight on screen', () => {
-    mount();
-    expect(screen.queryByText('Mermaid source')).toBeNull();
-    const toggle = screen.getByRole('button', { name: 'Mermaid' });
-    fireEvent.click(toggle);
-    expect(toggle.getAttribute('aria-pressed')).toBe('true');
-    expect(screen.getByRole('button', { name: 'Copy Mermaid' })).toBeTruthy();
-    expect(screen.getByText('Mermaid source')).toBeTruthy();
-    expect(document.querySelector('code')?.textContent).toContain(
-      'flowchart LR'
+  test('Open task quick-looks the task in the shell’s drawer', async () => {
+    const peekTask = mock((_id: string) => {});
+    mount({ peekTask });
+    await milestoneTitles();
+    fireEvent.click(screen.getByRole('radio', { name: 'Tasks' }));
+    const card = await waitFor(() => {
+      const found = screen
+        .queryAllByTestId('chart-task')
+        .find((el) => el.closest('[data-chart-node="t-cart"]') !== null);
+      if (found === undefined) throw new Error('no t-cart card');
+      return found;
+    });
+    fireEvent.click(card);
+    fireEvent.click(
+      within(screen.getByTestId('chart-inspector')).getByRole('button', {
+        name: 'Open task',
+      })
     );
-    fireEvent.click(toggle);
-    expect(screen.queryByText('Mermaid source')).toBeNull();
+    expect(peekTask).toHaveBeenCalledWith('t-cart');
   });
 
-  test('with no milestones the empty state keeps the level tabs in the title row', () => {
-    mount({ tasks: [] });
-    expect(screen.getByText('No milestones in the workspace.')).toBeTruthy();
-    expect(screen.queryAllByRole('button', { pressed: false })).toHaveLength(0);
-    expect(
-      screen.getByRole('navigation', { name: 'Graph level' })
-    ).toBeTruthy();
+  test('past the draw cap the milestones to narrow to stand where the canvas would', async () => {
+    window.localStorage.setItem('dispatch:graph-mode:graph-test', 'tasks');
+    mount({ tasks: oversized(TASK_DRAW_CAP + 5) });
+    const section = await screen.findByRole('region', {
+      name: 'Too many to draw',
+    });
+    expect(section.textContent).toContain(`${TASK_DRAW_CAP + 5} tasks`);
+    const row = within(section).getByRole('link', { name: /Everything/ });
+    expect(row.getAttribute('href')).toContain('milestone=ms-big');
+    expect(screen.queryByTestId('chart-stage')).toBeNull();
   });
 
-  test('says so outside App, where no planning is provided', () => {
-    render(
-      <ShellActionsProvider value={SHELL}>
-        <GraphView
-          data={{
-            tasks: [],
-            readyIds: new Set(),
-            liveRunStateByTaskId: new Map(),
-            latestRunByTaskId: new Map(),
-          }}
-          bucketOf={() => null}
-          selectedId={null}
-          scope={DEFAULT_GRAPH_SCOPE}
-          nodeId={null}
-          onNavigate={() => {}}
-        />
-      </ShellActionsProvider>
-    );
-    expect(screen.getByTestId('graph-view').textContent).toContain(
-      'The graph is not available here.'
-    );
+  test('says so while the project has no config yet', () => {
+    mount({ noConfig: true });
+    expect(screen.getByText('The graph is not available here.')).toBeTruthy();
   });
 });

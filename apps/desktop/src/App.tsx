@@ -1879,13 +1879,14 @@ function App() {
           />
         );
       case 'graph':
-        // Every box is a task; the peeked one is the graph's selection. The
-        // scope is the page's route; the view's links dispatch through `navigate`.
+        // The dependency chart; a route that names a scope narrows it, and
+        // opening a task quick-looks it in the drawer.
         return (
           <GraphView
             data={data}
             bucketOf={bucketOf}
-            selectedId={peekTaskId}
+            asksByTask={needs.byTask}
+            projectKey={activeProject?.path ?? ''}
             scope={page.scope}
             nodeId={page.nodeId}
             onNavigate={navigate}

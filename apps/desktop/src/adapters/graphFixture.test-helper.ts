@@ -1,4 +1,4 @@
-// A small workspace for the graph adapters' tests, in @dispatch/planning's
+// A small workspace for the graph scope adapter's tests, in @dispatch/planning's
 // terms (the shape `buildWorkspaceData` synthesizes from Dispatch's task
 // list): two initiatives and a project in none, a paused project, a project
 // with no lead, a complete milestone, an empty one, an undated one, an
@@ -7,11 +7,6 @@
 // in Dispatch, and every test states only what matters to it.
 
 import type {
-  DependencyGraph,
-  EvalContext,
-  GraphEdge,
-  GraphNode,
-  GraphScope,
   Initiative,
   Issue,
   Milestone,
@@ -20,31 +15,11 @@ import type {
   WorkflowState,
   WorkspaceData,
 } from '@dispatch/planning';
-import {
-  addDays,
-  assessWorkspace,
-  buildDependencyGraph,
-  DEFAULT_TUNING,
-  indexWorkspace,
-  planAllocation,
-} from '@dispatch/planning';
+import { addDays } from '@dispatch/planning';
 
-import { buildGraphPage, type GraphHrefs, type GraphPageInput } from './graph';
-import { graphHref } from './graphScope';
-
-export const TODAY = '2026-10-21';
+const TODAY = '2026-10-21';
 const NOW = `${TODAY}T12:00:00.000Z`;
 const TEAM = 'dispatch';
-
-/** The hrefs the desktop view passes: every box is a task, graph links are
- * the in-memory scope descriptors, the Issues list and the Timeline have no
- * query routes yet. */
-export const HREFS: GraphHrefs = {
-  task: (id) => `#/task/${id}`,
-  graph: graphHref,
-  issues: () => '#/issues',
-  timeline: () => '#/timeline',
-};
 
 /** `TODAY + days` as a calendar date. */
 function day(days: number): string {
@@ -339,182 +314,5 @@ export function demoWorkspace(): WorkspaceData {
       { id: 'rel-5', blockerId: 'iss-70', blockedId: 'iss-71' },
       { id: 'rel-6', blockerId: 'iss-71', blockedId: 'iss-70' },
     ],
-  };
-}
-
-/** buildGraphPage's options beside the graph and the snapshot. */
-export type PageOptions = Pick<GraphPageInput, 'nodeId' | 'overlay'>;
-
-/**
- * The demo workspace (or `data`) through the planning chain, with
- * `page(scope)` building the page through the core's graph builder and
- * `pageOf(graph)` building it from a hand-made graph.
- */
-export function fixture(data: WorkspaceData = demoWorkspace()) {
-  const snapshot = indexWorkspace(data);
-  const ctx: EvalContext = {
-    today: TODAY,
-    now: NOW,
-    tuning: DEFAULT_TUNING,
-    meta: new Map(),
-  };
-  const assessments = assessWorkspace(snapshot, ctx);
-  const allocationPlan = planAllocation(snapshot, ctx, assessments);
-  const graphOf = (scope: GraphScope) =>
-    buildDependencyGraph(snapshot, ctx, assessments, scope);
-  const pageOf = (graph: DependencyGraph, options: PageOptions = {}) =>
-    buildGraphPage({
-      graph,
-      snapshot,
-      assessments,
-      allocationPlan,
-      today: TODAY,
-      hrefs: HREFS,
-      ...options,
-    });
-  const page = (scope: GraphScope, options: PageOptions = {}) =>
-    pageOf(graphOf(scope), options);
-  return { snapshot, ctx, assessments, allocationPlan, graphOf, page, pageOf };
-}
-
-/** A hand-made graph node: an open, owned, ready issue by default. */
-export function node(overrides: Partial<GraphNode> = {}): GraphNode {
-  return {
-    id: 'n1',
-    kind: 'issue',
-    label: 'Backfill orders',
-    sublabel: 'ENG-1 · Ana Moreno',
-    url: '#/task/n1',
-    initiativeId: 'i1',
-    projectId: 'p1',
-    milestoneId: 'm1',
-    ownerId: 'u1',
-    external: false,
-    clusterId: null,
-    active: true,
-    open: true,
-    unassigned: false,
-    overdue: false,
-    inCycle: false,
-    holdsCycle: false,
-    waitsOnUnassigned: false,
-    waitsOnOverdue: false,
-    status: 'started',
-    readiness: 'ready',
-    blockedBy: 0,
-    unplacedBlockers: 0,
-    unblocks: 0,
-    openIssues: 1,
-    readyIssues: 1,
-    ...overrides,
-  };
-}
-
-/** A hand-made blocking edge, plain by default. */
-export function edge(overrides: Partial<GraphEdge> = {}): GraphEdge {
-  return {
-    from: 'a',
-    to: 'b',
-    resolved: false,
-    blocking: true,
-    crossProject: false,
-    crossInitiative: false,
-    crossOwner: false,
-    inCycle: false,
-    onRiskChain: false,
-    weight: 1,
-    ...overrides,
-  };
-}
-
-/** A hand-made graph for the cases the demo is too small for. */
-export function synthetic(
-  scope: GraphScope,
-  nodes: GraphNode[],
-  edges: GraphEdge[]
-): DependencyGraph {
-  return {
-    scope,
-    nodes,
-    edges,
-    cycles: [],
-    clusters: [],
-    fallback: null,
-    unplacedRelations: 0,
-    chain: null,
-  };
-}
-
-/**
- * A workspace at the draw limits: 700 issues in 7 projects × 10 milestones
- * (two initiatives, one project in none, one paused), joined by exactly
- * 1,000 blocking relations that all point forward (no cycle): a chain of 9
- * inside each milestone, then arrows between neighbouring milestones.
- * Every 7th issue is unassigned, every 11th done (so some arrows no longer
- * block) and every 13th started. Deterministic, for the timing test and
- * the drill-size check.
- */
-export function bigWorkspace(): WorkspaceData {
-  const base = demoWorkspace();
-  const projects: Project[] = [];
-  const milestones: Milestone[] = [];
-  const issues: Issue[] = [];
-  for (let p = 0; p < 7; p += 1) {
-    const id = `big-p${p}`;
-    projects.push(
-      project(id, `Big project ${p}`, {
-        initiativeIds: p < 3 ? ['init-platform'] : p < 6 ? ['init-growth'] : [],
-        leadId: p === 2 ? null : 'human:ana',
-        ...(p === 5
-          ? { statusType: 'paused' as const, statusName: 'Paused' }
-          : {}),
-      })
-    );
-    for (let k = 0; k < 10; k += 1) {
-      const mid = `big-m${p}-${k}`;
-      milestones.push(
-        milestone(mid, id, `Big milestone ${p}.${k}`, day(-10 + k * 7))
-      );
-      for (let j = 0; j < 10; j += 1) {
-        const n = (p * 10 + k) * 10 + j;
-        issues.push(
-          issue(`big-i${n}`, `BIG-${n}`, `Big issue ${n}`, {
-            projectId: id,
-            milestoneId: mid,
-            assigneeId: n % 7 === 0 ? null : 'human:dev',
-            stateId: n % 11 === 0 ? 'done' : n % 13 === 0 ? 'working' : 'ready',
-            completedAt: n % 11 === 0 ? NOW : null,
-          })
-        );
-      }
-    }
-  }
-  const relations: WorkspaceData['relations'] = [];
-  const relate = (from: number, to: number) => {
-    relations.push({
-      id: `big-r${relations.length}`,
-      blockerId: `big-i${from}`,
-      blockedId: `big-i${to}`,
-    });
-  };
-  for (let m = 0; m < 70; m += 1) {
-    for (let j = 0; j < 9; j += 1) relate(m * 10 + j, m * 10 + j + 1);
-  }
-  for (let m = 0; m < 69; m += 1) {
-    relate(m * 10 + 9, (m + 1) * 10);
-    relate(m * 10 + 4, (m + 1) * 10 + 4);
-    relate(m * 10 + 2, (m + 1) * 10 + 7);
-    relate(m * 10 + 6, (m + 1) * 10 + 1);
-  }
-  for (let m = 0; m < 47; m += 1) {
-    relate(m * 10, (m + 2) * 10 + 3);
-    relate(m * 10 + 8, (m + 2) * 10 + 5);
-  }
-  return {
-    ...base,
-    projects,
-    milestones,
-    issues,
-    relations,
   };
 }
