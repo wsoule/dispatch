@@ -429,6 +429,9 @@ importers:
       '@dispatch-foo/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@dispatch/planning':
+        specifier: workspace:*
+        version: link:../../packages/planning
       '@modelcontextprotocol/sdk':
         specifier: 'catalog:'
         version: 1.29.0(zod@4.4.3)
