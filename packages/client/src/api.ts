@@ -1690,6 +1690,9 @@ export interface OverseerMessage {
   actionId?: string;
   /** `approval` entries: the OverseerApproval this entry reports on. */
   requestId?: string;
+  /** Applied `action` entries: the tasks the action created or dispatched, in
+   *  order. Absent on older entries and on actions that touch no task. */
+  taskIds?: string[];
   /**
    * `action` and `approval` entries only. `failed` means the human approved
    * an action but the effect itself threw — the action stays pending so it
@@ -1764,6 +1767,8 @@ export interface OverseerAction {
   summary: string;
   createdAt: string;
   status: 'pending' | 'applied' | 'denied' | 'failed';
+  /** Once applied: the tasks it created or dispatched. */
+  taskIds?: string[];
 }
 
 // Mirrors OverseerRecord in packages/server/src/orchestrator/overseer.ts — the

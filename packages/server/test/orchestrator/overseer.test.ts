@@ -496,6 +496,8 @@ describe('OverseerManager queued actions', () => {
       role: 'action',
       actionId,
       outcome: 'applied',
+      // The task it sent out, so the chat can list it and open it.
+      taskIds: [taskId],
     });
     expect(record.messages.at(-1)?.text).toStartWith('Applied: Dispatch');
     expect(h.registry.getAction(actionId)?.status).toBe('applied');

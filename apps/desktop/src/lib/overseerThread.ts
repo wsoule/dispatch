@@ -53,6 +53,10 @@ export type OverseerThreadItem =
       outcome: 'applied' | 'allowed' | 'denied' | 'failed';
       text: string;
       at: string;
+      /** An action's tool, for an `action` row. */
+      tool?: string;
+      /** An applied action's tasks (created or dispatched), which it lists as a card. */
+      taskIds?: string[];
     }
   | {
       kind: 'confirm';
@@ -356,6 +360,10 @@ function buildRow(
       outcome: message.outcome,
       text: message.text,
       at: message.at,
+      ...(message.tool === undefined ? {} : { tool: message.tool }),
+      ...(message.outcome === 'applied' && message.taskIds !== undefined
+        ? { taskIds: message.taskIds }
+        : {}),
     };
   }
   return null;

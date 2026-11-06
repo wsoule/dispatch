@@ -890,6 +890,7 @@ describe('applyAction performs the real effect', () => {
     const applied = await h.registry.applyAction(action.id, CONFIRMED);
 
     expect(applied.status).toBe('applied');
+    expect(applied.taskIds).toEqual([task.meta.id]);
     const runs = h.orchestrator.list();
     expect(runs).toHaveLength(1);
     expect(runs[0].taskId).toBe(task.meta.id);
@@ -1721,8 +1722,9 @@ describe('the agent drives everything behind cards', () => {
     expect(h.cache.query().some((t) => t.meta.title === 'Spec the 403')).toBe(
       false
     );
-    await h.registry.applyAction(action.id, CONFIRMED);
+    const applied = await h.registry.applyAction(action.id, CONFIRMED);
     const made = h.cache.query().find((t) => t.meta.title === 'Spec the 403');
+    expect(applied.taskIds).toEqual([made?.meta.id ?? '']);
     expect(made?.meta.parent).toBe(milestone.meta.id);
     expect(made?.meta.priority).toBe('high');
   });
@@ -1740,7 +1742,7 @@ describe('the agent drives everything behind cards', () => {
     expect(action.summary).toBe(
       'Create milestone "Auth v2" with 3 tasks: "Schema", "Endpoints", "UI"'
     );
-    await h.registry.applyAction(action.id, CONFIRMED);
+    const applied = await h.registry.applyAction(action.id, CONFIRMED);
     const all = h.cache.query();
     const milestone = all.find((t) => t.meta.title === 'Auth v2');
     const byTitle = (title: string) => {
@@ -1752,6 +1754,10 @@ describe('the agent drives everything behind cards', () => {
     expect(byTitle('Schema').parent).toBe(milestone?.meta.id ?? null);
     expect(byTitle('Endpoints').blockedBy).toEqual([byTitle('Schema').id]);
     expect(byTitle('UI').blockedBy).toEqual([byTitle('Endpoints').id]);
+    // The plan's tasks, in order, never the milestone that holds them.
+    expect(applied.taskIds).toEqual(
+      ['Schema', 'Endpoints', 'UI'].map((title) => byTitle(title).id)
+    );
   });
 
   it('create_plan sends agents on its new milestone once approved, and says so first', async () => {

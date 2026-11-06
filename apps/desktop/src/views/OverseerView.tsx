@@ -112,6 +112,16 @@ export function OverseerView({
   firstRun,
   onOpenExternal = (url) => window.open(url, '_blank', 'noopener'),
 }: OverseerViewProps) {
+  // The board and runs the chat's task cards read; a row opens its task in the middle.
+  const work = useMemo(
+    () => ({
+      tasks: data.tasks,
+      runs,
+      onOpenTask: (taskId: string) => onFocus({ kind: 'task', taskId }),
+    }),
+    [data.tasks, runs, onFocus]
+  );
+
   // Whatever a side column opened takes the middle; Esc hands it back to the
   // talk. In the app the global keyboard claims Escape first and closes the
   // focus itself (App's escape command, appNav's escapeLeavesNav); this
@@ -435,6 +445,7 @@ export function OverseerView({
               attached
             }
             onOpenDoor={openDoor}
+            work={work}
           />
         )}
       </div>

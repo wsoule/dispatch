@@ -2,6 +2,7 @@ import type {
   OverseerAction,
   OverseerRecord,
   OverseerRecordView,
+  RunMeta,
 } from '@dispatch/client';
 import {
   act,
@@ -1691,4 +1692,124 @@ test('outcome lines are toned by what happened', () => {
   expect(denied.closest('[data-tone]')?.getAttribute('data-tone')).toBe(
     'muted'
   );
+});
+
+// A plan, a new task or a dispatch lists its tasks as one card: proposed on the
+// confirm card, then what it made, each row with its run and opening its task.
+test('task actions list their tasks as a card, proposed then started', async () => {
+  const opened: string[] = [];
+  const work = {
+    tasks: [
+      { meta: { id: 't-a', title: 'Schema' } },
+      { meta: { id: 't-b', title: 'UI' } },
+    ],
+    runs: [
+      {
+        id: 'r-a',
+        taskId: 't-a',
+        taskTitle: 'Schema',
+        state: 'running',
+        createdAt: '2026-08-10T00:00:06Z',
+        lastStep: { text: 'Editing src/db.ts', at: '2026-08-10T00:00:07Z' },
+      } as RunMeta,
+    ],
+    onOpenTask: (taskId: string) => opened.push(taskId),
+  };
+  const plan = overseerAction({
+    id: 'act-2',
+    tool: 'create_plan',
+    input: { tasks: [{ title: 'Docs' }, { title: 'Tests' }] },
+    summary: 'Create 2 tasks: "Docs", "Tests"',
+  });
+  render(
+    <OverseerChat
+      work={work}
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: overseerRecord({
+          messages: [
+            {
+              role: 'action',
+              tool: 'create_plan',
+              actionId: 'act-1',
+              outcome: 'applied',
+              text: 'Applied: Create 2 tasks',
+              at: '2026-08-10T00:00:05Z',
+              taskIds: ['t-a', 't-b'],
+            },
+            {
+              role: 'action',
+              tool: 'create_plan',
+              actionId: 'act-2',
+              outcome: 'pending',
+              text: 'Queued: Create 2 tasks',
+              at: '2026-08-10T00:00:08Z',
+            },
+          ],
+          pendingActions: [plan],
+        }),
+      })}
+    />
+  );
+  const [made, proposed] = screen.getAllByTestId('overseer-task-card');
+  expect(made.textContent).toContain('2 suggested tasks');
+  expect(made.textContent).toContain('1 started');
+  expect(made.textContent).toContain('Editing src/db.ts');
+  // The proposal lists its titles in place of the summary sentence; nothing opens yet.
+  expect(proposed.closest('[data-slot="overseer-confirm"]')).not.toBeNull();
+  expect(proposed.textContent).toContain('0 started');
+  expect(proposed.textContent).toContain('Docs');
+  expect(screen.queryByText('Create 2 tasks: "Docs", "Tests"')).toBeNull();
+  await clickAndSettle(screen.getByRole('button', { name: /^UI/ }));
+  expect(opened).toEqual(['t-b']);
+});
+
+// Several actions in one turn: a task action's row lists its tasks, the rest keep their sentence.
+test('a batch lists a task action as a card beside a plain one', () => {
+  const plan = overseerAction({
+    id: 'act-1',
+    tool: 'create_task',
+    input: { title: 'Spec the 403' },
+    summary: 'Create task "Spec the 403"',
+  });
+  const cancel = overseerAction({ id: 'act-2' });
+  render(
+    <OverseerChat
+      work={{ tasks: [], runs: [] }}
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: overseerRecord({
+          messages: [
+            {
+              role: 'action',
+              tool: 'create_task',
+              actionId: 'act-1',
+              outcome: 'pending',
+              text: 'Queued',
+              at: '2026-08-10T00:00:02Z',
+            },
+            {
+              role: 'action',
+              tool: 'cancel_run',
+              actionId: 'act-2',
+              outcome: 'pending',
+              text: 'Queued',
+              at: '2026-08-10T00:00:03Z',
+            },
+          ],
+          pendingActions: [plan, cancel],
+        }),
+      })}
+    />
+  );
+  const batch = screen.getByTestId('overseer-confirm-batch');
+  const card = batch.querySelector('[data-testid="overseer-task-card"]');
+  expect(card?.textContent).toContain('1 suggested task');
+  expect(card?.textContent).toContain('Spec the 403');
+  expect(batch.textContent).toContain('Cancel run r-1');
+  expect(screen.queryByText('Create task "Spec the 403"')).toBeNull();
+  // Each row keeps its own answers.
+  expect(
+    screen.getByRole('button', { name: 'Approve: Create task "Spec the 403"' })
+  ).toBeDefined();
 });

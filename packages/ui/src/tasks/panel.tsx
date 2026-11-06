@@ -15,8 +15,9 @@ function shown(node: ReactNode): boolean {
 }
 
 /* Gr8r's embedded panel: a --surface box in a 1px --border at --r-lg,
-   with a 40px heading row (the heading, a quiet tabular count after it,
-   the host's actions at the end) over its body, padded unless `flush`.
+   with a 40px heading row (the heading, a quiet tabular count or a quiet
+   note after it, the host's actions at the end) over its body, padded
+   unless `flush`. `band` fills the heading row with --surface-2.
    A tone adds data-tone and a 2px edge in its hue at the left, nothing
    else; `floating` adds --shadow-pop for the one panel that floats (the
    first-task guide). The host's data-* hooks land on the root. */
@@ -24,7 +25,9 @@ export function Panel(props: PanelProps) {
   const {
     heading,
     count,
+    note,
     actions,
+    band = false,
     tone,
     floating = false,
     flush = false,
@@ -35,7 +38,8 @@ export function Panel(props: PanelProps) {
   } = props;
   const toned = tone !== undefined && tone !== 'default' ? tone : undefined;
   const hasActions = shown(actions);
-  const hasHeader = shown(heading) || count !== undefined || hasActions;
+  const hasHeader =
+    shown(heading) || count !== undefined || shown(note) || hasActions;
   return (
     <Root
       {...dataAttributes(props)}
@@ -44,13 +48,22 @@ export function Panel(props: PanelProps) {
       data-floating={floating ? 'true' : undefined}
     >
       {hasHeader ? (
-        <div className={styles.header} data-part="header">
+        <div
+          className={styles.header}
+          data-part="header"
+          data-band={band ? 'true' : undefined}
+        >
           {shown(heading) ? (
             <Heading className={styles.heading}>{heading}</Heading>
           ) : null}
           {count !== undefined ? (
             <span className={styles.count} data-part="count">
               {count}
+            </span>
+          ) : null}
+          {shown(note) ? (
+            <span className={styles.note} data-part="note">
+              {note}
             </span>
           ) : null}
           {hasActions ? (

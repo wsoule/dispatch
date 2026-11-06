@@ -33,6 +33,12 @@
   border-bottom: 1px solid var(--divider);
 }
 
+/* band: the heading row on --surface-2, so a list card's head reads as
+   a band above its rows. */
+.header[data-band='true'] {
+  background: var(--surface-2);
+}
+
 .heading {
   min-width: 0;
   margin: 0;
@@ -47,6 +53,15 @@
   flex: none;
   color: var(--text-3);
   font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* note: a quiet phrase after the heading at the heading's size ("2
+   started"), outside the heading element so its name stays its words. */
+.note {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--fs);
   font-variant-numeric: tabular-nums;
 }
 
