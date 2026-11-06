@@ -78,9 +78,14 @@ export interface PlanningConfig {
   /** `daily`: the daemon applies the allocation once a day on its own;
    * `manual` (default): only when someone presses Apply. */
   allocation: PlanningAllocationMode;
+  /** `notify`: the daemon sends each watcher and project lead a daily digest
+   * of milestones at risk; `off` (default): nothing is sent. */
+  warnings: PlanningWarningsMode;
 }
 
 export type PlanningAllocationMode = 'manual' | 'daily';
+
+export type PlanningWarningsMode = 'off' | 'notify';
 
 export interface RepoDigestConfig {
   /** False stops all generation; the cache still serves what is on disk. */
@@ -933,6 +938,7 @@ export interface ConfigPatch {
     /** Per milestone; null clears one milestone's weight. */
     weights?: Record<string, number | null>;
     allocation?: PlanningAllocationMode | null;
+    warnings?: PlanningWarningsMode | null;
   };
   receipts?: {
     enabled?: boolean;

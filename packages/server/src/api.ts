@@ -291,6 +291,7 @@ import {
   type AllocationRunStore,
   parseAllocationRunInput,
 } from './planning/allocationRuns.js';
+import type { WarningStore } from './planning/warningRuns.js';
 import type { PresenceTracker } from './presence.js';
 import type { PreviewState, PreviewSupervisor } from './preview.js';
 import type { PreviewGateway } from './previewGateway.js';
@@ -387,6 +388,8 @@ export interface ApiContext {
   noteStore: NoteStore;
   /** The allocation run log; absent in a test context that does not need it. */
   allocationRuns?: AllocationRunStore;
+  /** The daily digest's warning memory and log; absent in a test context. */
+  warningStore?: WarningStore;
   inboxStore: InboxStore;
   findingStore: FindingStorePort;
   ledgerStore: LedgerStorePort;
@@ -6631,6 +6634,19 @@ export async function handleApi(
       if (segments.length === 1 && method === 'GET') {
         return jsonResponse(await ctx.orchestrator.listBranches());
       }
+    }
+
+    if (
+      segments[0] === 'planning' &&
+      segments[1] === 'digests' &&
+      segments.length === 2 &&
+      method === 'GET'
+    ) {
+      // GET /api/planning/digests — the daily digests the daemon sent or
+      // logged, newest first (Better Tracker's Settings → Notifications).
+      return ctx.warningStore === undefined
+        ? errorResponse(503, 'digests are not kept here')
+        : jsonResponse(ctx.warningStore.digests());
     }
 
     if (segments[0] === 'planning' && segments[1] === 'allocation-runs') {

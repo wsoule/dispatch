@@ -39,6 +39,7 @@ test('the active statuses toggle, and the last one cannot be cleared', () => {
     watchers: [],
     weights: {},
     allocation: 'manual',
+    warnings: 'off',
   });
   const started = screen.getByRole('checkbox', { name: 'In progress' });
   expect((started as HTMLInputElement).disabled).toBe(true);
@@ -54,6 +55,7 @@ test('ticking a person makes them a watcher', () => {
     watchers: ['human:dev'],
     weights: {},
     allocation: 'manual',
+    warnings: 'off',
   });
   fireEvent.click(screen.getByRole('checkbox', { name: 'Ana' }));
   expect(saved).toEqual([

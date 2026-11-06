@@ -50,6 +50,7 @@ import {
 } from '../components/settings/DaemonConfigGroups';
 import { DaemonSection } from '../components/settings/DaemonSection';
 import { DiffsSection } from '../components/settings/DiffsSection';
+import { DigestsGroup } from '../components/settings/DigestsGroup';
 import { GeneralSection } from '../components/settings/GeneralSection';
 import { IntegrationsSection } from '../components/settings/IntegrationsSection';
 import { LicenseSection } from '../components/settings/LicenseSection';
@@ -293,11 +294,18 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
           'How the milestone planner judges risk, which projects it counts as active, and who hears about milestones at risk.',
         savesConfig: true,
         render: withConfig((ctx) => (
-          <PlanningSection
-            config={ctx.config}
-            people={ctx.data.people}
-            onSave={ctx.save}
-          />
+          <>
+            <PlanningSection
+              config={ctx.config}
+              people={ctx.data.people}
+              onSave={ctx.save}
+            />
+            <DigestsGroup
+              config={ctx.config}
+              data={ctx.data}
+              onSave={ctx.save}
+            />
+          </>
         )),
       },
       {

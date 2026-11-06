@@ -964,11 +964,16 @@ function parsePlanningConfig(raw: unknown): PlanningConfig | undefined {
   if (allocation !== 'manual' && allocation !== 'daily') {
     throw new ConfigError(`${where}.allocation must be manual or daily`);
   }
+  const warnings = obj.warnings ?? 'off';
+  if (warnings !== 'off' && warnings !== 'notify') {
+    throw new ConfigError(`${where}.warnings must be off or notify`);
+  }
   return {
     tuning,
     watchers: [...new Set(watchers as string[])],
     weights,
     allocation,
+    warnings,
   };
 }
 
@@ -2402,6 +2407,13 @@ function applyPlanningPatch(
       doc,
       ['planning', 'allocation'],
       patch.allocation === 'manual' ? null : patch.allocation
+    );
+  }
+  if (patch.warnings !== undefined) {
+    setOrDelete(
+      doc,
+      ['planning', 'warnings'],
+      patch.warnings === 'off' ? null : patch.warnings
     );
   }
   for (const path of [

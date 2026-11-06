@@ -2105,6 +2105,40 @@ export interface AllocationRun extends AllocationRunSummary {
   projects: AllocationRunProject[];
 }
 
+// GET /api/planning/digests: the daily digests of milestones at risk the
+// daemon sent (or logged), newest first. The digest is @dispatch/planning's
+// Digest, carried here with the fields a surface reads.
+export interface PlanningDigestItem {
+  notice: {
+    kind: 'overdue' | 'at_risk' | 'invalid_due_soon' | 'allocation_blocked';
+    subjectId: string;
+    projectId: string;
+    milestoneId: string | null;
+  };
+  projectName: string;
+  milestoneName: string | null;
+  openCount: number;
+  unassignedCount: number;
+  /** Why, in plain lines ("2 open issues unassigned"). */
+  lines: string[];
+}
+
+export interface PlanningDigest {
+  recipientId: string;
+  recipientName: string;
+  day: string;
+  items: PlanningDigestItem[];
+}
+
+export interface PlanningDigestRecord {
+  id: number;
+  at: string;
+  /** Posted to the notifications webhook, kept in the log only, or a failed post. */
+  delivery: 'webhook' | 'logged' | 'failed';
+  error: string | null;
+  digest: PlanningDigest;
+}
+
 export interface InboxItem {
   id: string;
   kind: InboxKind;
@@ -3939,6 +3973,8 @@ export interface ApiClient {
   fetchAllocationRun(id: string): Promise<AllocationRun>;
   /** Records a dry run or an applied run the client carried out. */
   recordAllocationRun(input: AllocationRunInput): Promise<AllocationRun>;
+  /** The daily digests the daemon sent or logged, newest first. */
+  fetchPlanningDigests(): Promise<PlanningDigestRecord[]>;
   fetchInbox(): Promise<InboxItem[]>;
   addInbox(input: {
     text: string;
@@ -4966,6 +5002,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         body: JSON.stringify(input),
       }),
+    fetchPlanningDigests: () => request(target, '/api/planning/digests'),
     fetchInbox: () => request(target, '/api/inbox'),
     addInbox: (input) =>
       request(target, '/api/inbox', {
