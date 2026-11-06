@@ -24,6 +24,9 @@ import type {
   OrchestratorConfig,
   OverseerConfig,
   OverseerStreamMode,
+  PlanningConfig,
+  PlanningProjectStatus,
+  PlanningTuningNumber,
   PreviewConfig,
   QueueConfig,
   ReceiptsConfig,
@@ -63,6 +66,8 @@ import {
   MODEL_ROLES,
   NOTIFICATION_KINDS,
   OVERSEER_STREAM_MODES,
+  PLANNING_PROJECT_STATUSES,
+  PLANNING_TUNING_NUMBERS,
   RETIRED_MODEL_ROLES,
   RUN_STREAM_MODES,
 } from './configTypes.js';
@@ -865,6 +870,106 @@ function parseExecutorsConfig(raw: unknown): Record<string, ExecutorConfig> {
     };
   }
   return result;
+}
+
+// The longest planning window or lead time, in days.
+const PLANNING_MAX_DAYS = 365;
+
+// Validates the optional `planning:` block: each tuning number a whole number
+// of days (overdueRepeatDays at least 1, the rest at least 0), the active
+// statuses a non-empty list of known project statuses, the watchers a list of
+// `human:<handle>` refs. Undefined (no block) stays undefined.
+function parsePlanningConfig(raw: unknown): PlanningConfig | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const where = 'invalid .dispatch/config.yml: planning';
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ConfigError(`${where} must be an object`);
+  }
+  const obj = raw as Record<string, unknown>;
+  const tuningRaw = obj.tuning ?? {};
+  if (
+    typeof tuningRaw !== 'object' ||
+    tuningRaw === null ||
+    Array.isArray(tuningRaw)
+  ) {
+    throw new ConfigError(`${where}.tuning must be an object`);
+  }
+  const tuningObj = tuningRaw as Record<string, unknown>;
+  const tuning: PlanningConfig['tuning'] = {};
+  for (const [key, value] of Object.entries(tuningObj)) {
+    if (key === 'activeProjectStatuses') {
+      if (
+        !Array.isArray(value) ||
+        value.length === 0 ||
+        !value.every((s) =>
+          (PLANNING_PROJECT_STATUSES as readonly unknown[]).includes(s)
+        )
+      ) {
+        throw new ConfigError(
+          `${where}.tuning.activeProjectStatuses must list some of ${PLANNING_PROJECT_STATUSES.join('|')}`
+        );
+      }
+      tuning.activeProjectStatuses = [
+        ...new Set(value as PlanningProjectStatus[]),
+      ];
+      continue;
+    }
+    if (!(PLANNING_TUNING_NUMBERS as readonly string[]).includes(key)) {
+      throw new ConfigError(`${where}.tuning has an unknown field: ${key}`);
+    }
+    const least = key === 'overdueRepeatDays' ? 1 : 0;
+    if (
+      typeof value !== 'number' ||
+      !Number.isInteger(value) ||
+      value < least ||
+      value > PLANNING_MAX_DAYS
+    ) {
+      throw new ConfigError(
+        `${where}.tuning.${key} must be a whole number of days from ${least} to ${PLANNING_MAX_DAYS}`
+      );
+    }
+    tuning[key as PlanningTuningNumber] = value;
+  }
+  const watchers = obj.watchers ?? [];
+  if (
+    !Array.isArray(watchers) ||
+    !watchers.every((w) => typeof w === 'string' && w.startsWith('human:'))
+  ) {
+    throw new ConfigError(
+      `${where}.watchers must be a list of human:<handle> refs`
+    );
+  }
+  const weightsRaw = obj.weights ?? {};
+  if (
+    typeof weightsRaw !== 'object' ||
+    weightsRaw === null ||
+    Array.isArray(weightsRaw)
+  ) {
+    throw new ConfigError(`${where}.weights must map milestone ids to numbers`);
+  }
+  const weights: Record<string, number> = {};
+  for (const [id, weight] of Object.entries(weightsRaw)) {
+    if (
+      typeof weight !== 'number' ||
+      !Number.isInteger(weight) ||
+      Math.abs(weight) > 1000
+    ) {
+      throw new ConfigError(
+        `${where}.weights.${id} must be a whole number from -1000 to 1000`
+      );
+    }
+    weights[id] = weight;
+  }
+  const allocation = obj.allocation ?? 'manual';
+  if (allocation !== 'manual' && allocation !== 'daily') {
+    throw new ConfigError(`${where}.allocation must be manual or daily`);
+  }
+  return {
+    tuning,
+    watchers: [...new Set(watchers as string[])],
+    weights,
+    allocation,
+  };
 }
 
 // Validates the optional `repoDigest:` block, same contract as
@@ -1957,6 +2062,7 @@ function parseConfig(parsed: unknown): DispatchConfig {
     verify: parseVerifyConfig(raw.verify),
     carto: parseCarto(raw.carto),
     repoDigest: parseRepoDigestConfig(raw.repoDigest),
+    ...planningField(parsePlanningConfig(raw.planning)),
     notifications: parseNotificationsConfig(raw.notifications),
     messaging: parseMessagingConfig(raw.messaging),
     memory: parseMemoryConfig(raw.memory).config,
@@ -2261,6 +2367,51 @@ function applyBlockPatches(doc: YAML.Document, patch: ConfigPatch): void {
     }
   }
   setOrDelete(doc, ['prWorktreeDir'], patch.prWorktreeDir);
+  applyPlanningPatch(doc, patch.planning);
+}
+
+// The `planning` key only when the file has the block, so a config without
+// one reads exactly as before.
+function planningField(planning: PlanningConfig | undefined): {
+  planning?: PlanningConfig;
+} {
+  return planning === undefined ? {} : { planning };
+}
+
+// Writes the planning block field by field; null clears a field (and the
+// block once nothing is left). Validation is the loader's, run after.
+function applyPlanningPatch(
+  doc: YAML.Document,
+  patch: ConfigPatch['planning']
+): void {
+  if (patch === undefined) return;
+  for (const [field, value] of Object.entries(patch.tuning ?? {})) {
+    const cleared =
+      value === null || (Array.isArray(value) && value.length === 0);
+    setOrDelete(doc, ['planning', 'tuning', field], cleared ? null : value);
+  }
+  if (patch.watchers !== undefined) {
+    const cleared = patch.watchers === null || patch.watchers.length === 0;
+    setOrDelete(doc, ['planning', 'watchers'], cleared ? null : patch.watchers);
+  }
+  for (const [id, weight] of Object.entries(patch.weights ?? {})) {
+    setOrDelete(doc, ['planning', 'weights', id], weight);
+  }
+  if (patch.allocation !== undefined) {
+    setOrDelete(
+      doc,
+      ['planning', 'allocation'],
+      patch.allocation === 'manual' ? null : patch.allocation
+    );
+  }
+  for (const path of [
+    ['planning', 'tuning'],
+    ['planning', 'weights'],
+    ['planning'],
+  ]) {
+    const left = doc.getIn(path);
+    if (YAML.isMap(left) && left.items.length === 0) doc.deleteIn(path);
+  }
 }
 
 // Writes the chat streaming switches, `overseer.stream` and `runs.stream`,

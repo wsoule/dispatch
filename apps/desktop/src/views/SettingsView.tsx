@@ -6,6 +6,7 @@ import {
   Bot,
   BotMessageSquare,
   Brain,
+  CalendarRange,
   Cpu,
   FileDiff,
   FolderSearch,
@@ -54,6 +55,7 @@ import { IntegrationsSection } from '../components/settings/IntegrationsSection'
 import { LicenseSection } from '../components/settings/LicenseSection';
 import { MemorySection } from '../components/settings/MemorySection';
 import { NotificationsSection } from '../components/settings/NotificationsSection';
+import { PlanningSection } from '../components/settings/PlanningSection';
 import { PolicySection } from '../components/settings/PolicySection';
 import { PreviewsSection } from '../components/settings/PreviewsSection';
 import { QueueWeightsGroup } from '../components/settings/QueueWeightsGroup';
@@ -280,6 +282,21 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
             config={ctx.config}
             onSave={ctx.save}
             canOperate={ctx.canOperate}
+          />
+        )),
+      },
+      {
+        id: 'planning',
+        label: SETTINGS_PAGE_LABELS.planning,
+        icon: CalendarRange,
+        intro:
+          'How the milestone planner judges risk, which projects it counts as active, and who hears about milestones at risk.',
+        savesConfig: true,
+        render: withConfig((ctx) => (
+          <PlanningSection
+            config={ctx.config}
+            people={ctx.data.people}
+            onSave={ctx.save}
           />
         )),
       },

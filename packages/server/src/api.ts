@@ -1529,6 +1529,7 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     'remotes',
     'carto',
     'repoDigest',
+    'planning',
     'receipts',
     'sync',
     'preview',

@@ -1,0 +1,8 @@
+/* Settings → Planning (PlanningSection.tsx): the checkbox lists (active
+   statuses, watchers) wrap in rows under their setting. */
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-4);
+}

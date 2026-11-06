@@ -145,6 +145,7 @@ export type SettingsPage =
   | 'autonomy'
   | 'memory'
   | 'previews'
+  | 'planning'
   | 'notifications'
   | 'team'
   | 'connected-agents'
@@ -172,6 +173,7 @@ export const SETTINGS_PAGE_LABELS: Readonly<Record<NavSettingsPage, string>> = {
   autonomy: 'Autonomy',
   memory: 'Memory',
   previews: 'Previews',
+  planning: 'Planning',
   notifications: 'Notifications',
   team: 'Members',
   'connected-agents': 'Connected agents',
