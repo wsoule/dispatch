@@ -225,6 +225,15 @@ export function buildPaletteEntries(
   if (ctx.hasProject) {
     entries.push(
       {
+        id: 'go-week',
+        label: 'Go to My week',
+        kind: 'go to',
+        section: 'navigation',
+        shortcut: 'G W',
+        href: hrefFor('week'),
+        run: () => actions.setProjectView('week'),
+      },
+      {
         id: 'go-timeline',
         label: 'Go to Timeline',
         kind: 'go to',

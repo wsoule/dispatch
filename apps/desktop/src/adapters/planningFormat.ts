@@ -20,6 +20,31 @@ const MONTHS = [
   'Dec',
 ] as const;
 
+const FULL_MONTHS = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+] as const;
+
+const WEEKDAYS = [
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+] as const;
+
 /** The year, month and day of a YYYY-MM-DD string; throws on anything else so
  * a malformed date is a loud bug, never a silently wrong label. */
 function parts(date: string): { y: number; m: number; d: number } {
@@ -68,4 +93,18 @@ export function dueLabel(
  * irregular plural (plural(2, 'person', 'people')). */
 export function plural(count: number, noun: string, many?: string): string {
   return `${count} ${count === 1 ? noun : (many ?? `${noun}s`)}`;
+}
+
+/** "Wednesday, October 21", for page headers. */
+export function formatLongDate(date: string): string {
+  const { y, m, d } = parts(date);
+  const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return `${WEEKDAYS[weekday]}, ${FULL_MONTHS[m - 1]} ${d}`;
+}
+
+/** Morning / afternoon / evening greeting from an hour 0–23. */
+export function greeting(hour: number): string {
+  if (hour < 12) return 'Good morning';
+  if (hour < 18) return 'Good afternoon';
+  return 'Good evening';
 }

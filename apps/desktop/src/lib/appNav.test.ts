@@ -40,6 +40,7 @@ const EVERY_PROJECT_VIEW: Record<ProjectView, true> = {
   inbox: true,
   threads: true,
   timeline: true,
+  week: true,
   graph: true,
   'brain-dump': true,
   design: true,

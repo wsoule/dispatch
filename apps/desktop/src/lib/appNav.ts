@@ -72,6 +72,8 @@ export type ProjectView =
   | 'terminals'
   /** The Gantt of every project's milestones, grouped by initiative (Phase 4). */
   | 'timeline'
+  /** One person's open issues by milestone, deadlines and attention (My week). */
+  | 'week'
   /** The dependency graph at every level (initiatives, projects, milestones,
    * issues), a sidebar destination of its own (Phase 5). */
   | 'graph'
@@ -202,7 +204,14 @@ export type TasksMode = 'list' | 'board';
  * Runs › Live and closing it returns to the Runs page. */
 export type HostedView = Extract<
   ProjectView,
-  'files' | 'terminals' | 'threads' | 'timeline' | 'graph' | 'projects' | 'live'
+  | 'files'
+  | 'terminals'
+  | 'threads'
+  | 'timeline'
+  | 'graph'
+  | 'projects'
+  | 'live'
+  | 'week'
 >;
 
 /** A hosted view as a page, with the parameters its route carries: the
@@ -432,6 +441,7 @@ export function projectViewDestination(view: ProjectView): NavDestination {
     case 'threads':
     case 'projects':
     case 'live':
+    case 'week':
       return { kind: 'page', page: { kind: 'view', view } };
     case 'timeline':
       return {
@@ -526,6 +536,8 @@ export function keyAction(
       return { type: 'setProjectView', view: 'threads' };
     case 'goto-timeline':
       return { type: 'openTimeline', project: null };
+    case 'goto-week':
+      return { type: 'setProjectView', view: 'week' };
     case 'goto-graph':
       return { type: 'openGraph', scope: DEFAULT_GRAPH_SCOPE, nodeId: null };
     case 'goto-settings':

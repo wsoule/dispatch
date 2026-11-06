@@ -45,12 +45,13 @@ function nav(over: Partial<Parameters<typeof buildShellNav>[0]> = {}) {
 }
 
 describe('buildShellNav', () => {
-  test('eight rows in order, the current one marked, keys as the shell prints them', () => {
+  test('nine rows in order, the current one marked, keys as the shell prints them', () => {
     const items = nav({ destination: 'threads' });
     expect(items.map((item) => item.label)).toEqual([
       'Overseer',
       'Issues',
       'Needs you',
+      'My week',
       'Timeline',
       'Graph',
       'Threads',
@@ -63,15 +64,17 @@ describe('buildShellNav', () => {
       false,
       false,
       false,
+      false,
       true,
       false,
       false,
     ]);
     expect(items[0].shortcut).toEqual(['⌘', '1']);
     expect(items[2].shortcut).toEqual(['G', 'I']);
-    expect(items[3].shortcut).toEqual(['G', 'L']);
-    expect(items[4].shortcut).toEqual(['G', 'G']);
-    expect(items[6].shortcut).toBeUndefined();
+    expect(items[3].shortcut).toEqual(['G', 'W']);
+    expect(items[4].shortcut).toEqual(['G', 'L']);
+    expect(items[5].shortcut).toEqual(['G', 'G']);
+    expect(items[7].shortcut).toBeUndefined();
     expect(items.every((item) => item.href === `#/${item.id}`)).toBe(true);
   });
 
@@ -431,6 +434,7 @@ test('every destination has a label', () => {
     'settings',
     'threads',
     'timeline',
+    'week',
   ]);
 });
 

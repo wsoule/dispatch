@@ -234,6 +234,7 @@ import { SetupView } from './views/SetupView';
 import { TerminalsView } from './views/TerminalsView';
 import { ThreadsView } from './views/ThreadsView';
 import { TimelineView } from './views/TimelineView';
+import { WeekView } from './views/WeekView';
 
 // The hosts a task page and a Flight Plan draw from, provided together so the shell's
 // provider stack stays one level deep.
@@ -1899,6 +1900,9 @@ function App() {
             onNavigate={navigate}
           />
         );
+      case 'week':
+        // One person's open issues by milestone, deadlines and attention.
+        return <WeekView me={data.me} />;
       case 'projects':
         // The projects register: every open project with its status, next
         // milestone, lead and allocation, grouped by initiative. Its rows and

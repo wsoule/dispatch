@@ -26,6 +26,7 @@ const EVERY_DESTINATION: readonly ShellDestination[] = [
   'overseer',
   'issues',
   'needs-you',
+  'week',
   'timeline',
   'graph',
   'threads',
@@ -60,6 +61,7 @@ describe('the route table', () => {
     // `g t` is Tasks, so the Timeline takes `g l`; the Graph owns `g g`.
     expect(shellShortcut(shellRoute('timeline'), '⌘')).toEqual(['G', 'L']);
     expect(shellShortcut(shellRoute('graph'), '⌘')).toEqual(['G', 'G']);
+    expect(shellShortcut(shellRoute('week'), '⌘')).toEqual(['G', 'W']);
     expect(shellShortcut(shellRoute('settings'), '⌘')).toEqual(['G', 'S']);
     expect(shellShortcut(shellRoute('docs'), '⌘')).toBeUndefined();
     expect(shellShortcut(shellRoute('runs'), '⌘')).toBeUndefined();
