@@ -287,6 +287,10 @@ import {
 } from './orchestrator/types.js';
 import type { NormalizedEntry, RunMeta } from './orchestrator/types.js';
 import type { VerificationRunner } from './orchestrator/verify.js';
+import {
+  type AllocationRunStore,
+  parseAllocationRunInput,
+} from './planning/allocationRuns.js';
 import type { PresenceTracker } from './presence.js';
 import type { PreviewState, PreviewSupervisor } from './preview.js';
 import type { PreviewGateway } from './previewGateway.js';
@@ -381,6 +385,8 @@ export interface ApiContext {
   prWorktrees: PrWorktreeManager;
   mergeQueue: MergeQueue;
   noteStore: NoteStore;
+  /** The allocation run log; absent in a test context that does not need it. */
+  allocationRuns?: AllocationRunStore;
   inboxStore: InboxStore;
   findingStore: FindingStorePort;
   ledgerStore: LedgerStorePort;
@@ -4014,6 +4020,42 @@ async function enqueueMergeQueueStack(
 
 // Routes every `/api/*` request. Called only for paths under `/api` — the
 // caller (index.ts) handles `/ws` upgrades and static file serving itself.
+// /api/planning/allocation-runs — the allocation run log. GET lists runs
+// (newest first, no items; `?appliedSince=<iso>` returns whole applied runs
+// instead, for My week's "New to you"), GET /:id one run whole, POST records
+// a dry run or an applied run the client computed and carried out.
+async function allocationRunsRoute(
+  req: Request,
+  ctx: ApiContext,
+  method: string,
+  rest: string[]
+): Promise<Response> {
+  const store = ctx.allocationRuns;
+  if (store === undefined) {
+    return errorResponse(503, 'allocation runs are not kept here');
+  }
+  if (rest.length === 0 && method === 'GET') {
+    const since = new URL(req.url).searchParams.get('appliedSince');
+    return jsonResponse(
+      since === null ? store.list() : store.appliedSince(since)
+    );
+  }
+  if (rest.length === 0 && method === 'POST') {
+    const parsed = await readJsonBody(req);
+    if (!parsed.ok) return parsed.response;
+    const input = parseAllocationRunInput(parsed.value);
+    if (!input.ok) return errorResponse(400, input.error);
+    return jsonResponse(store.record(input.input, humanActor(ctx)), 201);
+  }
+  if (rest.length === 1 && method === 'GET') {
+    const run = store.get(rest[0]);
+    return run === null
+      ? errorResponse(404, `no allocation run ${rest[0]}`)
+      : jsonResponse(run);
+  }
+  return errorResponse(405, 'method not allowed');
+}
+
 // POST /api/notes — create a note/triage/follow-up/todo. Used by the app's
 // Notes tab and (via the MCP `dispatch_note` tool) by agents flagging triage
 // they find mid-run. `createdByRunId` optionally records which agent added it.
@@ -6588,6 +6630,10 @@ export async function handleApi(
       if (segments.length === 1 && method === 'GET') {
         return jsonResponse(await ctx.orchestrator.listBranches());
       }
+    }
+
+    if (segments[0] === 'planning' && segments[1] === 'allocation-runs') {
+      return await allocationRunsRoute(req, ctx, method, segments.slice(2));
     }
 
     if (segments[0] === 'notes') {

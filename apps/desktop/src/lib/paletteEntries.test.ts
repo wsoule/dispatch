@@ -74,6 +74,7 @@ describe('buildPaletteEntries', () => {
       'go-files': [{ type: 'setProjectView', view: 'files' }],
       'go-terminals': [{ type: 'setProjectView', view: 'terminals' }],
       'go-projects': [{ type: 'setProjectView', view: 'projects' }],
+      'go-allocation': [{ type: 'setProjectView', view: 'allocation' }],
       'go-live': [{ type: 'setProjectView', view: 'live' }],
     });
   });
@@ -275,6 +276,7 @@ describe('navigation rows', () => {
       ['Open Files', undefined],
       ['Open Terminals', undefined],
       ['Open Projects', undefined],
+      ['Open Allocation', undefined],
       ['Open Live', undefined],
     ]);
     expect(entries.some((e) => e.id === 'action-toggle-sidebar')).toBe(false);
@@ -289,6 +291,7 @@ describe('navigation rows', () => {
       'project:files',
       'project:terminals',
       'project:projects',
+      'project:allocation',
       'project:live',
     ]);
   });

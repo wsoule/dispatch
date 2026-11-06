@@ -31,6 +31,7 @@ const EVERY_PROJECT_VIEW: Record<ProjectView, true> = {
   overview: true,
   board: true,
   projects: true,
+  allocation: true,
   live: true,
   runs: true,
   branches: true,

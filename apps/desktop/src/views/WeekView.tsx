@@ -1,4 +1,5 @@
-import { buildWeekView } from '@dispatch/planning';
+import type { ApiClient } from '@dispatch/client';
+import { buildWeekView, type RecentAllocation } from '@dispatch/planning';
 import {
   BlockBar,
   Chip,
@@ -11,6 +12,7 @@ import {
   StatsStrip,
   TaskGroupTable,
 } from '@dispatch/ui';
+import { useQuery } from '@tanstack/react-query';
 import {
   CalendarX,
   CircleDot,
@@ -20,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
+import { recentAllocationsFrom } from '../adapters/allocation';
 import {
   buildWeekPage,
   resolveWeekUserId,
@@ -38,6 +41,37 @@ import styles from './WeekView.module.css';
 // group headings, deadlines and attention rows are task hrefs the shell's
 // link provider resolves.
 
+const NO_ALLOCATIONS: RecentAllocation[] = [];
+
+/**
+ * Issues an applied allocation run gave someone within the "new" window, for
+ * the "New to you" mark; refetched with the run log (same query key root).
+ */
+function useRecentAllocations(
+  client: Pick<ApiClient, 'fetchAppliedAllocationRuns'> | null,
+  port: number | undefined,
+  now: string,
+  newBadgeDays: number
+): RecentAllocation[] {
+  // The window's start moves by the day, not the minute, so the key is stable.
+  const since = new Date(
+    Date.parse(now.slice(0, 10)) - newBadgeDays * 86_400_000
+  ).toISOString();
+  const q = useQuery({
+    queryKey: ['allocation-runs', port, 'applied-since', since],
+    enabled: client !== null,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchAppliedAllocationRuns(since);
+    },
+  });
+  return useMemo(
+    () =>
+      q.data === undefined ? NO_ALLOCATIONS : recentAllocationsFrom(q.data),
+    [q.data]
+  );
+}
+
 const STAT_ICONS: Record<string, LucideIcon> = {
   open: CircleDot,
   overdue: CalendarX,
@@ -48,10 +82,13 @@ const STAT_ICONS: Record<string, LucideIcon> = {
 export interface WeekViewProps {
   /** This window's own `human:<handle>` ref, or null until the daemon says. */
   me: string | null;
+  /** Reads the applied allocation runs for "New to you"; none without it. */
+  client?: Pick<ApiClient, 'fetchAppliedAllocationRuns'> | null;
+  port?: number;
 }
 
 /** The My week page. Without a planning (outside App) it says so. */
-export function WeekView({ me }: WeekViewProps) {
+export function WeekView({ me, client, port }: WeekViewProps) {
   const planning = usePlanningContext();
   if (planning === null) {
     return (
@@ -60,11 +97,22 @@ export function WeekView({ me }: WeekViewProps) {
       </div>
     );
   }
-  return <WeekLoaded planning={planning} me={me} />;
+  return <WeekLoaded planning={planning} me={me} client={client} port={port} />;
 }
 
-function WeekLoaded({ planning, me }: WeekViewProps & { planning: Planning }) {
+function WeekLoaded({
+  planning,
+  me,
+  client = null,
+  port,
+}: WeekViewProps & { planning: Planning }) {
   const { peekTask } = useShellActions();
+  const recentAllocations = useRecentAllocations(
+    client,
+    port,
+    planning.ctx.now,
+    planning.ctx.tuning.newBadgeDays
+  );
   const [requested, setRequested] = useState<string | null>(null);
   const { snapshot, ctx, assessments, timeline } = planning;
 
@@ -85,7 +133,7 @@ function WeekLoaded({ planning, me }: WeekViewProps & { planning: Planning }) {
       ctx,
       assessments,
       userId,
-      recentAllocations: [],
+      recentAllocations,
     });
     // The planning's "No milestone" rows carry no project: the snapshot does.
     const issueProjects = new Map<
@@ -114,7 +162,7 @@ function WeekLoaded({ planning, me }: WeekViewProps & { planning: Planning }) {
       newBadgeDays: ctx.tuning.newBadgeDays,
       issueProjects,
     });
-  }, [snapshot, ctx, assessments, timeline, userId, me]);
+  }, [snapshot, ctx, assessments, timeline, userId, me, recentAllocations]);
 
   if (page === null) {
     return (

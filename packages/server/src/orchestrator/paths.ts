@@ -247,6 +247,21 @@ export function receiptsDir(rootDir: string): string {
 }
 
 /**
+ * The allocation run log of a project (planning/allocationRuns): daemon state
+ * under DISPATCH_HOME, never in the project.
+ */
+export function allocationRunsPath(rootDir: string): string {
+  return join(
+    dispatchHome(),
+    '.dispatch',
+    'projects',
+    projectKeyOf(rootDir),
+    'planning',
+    'allocation-runs.db'
+  );
+}
+
+/**
  * Where board sync keeps this replica's state: its identity, what it knows of
  * every synced field, and its clone of the sync branch (see
  * packages/server/src/boardSync). Machine-local by definition — it is this

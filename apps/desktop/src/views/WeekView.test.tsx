@@ -1,7 +1,9 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
 import type { MilestoneProgress, RunMeta } from '@dispatch/client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, test } from 'bun:test';
+import type { ReactNode } from 'react';
 
 import { ShellActionsProvider } from '../components/shell/ShellActionsContext';
 import { SHELL } from '../components/tasks/page/pageHost.test-helper';
@@ -15,6 +17,15 @@ import { WeekView } from './WeekView';
 // attention); Dev holds one issue with no milestone.
 
 afterEach(cleanup);
+
+/** The page reads the applied allocation runs through react-query. */
+function Queries({ children }: { children: ReactNode }) {
+  return (
+    <QueryClientProvider client={new QueryClient()}>
+      {children}
+    </QueryClientProvider>
+  );
+}
 
 const DONE_MEANS = '## Description\n\nDone means: it ships.\n';
 
@@ -86,7 +97,8 @@ function mount(me: string | null = 'human:ana') {
       <PlanningProvider data={planningInput(fixture())}>
         <WeekView me={me} />
       </PlanningProvider>
-    </ShellActionsProvider>
+    </ShellActionsProvider>,
+    { wrapper: Queries }
   );
   return { peeked };
 }
@@ -120,7 +132,8 @@ describe('WeekView', () => {
         <PlanningProvider data={{ ...planningInput([]), people: [], me: null }}>
           <WeekView me={null} />
         </PlanningProvider>
-      </ShellActionsProvider>
+      </ShellActionsProvider>,
+      { wrapper: Queries }
     );
     expect(screen.getByText('No people yet')).toBeTruthy();
   });

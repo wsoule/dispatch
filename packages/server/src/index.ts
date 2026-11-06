@@ -158,7 +158,11 @@ import {
   type OverseerStore,
 } from './orchestrator/overseerStore.js';
 import { OverseerToolRegistry } from './orchestrator/overseerTools.js';
-import { boardSyncDir, taskAuthorshipPath } from './orchestrator/paths.js';
+import {
+  allocationRunsPath,
+  boardSyncDir,
+  taskAuthorshipPath,
+} from './orchestrator/paths.js';
 import { PlanManager } from './orchestrator/plan.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
@@ -181,6 +185,7 @@ import {
   TERMINAL_RUN_STATES,
 } from './orchestrator/types.js';
 import { VerificationRunner } from './orchestrator/verify.js';
+import { AllocationRunStore } from './planning/allocationRuns.js';
 import {
   policyActivityAppender,
   policyDecisionClassifier,
@@ -2464,6 +2469,9 @@ async function bootServer(
     }
   }, PREVIEW_SWEEP_INTERVAL_MS);
 
+  // The allocation run log's own SQLite file, closed with the daemon.
+  const allocationRuns = new AllocationRunStore(allocationRunsPath(rootDir));
+
   const apiCtx: ApiContext = {
     rootDir,
     store,
@@ -2487,6 +2495,7 @@ async function bootServer(
     mergeQueue,
     startedAt,
     noteStore: new NoteStore(rootDir),
+    allocationRuns,
     inboxStore,
     inboxTriage,
     findingStore,
@@ -2949,6 +2958,7 @@ async function bootServer(
       unsubscribeLinear();
       unsubscribeRevokedAsks();
       linearSignIn.stop();
+      allocationRuns.close();
       await linearSync.stop();
       unsubscribeBoardSync();
       unsubscribeDocPublishes();

@@ -40,6 +40,9 @@ export type ProjectView =
    * milestone, lead and allocation, grouped by initiative; a page under
    * Tasks, reached from the Projects section's "All". */
   | 'projects'
+  /** The allocation preview and run log; a page under Tasks, reached from
+   * the Projects page and the palette. */
+  | 'allocation'
   /** Everything in motion at once: a Flight Plan band per container with work
    * moving; a page under Runs (Runs › Live), reached from the Runs page's Live
    * button and the palette, and left back to the Runs page. */
@@ -210,6 +213,7 @@ export type HostedView = Extract<
   | 'timeline'
   | 'graph'
   | 'projects'
+  | 'allocation'
   | 'live'
   | 'week'
 >;
@@ -440,6 +444,7 @@ export function projectViewDestination(view: ProjectView): NavDestination {
     case 'terminals':
     case 'threads':
     case 'projects':
+    case 'allocation':
     case 'live':
     case 'week':
       return { kind: 'page', page: { kind: 'view', view } };
