@@ -131,14 +131,3 @@ export function fileRemoteStore(path: string): RemoteStore {
     },
   };
 }
-
-/** A store that keeps nothing, for tests. */
-export function memoryRemoteStore(): RemoteStore {
-  let saved: RemoteState | null = null;
-  return {
-    load: () => saved,
-    save: (state) => {
-      saved = { ...state, devices: state.devices.map((d) => ({ ...d })) };
-    },
-  };
-}

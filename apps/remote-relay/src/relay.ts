@@ -89,7 +89,7 @@ class ConnectLimiter {
   }
 }
 
-/** Bun's send result 0 means the frame was dropped, which would desynchronise
+/** Bun's send result 0 means the frame was dropped, which would throw off
  *  the session's cipher counters, so the session has to end. */
 function delivered(result: number): boolean {
   return result !== 0;
@@ -214,11 +214,11 @@ export function startRelay(options: RelayOptions = {}): Relay {
           phones: phones.size,
         });
       }
-      // Behind Railway's proxy the peer is the proxy; the first forwarded
-      // address is the client's.
+      // Behind a proxy the peer is the proxy. Its own entry is the last one
+      // in X-Forwarded-For: earlier entries are whatever the client sent.
       const forwarded =
         options.trustForwardedFor === true
-          ? req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+          ? req.headers.get('x-forwarded-for')?.split(',').at(-1)?.trim()
           : undefined;
       const ip = forwarded ?? srv.requestIP(req)?.address ?? 'unknown';
       if (

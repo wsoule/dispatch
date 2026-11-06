@@ -18,7 +18,7 @@ import { type OperatorDeviceCredentials, sha256 } from '../identity.js';
 import type { RemoteState, RemoteStore, StoredDevice } from './store.js';
 
 // Remote access: a paired phone reaching this daemon through the relay, with
-// no VPN and no open port (see docs/specs/remote-access.md).
+// no VPN and no open port (see docs/specs/2026-11-06-remote-access-design.md).
 //
 // The daemon dials the relay only while a phone is paired or a pairing code
 // is live. A phone never holds a daemon token: each session it opens is
@@ -39,7 +39,7 @@ export function relayFromEnv(value: string | undefined): string {
 }
 
 /** How long a pairing code shown as a QR code stays usable. */
-export const OFFER_TTL_MS = 10 * 60_000;
+const OFFER_TTL_MS = 10 * 60_000;
 
 /** Request headers a phone may set. Everything else, `authorization` and
  *  `cookie` above all, is dropped before the request reaches the API. */
@@ -50,7 +50,7 @@ const FORWARDED_HEADERS = new Set([
   'if-none-match',
 ]);
 
-export interface RemoteDeviceSummary {
+interface RemoteDeviceSummary {
   id: string;
   name: string;
   pairedAt: string;

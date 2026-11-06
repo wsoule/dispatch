@@ -80,7 +80,7 @@ export interface LocalApi {
   ): { close(): void };
 }
 
-export interface DaemonLinkOptions {
+interface DaemonLinkOptions {
   relay: string;
   secret: Uint8Array;
   key: KeyPair;
@@ -117,7 +117,7 @@ interface DaemonSession {
 
 /** Paths a phone may reach: the API and the event stream, nothing served
  *  statically, nothing proxied (no previews). */
-function relayablePath(path: string): boolean {
+function phoneMayReach(path: string): boolean {
   return path.startsWith('/api/') && !path.includes('..');
 }
 
@@ -370,7 +370,7 @@ export class DaemonLink {
         this.send(session, { t: 'pong' });
         return;
       case 'req': {
-        if (!relayablePath(header.path)) {
+        if (!phoneMayReach(header.path)) {
           this.send(session, {
             t: 'error',
             id: header.id,

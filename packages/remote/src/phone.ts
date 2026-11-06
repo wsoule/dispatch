@@ -44,7 +44,7 @@ export type RemoteStatus =
   | { kind: 'error'; message: string }
   | { kind: 'stopped' };
 
-export interface RemoteConnectionOptions {
+interface RemoteConnectionOptions {
   relay: string;
   daemonId: string;
   daemonKey: Uint8Array;

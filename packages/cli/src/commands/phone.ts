@@ -17,7 +17,7 @@ import { appTokenClient } from './appToken.js';
  */
 
 /** The devices list as a person reads it. */
-export function describePhones(status: RemoteAccessStatus): string[] {
+function describePhones(status: RemoteAccessStatus): string[] {
   if (!status.enabled)
     return ['Remote access is off on this daemon (DISPATCH_REMOTE=off).'];
   if (status.devices.length === 0)

@@ -176,6 +176,21 @@ describe('a phone paired through the relay', () => {
     });
     expect(pairFromPhone.status).toBe(403);
 
+    // The app's own actions are reachable at this tier: each gets past auth
+    // and answers that the run does not exist.
+    for (const [method, path, body] of [
+      ['POST', '/api/runs/no-such-run/cancel', undefined],
+      ['POST', '/api/runs/no-such-run/review', '{"action":"discard"}'],
+      ['POST', '/api/merge-queue', '{"runId":"no-such-run"}'],
+    ] as const) {
+      const res = await conn.fetch(path, {
+        method,
+        headers: { 'content-type': 'application/json' },
+        ...(body === undefined ? {} : { body }),
+      });
+      expect([method, path, res.status]).toEqual([method, path, 404]);
+    }
+
     const status = (await (await api('/api/remote')).json()) as {
       devices: Array<{ id: string; name: string }>;
       offerExpiresAt: string | null;

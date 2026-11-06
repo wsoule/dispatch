@@ -7,7 +7,7 @@ import { isDaemonId } from './wire.js';
 // is the one secret, single-use and short-lived, and it never crosses the
 // relay: it only feeds the handshake's key derivation (handshake.ts).
 
-export const PAIRING_SCHEME = 'dispatch-remote:';
+const PAIRING_SCHEME = 'dispatch-remote:';
 
 /** One pairing offer as the phone reads it out of a QR code. */
 export interface PairingOffer {

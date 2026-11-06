@@ -58,7 +58,7 @@ export function isDaemonId(value: string): boolean {
 }
 
 /** Session ids are hex on the control channel and raw bytes on data frames. */
-export function sidToBytes(sid: string): Uint8Array {
+function sidToBytes(sid: string): Uint8Array {
   const out = new Uint8Array(SID_BYTES);
   for (let i = 0; i < SID_BYTES; i++)
     out[i] = Number.parseInt(sid.slice(i * 2, i * 2 + 2), 16);

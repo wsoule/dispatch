@@ -28,7 +28,7 @@ import {
 // all of it, salted with a hash of every public key involved, so a relay that
 // swaps any key gets two sides holding different keys and nothing decrypts.
 
-export const PROTOCOL = 'dispatch-remote/1';
+const PROTOCOL = 'dispatch-remote/1';
 
 const KEY_BYTES = 32;
 const ZERO_PSK = new Uint8Array(KEY_BYTES);
@@ -285,14 +285,4 @@ export class SessionCipher {
   open(ciphertext: Uint8Array): Uint8Array {
     return this.in.open(ciphertext);
   }
-}
-
-/** What a phone shows to tell this daemon's key apart: the first 8 bytes of
- *  its hash as hex groups. */
-export function fingerprint(publicKey: Uint8Array): string {
-  const digest = sha256(publicKey);
-  const hex = Array.from(digest.slice(0, 8), (b) =>
-    b.toString(16).padStart(2, '0')
-  ).join('');
-  return hex.match(/.{4}/g)?.join('-') ?? hex;
 }
