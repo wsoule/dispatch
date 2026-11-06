@@ -28,6 +28,7 @@ import {
   useRef,
 } from 'react';
 
+import { milestoneMetaFrom, tuningFrom } from '../adapters/planningSettings';
 import {
   buildEvalContext,
   buildWorkspaceData,
@@ -193,6 +194,15 @@ export function usePlanning(data: PlanningInput): Planning {
   );
   const { tasks, people, me, linearLinks } = data;
   const bodies = useMilestoneBodies(data.client ?? null, tasks);
+  // The planning block changes rarely: keyed on it, not on the whole config.
+  const planningConfig = data.config?.planning;
+  const { tuning, meta } = useMemo(
+    () => ({
+      tuning: tuningFrom(planningConfig),
+      meta: milestoneMetaFrom(planningConfig),
+    }),
+    [planningConfig]
+  );
   return useMemo(() => {
     const workspace = buildWorkspaceData({
       tasks,
@@ -206,7 +216,7 @@ export function usePlanning(data: PlanningInput): Planning {
       hrefFor: taskHref,
       bodies,
     });
-    const ctx = buildEvalContext(new Date(minute));
+    const ctx = buildEvalContext(new Date(minute), tuning, meta);
     const snapshot = indexWorkspace(workspace);
     const assessments = assessWorkspace(snapshot, ctx);
     const allocation = planAllocation(snapshot, ctx, assessments);
@@ -247,6 +257,8 @@ export function usePlanning(data: PlanningInput): Planning {
     sessions,
     minute,
     bodies,
+    tuning,
+    meta,
   ]);
 }
 

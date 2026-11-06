@@ -470,18 +470,19 @@ export function buildWorkspaceData(input: WorkspaceDataInput): WorkspaceData {
 
 /**
  * The evaluation context for `now`: today as the local calendar day (what
- * `dueDate` is stored in), the instant, the tuning, and no tool-owned
- * milestone meta (Dispatch keeps no weights or "done means…" of its own; a
- * milestone's "done means" comes from its description).
+ * `dueDate` is stored in), the instant, the tuning, and each milestone's
+ * planner meta (its weight from config.yml; a milestone's "done means" comes
+ * from its description, not here).
  */
 export function buildEvalContext(
   now: Date,
-  tuning: Tuning = DEFAULT_TUNING
+  tuning: Tuning = DEFAULT_TUNING,
+  meta: ReadonlyMap<string, MilestoneMeta> = new Map()
 ): EvalContext {
   return {
     today: dayFromNow(0, now),
     now: now.toISOString(),
     tuning,
-    meta: new Map<string, MilestoneMeta>(),
+    meta,
   };
 }
