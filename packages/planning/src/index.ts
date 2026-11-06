@@ -17,3 +17,4 @@ export * from './issue-search';
 export * from './labels';
 export * from './fromDispatch';
 export * from './dispatchSettings';
+export * from './warnings';
