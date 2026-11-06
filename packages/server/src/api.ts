@@ -291,6 +291,8 @@ import type { PresenceTracker } from './presence.js';
 import type { PreviewState, PreviewSupervisor } from './preview.js';
 import type { PreviewGateway } from './previewGateway.js';
 import type { ReceiptsPush, ReceiptsScheduler } from './receipts/scheduler.js';
+import { handleRemoteRoute } from './remoteAccess/routes.js';
+import type { RemoteAccess } from './remoteAccess/service.js';
 import {
   formatCommentsForAgent,
   resolveAnchor,
@@ -369,6 +371,8 @@ export interface ApiContext {
   messaging: Messaging;
   /** The link to the machine hub, when this daemon makes one. */
   hubLink?: DaemonHubLink | null;
+  /** Phones paired through the relay (remoteAccess/). */
+  remoteAccess?: RemoteAccess | null;
   // The docs service (docs/service.ts); unavailable when docs.db did not open.
   docs: DocsService;
   /** The memory store and engine (memory/service.ts). */
@@ -4534,6 +4538,11 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // Saving an agent key writes a machine-wide secret; refresh changes what runs can spawn.
   { method: 'POST', segments: ['setup', 'agent-key'], tier: 'operator' },
   { method: 'POST', segments: ['setup', 'refresh'], tier: 'operator' },
+  // Pairing a phone hands out a way to answer this daemon's gates, and the
+  // device list says who holds one (remoteAccess/routes.ts).
+  { method: 'GET', segments: ['remote'], tier: 'operator' },
+  { method: 'POST', segments: ['remote', 'pair'], tier: 'operator' },
+  { method: 'DELETE', segments: ['remote', 'devices', '*'], tier: 'operator' },
   // ---- decide: adjudication -------------------------------------------------
   // Starting a preview runs a command out of the run's own worktree — a
   // worktree the agent just wrote to, including its package.json. On the
@@ -5346,6 +5355,9 @@ export async function handleApi(
         storageBackend: ctx.storeBackend,
       });
     }
+
+    const remoteRoute = handleRemoteRoute(ctx.remoteAccess, method, segments);
+    if (remoteRoute !== null) return remoteRoute;
 
     if (segments[0] === 'team' && isFederationRoute(segments)) {
       return await handleFederationRoute(req, ctx, segments, method);

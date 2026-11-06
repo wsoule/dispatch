@@ -300,3 +300,17 @@ export function terminalScrollbackPath(rootDir: string, id: string): string {
 export function licenseKeyPath(): string {
   return join(dispatchHome(), '.dispatch', 'license.key');
 }
+
+// The phone link's keys and paired devices (remoteAccess/), mode 0600: the
+// relay secret this daemon signs in with, its X25519 key and each phone's
+// public key. Beside team-tokens.json, for the same reason: credentials for
+// this machine's daemon, never committed with the project.
+export function remoteAccessPath(rootDir: string): string {
+  return join(
+    dispatchHome(),
+    '.dispatch',
+    'projects',
+    projectKeyOf(rootDir),
+    'remote.json'
+  );
+}
