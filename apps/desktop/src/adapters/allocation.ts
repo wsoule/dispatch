@@ -269,7 +269,12 @@ export function runRow(
     at: run.at,
     by: nameFor(run.by),
     mode: run.mode,
-    modeLabel: run.mode === 'applied' ? 'Applied' : 'Dry run',
+    modeLabel:
+      run.mode === 'dry_run'
+        ? 'Dry run'
+        : run.trigger === 'daily'
+          ? 'Daily'
+          : 'Applied',
     modeTone: run.mode === 'applied' ? 'success' : 'default',
     summary: parts.length === 0 ? 'Nothing to assign' : parts.join(' · '),
     blocked: counts.blocked,

@@ -1,7 +1,7 @@
-import { DEFAULT_TUNING } from '@dispatch/planning';
 import { describe, expect, test } from 'bun:test';
 
-import { milestoneMetaFrom, tuningFrom } from './planningSettings';
+import { DEFAULT_TUNING } from '../src/config';
+import { milestoneMetaFrom, tuningFrom } from '../src/dispatchSettings';
 
 describe('tuningFrom', () => {
   test('is the planning default without a planning block', () => {

@@ -162,7 +162,7 @@ function AllocationLoaded({
         Each unassigned issue in a project's next milestone goes to the
         project's lead and moves out of Backlog, with a comment saying why.
         Projects missing a lead, a date or a "Done means…" are skipped until
-        they have one.
+        they have one. Settings → Planning can have the daemon do this daily.
       </p>
 
       <section aria-label="Preview" className={styles.section}>
@@ -332,7 +332,7 @@ function RunDialog({
       title={
         run === undefined
           ? 'Allocation run'
-          : `${run.mode === 'applied' ? 'Applied' : 'Dry run'} · ${formatRelativeTimeFromIso(run.at)}`
+          : `${runRow(run, (ref) => ref).modeLabel} · ${formatRelativeTimeFromIso(run.at)}`
       }
     >
       {run === undefined ? (

@@ -19,6 +19,8 @@ import {
   indexWorkspace,
   planAllocation,
 } from '@dispatch/planning';
+import { milestoneMetaFrom, tuningFrom } from '@dispatch/planning';
+import { buildEvalContext, buildWorkspaceData } from '@dispatch/planning';
 import {
   createContext,
   createElement,
@@ -28,11 +30,6 @@ import {
   useRef,
 } from 'react';
 
-import { milestoneMetaFrom, tuningFrom } from '../adapters/planningSettings';
-import {
-  buildEvalContext,
-  buildWorkspaceData,
-} from '../adapters/workspaceData';
 import { taskHref } from '../lib/shellRoutes';
 import { useStatusModelOf } from '../lib/statusModel';
 import type { DispatchProjectData } from './useDispatchProject';
@@ -40,8 +37,8 @@ import { useMilestoneBodies } from './useMilestoneBodies';
 import { useMinuteClock } from './useMinuteClock';
 
 // The planning chain over the open project, in the renderer: Dispatch's task
-// list synthesized into @dispatch/planning's WorkspaceData (adapters/
-// workspaceData), indexed, every milestone assessed, allocation planned, the
+// list synthesized into @dispatch/planning's WorkspaceData (its
+// buildWorkspaceData, which the daemon's daily allocation shares), indexed, every milestone assessed, allocation planned, the
 // timeline built and the dependency graph of any scope drawn on demand (the
 // milestone level of the whole workspace is the timeline's connectors; the
 // Graph destination asks for the scope on screen). One useMemo runs the whole chain, keyed
@@ -180,7 +177,7 @@ function useSessionStates(
 /**
  * The planning chain over the open project, memoized on its inputs (see the
  * file comment). For 500 tasks the whole chain takes well under 50 ms
- * (adapters/workspaceData.test.ts times it), so a recompute on a task change
+ * (adapters/fromDispatch.test.ts times it), so a recompute on a task change
  * is cheaper than a frame.
  */
 export function usePlanning(data: PlanningInput): Planning {

@@ -96,6 +96,7 @@ function fakeClient(log: FakeLog, refuse: string[] = []): ApiClient {
       const run: AllocationRun = {
         ...input,
         id: `ar-${runs.length}`,
+        trigger: 'manual',
         at: new Date().toISOString(),
         by: 'human:ana',
         counts: {
@@ -226,6 +227,7 @@ describe('AllocationView', () => {
 describe('the run log helpers', () => {
   const run: AllocationRun = {
     id: 'ar-1',
+    trigger: 'manual',
     at: '2026-11-06T10:00:00.000Z',
     by: 'human:ana',
     mode: 'applied',
@@ -269,6 +271,9 @@ describe('the run log helpers', () => {
     const row = runRow(run, () => 'Ana');
     expect(row.summary).toBe('2 assigned · 1 failed');
     expect(row.modeLabel).toBe('Applied');
+    expect(runRow({ ...run, trigger: 'daily' }, () => 'Ana').modeLabel).toBe(
+      'Daily'
+    );
     expect(row.by).toBe('Ana');
   });
 

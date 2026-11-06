@@ -60,3 +60,9 @@ test('ticking a person makes them a watcher', () => {
     { planning: { watchers: ['human:dev', 'human:ana'] } },
   ]);
 });
+
+test('the allocation mode saves as daily or manual', () => {
+  const saved = mount();
+  fireEvent.click(screen.getByRole('radio', { name: 'Daily' }));
+  expect(saved).toEqual([{ planning: { allocation: 'daily' } }]);
+});

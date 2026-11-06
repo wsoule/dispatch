@@ -632,6 +632,10 @@ importers:
         version: 5.9.2
 
   packages/planning:
+    dependencies:
+      '@dispatch-foo/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@types/bun':
         specifier: 'catalog:'
@@ -700,6 +704,9 @@ importers:
       '@dispatch/memory':
         specifier: workspace:*
         version: link:../memory
+      '@dispatch/planning':
+        specifier: workspace:*
+        version: link:../planning
       '@typesafe-ai/sdk':
         specifier: 'catalog:'
         version: 0.6.0

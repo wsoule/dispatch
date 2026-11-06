@@ -14,16 +14,16 @@ import {
   resolveTodoState,
 } from '@dispatch/planning';
 import type { WorkspaceData } from '@dispatch/planning';
-import { describe, expect, test } from 'bun:test';
-
-import { taskDoc } from '../lib/taskDoc.test-helper';
 import {
   buildEvalContext,
   buildWorkspaceData,
   noProjectId,
   PLANNING_TEAM_ID,
   type WorkspaceDataInput,
-} from './workspaceData';
+} from '@dispatch/planning';
+import { describe, expect, test } from 'bun:test';
+
+import { taskDoc } from '../lib/taskDoc.test-helper';
 
 const NOW = new Date('2026-10-26T12:00:00.000Z');
 

@@ -3,6 +3,7 @@ import type {
   TimelineLane,
   TimelineView,
 } from '@dispatch/planning';
+import { noProjectId } from '@dispatch/planning';
 import type { PaletteItem, ShellIcon } from '@dispatch/ui';
 import {
   ArrowRight,
@@ -17,7 +18,6 @@ import {
 import type { PaletteEntry, PaletteSection } from '../lib/paletteEntries';
 import { formatDate } from './planningFormat';
 import { assessmentMark, type StatusMarkModel } from './planningStatus';
-import { noProjectId } from './workspaceData';
 
 // Dispatch's palette rows as @dispatch/ui PaletteItems: the entries
 // `lib/paletteEntries.ts` builds (tasks, docs, views, navigation, actions)
@@ -232,7 +232,7 @@ export interface JumpToHrefs {
  * <date>", marked by its assessment). A project row opens its Timeline
  * lane, a milestone row its own page. An inactive lane's rows are muted and
  * say so in the mark's label. The synthetic "No project" lane a group gets
- * for its loose milestones (workspaceData's noProjectId) is no task, so it
+ * for its loose milestones (@dispatch/planning's noProjectId) is no task, so it
  * has no row of its own; its milestones are real tasks and keep theirs.
  */
 export function buildJumpToItems(
