@@ -41,7 +41,7 @@ function session(over: Partial<OverseerSession>): OverseerSession {
     sending: false,
     sendError: null,
     revoked: false,
-    confirmAction: () => Promise.resolve(),
+    confirmAction: () => Promise.resolve(true),
     decidingActionId: null,
     decideApproval: () => Promise.resolve(true),
     decidingRequestId: null,

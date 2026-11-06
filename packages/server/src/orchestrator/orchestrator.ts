@@ -2960,19 +2960,23 @@ export class Orchestrator {
         // predates closeSupersededPredecessors, or if the walk stopped short),
         // and clearing it out of the queue is housekeeping, not a verdict on
         // the landed work.
-        const taskStatus = this.ctx.store.get(meta.taskId)?.meta.status;
-        this.ctx.store.update(
-          meta.taskId,
-          {
-            ...(taskStatus !== undefined &&
-            isCompletedStatus(taskStatus, this.statuses())
-              ? {}
-              : { status: this.statuses().roles.ready }),
-            appendActivity: `${now} run ${runId} discarded`,
-            activityActor: actor,
-          },
-          now
-        );
+        // A run whose task was deleted is still discardable: there is no
+        // task left to reopen, only the branch and the run record.
+        const task = this.ctx.store.get(meta.taskId);
+        if (task !== null) {
+          const taskStatus = task.meta.status;
+          this.ctx.store.update(
+            meta.taskId,
+            {
+              ...(isCompletedStatus(taskStatus, this.statuses())
+                ? {}
+                : { status: this.statuses().roles.ready }),
+              appendActivity: `${now} run ${runId} discarded`,
+              activityActor: actor,
+            },
+            now
+          );
+        }
         this.flagStackedDependents(meta);
       }
     } catch (err) {

@@ -57,9 +57,6 @@ export type OverseerThreadItem =
       kind: 'confirm';
       key: string;
       action: OverseerAction;
-      /** The server's failure text when the last approval attempt threw — the
-       * action came back to `pending` for a retry, and the card should say why. */
-      failure: string | null;
     }
   | { kind: 'approve'; key: string; approval: OverseerApproval }
   | { kind: 'pending'; key: string }
@@ -131,10 +128,9 @@ const TURN_FAILED_FALLBACK =
  * `action` message (`applied`/`denied`/`failed`) rather than editing the first.
  * Rendering both would show every decided action twice ("queued" then
  * "Applied"), so the rule here is: an action still on `pendingActions` renders
- * as one `confirm` card at its *latest* transcript position (a failed approval
- * moves it down to where the failure happened, with the failure text on the
- * card); an action already decided drops its stale `pending` rows and keeps
- * only its decided `outcome` rows.
+ * as one `confirm` card at its latest transcript position; an action already
+ * decided (a failed approval included) drops its stale `pending` rows and
+ * keeps only its decided `outcome` rows.
  *
  * `live` is the running turn's uncommitted text (OverseerSession.live). Its
  * segments follow the transcript, where the "working" row would be, and take
@@ -189,7 +185,6 @@ export function buildOverseerThread(
         kind: 'confirm',
         key: `${record.id}-confirm-${action.id}`,
         action,
-        failure: null,
       });
     }
   }
@@ -333,9 +328,6 @@ function buildRow(
       kind: 'confirm',
       key: `${record.id}-confirm-${actionId}`,
       action: pending,
-      // A failed approval restored the action to pending — surface the server's
-      // explanation on the card the human will retry from.
-      failure: message.outcome === 'failed' ? message.text : null,
     };
   }
 
@@ -430,7 +422,7 @@ export type OverseerStreamItem =
   | {
       kind: 'confirms';
       key: string;
-      actions: { action: OverseerAction; failure: string | null }[];
+      actions: OverseerAction[];
     };
 
 /** Folds each run of two or more queued actions into one card's row list. */
@@ -444,13 +436,12 @@ export function groupConfirmRows(
       out.push(item);
       continue;
     }
-    const row = { action: item.action, failure: item.failure };
-    if (last?.kind === 'confirms') last.actions.push(row);
+    if (last?.kind === 'confirms') last.actions.push(item.action);
     else if (last?.kind === 'confirm') {
       out[out.length - 1] = {
         kind: 'confirms',
         key: last.key,
-        actions: [{ action: last.action, failure: last.failure }, row],
+        actions: [last.action, item.action],
       };
     } else out.push(item);
   }

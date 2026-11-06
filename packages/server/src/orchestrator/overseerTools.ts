@@ -225,7 +225,8 @@ export interface OverseerAction {
   /** One sentence, safe to render verbatim in the chat UI. */
   summary: string;
   createdAt: string;
-  status: 'pending' | 'applied' | 'denied';
+  /** `failed`: approved, but the effect threw; final, like the other two. */
+  status: 'pending' | 'applied' | 'denied' | 'failed';
 }
 
 // ---------------------------------------------------------------------------
@@ -1156,8 +1157,7 @@ const discardRun: OverseerMutatingTool<z.infer<typeof discardInput>> = {
   },
   apply(ctx, input, meta) {
     for (const id of discardTargets(input)) {
-      // A run reviewed since the card was drawn has nothing left to discard;
-      // skipping it also lets a retry after a part-way failure finish the rest.
+      // A run reviewed since the card was drawn has nothing left to discard.
       if (ctx.orchestrator.getRun(id)?.meta.reviewedAt !== undefined) continue;
       ctx.orchestrator.review(id, 'discard', { actor: meta.actor });
     }
@@ -1722,10 +1722,9 @@ export class OverseerToolRegistry {
     try {
       await tool.apply(this.ctx, action.input, meta);
     } catch (err) {
-      // Back to `pending` because the effect did not happen: leaving it
-      // `applied` would lie, and `denied` would discard an action the human
-      // explicitly approved and may well want to retry.
-      action.status = 'pending';
+      // Final, not back to `pending`: a re-queued card that fails the same
+      // way on every approval is noise. The overseer can propose it again.
+      action.status = 'failed';
       throw err;
     }
     return action;
