@@ -1804,7 +1804,7 @@ async function bootServer(
   }
   // Open publishes a crash left with no run start now.
   try {
-    await redispatchPublishes(docs.service, orchestrator);
+    await redispatchPublishes(docs.service, { orchestrator, rootDir });
   } catch (err) {
     console.error('dispatchd: publish redispatch failed', err);
   }

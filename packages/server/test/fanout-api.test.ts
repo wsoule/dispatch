@@ -1,12 +1,22 @@
 import { TaskStore } from '@dispatch-foo/core';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
+import type { JudgmentClient } from '../src/judgments/client.js';
 import { FakeExecutor } from '../src/orchestrator/executors/fake.js';
+import { DEFAULT_EXECUTOR_PROFILE } from '../src/orchestrator/types.js';
 import { json } from './json.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth } from './testAuth.js';
@@ -15,7 +25,16 @@ let fakeHome: string;
 let root: string;
 let handle: ServerHandle;
 let baseUrl: string;
+let claude: FakeExecutor;
+let codex: FakeExecutor;
+let gemini: FakeExecutor;
 const originalDispatchHome = process.env.DISPATCH_HOME;
+const judgments = {
+  model: 'test',
+  judge: mock((..._args: Parameters<JudgmentClient['judge']>) =>
+    Promise.reject(new Error('judgment unavailable in test'))
+  ),
+};
 
 function initRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), 'dispatch-fanout-api-'));
@@ -46,6 +65,7 @@ async function createTask(title: string, body: string): Promise<string> {
 }
 
 beforeEach(async () => {
+  judgments.judge.mockClear();
   fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-home-'));
   process.env.DISPATCH_HOME = fakeHome;
   root = initRepo();
@@ -54,13 +74,17 @@ beforeEach(async () => {
     rootDir: root,
     port: 0,
     writeDaemonFile: false,
+    judgments,
     registerExecutors: (orchestrator) => {
       // A script that finishes immediately: this suite is about how many runs
       // are started and how they are grouped, not what an agent writes.
       const script = { steps: [], finish: { state: 'finished' as const } };
-      orchestrator.registerExecutor('claude', new FakeExecutor(script));
-      orchestrator.registerExecutor('codex', new FakeExecutor(script));
-      orchestrator.registerExecutor('gemini', new FakeExecutor(script));
+      claude = new FakeExecutor(script);
+      codex = new FakeExecutor(script);
+      gemini = new FakeExecutor(script);
+      orchestrator.registerExecutor('claude', claude);
+      orchestrator.registerExecutor('codex', codex);
+      orchestrator.registerExecutor('gemini', gemini);
     },
   });
   useTestAuth(handle);
@@ -77,6 +101,14 @@ afterEach(async () => {
 
 describe('POST /api/tasks/:id/fanout', () => {
   it('starts one task and one run per agent', async () => {
+    writeFileSync(
+      join(root, '.dispatch/config.yml'),
+      'models:\n  execute: claude-configured\n  plan: claude-plan\n' +
+        'executors:\n  codex:\n    models:\n      execute: codex-configured\n      plan: codex-plan\n'
+    );
+    const claudeStart = spyOn(claude, 'start');
+    const codexStart = spyOn(codex, 'start');
+    const geminiStart = spyOn(gemini, 'start');
     const taskId = await createTask('Fix login', 'Passwords are rejected.');
     const res = await apiFetch(`/api/tasks/${taskId}/fanout`, {
       method: 'POST',
@@ -86,6 +118,21 @@ describe('POST /api/tasks/:id/fanout', () => {
     const result = await json(res);
 
     expect(result.variants).toHaveLength(3);
+    // Finished variants may request landing checklists, but never model tiers.
+    expect(
+      judgments.judge.mock.calls.filter(
+        ([, questions]) => 'complexity' in questions
+      )
+    ).toEqual([]);
+    expect(claudeStart.mock.calls.map(([opts]) => opts.model)).toEqual([
+      'claude-configured',
+    ]);
+    expect(codexStart.mock.calls.map(([opts]) => opts.model)).toEqual([
+      'codex-configured',
+    ]);
+    expect(geminiStart.mock.calls.map(([opts]) => opts.model)).toEqual([
+      undefined,
+    ]);
     expect(result.label).toBe(`fanout:${taskId}`);
     for (const variant of result.variants) {
       expect(variant.run).not.toBeNull();
@@ -120,6 +167,11 @@ describe('POST /api/tasks/:id/fanout', () => {
   });
 
   it('names the agent in each clone’s title', async () => {
+    writeFileSync(
+      join(root, '.dispatch/config.yml'),
+      'executors:\n  codex:\n    models:\n      execute: codex-configured\n'
+    );
+    const codexStart = spyOn(codex, 'start');
     const taskId = await createTask('Fix login', 'body');
     const result = await json(
       await apiFetch(`/api/tasks/${taskId}/fanout`, {
@@ -136,6 +188,37 @@ describe('POST /api/tasks/:id/fanout', () => {
       'Fix login [claude]',
       'Fix login [codex · gpt-5.5]',
     ]);
+    expect(codexStart.mock.calls.map(([opts]) => opts.model)).toEqual([
+      'gpt-5.5',
+    ]);
+  });
+
+  it('keeps the group and starts later variants when one executor refuses permission mode', async () => {
+    handle.orchestrator.registerExecutor('codex', {
+      profile: {
+        ...DEFAULT_EXECUTOR_PROFILE,
+        permissionRefusal: () => 'test refusal',
+      },
+      start: () => {
+        throw new Error('must not start');
+      },
+    });
+    const claudeStart = spyOn(claude, 'start');
+    const taskId = await createTask('Fix login', 'body');
+    const res = await apiFetch('/api/tasks/' + taskId + '/fanout', {
+      method: 'POST',
+      body: JSON.stringify({ variants: ['codex', 'claude'] }),
+    });
+    expect(res.status).toBe(201);
+    const result = await json(res);
+    expect(result.variants).toHaveLength(2);
+    expect(result.variants[0].run).toBeNull();
+    expect(result.variants[0].error).toContain('test refusal');
+    expect(result.variants[1].run).not.toBeNull();
+    expect(claudeStart).toHaveBeenCalledTimes(1);
+    for (const variant of result.variants) {
+      expect(variant.task.meta.labels).toContain('fanout:' + taskId);
+    }
   });
 
   it('leaves the source task untouched', async () => {
