@@ -7,6 +7,7 @@ import type {
   OverseerRecord,
 } from '@dispatch/client';
 
+import { normalizeBrowserUrl } from './browserPane';
 import { TASKS_PRESETS, type TasksPreset } from './tasksPresets';
 
 // One rendered row of a overseer conversation, flattened from the record's
@@ -61,9 +62,6 @@ export type OverseerThreadItem =
       kind: 'confirm';
       key: string;
       action: OverseerAction;
-      /** The server's failure text when the last approval attempt threw — the
-       * action came back to `pending` for a retry, and the card should say why. */
-      failure: string | null;
     }
   | { kind: 'approve'; key: string; approval: OverseerApproval }
   | { kind: 'pending'; key: string }
@@ -85,11 +83,12 @@ export type OverseerThreadItem =
 /** A tool call's chip: still running, ended, or failed. */
 export type ToolCallState = 'running' | 'done' | 'failed';
 
-/** Where a show_tasks door opens Tasks. */
+/** Where a show_tasks door opens Tasks, or the page a show_page door opens in the browser pane. */
 export interface OverseerDoor {
   preset?: TasksPreset;
   taskId?: string;
   milestoneId?: string;
+  url?: string;
 }
 
 // The door a show_tasks result recorded, or null for an error or a shape this build does not know.
@@ -102,7 +101,11 @@ function doorOf(text: string): OverseerDoor | null {
   }
   const door = (parsed as { door?: unknown } | null)?.door;
   if (typeof door !== 'object' || door === null) return null;
-  const { preset, taskId, milestoneId } = door as Record<string, unknown>;
+  const { preset, taskId, milestoneId, url } = door as Record<string, unknown>;
+  if (typeof url === 'string') {
+    const page = normalizeBrowserUrl(url);
+    return page === null ? null : { url: page };
+  }
   const presets: readonly string[] = TASKS_PRESETS.map((p) => p.id);
   return {
     ...(typeof preset === 'string' && presets.includes(preset)
@@ -115,6 +118,9 @@ function doorOf(text: string): OverseerDoor | null {
 
 /** The door's button text. */
 export function doorLabel(door: OverseerDoor): string {
+  if (door.url !== undefined) {
+    return `Open ${new URL(door.url).host} in the browser →`;
+  }
   const target =
     door.taskId ??
     door.milestoneId ??
@@ -135,10 +141,9 @@ const TURN_FAILED_FALLBACK =
  * `action` message (`applied`/`denied`/`failed`) rather than editing the first.
  * Rendering both would show every decided action twice ("queued" then
  * "Applied"), so the rule here is: an action still on `pendingActions` renders
- * as one `confirm` card at its *latest* transcript position (a failed approval
- * moves it down to where the failure happened, with the failure text on the
- * card); an action already decided drops its stale `pending` rows and keeps
- * only its decided `outcome` rows.
+ * as one `confirm` card at its latest transcript position; an action already
+ * decided (a failed approval included) drops its stale `pending` rows and
+ * keeps only its decided `outcome` rows.
  *
  * `live` is the running turn's uncommitted text (OverseerSession.live). Its
  * segments follow the transcript, where the "working" row would be, and take
@@ -193,7 +198,6 @@ export function buildOverseerThread(
         kind: 'confirm',
         key: `${record.id}-confirm-${action.id}`,
         action,
-        failure: null,
       });
     }
   }
@@ -285,7 +289,10 @@ function buildRow(
       at: message.at,
     };
   }
-  if (message.role === 'tool' && message.tool === 'show_tasks') {
+  if (
+    message.role === 'tool' &&
+    (message.tool === 'show_tasks' || message.tool === 'show_page')
+  ) {
     const door = doorOf(message.text);
     if (door !== null) return { kind: 'door', key, door, at: message.at };
   }
@@ -337,9 +344,6 @@ function buildRow(
       kind: 'confirm',
       key: `${record.id}-confirm-${actionId}`,
       action: pending,
-      // A failed approval restored the action to pending — surface the server's
-      // explanation on the card the human will retry from.
-      failure: message.outcome === 'failed' ? message.text : null,
     };
   }
 
@@ -438,7 +442,7 @@ export type OverseerStreamItem =
   | {
       kind: 'confirms';
       key: string;
-      actions: { action: OverseerAction; failure: string | null }[];
+      actions: OverseerAction[];
     };
 
 /** Folds each run of two or more queued actions into one card's row list. */
@@ -452,13 +456,12 @@ export function groupConfirmRows(
       out.push(item);
       continue;
     }
-    const row = { action: item.action, failure: item.failure };
-    if (last?.kind === 'confirms') last.actions.push(row);
+    if (last?.kind === 'confirms') last.actions.push(item.action);
     else if (last?.kind === 'confirm') {
       out[out.length - 1] = {
         kind: 'confirms',
         key: last.key,
-        actions: [{ action: last.action, failure: last.failure }, row],
+        actions: [last.action, item.action],
       };
     } else out.push(item);
   }

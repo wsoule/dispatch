@@ -1531,6 +1531,41 @@ describe('MergeQueue persistence', () => {
     expect(reloaded?.state).toBe('queued');
   });
 
+  it('keeps only the latest history row for a run that failed more than once', () => {
+    const harness = makeHarness();
+    mkdirSync(runsDir(harness.rootDir), { recursive: true });
+    const failed = (runId: string, finishedAt: string) => ({
+      runId,
+      taskId: 't-gone00',
+      taskTitle: 'Gone',
+      state: 'failed',
+      reason: 'worktree is gone',
+      enqueuedAt: finishedAt,
+      finishedAt,
+    });
+    writeFileSync(
+      mergeQueuePath(harness.rootDir),
+      JSON.stringify({
+        entries: [],
+        history: [
+          failed('r-aaaaaa', '2026-11-06T10:00:00.000Z'),
+          failed('r-bbbbbb', '2026-11-06T09:00:00.000Z'),
+          failed('r-aaaaaa', '2026-10-20T10:00:00.000Z'),
+          failed('r-bbbbbb', '2026-10-20T09:00:00.000Z'),
+        ],
+      })
+    );
+
+    const queue = makeQueue(harness, new StubRunner().run);
+
+    expect(
+      queue.snapshot().history.map((e) => [e.runId, e.finishedAt])
+    ).toEqual([
+      ['r-aaaaaa', '2026-11-06T10:00:00.000Z'],
+      ['r-bbbbbb', '2026-11-06T09:00:00.000Z'],
+    ]);
+  });
+
   it('requeues a mid-flight persisted entry instead of failing it, counting the attempt', async () => {
     const harness = makeHarness();
     const { runId, taskId } = await dispatchAndFinish(harness);

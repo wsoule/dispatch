@@ -61,7 +61,7 @@ function overseerSession(over: Partial<OverseerSession> = {}): OverseerSession {
     sending: false,
     sendError: null,
     revoked: false,
-    confirmAction: () => Promise.resolve(),
+    confirmAction: () => Promise.resolve(true),
     decidingActionId: null,
     decideApproval: () => Promise.resolve(true),
     decidingRequestId: null,
@@ -165,7 +165,7 @@ test('the transcript renders its lines and the confirm card decides through the 
     record,
     confirmAction: (actionId: string, approve: boolean) => {
       decisions.push([actionId, approve]);
-      return Promise.resolve();
+      return Promise.resolve(true);
     },
   });
   render(<OverseerChat overseer={overseer} />);
@@ -324,7 +324,7 @@ test('a decision in flight disables every confirm card, not just its own', () =>
           confirmAction: (actionId: string, approve: boolean) => {
             decisions.push([actionId, approve]);
             setDecidingActionId(actionId);
-            return new Promise<void>(() => {});
+            return new Promise<boolean>(() => {});
           },
         })}
       />
@@ -1022,7 +1022,7 @@ test('Approve and Deny are buttons inside the confirm card', async () => {
         record: overseerRecord({ pendingActions: [overseerAction()] }),
         confirmAction: (actionId: string, approve: boolean) => {
           decisions.push([actionId, approve]);
-          return Promise.resolve();
+          return Promise.resolve(true);
         },
       })}
     />
@@ -1159,7 +1159,7 @@ test('actions queued together share one card, and Approve both decides each in t
         }),
         confirmAction: (id, approve) => {
           decided.push([id, approve]);
-          return Promise.resolve();
+          return Promise.resolve(true);
         },
       })}
     />
@@ -1174,6 +1174,39 @@ test('actions queued together share one card, and Approve both decides each in t
     ['act-a', true],
     ['act-b', true],
   ]);
+});
+
+test('Approve both stops at the first action that fails', async () => {
+  const decided: string[] = [];
+  const actions = ['act-a', 'act-b'].map((id, i) =>
+    overseerAction({ id, tool: 'discard_run', summary: `Discard r-${i}` })
+  );
+  render(
+    <ChatWithDraft
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: overseerRecord({
+          pendingActions: actions,
+          messages: actions.map((a) => ({
+            role: 'action' as const,
+            actionId: a.id,
+            outcome: 'pending' as const,
+            text: a.summary,
+            at: 't1',
+          })),
+        }),
+        confirmAction: (id) => {
+          decided.push(id);
+          return Promise.resolve(false);
+        },
+      })}
+    />
+  );
+  await clickAndSettle(screen.getByRole('button', { name: 'Approve both' }));
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(decided).toEqual(['act-a']);
 });
 
 // A running turn with two lines queued behind it, for the edit/remove tests.

@@ -28,3 +28,17 @@
   min-height: 0;
   padding: var(--s-6) var(--s-4);
 }
+
+/* The chart over the branch lane, taking the rest of the column. */
+.stage {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-height: 0;
+  padding: var(--s-2) 0 0;
+}
+
+.chart {
+  min-height: 240px;
+}

@@ -230,7 +230,8 @@ export interface OverseerAction {
   /** One sentence, safe to render verbatim in the chat UI. */
   summary: string;
   createdAt: string;
-  status: 'pending' | 'applied' | 'denied';
+  /** `failed`: approved, but the effect threw; final, like the other two. */
+  status: 'pending' | 'applied' | 'denied' | 'failed';
   /** Once applied: the tasks it created or dispatched (AppliedEffect). */
   taskIds?: string[];
 }
@@ -720,6 +721,38 @@ const showTasksTool: OverseerStatusTool<z.infer<typeof showTasksInput>> = {
   },
 };
 
+const showPageInput = z.strictObject({
+  url: z
+    .string()
+    .describe(
+      'The http(s) page to open, such as a dev server at http://localhost:5173.'
+    ),
+});
+
+// Leaves a door that opens `url` in the app's browser pane, beside the talk.
+const showPageTool: OverseerStatusTool<z.infer<typeof showPageInput>> = {
+  name: 'show_page',
+  description:
+    'Put an "Open in the browser" door under your answer, opening an http(s) page (a dev server, a preview) in the browser pane beside this conversation. ' +
+    "It never switches the human's view: they open it when they want.",
+  inputSchema: showPageInput,
+  read(_ctx, input) {
+    let url: URL;
+    try {
+      url = new URL(input.url);
+    } catch {
+      throw new OverseerToolError(`not a URL: ${input.url}`);
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new OverseerToolError(`not an http(s) page: ${input.url}`);
+    }
+    return {
+      door: { url: url.href },
+      note: 'An "Open in the browser" door is under your answer. The human\'s view did not change.',
+    };
+  },
+};
+
 const taskDetailsInput = z.strictObject({
   taskId: z.string().describe('The task (t-…) to read.'),
 });
@@ -885,6 +918,7 @@ export const OVERSEER_STATUS_TOOLS: readonly OverseerStatusTool[] = [
   docListTool,
   docReadTool,
   showTasksTool,
+  showPageTool,
   taskDetailsTool,
   milestoneStatusTool,
   readConversationTool,
@@ -1164,8 +1198,7 @@ const discardRun: OverseerMutatingTool<z.infer<typeof discardInput>> = {
   },
   apply(ctx, input, meta) {
     for (const id of discardTargets(input)) {
-      // A run reviewed since the card was drawn has nothing left to discard;
-      // skipping it also lets a retry after a part-way failure finish the rest.
+      // A run reviewed since the card was drawn has nothing left to discard.
       if (ctx.orchestrator.getRun(id)?.meta.reviewedAt !== undefined) continue;
       ctx.orchestrator.review(id, 'discard', { actor: meta.actor });
     }
@@ -1733,10 +1766,9 @@ export class OverseerToolRegistry {
       const effect = await tool.apply(this.ctx, action.input, meta);
       if (effect?.taskIds !== undefined) action.taskIds = effect.taskIds;
     } catch (err) {
-      // Back to `pending` because the effect did not happen: leaving it
-      // `applied` would lie, and `denied` would discard an action the human
-      // explicitly approved and may well want to retry.
-      action.status = 'pending';
+      // Final, not back to `pending`: a re-queued card that fails the same
+      // way on every approval is noise. The overseer can propose it again.
+      action.status = 'failed';
       throw err;
     }
     return action;

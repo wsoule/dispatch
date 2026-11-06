@@ -273,8 +273,6 @@ function OverseerNarration({ text, at }: { text: string; at: string }) {
 
 interface OverseerConfirmCardProps {
   action: OverseerAction;
-  /** The server's explanation when the last approval attempt threw. */
-  failure: string | null;
   /** A decision for *this* action is currently in flight — this card owns the
    * spinner. */
   deciding: boolean;
@@ -303,7 +301,6 @@ const APPROVAL_ICON = <Shield size={14} strokeWidth={1.8} aria-hidden />;
  */
 function OverseerConfirmCard({
   action,
-  failure,
   deciding,
   locked,
   onDecide,
@@ -334,7 +331,7 @@ function OverseerConfirmCard({
               )
             }
           >
-            {failure !== null ? 'Retry' : 'Approve'}
+            Approve
           </Button>
           <Button
             size="sm"
@@ -354,7 +351,6 @@ function OverseerConfirmCard({
       ) : (
         <OverseerTaskCard card={card} onOpenTask={onOpenTask} />
       )}
-      {failure !== null && <ErrorLine>{failure}</ErrorLine>}
     </DecisionCard>
   );
 }
@@ -398,7 +394,7 @@ function OverseerConfirmBatch({
   cardFor,
   onOpenTask,
 }: {
-  actions: { action: OverseerAction; failure: string | null }[];
+  actions: OverseerAction[];
   decidingId: string | null;
   locked: boolean;
   onDecide: (actionId: string, approve: boolean) => void;
@@ -407,11 +403,11 @@ function OverseerConfirmBatch({
   cardFor?: (action: OverseerAction) => TaskCardModel | null;
   onOpenTask?: (taskId: string) => void;
 }) {
-  const tools = new Set(actions.map((a) => a.action.tool));
+  const tools = new Set(actions.map((a) => a.tool));
   const label =
     tools.size === 1 ? (
       <>
-        <span className="mono">{actions[0].action.tool}</span>
+        <span className="mono">{actions[0].tool}</span>
         {` ×${actions.length}`}
       </>
     ) : (
@@ -450,7 +446,7 @@ function OverseerConfirmBatch({
       }
     >
       <ul className={styles.batchRows}>
-        {actions.map(({ action, failure }) => {
+        {actions.map((action) => {
           const card = cardFor?.(action) ?? null;
           return (
             <li key={action.id} className={styles.batchRow}>
@@ -483,7 +479,6 @@ function OverseerConfirmBatch({
                   icon={<X size={14} strokeWidth={1.8} />}
                 />
               </div>
-              {failure !== null && <ErrorLine>{failure}</ErrorLine>}
             </li>
           );
         })}
@@ -1062,10 +1057,13 @@ export function OverseerChat({
             cardFor={taskCardFor}
             onOpenTask={work?.onOpenTask}
             onDecideAll={(approve) => {
-              // One at a time: the session decides one action per call.
+              // One at a time, stopping at the first that fails: the rest
+              // likely fail the same way, and one error is enough to read.
               void (async () => {
-                for (const { action } of item.actions) {
-                  await overseer.confirmAction(action.id, approve);
+                for (const action of item.actions) {
+                  if (!(await overseer.confirmAction(action.id, approve))) {
+                    return;
+                  }
                 }
               })();
             }}
@@ -1076,7 +1074,6 @@ export function OverseerChat({
           <OverseerConfirmCard
             key={item.key}
             action={item.action}
-            failure={item.failure}
             deciding={decidingId === item.action.id}
             locked={decidingId !== null}
             onDecide={(approve) => decide(item.action.id, approve)}

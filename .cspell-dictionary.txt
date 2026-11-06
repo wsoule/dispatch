@@ -757,8 +757,6 @@ bulkbar
 cbox
 chipsbar
 choosable
-dagre
-dagrejs
 dotc
 edgesep
 ellipsized

@@ -571,7 +571,7 @@ describe('OverseerManager queued actions', () => {
     ).rejects.toThrow(OrchestratorNotFoundError);
   });
 
-  it('keeps an action pending and records the failure when applying throws', async () => {
+  it('settles an action as failed and records the failure when applying throws', async () => {
     const h = makeManager({ ok: true, reply: 'placeholder' });
     // A run that stays live long enough to queue a cancel against it...
     const taskId = makeTask(h, 'Long one');
@@ -595,13 +595,13 @@ describe('OverseerManager queued actions', () => {
     ).rejects.toThrow();
 
     const record = h.manager.get(opened.id);
-    expect(record.pendingActions.map((a) => a.id)).toEqual([actionId]);
+    expect(record.pendingActions).toEqual([]);
     expect(record.messages.at(-1)).toMatchObject({
       role: 'action',
       actionId,
       outcome: 'failed',
     });
-    expect(h.registry.getAction(actionId)?.status).toBe('pending');
+    expect(h.registry.getAction(actionId)?.status).toBe('failed');
   });
 
   it('tells the model on the next turn what the human decided', async () => {
@@ -1247,7 +1247,7 @@ describe('overseer on the bus', () => {
     return { messaging, manager, record: manager.get(started.id), gate };
   }
 
-  it('re-raises the action gate with the error when applying it fails', async () => {
+  it('reports a failed apply once and does not raise the gate again', async () => {
     const { messaging, manager, record, gate } = await failingCancel();
 
     await messaging.engine.reply(
@@ -1256,34 +1256,40 @@ describe('overseer on the bus', () => {
       WYAT
     );
 
-    const again = messaging.engine
-      .openBlocking()
-      .filter((m) => gateOfType(m) === 'overseer-action');
-    expect(again).toHaveLength(1);
-    expect(again[0].id).not.toBe(gate.id);
-    expect(again[0].body).toContain('(the last attempt failed: ');
-    expect(manager.get(record.id).pendingActions).toHaveLength(1);
+    expect(
+      messaging.engine
+        .openBlocking()
+        .filter((m) => gateOfType(m) === 'overseer-action')
+    ).toEqual([]);
+    const after = manager.get(record.id);
+    expect(after.pendingActions).toEqual([]);
+    expect(
+      after.messages.filter(
+        (m) => m.role === 'action' && m.outcome === 'failed'
+      )
+    ).toHaveLength(1);
     messaging.close();
   });
 
-  it('a failed confirm made directly replaces the open gate rather than adding one', async () => {
+  it('a failed confirm made directly settles the action, so a second confirm is refused', async () => {
     const { messaging, manager, record, gate } = await failingCancel();
+    const actionId = record.pendingActions[0].id;
 
     await expect(
-      manager.confirmAction(
-        record.id,
-        record.pendingActions[0].id,
-        true,
-        'human:wyat'
-      )
+      manager.confirmAction(record.id, actionId, true, 'human:wyat')
     ).rejects.toThrow();
 
-    const open = messaging.engine
-      .openBlocking()
-      .filter((m) => gateOfType(m) === 'overseer-action');
-    expect(open.map((m) => m.id)).not.toContain(gate.id);
-    expect(open).toHaveLength(1);
-    expect(open[0].body).toContain('(the last attempt failed: ');
+    expect(messaging.engine.answerOf(gate.id)?.data).toMatchObject({
+      type: 'x-closed',
+    });
+    expect(
+      messaging.engine
+        .openBlocking()
+        .filter((m) => gateOfType(m) === 'overseer-action')
+    ).toEqual([]);
+    await expect(
+      manager.confirmAction(record.id, actionId, true, 'human:wyat')
+    ).rejects.toThrow(/no action awaiting confirmation/);
     messaging.close();
   });
 

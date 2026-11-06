@@ -205,6 +205,7 @@ import {
   isTauri,
   listProjects,
   listRegisteredProjects,
+  openUrl,
   touchProjectOpened,
 } from './lib/tauri';
 import {
@@ -1263,6 +1264,9 @@ function App() {
   const flightPlanHost = useMemo<FlightPlanHost>(
     () => ({
       data,
+      bucketOf,
+      asksByTask: needs.byTask,
+      projectKey: activeProject?.path ?? '',
       dispatchTask: cockpitDispatch,
       onDispatchFailed: onCockpitDispatchFailed,
       onOpenTask: openTaskView,
@@ -1272,6 +1276,9 @@ function App() {
     }),
     [
       data,
+      bucketOf,
+      needs.byTask,
+      activeProject?.path,
       cockpitDispatch,
       onCockpitDispatchFailed,
       openTaskView,
@@ -1905,6 +1912,9 @@ function App() {
         return (
           <LiveView
             data={data}
+            bucketOf={bucketOf}
+            asksByTask={needs.byTask}
+            projectKey={activeProject?.path ?? ''}
             dispatchTask={cockpitDispatch}
             onDispatchFailed={onCockpitDispatchFailed}
             onOpenTask={openTaskView}
@@ -2434,6 +2444,10 @@ function App() {
           revoked={overseer.revoked}
           onShowAsks={() => dispatchNav({ type: 'showTasks' })}
           onOpenDoor={openDoor}
+          onOpenExternal={(url) => {
+            if (isTauri()) void openUrl(url);
+            else window.open(url, '_blank', 'noopener');
+          }}
           firstRun={
             showFirstRun ? (
               <FirstRunView
