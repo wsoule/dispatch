@@ -163,6 +163,7 @@ import { OverseerToolRegistry } from './orchestrator/overseerTools.js';
 import {
   allocationRunsPath,
   boardSyncDir,
+  planningAuditPath,
   planningWarningsPath,
   taskAuthorshipPath,
 } from './orchestrator/paths.js';
@@ -189,6 +190,7 @@ import {
 } from './orchestrator/types.js';
 import { VerificationRunner } from './orchestrator/verify.js';
 import { AllocationRunStore } from './planning/allocationRuns.js';
+import { PlanningAuditStore } from './planning/audit.js';
 import {
   type AllocationDeps,
   applyAllocation,
@@ -1505,6 +1507,7 @@ async function bootServer(
   // (planning.warnings: notify) sent to leads and watchers.
   const allocationRuns = new AllocationRunStore(allocationRunsPath(rootDir));
   const warningStore = new WarningStore(planningWarningsPath(rootDir));
+  const planningAudit = new PlanningAuditStore(planningAuditPath(rootDir));
   const allocationDeps: AllocationDeps = {
     rootDir,
     store,
@@ -2555,6 +2558,7 @@ async function bootServer(
     noteStore: new NoteStore(rootDir),
     allocationRuns,
     warningStore,
+    planningAudit,
     inboxStore,
     inboxTriage,
     findingStore,
@@ -3020,6 +3024,7 @@ async function bootServer(
       dailyPlanning.stop();
       allocationRuns.close();
       warningStore.close();
+      planningAudit.close();
       await linearSync.stop();
       unsubscribeBoardSync();
       unsubscribeDocPublishes();
