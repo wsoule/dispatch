@@ -15,6 +15,9 @@ export {
   wsUrl,
 } from './api';
 export type {
+  PlanningDigest,
+  PlanningDigestItem,
+  PlanningDigestRecord,
   AllocationItemOutcome,
   AllocationRun,
   AllocationRunInput,

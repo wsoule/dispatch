@@ -247,9 +247,21 @@ export function receiptsDir(rootDir: string): string {
 }
 
 /**
- * The allocation run log of a project (planning/allocationRuns): daemon state
- * under DISPATCH_HOME, never in the project.
+ * The daily digest's warning memory and log (planning/warningRuns): daemon
+ * state under DISPATCH_HOME, never in the project.
  */
+export function planningWarningsPath(rootDir: string): string {
+  return join(
+    dispatchHome(),
+    '.dispatch',
+    'projects',
+    projectKeyOf(rootDir),
+    'planning',
+    'warnings.db'
+  );
+}
+
+/** The allocation run log of a project (planning/allocationRuns), beside it. */
 export function allocationRunsPath(rootDir: string): string {
   return join(
     dispatchHome(),

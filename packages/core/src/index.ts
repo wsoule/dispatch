@@ -334,6 +334,7 @@ export type {
   RemoteConfig,
   RepoDigestConfig,
   PlanningAllocationMode,
+  PlanningWarningsMode,
   PlanningConfig,
   PlanningProjectStatus,
   PlanningTuningNumber,

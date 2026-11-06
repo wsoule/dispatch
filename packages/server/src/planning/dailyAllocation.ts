@@ -1,5 +1,6 @@
 import type {
   CommentStorePort,
+  DispatchConfig,
   Person,
   TaskDoc,
   TaskStorePort,
@@ -7,11 +8,14 @@ import type {
 } from '@dispatch-foo/core';
 import { loadConfig, statusModelOf } from '@dispatch-foo/core';
 import {
+  type AllocationPlan,
   assessWorkspace,
   BLOCK_REASON_LABEL,
   buildEvalContext,
   buildWorkspaceData,
+  type EvalContext,
   indexWorkspace,
+  type MilestoneAssessment,
   milestoneMetaFrom,
   planAllocation,
   type Snapshot,
@@ -32,10 +36,11 @@ import type {
 // the daemon's own task docs. Each unassigned issue in a project's next
 // milestone goes to the project's lead and leaves Backlog, with a comment
 // saying why, and the run is logged with trigger `daily`. It runs at the
-// first check on or after DAILY_HOUR local time, at most once a calendar day.
+// first check on or after DAILY_HOUR local time, at most once a calendar day
+// (startDailyJobs, which also runs the daily digest of warningRuns).
 
-/** The local hour from which the day's run may start. */
-const DAILY_HOUR = 8;
+/** The local hour from which the day's runs may start. */
+export const DAILY_HOUR = 8;
 
 /** How often the daemon checks whether today's run is due. */
 const CHECK_EVERY_MS = 15 * 60 * 1000;
@@ -70,19 +75,29 @@ function note(
   return `Assigned by the daily allocation: you lead ${project} and this is in its next milestone ${milestone?.name ?? ''}${due}.`;
 }
 
+/** The planning chain over the daemon's own task docs, as of now. */
+export interface PlanningNow {
+  config: DispatchConfig;
+  snapshot: Snapshot;
+  ctx: EvalContext;
+  assessments: Map<string, MilestoneAssessment>;
+  plan: AllocationPlan;
+}
+
 /**
- * Plans and applies the allocation now, one issue at a time, and logs the
- * run (trigger `daily`). A refused update fails only that issue.
+ * The same chain the desktop runs (@dispatch/planning's buildWorkspaceData →
+ * assess → planAllocation), over the daemon's task docs and config.yml.
  */
-export function applyAllocation(deps: AllocationDeps): AllocationRun {
+export function planningNow(
+  deps: Pick<AllocationDeps, 'rootDir' | 'store' | 'actor' | 'people' | 'now'>
+): PlanningNow {
   const now = deps.now?.() ?? new Date();
   const config = loadConfig(deps.rootDir);
   const tasks: TaskDoc[] = deps.store.list();
-  const people = deps.people();
   const workspace = buildWorkspaceData({
     tasks,
     model: statusModelOf(config),
-    people,
+    people: deps.people(),
     executors: [],
     me: deps.actor,
     hrefFor: (taskId) => taskId,
@@ -95,6 +110,15 @@ export function applyAllocation(deps: AllocationDeps): AllocationRun {
   const snapshot = indexWorkspace(workspace);
   const assessments = assessWorkspace(snapshot, ctx);
   const plan = planAllocation(snapshot, ctx, assessments);
+  return { config, snapshot, ctx, assessments, plan };
+}
+
+/**
+ * Plans and applies the allocation now, one issue at a time, and logs the
+ * run (trigger `daily`). A refused update fails only that issue.
+ */
+export function applyAllocation(deps: AllocationDeps): AllocationRun {
+  const { snapshot, plan } = planningNow(deps);
 
   const nameOf = (id: string) => snapshot.users.get(id)?.name ?? id;
   const items: AllocationRunItem[] = [];
@@ -150,8 +174,8 @@ export function applyAllocation(deps: AllocationDeps): AllocationRun {
   return deps.runs.record(input, deps.actor, 'daily');
 }
 
-// The local calendar day of an instant, YYYY-MM-DD.
-function localDay(date: Date): string {
+/** The local calendar day of an instant, YYYY-MM-DD. */
+export function localDay(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
@@ -171,28 +195,37 @@ export function dailyRunDue(deps: AllocationDeps, now: Date): boolean {
     );
 }
 
-/** The daemon's timer for the daily run; `stop` clears it. */
-export function startDailyAllocation(deps: AllocationDeps): {
-  stop: () => void;
-  check: () => AllocationRun | null;
-} {
-  const check = (): AllocationRun | null => {
-    const now = deps.now?.() ?? new Date();
-    try {
-      return dailyRunDue(deps, now) ? applyAllocation(deps) : null;
-    } catch (err) {
-      // A config the loader refuses, or a store that is not ready: try again
-      // at the next check rather than take the daemon down.
-      console.error(
-        `dispatchd: daily allocation skipped: ${(err as Error).message}`
-      );
-      return null;
+/** A job the daily timer runs: whether it is due now, and running it. */
+export interface DailyJob {
+  name: string;
+  due: (now: Date) => boolean;
+  run: () => unknown;
+}
+
+/**
+ * The daemon's timer for the daily planning jobs (the allocation, the
+ * digests): a first look a minute after boot, so a daemon started mid-morning
+ * does not wait a whole interval, then every CHECK_EVERY_MS. A job that throws
+ * (a config the loader refuses, a store not ready) is logged and tried again
+ * at the next check rather than taking the daemon down.
+ */
+export function startDailyJobs(
+  jobs: readonly DailyJob[],
+  now: () => Date = () => new Date()
+): { stop: () => void; check: () => Promise<void> } {
+  const check = async (): Promise<void> => {
+    for (const job of jobs) {
+      try {
+        if (job.due(now())) await job.run();
+      } catch (err) {
+        console.error(
+          `dispatchd: ${job.name} skipped: ${(err as Error).message}`
+        );
+      }
     }
   };
-  // A first look soon after boot, so a daemon started mid-morning does not
-  // wait a whole interval; then every CHECK_EVERY_MS.
-  const first = setTimeout(check, FIRST_CHECK_MS);
-  const timer = setInterval(check, CHECK_EVERY_MS);
+  const first = setTimeout(() => void check(), FIRST_CHECK_MS);
+  const timer = setInterval(() => void check(), CHECK_EVERY_MS);
   first.unref?.();
   timer.unref?.();
   return {

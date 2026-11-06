@@ -33,6 +33,7 @@ describe('planning config', () => {
         '  weights:',
         '    t-abc123: 2',
         '  allocation: daily',
+        '  warnings: notify',
         '',
       ].join('\n')
     );
@@ -44,6 +45,7 @@ describe('planning config', () => {
       watchers: ['human:ana'],
       weights: { 't-abc123': 2 },
       allocation: 'daily',
+      warnings: 'notify',
     });
   });
 
@@ -58,6 +60,7 @@ describe('planning config', () => {
     ['planning:\n  watchers: [ana]\n', /watchers/],
     ['planning:\n  weights:\n    t-1: 1.5\n', /weights/],
     ['planning:\n  allocation: hourly\n', /allocation/],
+    ['planning:\n  warnings: loud\n', /warnings/],
   ])('refuses %p', (text, message) => {
     expect(() => loadConfig(root(text))).toThrow(ConfigError);
     expect(() => loadConfig(root(text))).toThrow(message);
@@ -71,6 +74,7 @@ describe('planning config', () => {
         watchers: ['human:ana'],
         weights: { 't-abc123': 1 },
         allocation: 'daily',
+        warnings: 'notify',
       },
     });
     expect(set.planning).toEqual({
@@ -78,6 +82,7 @@ describe('planning config', () => {
       watchers: ['human:ana'],
       weights: { 't-abc123': 1 },
       allocation: 'daily',
+      warnings: 'notify',
     });
     const cleared = updateConfig(dir, {
       planning: {
@@ -85,6 +90,7 @@ describe('planning config', () => {
         watchers: [],
         weights: { 't-abc123': null },
         allocation: 'manual',
+        warnings: 'off',
       },
     });
     expect(cleared.planning).toBeUndefined();

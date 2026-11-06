@@ -163,6 +163,7 @@ import { OverseerToolRegistry } from './orchestrator/overseerTools.js';
 import {
   allocationRunsPath,
   boardSyncDir,
+  planningWarningsPath,
   taskAuthorshipPath,
 } from './orchestrator/paths.js';
 import { PlanManager } from './orchestrator/plan.js';
@@ -188,7 +189,18 @@ import {
 } from './orchestrator/types.js';
 import { VerificationRunner } from './orchestrator/verify.js';
 import { AllocationRunStore } from './planning/allocationRuns.js';
-import { startDailyAllocation } from './planning/dailyAllocation.js';
+import {
+  type AllocationDeps,
+  applyAllocation,
+  dailyRunDue,
+  startDailyJobs,
+} from './planning/dailyAllocation.js';
+import {
+  dailyWarningsDue,
+  runWarnings,
+  type WarningDeps,
+  WarningStore,
+} from './planning/warningRuns.js';
 import {
   policyActivityAppender,
   policyDecisionClassifier,
@@ -1487,11 +1499,13 @@ async function bootServer(
   const commentStore: CommentStorePort =
     stores.records?.comments ?? new FileCommentStore(rootDir);
 
-  // The allocation run log and the daily allocation (config.yml's
-  // planning.allocation: daily), which applies the planning's allocation once
-  // a day as the daemon's owner and logs it beside the app's own runs.
+  // The allocation run log, the warning memory and digest log, and the
+  // daemon's daily planning jobs: the allocation (planning.allocation: daily)
+  // applied as the daemon's owner, and the digest of milestones at risk
+  // (planning.warnings: notify) sent to leads and watchers.
   const allocationRuns = new AllocationRunStore(allocationRunsPath(rootDir));
-  const dailyAllocation = startDailyAllocation({
+  const warningStore = new WarningStore(planningWarningsPath(rootDir));
+  const allocationDeps: AllocationDeps = {
     rootDir,
     store,
     runs: allocationRuns,
@@ -1513,7 +1527,23 @@ async function bootServer(
       cache.refresh(store, ids);
       events.broadcast({ type: 'task.changed', ids });
     },
-  });
+  };
+  const warningDeps: WarningDeps = {
+    ...allocationDeps,
+    warnings: warningStore,
+  };
+  const dailyPlanning = startDailyJobs([
+    {
+      name: 'daily allocation',
+      due: (now) => dailyRunDue(allocationDeps, now),
+      run: () => applyAllocation(allocationDeps),
+    },
+    {
+      name: 'daily digest',
+      due: (now) => dailyWarningsDue(warningDeps, now),
+      run: () => runWarnings(warningDeps),
+    },
+  ]);
 
   // The reverse-dependency map ReviewRunner scopes reviews with. Carto backs
   // it when available; the built-in scanner is the fallback. Source changes
@@ -2524,6 +2554,7 @@ async function bootServer(
     startedAt,
     noteStore: new NoteStore(rootDir),
     allocationRuns,
+    warningStore,
     inboxStore,
     inboxTriage,
     findingStore,
@@ -2986,8 +3017,9 @@ async function bootServer(
       unsubscribeLinear();
       unsubscribeRevokedAsks();
       linearSignIn.stop();
-      dailyAllocation.stop();
+      dailyPlanning.stop();
       allocationRuns.close();
+      warningStore.close();
       await linearSync.stop();
       unsubscribeBoardSync();
       unsubscribeDocPublishes();

@@ -16,6 +16,7 @@ describe('tuningFrom', () => {
         watchers: [],
         weights: {},
         allocation: 'manual',
+        warnings: 'off',
       })
     ).toEqual({
       ...DEFAULT_TUNING,
@@ -32,6 +33,7 @@ describe('milestoneMetaFrom', () => {
       watchers: [],
       weights: { 't-abc123': 2 },
       allocation: 'manual',
+      warnings: 'off',
     });
     expect(meta.get('t-abc123')?.weight).toBe(2);
     expect(meta.get('t-abc123')?.doneMeans).toBeNull();
