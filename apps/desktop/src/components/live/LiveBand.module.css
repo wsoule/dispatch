@@ -1,5 +1,5 @@
 /* One band of the Live view (LiveBand): a 44px title row over the band's
-   Flight Plan canvas. The band's height is set inline from liveBandHeight
+   dependency chart. The band's height is set inline from liveBandHeight
    (exact, so the band list sizes its gaps before a band is drawn); this
    sheet only places and colours what is inside it. */
 .band {
@@ -7,9 +7,9 @@
   flex-direction: column;
 }
 
-/* The title row: what the band is, its fold, how it is moving, then the
-   verbs. The left side clips from its end when the row runs short, so the
-   title and the fold always show. */
+/* The title row: what the band is, how it is moving, then the verbs. The
+   left side clips from its end when the row runs short, so the title always
+   shows. */
 .head {
   display: flex;
   flex: none;
@@ -67,25 +67,6 @@
   color: var(--text-3);
 }
 
-.fold {
-  flex: none;
-  color: var(--text-2);
-}
-
-.chevron {
-  display: block;
-}
-
-.chevronOpen {
-  transform: rotate(90deg);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .chevron {
-    transition: transform var(--dur) var(--ease);
-  }
-}
-
 .controls {
   display: flex;
   flex: none;
@@ -102,10 +83,14 @@
   color: var(--text-3);
 }
 
-/* The canvas scrolls sideways on its own; the page scrolls it down. */
+/* The chart's fixed-height slot, inset to the band's margins. */
 .canvas {
-  position: relative;
+  display: flex;
   flex: none;
-  overflow: auto hidden;
-  scrollbar-width: thin;
+  flex-direction: column;
+  padding: 0 var(--s-4) var(--s-1);
+}
+
+.chart {
+  flex: 1;
 }

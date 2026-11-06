@@ -3,15 +3,11 @@ import {
   DEFAULT_STATUS_MODEL,
   fanoutCoverers,
   fanoutScope,
-  isDoneStatus,
   isUnstartedStatus,
   statusModelOf,
   usesIntegrationBranch,
 } from '@dispatch-foo/core/browser';
-import type {
-  MilestoneProgress,
-  MilestoneProgressChild,
-} from '@dispatch/client';
+import type { MilestoneProgress } from '@dispatch/client';
 import {
   Button,
   cx,
@@ -22,7 +18,7 @@ import {
   SkeletonRows,
   Tooltip,
 } from '@dispatch/ui';
-import { ChevronDown, Waypoints } from 'lucide-react';
+import { ChevronDown, Waypoints, Zap } from 'lucide-react';
 import {
   type ReactNode,
   useCallback,
@@ -36,29 +32,29 @@ import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { useOptimisticDispatch } from '../../hooks/useOptimisticDispatch';
 import type { TaskTab } from '../../lib/appNav';
 import { liveClaimsFrom } from '../../lib/dispatchPreview';
-import { landingStateByTaskId } from '../../lib/landingBadge';
+import { ISSUES_DISPLAY } from '../../lib/issuesPrefs';
 import { resolveLinearLink } from '../../lib/linearSettings';
+import { groupTasks } from '../../lib/listGrouping';
 import {
   concurrencyChoices,
   concurrencyLabel,
 } from '../../lib/milestoneConcurrency';
-import { rollupMilestoneStatus } from '../../lib/milestoneRollup';
 import {
   spendCellWords,
   waveSteps,
   type WorkMilestoneOptions,
 } from '../../lib/milestoneSession';
 import { pendingStarts } from '../../lib/optimisticDispatch';
+import { taskHref } from '../../lib/routes';
 import { tasksWithFinishedRun } from '../../lib/runState';
-import { assigneeRef } from '../../lib/taskDisplay';
+import type { TaskBucket } from '../../lib/taskStatus';
+import { GraphTooLarge } from '../graph/GraphTooLarge';
+import { type ChartView, MilestoneMapView } from '../graph/MilestoneMap';
 import { FanoutControls } from '../milestones/FanoutControls';
 import { usePeople } from '../people/PeopleContext';
 import { DispatchDialog } from '../tasks/DispatchDialog';
 import { criticalPath, etaMs, runPace } from './criticalPath';
-import type { BranchLaneGroup } from './FlightBranchLane';
-import type { FlightBandView } from './FlightCanvas';
-import { flightNavIndex } from './flightKeys';
-import { flightGeometry, flightStructureKey } from './flightLayout';
+import { type BranchLaneGroup, FlightBranchLane } from './FlightBranchLane';
 import {
   buildFlightPlan,
   type FlightNode,
@@ -74,17 +70,17 @@ import {
   flightScope,
   sameScope,
 } from './flightScope';
-import { type FlightLaneData, FlightStage } from './FlightStage';
-import {
-  flightEdgeViews,
-  flightNodeViews,
-  flightWaveViews,
-  queuePositions,
-} from './flightViews';
+import { flightStructureKey, flightWaves } from './flightStructure';
 
 export interface FlightPlanProps {
   containerId: string;
   data: DispatchProjectData;
+  /** An open task's one bucket (App's `itemBucket`): the chart's state words read it. */
+  bucketOf: (task: TaskListItem) => TaskBucket | null;
+  /** Open asks per task, for a milestone's attention count. */
+  asksByTask: ReadonlyMap<string, number>;
+  /** Keys the chart's remembered view and display choices (the project's path). */
+  projectKey: string;
   /** Dispatches without leaving the plan, rejecting on failure so `d` can roll back. */
   dispatchTask: (taskId: string) => Promise<void>;
   /** A dispatch or ceiling change the daemon refused — the caller toasts it. */
@@ -98,7 +94,7 @@ export interface FlightPlanProps {
   openIn?: 'peek' | 'page';
   /** The branch lane beneath the plan; on by default. */
   showBranches?: boolean;
-  /** Take keyboard focus once the plan is on screen. */
+  /** Take keyboard focus once the plan is on screen: the chart's canvas holds it. */
   focusOnMount?: boolean;
   /** A one-shot ask to open Send agents on this container, as Plans' "Create &
    * send agents…" leaves it; `nonce` tells two asks apart. */
@@ -109,6 +105,16 @@ export interface FlightPlanProps {
 }
 
 const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
+
+/** A plan's chart groups every task under its milestone, subtasks included: a parent
+ * issue's plan is its subtasks. */
+const PLAN_DISPLAY = { ...ISSUES_DISPLAY, showSubtasks: true };
+/** A plan with milestone bands offers the Milestones view too. */
+const BANDED_VIEWS: readonly ChartView[] = ['tasks', 'milestones'];
+const TASK_VIEW: readonly ChartView[] = ['tasks'];
+/** A plan draws all of its tasks, linked or not: they are the plan. The header already
+ * counts them, so the inspector opens only on a selection. */
+const PLAN_PREFS = { showUnlinked: true, inspector: false };
 
 /** A fan-out's agent slots as the slots picker's name and hint say them: "1 slot",
  * "3 slots". */
@@ -155,23 +161,22 @@ interface FanoutDialogState {
 }
 
 /**
- * A container's Flight Plan: its work as waves of cards, left to right, that fill in as
- * agents run — landed ✓, running ◐ with the agent's step, clock and cost, a teammate's ●
- * with their avatar and state, queued ⏳ with its place in line, blocked ○ with the exact
- * blockers it auto-starts after. Edges light as blockers land; the critical path glows
- * under its edges; a project draws one band per milestone. The header carries slots,
- * counts, the critical path, the ETA and the fan-out controls; the branch lane beneath
- * shows the same work as git sees it. Everything derives from the cached task list, runs
- * and fan-out progress — no polling of its own — and the layout reads structure only, so
- * live updates flip cards in place.
- *
- * Keyboard: arrows (or h/j/k/l) move, Enter opens the task beside the plan, `o` opens its
- * page, Space peeks, `d` dispatches the focused node (optimistically), Escape closes the
- * pane.
+ * A container's Flight Plan: the header (slots, counts, the critical path, the ETA and the
+ * fan-out controls) over the dependency chart of the container's work (components/graph's
+ * MilestoneMapView, the Graph page's chart scoped to this plan), with the branch lane
+ * beneath showing the same work as git sees it. A click on a card traces what it waits on
+ * and what it unblocks; the inspector opens the task and sends an agent at a card that may
+ * start now (optimistically). A project's plan offers the Milestones view too, and a
+ * selected milestone's inspector carries that milestone's own fan-out controls.
+ * Everything derives from the cached task list, runs and fan-out progress — no polling of
+ * its own.
  */
 export function FlightPlan({
   containerId,
   data,
+  bucketOf,
+  asksByTask,
+  projectKey,
   dispatchTask,
   onDispatchFailed,
   onOpenTask,
@@ -273,10 +278,7 @@ export function FlightPlan({
           ),
     [scope]
   );
-  const geometry = useMemo(() => {
-    const { waves, layout } = flightGeometry(structure);
-    return { waves, layout, nav: flightNavIndex(layout.boxes) };
-  }, [structure]);
+  const waves = useMemo(() => flightWaves(structure), [structure]);
 
   // Live runs, plus the dispatches `d` sent that the run list has not caught up with.
   const liveTaskIds = useMemo(
@@ -397,14 +399,6 @@ export function FlightPlan({
     }
     return total;
   }, [sessions]);
-  const phases = useMemo(() => {
-    const out = new Map<string, MilestoneProgressChild>();
-    for (const progress of sessions.values()) {
-      if (progress.session === null) continue;
-      for (const child of progress.children) out.set(child.id, child);
-    }
-    return out;
-  }, [sessions]);
 
   const withRunBranch = useMemo(
     () => tasksWithRunBranch(data.runs),
@@ -421,7 +415,7 @@ export function FlightPlan({
         model,
         concurrency,
         containerIds,
-        waves: geometry.waves,
+        waves,
         me: directory.me,
         local: data.localHuman,
         ownerOf,
@@ -436,7 +430,7 @@ export function FlightPlan({
       model,
       concurrency,
       containerIds,
-      geometry.waves,
+      waves,
       directory.me,
       data.localHuman,
       ownerOf,
@@ -486,62 +480,7 @@ export function FlightPlan({
       )?.identifier ?? id,
     [nodeById, outside, data.linearLinks]
   );
-  const queue = useMemo(
-    () =>
-      queuePositions(plan.nodes, (owner) => {
-        const session = sessions.get(owner)?.session;
-        return session?.state === 'active' ? session.concurrency : null;
-      }),
-    [plan, sessions]
-  );
   const liveClaims = useMemo(() => liveClaimsFrom(data.runs), [data.runs]);
-  const landingByTaskId = useMemo(
-    () => landingStateByTaskId(data.mergeQueue),
-    [data.mergeQueue]
-  );
-  const nodeViews = useMemo(
-    () =>
-      flightNodeViews(plan, geometry.layout, path, queue, {
-        model,
-        refFor,
-        latestRunByTaskId: data.latestRunByTaskId,
-        live: liveTaskIds,
-        pending,
-        sessionActive: (owner) =>
-          sessions.get(owner)?.session?.state === 'active',
-        phaseOf: (id) => phases.get(id),
-        liveClaims,
-        landingByTaskId,
-        personName: (assignee) =>
-          directory.personFor(assignee)?.name ??
-          assigneeRef(assignee)?.handle ??
-          null,
-      }),
-    [
-      plan,
-      geometry.layout,
-      path,
-      queue,
-      model,
-      refFor,
-      data.latestRunByTaskId,
-      liveTaskIds,
-      pending,
-      sessions,
-      phases,
-      liveClaims,
-      landingByTaskId,
-      directory,
-    ]
-  );
-  const edgeViews = useMemo(
-    () => flightEdgeViews(plan, geometry.layout, path),
-    [plan, geometry.layout, path]
-  );
-  const waveViews = useMemo(
-    () => flightWaveViews(plan, geometry.layout),
-    [plan, geometry.layout]
-  );
 
   // Each band's work, and the branch lane's groups: held across renders so the lane's
   // graphs lay out again only when the work under them changes.
@@ -584,16 +523,6 @@ export function FlightPlan({
     }));
   }, [container, scope, nodes, bandNodes]);
 
-  // Where the cursor sits before anyone moves it: the first unfinished node, reading
-  // column by column, so arriving on a plan lands on the work still ahead.
-  const defaultCursor = useMemo(() => {
-    for (const column of geometry.nav.columns) {
-      for (const id of column) {
-        if (planNodeById.get(id)?.state !== 'done') return id;
-      }
-    }
-    return geometry.nav.columns[0]?.[0] ?? null;
-  }, [geometry.nav, planNodeById]);
   // `d` sends an agent only at a node the plan says may start now, and never at a
   // teammate's.
   const viewerHolder = useMemo(
@@ -603,15 +532,6 @@ export function FlightPlan({
   const dispatchable = useCallback(
     (id: string) => canDispatch(planNodeById.get(id), model, viewerHolder),
     [planNodeById, model, viewerHolder]
-  );
-  const laneData = useMemo<FlightLaneData>(
-    () => ({
-      branches: data.branches,
-      latestRunByTaskId: data.latestRunByTaskId,
-      liveRunStateByTaskId: data.liveRunStateByTaskId,
-      refFor,
-    }),
-    [data.branches, data.latestRunByTaskId, data.liveRunStateByTaskId, refFor]
   );
 
   // A ceiling change on a live session: pause, then resume at the new concurrency (the
@@ -714,39 +634,95 @@ export function FlightPlan({
   // only the direct band, so the milestone bands keep their own controls.
   const containerLive =
     liveStarters.has(containerId) && !directOnly.has(containerId);
-  const bandViews = useMemo<FlightBandView[] | null>(() => {
-    if (scope === null || container === null || scope.bands === null) {
-      return null;
-    }
-    return scope.bands.map((band) => {
-      const box = geometry.layout.bands.find((b) => b.key === band.key);
-      const work = bandNodes.get(band.key) ?? [];
-      return {
-        key: band.key,
-        top: box?.top ?? 0,
-        title:
-          band.container?.meta.title ?? `Directly in ${container.meta.title}`,
-        refLabel: band.container === null ? null : refFor(band.key),
-        status: rollupMilestoneStatus(work, model),
-        done: work.filter((t) => isDoneStatus(t.meta.status, model)).length,
-        total: work.length,
-        // The container's own live fan-out already covers every band.
-        controls:
-          band.container === null || containerLive
-            ? null
-            : fanoutFor(band.container, true),
-      };
-    });
-  }, [
-    scope,
-    container,
-    containerLive,
-    geometry.layout,
-    bandNodes,
-    refFor,
-    model,
-    fanoutFor,
-  ]);
+  // A band's fan-out verbs, in its milestone's inspector: the container's own live
+  // fan-out already covers every band, so then none.
+  const bandContainers = useMemo(
+    () =>
+      new Map(
+        (scope?.bands ?? []).flatMap((band) =>
+          band.container === null ? [] : [[band.key, band.container] as const]
+        )
+      ),
+    [scope]
+  );
+  const milestoneActions = useCallback(
+    (milestoneId: string): ReactNode => {
+      const band = bandContainers.get(milestoneId);
+      return band === undefined || containerLive ? null : fanoutFor(band, true);
+    },
+    [bandContainers, containerLive, fanoutFor]
+  );
+
+  // The chart's groups: the plan's tasks and the outside blockers they wait on, under
+  // their milestones as the Issues list groups them.
+  const statuses = data.config?.statuses;
+  const groups = useMemo(
+    () =>
+      groupTasks([...nodes, ...outside.values()], PLAN_DISPLAY, {
+        statuses: statuses ?? [],
+        milestones: data.milestones,
+        model,
+      }),
+    [nodes, outside, statuses, data.milestones, model]
+  );
+
+  // A card opens where the host says: the quick-look slide-over, or its page.
+  const openFromChart = useCallback(
+    (id: string, tab?: TaskTab) => {
+      if (tab !== undefined) onOpenTask(id, tab);
+      else if (openIn === 'page' || onPeekTask === undefined) onOpenTask(id);
+      else onPeekTask(id);
+    },
+    [openIn, onOpenTask, onPeekTask]
+  );
+  // A card the plan says may start now gets Send agent in its inspector, as `d` was.
+  const taskActions = useCallback(
+    (id: string): ReactNode =>
+      dispatchable(id) ? (
+        <Button
+          size="sm"
+          variant="secondary"
+          icon={<Zap {...ICON} />}
+          onClick={() => {
+            dispatchNode(id);
+          }}
+        >
+          Send agent
+        </Button>
+      ) : null,
+    [dispatchable, dispatchNode]
+  );
+  // Past the chart's draw cap: each band's own plan, largest first.
+  const renderTooLarge = useCallback(
+    (count: number) => (
+      <GraphTooLarge
+        tooLarge={{
+          message: `${count} tasks is more than the chart draws at once. Hide landed tasks under Display, or open one milestone's plan.`,
+          title: 'Open one milestone',
+          rows: laneGroups
+            .filter((group) => bandContainers.has(group.key))
+            .map((group) => ({
+              id: group.key,
+              label: group.title ?? group.key,
+              count: group.tasks.length,
+              href: taskHref(group.key),
+            }))
+            .sort((a, b) => b.count - a.count),
+        }}
+      />
+    ),
+    [laneGroups, bandContainers]
+  );
+
+  // Focus the chart's canvas once on screen, for a surface where the plan is the page.
+  const chartRef = useRef<HTMLDivElement>(null);
+  const hasNodes = nodes.length > 0;
+  useEffect(() => {
+    if (!focusOnMount || !hasNodes) return;
+    chartRef.current
+      ?.querySelector<HTMLElement>('[data-testid="chart-stage"]')
+      ?.focus({ preventScroll: true });
+  }, [focusOnMount, hasNodes]);
 
   if (!data.tasksReady) {
     // A load: the header's strip and a few rows of cards hold the plan's shape.
@@ -834,29 +810,40 @@ export function FlightPlan({
             icon={<Waypoints size={22} strokeWidth={1.8} aria-hidden />}
             label="Nothing to plan yet"
           >
-            Tasks under this container show up here as waves, with their
-            blockers drawn between them.
+            Tasks under this container show up here, with their blockers drawn
+            between them.
           </EmptyState>
         </div>
       ) : (
-        <FlightStage
-          title={container.meta.title}
-          layout={geometry.layout}
-          nav={geometry.nav}
-          nodes={nodeViews}
-          edges={edgeViews}
-          waves={waveViews}
-          bands={bandViews}
-          defaultCursor={defaultCursor}
-          laneGroups={showBranches ? laneGroups : null}
-          lane={laneData}
-          canDispatch={dispatchable}
-          onDispatch={dispatchNode}
-          onOpenTask={onOpenTask}
-          onPeekTask={onPeekTask}
-          openIn={openIn}
-          focusOnMount={focusOnMount}
-        />
+        <div ref={chartRef} className={styles.stage}>
+          <MilestoneMapView
+            // A plan starts from its own remembered view and display choices.
+            key={containerId}
+            groups={groups}
+            bucketOf={bucketOf}
+            asksByTask={asksByTask}
+            projectKey={`${projectKey}|plan:${containerId}`}
+            views={scope.bands === null ? TASK_VIEW : BANDED_VIEWS}
+            defaultPrefs={PLAN_PREFS}
+            taskActions={taskActions}
+            milestoneActions={milestoneActions}
+            inspectorOnSelect
+            renderTooLarge={renderTooLarge}
+            onOpenTask={openFromChart}
+            className={styles.chart}
+          />
+          {showBranches && (
+            <FlightBranchLane
+              groups={laneGroups}
+              branches={data.branches}
+              latestRunByTaskId={data.latestRunByTaskId}
+              liveRunStateByTaskId={data.liveRunStateByTaskId}
+              refFor={refFor}
+              focusedId={null}
+              onOpenNode={openFromChart}
+            />
+          )}
+        </div>
       )}
       {dialog !== null && dialogMilestone !== null && (
         <DispatchDialog
