@@ -66,6 +66,7 @@ describe('buildPaletteEntries', () => {
       'go-overseer': [{ type: 'showOverseer' }],
       'go-board': [{ type: 'showTasks' }],
       'go-settings': [{ type: 'openSettings' }],
+      'go-week': [{ type: 'setProjectView', view: 'week' }],
       'go-timeline': [{ type: 'openTimeline', project: null }],
       'go-graph': [
         { type: 'openGraph', scope: { level: 'milestone' }, nodeId: null },
@@ -268,6 +269,7 @@ describe('navigation rows', () => {
       ['Go to Overseer', '⌘1'],
       ['Go to Tasks', '⌘2'],
       ['Go to Settings', '⌘,'],
+      ['Go to My week', 'G W'],
       ['Go to Timeline', 'G L'],
       ['Go to Graph', 'G G'],
       ['Open Files', undefined],
@@ -281,6 +283,7 @@ describe('navigation rows', () => {
       'global:overseer',
       'project:board',
       'global:settings',
+      'project:week',
       'project:timeline',
       'project:graph',
       'project:files',

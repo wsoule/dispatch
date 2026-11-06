@@ -73,6 +73,7 @@ const NAV_DESTINATIONS: readonly ShellDestination[] = [
   'overseer',
   'issues',
   'needs-you',
+  'week',
   'timeline',
   'graph',
   'threads',
