@@ -364,6 +364,17 @@ describe('buildWorkspaceData: the hierarchy', () => {
     expect(byId(data.milestones, 'ms-orphan').description).toBe('');
   });
 
+  test('a body-less list item reads its description from the fetched bodies', () => {
+    const listed: TaskListItem[] = hierarchy().map(({ meta }) => ({ meta }));
+    const bodies = new Map([
+      ['ms-1', '## Description\n\nDone means: it ships\n'],
+    ]);
+    expect(byId(build(listed).milestones, 'ms-1').description).toBe('');
+    expect(byId(build(listed, { bodies }).milestones, 'ms-1').description).toBe(
+      'Done means: it ships'
+    );
+  });
+
   test('a milestone with no project above it goes under a synthetic, inactive "No project" lane', () => {
     const orphan = byId(data.milestones, 'ms-orphan');
     expect(orphan.projectId).toBe(noProjectId('init-1'));

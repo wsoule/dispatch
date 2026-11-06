@@ -35,6 +35,7 @@ import {
 import { taskHref } from '../lib/shellRoutes';
 import { useStatusModelOf } from '../lib/statusModel';
 import type { DispatchProjectData } from './useDispatchProject';
+import { useMilestoneBodies } from './useMilestoneBodies';
 import { useMinuteClock } from './useMinuteClock';
 
 // The planning chain over the open project, in the renderer: Dispatch's task
@@ -54,18 +55,21 @@ import { useMinuteClock } from './useMinuteClock';
 // once and hands the result down through PlanningContext to the timeline, the
 // graph, the sidebar's project marks and the task drawer's Milestone section.
 
-/** What the planning reads from `useDispatchProject`'s data. */
-export type PlanningInput = Pick<
-  DispatchProjectData,
-  | 'tasks'
-  | 'config'
-  | 'people'
-  | 'executors'
-  | 'me'
-  | 'linearLinks'
-  | 'latestRunByTaskId'
-  | 'milestoneProgressById'
->;
+/** What the planning reads from `useDispatchProject`'s data. The client
+ * fetches milestone bodies for the rubric; without one (a test) the rubric
+ * reads only bodies the task list already carries. */
+export type PlanningInput = Partial<Pick<DispatchProjectData, 'client'>> &
+  Pick<
+    DispatchProjectData,
+    | 'tasks'
+    | 'config'
+    | 'people'
+    | 'executors'
+    | 'me'
+    | 'linearLinks'
+    | 'latestRunByTaskId'
+    | 'milestoneProgressById'
+  >;
 
 /** The chain's results, one object per computation (stable between). */
 export interface Planning {
@@ -188,6 +192,7 @@ export function usePlanning(data: PlanningInput): Planning {
     [data.executors]
   );
   const { tasks, people, me, linearLinks } = data;
+  const bodies = useMilestoneBodies(data.client ?? null, tasks);
   return useMemo(() => {
     const workspace = buildWorkspaceData({
       tasks,
@@ -199,6 +204,7 @@ export function usePlanning(data: PlanningInput): Planning {
       latestRunByTaskId: runStarts,
       milestoneProgressById: sessions,
       hrefFor: taskHref,
+      bodies,
     });
     const ctx = buildEvalContext(new Date(minute));
     const snapshot = indexWorkspace(workspace);
@@ -240,6 +246,7 @@ export function usePlanning(data: PlanningInput): Planning {
     runStarts,
     sessions,
     minute,
+    bodies,
   ]);
 }
 
