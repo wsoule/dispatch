@@ -1767,6 +1767,8 @@ export interface OverseerAction {
   summary: string;
   createdAt: string;
   status: 'pending' | 'applied' | 'denied';
+  /** Once applied: the tasks it created or dispatched. */
+  taskIds?: string[];
 }
 
 // Mirrors OverseerRecord in packages/server/src/orchestrator/overseer.ts — the
