@@ -56,6 +56,7 @@ import { IntegrationsSection } from '../components/settings/IntegrationsSection'
 import { LicenseSection } from '../components/settings/LicenseSection';
 import { MemorySection } from '../components/settings/MemorySection';
 import { NotificationsSection } from '../components/settings/NotificationsSection';
+import { PlanningAuditGroup } from '../components/settings/PlanningAuditGroup';
 import { PlanningSection } from '../components/settings/PlanningSection';
 import { PolicySection } from '../components/settings/PolicySection';
 import { PreviewsSection } from '../components/settings/PreviewsSection';
@@ -312,6 +313,7 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
               data={ctx.data}
               onSave={ctx.save}
             />
+            <PlanningAuditGroup data={ctx.data} />
           </>
         )),
       },

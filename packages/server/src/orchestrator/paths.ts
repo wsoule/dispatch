@@ -261,6 +261,18 @@ export function planningWarningsPath(rootDir: string): string {
   );
 }
 
+/** The planning audit of a project (planning/audit), beside it. */
+export function planningAuditPath(rootDir: string): string {
+  return join(
+    dispatchHome(),
+    '.dispatch',
+    'projects',
+    projectKeyOf(rootDir),
+    'planning',
+    'audit.db'
+  );
+}
+
 /** The allocation run log of a project (planning/allocationRuns), beside it. */
 export function allocationRunsPath(rootDir: string): string {
   return join(

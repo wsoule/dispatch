@@ -2139,6 +2139,19 @@ export interface PlanningDigestRecord {
   digest: PlanningDigest;
 }
 
+// GET /api/planning/audit: who changed which planning setting, when, and
+// from what to what, newest first. Mirrors packages/server/src/planning/audit.ts.
+export interface PlanningAuditEntry {
+  id: number;
+  at: string;
+  by: string;
+  /** What changed, in words ("Warn ahead", "Weight of Beta"). */
+  what: string;
+  /** The value before and after, in words; null for none. */
+  before: string | null;
+  after: string | null;
+}
+
 export interface InboxItem {
   id: string;
   kind: InboxKind;
@@ -3975,6 +3988,8 @@ export interface ApiClient {
   recordAllocationRun(input: AllocationRunInput): Promise<AllocationRun>;
   /** The daily digests the daemon sent or logged, newest first. */
   fetchPlanningDigests(): Promise<PlanningDigestRecord[]>;
+  /** Who changed which planning setting, newest first. */
+  fetchPlanningAudit(): Promise<PlanningAuditEntry[]>;
   fetchInbox(): Promise<InboxItem[]>;
   addInbox(input: {
     text: string;
@@ -5003,6 +5018,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         body: JSON.stringify(input),
       }),
     fetchPlanningDigests: () => request(target, '/api/planning/digests'),
+    fetchPlanningAudit: () => request(target, '/api/planning/audit'),
     fetchInbox: () => request(target, '/api/inbox'),
     addInbox: (input) =>
       request(target, '/api/inbox', {
