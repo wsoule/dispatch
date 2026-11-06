@@ -67,6 +67,10 @@ export interface User {
   login: string;
   name: string | null;
 }
+/** A way to sign in: a GitHub account (numeric id) or a Linear user (UUID). */
+export type Identity =
+  | { provider: 'github'; id: number }
+  | { provider: 'linear'; id: string };
 export interface Team {
   id: string;
   name: string;
@@ -97,7 +101,8 @@ function id(prefix: string): string {
   return `${prefix}_${randomBytes(9).toString('base64url')}`;
 }
 
-/** A GitHub login as a Dispatch handle: lowercase, handle characters only. */
+/** A GitHub login or Linear display name as a Dispatch handle: lowercase,
+ * handle characters only. */
 export function handleOf(login: string): string {
   return login
     .toLowerCase()
@@ -117,6 +122,20 @@ export class TeamDb {
     this.db = new Database(path, { create: true });
     this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec(SCHEMA);
+    this.addLinearIdentity();
+  }
+
+  // Databases written before Linear sign-in have no linear_user_id. SQLite
+  // cannot add a UNIQUE column, so the column and its unique index are separate.
+  private addLinearIdentity(): void {
+    const columns = this.db
+      .query<{ name: string }, []>('PRAGMA table_info(users)')
+      .all();
+    if (!columns.some((c) => c.name === 'linear_user_id'))
+      this.db.exec('ALTER TABLE users ADD COLUMN linear_user_id TEXT');
+    this.db.exec(
+      'CREATE UNIQUE INDEX IF NOT EXISTS users_linear_user_id ON users (linear_user_id)'
+    );
   }
 
   close(): void {
@@ -145,15 +164,7 @@ export class TeamDb {
         .run(name, existing.id);
       return this.user(existing.id)!;
     }
-    const taken = (h: string): boolean =>
-      this.db.query('SELECT 1 FROM users WHERE login = ?').get(h) !== null;
-    const derived = handleOf(login);
-    const base = derived === '' ? 'user' : derived;
-    // The suffixed handle can be someone's real login too: keep going.
-    let handle = base;
-    if (taken(handle)) handle = `${base.slice(0, 28)}-${String(githubId)}`;
-    while (taken(handle))
-      handle = `${base.slice(0, 28)}-${randomBytes(3).toString('hex')}`;
+    const handle = this.freeHandle(login, String(githubId));
     const user: User = { id: id('usr'), login: handle, name };
     this.db
       .query(
@@ -161,6 +172,92 @@ export class TeamDb {
       )
       .run(user.id, githubId, handle, name, this.iso());
     return user;
+  }
+
+  /** The user for a Linear account, created on first sign-in. */
+  upsertLinearUser(
+    linearId: string,
+    displayName: string,
+    name: string | null
+  ): User {
+    const existing = this.db
+      .query<{ id: string }, [string]>(
+        'SELECT id FROM users WHERE linear_user_id = ?'
+      )
+      .get(linearId);
+    if (existing !== null) {
+      this.db
+        .query('UPDATE users SET name = ? WHERE id = ?')
+        .run(name, existing.id);
+      return this.user(existing.id)!;
+    }
+    // Linear ids are UUIDs, too long for a readable suffix: a taken handle
+    // gets a random one instead.
+    const user: User = {
+      id: id('usr'),
+      login: this.freeHandle(displayName, null),
+      name,
+    };
+    this.db
+      .query(
+        'INSERT INTO users (id, linear_user_id, login, name, created_at) VALUES (?, ?, ?, ?, ?)'
+      )
+      .run(user.id, linearId, user.login, name, this.iso());
+    return user;
+  }
+
+  /**
+   * Adds a GitHub or Linear identity to an existing account. Refused, naming
+   * the holder, when another account already signs in with it: accounts are
+   * never merged here.
+   */
+  linkIdentity(
+    userId: string,
+    identity: Identity
+  ): { ok: true } | { ok: false; owner: User } {
+    const column =
+      identity.provider === 'github' ? 'github_id' : 'linear_user_id';
+    const holder = this.db
+      .query<{ id: string }, [string | number]>(
+        `SELECT id FROM users WHERE ${column} = ?`
+      )
+      .get(identity.id);
+    if (holder !== null && holder.id !== userId)
+      return { ok: false, owner: this.user(holder.id)! };
+    this.db
+      .query(`UPDATE users SET ${column} = ? WHERE id = ?`)
+      .run(identity.id, userId);
+    return { ok: true };
+  }
+
+  /** Which providers an account can sign in with. */
+  identities(userId: string): { github: boolean; linear: boolean } {
+    const row = this.db
+      .query<
+        { github_id: number | null; linear_user_id: string | null },
+        [string]
+      >('SELECT github_id, linear_user_id FROM users WHERE id = ?')
+      .get(userId);
+    return {
+      github: row?.github_id != null,
+      linear: row?.linear_user_id != null,
+    };
+  }
+
+  // A handle is someone's agent addresses (agent:<handle>/...), so a newcomer
+  // whose wanted handle is taken gets a suffixed one: `preferredSuffix` first
+  // when given, then random ones (a suffixed handle can be a real login too).
+  private freeHandle(wanted: string, preferredSuffix: string | null): string {
+    const taken = (h: string): boolean =>
+      this.db.query('SELECT 1 FROM users WHERE login = ?').get(h) !== null;
+    const derived = handleOf(wanted);
+    const base = derived === '' ? 'user' : derived;
+    let handle = base;
+    if (taken(handle) && preferredSuffix !== null)
+      handle = `${base.slice(0, 28)}-${preferredSuffix}`;
+    while (taken(handle))
+      handle = `${base.slice(0, 28)}-${randomBytes(3).toString('hex')}`;
+    return handle;
   }
 
   user(userId: string): User | null {
