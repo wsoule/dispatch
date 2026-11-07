@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { ServerHandle } from '../src/index.js';
-import { startServer } from '../src/index.js';
+import { judgmentsFor, startServer } from '../src/index.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth } from './testAuth.js';
 
@@ -145,5 +145,15 @@ describe('hosted planner mode', () => {
       executors: unknown[];
     };
     expect(executors.executors).toEqual([]);
+  });
+
+  it('never creates a judgment client, even with a TypeSafe key and one passed in', () => {
+    const passed = {
+      judge: () => Promise.resolve(null),
+    } as unknown as Parameters<typeof judgmentsFor>[0]['judgments'];
+    expect(
+      judgmentsFor({ hostedPlanner: true, judgments: passed }, root)
+    ).toBeNull();
+    expect(judgmentsFor({ judgments: passed }, root) === passed).toBe(true);
   });
 });

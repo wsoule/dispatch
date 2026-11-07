@@ -294,6 +294,19 @@ export interface ServerHandle {
   stop(): Promise<void>;
 }
 
+/** The TypeSafe judgment client a daemon boots with: the one a test passes,
+ * none on a hosted planner (it calls a model, and a hosted planner runs no
+ * model for anyone), else the project's own. */
+export function judgmentsFor(
+  opts: Pick<StartServerOptions, 'judgments' | 'hostedPlanner'>,
+  rootDir: string
+): JudgmentClient | null {
+  if (opts.hostedPlanner === true) return null;
+  return opts.judgments === undefined
+    ? createJudgmentClient(rootDir)
+    : opts.judgments;
+}
+
 export interface StartServerOptions {
   rootDir: string;
   /** Hosted for other people (app.dispatch.foo's planner): only the planning
@@ -1621,10 +1634,7 @@ async function bootServer(
   // The TypeSafe judgment client, resolved once at boot: a key added later
   // needs a restart, same as the executors. Tests pass `judgments`
   // explicitly (null disables).
-  const judgments =
-    opts.judgments === undefined
-      ? createJudgmentClient(rootDir)
-      : opts.judgments;
+  const judgments = judgmentsFor(opts, rootDir);
   const orchestrator = new Orchestrator({
     rootDir,
     store,
@@ -2327,6 +2337,7 @@ async function bootServer(
     accounts: linearAccounts,
     personEdits: linearPersonEdits,
     localHumanRef: actorContext.humanRef,
+    connectionFromSignIn: opts.hostedPlanner === true,
     comments: commentStore,
     webhookUrl: webhookUrlFor(opts.publicOrigins ?? []),
     documents: {
