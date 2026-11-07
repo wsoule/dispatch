@@ -311,8 +311,16 @@ export class SyncRepo {
       }
     } else {
       // The remote may have been changed in config.yml since the clone was
-      // made; follow it rather than syncing with the old one forever.
-      await this.run(['remote', 'set-url', 'origin', this.remoteUrl]);
+      // made; follow it rather than syncing with the old one forever. A clone
+      // whose first ensure stopped before adding origin gets it added now.
+      const followed = await this.run([
+        'remote',
+        'set-url',
+        'origin',
+        this.remoteUrl,
+      ]);
+      if (!followed.ok)
+        await this.run(['remote', 'add', 'origin', this.remoteUrl]);
     }
     // A symlink on the branch checks out as a plain file naming its target.
     await this.run(['config', 'core.symlinks', 'false']);
