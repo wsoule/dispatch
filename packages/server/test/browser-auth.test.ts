@@ -83,6 +83,17 @@ describe('the token dispatchd inlines into the page it serves', () => {
     expect(res.headers.get('cache-control')).toBe('no-store');
   });
 
+  // A frame the app's browser pane holds keeps its own origin, so one that
+  // navigates here would read the token; the browser must refuse to frame it.
+  it('rides on a page no frame may hold, on every route', async () => {
+    for (const path of ['/', '/runs/r-1']) {
+      const res = await rawFetch(`${baseUrl}${path}`);
+      expect(res.headers.get('content-security-policy')).toBe(
+        "frame-ancestors 'none'"
+      );
+    }
+  });
+
   it('does not make the page itself readable to an untrusted origin', async () => {
     const res = await rawFetch(`${baseUrl}/`, {
       headers: { origin: 'http://evil.example' },

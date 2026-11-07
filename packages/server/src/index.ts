@@ -216,6 +216,7 @@ import {
   previewRequestHeaders,
   previewResponseHeaders,
   previewUpstreamUrl,
+  sandboxPreview,
 } from './previewHeaders.js';
 import type { ReceiptsStep } from './receipts/exporter.js';
 import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
@@ -745,6 +746,9 @@ async function serveIndexHtml(
         'content-type': CONTENT_TYPES['.html'],
         // A page carrying a credential must not sit in a shared cache.
         'cache-control': 'no-store',
+        // Nor in a frame: the app's browser pane frames with
+        // `allow-same-origin`, and a page there can navigate itself here.
+        'content-security-policy': "frame-ancestors 'none'",
       },
     }
   );
@@ -2848,7 +2852,7 @@ async function bootServer(
               { status: 403 }
             );
           }
-          return await proxyPreview(url, req, previews);
+          return sandboxPreview(await proxyPreview(url, req, previews));
         }
 
         if (url.pathname.startsWith('/api/')) {
