@@ -297,3 +297,15 @@ describe('regularFile', () => {
     expect(regularFile(join(dir, 'missing.jsonl'))).toBe(false);
   });
 });
+
+describe('a clone left half made', () => {
+  it('gets its origin back when a first ensure stopped before adding it', async () => {
+    const path = join(dir, 'clone');
+    mkdirSync(path);
+    runGitSync(path, ['init', '-q']);
+    await clone();
+    expect(runGitSync(path, ['remote', 'get-url', 'origin']).trim()).toBe(
+      remote
+    );
+  });
+});

@@ -493,6 +493,8 @@ describe('board convergence over signed ops', () => {
       const c = await team(['ada']);
       const [ada] = c.members as [Member];
       const dee = await c.add('dee');
+      // dee's first sync makes its clone's origin; partitioning sooner races it.
+      await quiesce(c.members);
       const deeId = (await dee.handle.keys()).machine.replica;
       dee.handle.partition(true);
       editRemote(c.remote, (dir) => {
