@@ -854,30 +854,40 @@ export class LinearSync {
     return project === null ? null : this.clientFor(project.credential);
   }
 
-  // The project connection's credential: an API key (project, env, then the
-  // machine-wide one), else, on a hosted planner, its workspace install.
-  // `key` identifies it for the connection cache.
+  // The project connection's credential. A hosted planner's is its workspace
+  // install and nothing else: no API key (a member could otherwise swap in
+  // their own, or the host's environment could leak one into every
+  // workspace), and only when its home holds exactly one account, so it never
+  // runs on another workspace's grant. Any other daemon uses an API key
+  // (project, env, then the machine-wide one) and never a sign-in.
+  // `key` identifies the credential for the connection cache.
   private projectCredential(): {
     credential: string | LinearAuth;
     key: string;
     source: Exclude<CredentialSource, null>;
   } | null {
-    const { apiKey, source } = resolveLinearApiKey(this.deps.rootDir);
-    if (apiKey !== null && source !== null)
+    if (this.deps.connectionFromSignIn === true) {
+      const accounts = this.deps.accounts;
+      const installs = listLinearAccounts();
+      const install = installs[0];
+      if (
+        accounts === undefined ||
+        installs.length !== 1 ||
+        install === undefined
+      )
+        return null;
       return {
-        credential: apiKey,
-        key: createHash('sha256').update(apiKey).digest('hex'),
-        source,
+        credential: accounts.authFor(install.organization.id),
+        key: `install:${install.organization.id}`,
+        source: 'project',
       };
-    const accounts = this.deps.accounts;
-    if (this.deps.connectionFromSignIn !== true || accounts === undefined)
-      return null;
-    const [install] = listLinearAccounts();
-    if (install === undefined) return null;
+    }
+    const { apiKey, source } = resolveLinearApiKey(this.deps.rootDir);
+    if (apiKey === null || source === null) return null;
     return {
-      credential: accounts.authFor(install.organization.id),
-      key: `install:${install.organization.id}`,
-      source: 'project',
+      credential: apiKey,
+      key: createHash('sha256').update(apiKey).digest('hex'),
+      source,
     };
   }
 

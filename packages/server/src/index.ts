@@ -1068,14 +1068,18 @@ async function bootServer(
   // expects an injected token that shared mode will never inject. With no
   // desktop build on disk, shared mode serves no UI at all rather than one
   // that cannot sign in — the API still answers the CLI and the MCP server.
+  // A hosted planner serves no UI: its host serves the bundle, and the page
+  // here would carry the agent token to anyone who loaded it.
   const webDistDir =
-    opts.webDistDir !== undefined
-      ? opts.webDistDir
-      : shared
-        ? existsSync(join(DESKTOP_DIST_DIR, 'index.html'))
-          ? DESKTOP_DIST_DIR
-          : null
-        : DEFAULT_WEB_DIST_DIR;
+    opts.hostedPlanner === true
+      ? null
+      : opts.webDistDir !== undefined
+        ? opts.webDistDir
+        : shared
+          ? existsSync(join(DESKTOP_DIST_DIR, 'index.html'))
+            ? DESKTOP_DIST_DIR
+            : null
+          : DEFAULT_WEB_DIST_DIR;
   if (shared && webDistDir === null) {
     console.error(
       'dispatchd: team-local mode found no desktop build to serve — run `moonx desktop:build` or pass --web-dist <dir>'
@@ -1278,8 +1282,9 @@ async function bootServer(
   // copies task *files* into a git worktree and commits them. A
   // database-backed project has no such files; exporting its state to git is
   // the receipts exporter's job, not this one's.
+  // A hosted planner pushes nowhere: no board sync and no receipts export.
   const syncWorktree =
-    store instanceof TaskStore
+    store instanceof TaskStore && opts.hostedPlanner !== true
       ? SyncWorktree.open(rootDir, defaultGitRunner)
       : null;
   // The one serialized writer to origin's default branch, shared by the board
@@ -1334,7 +1339,7 @@ async function bootServer(
   // Memory opens further down; until it does, its step writes nothing.
   let memoryReceipts: ReceiptsStep | null = null;
   const receiptsScheduler =
-    store instanceof TaskStore
+    store instanceof TaskStore || opts.hostedPlanner === true
       ? null
       : new ReceiptsScheduler({
           rootDir,
@@ -2045,9 +2050,11 @@ async function bootServer(
   // health check or review action would be wasted work.
   // Not awaited: `gh --version` alone costs a few hundred ms, and nothing at
   // boot needs the answer. PrManager awaits it; health refetches on the event.
-  const prCapability = detectPrCapability(rootDir, opts.prCommandRunner).catch(
-    () => false
-  );
+  // A hosted planner runs no gh or git for PRs.
+  const prCapability =
+    opts.hostedPlanner === true
+      ? Promise.resolve(false)
+      : detectPrCapability(rootDir, opts.prCommandRunner).catch(() => false);
   void prCapability.then(
     (capable) => capable && events.broadcast({ type: 'health.changed' })
   );
@@ -2117,8 +2124,10 @@ async function bootServer(
   // either of the two paths above, so they'd sit in the review queue as
   // "needs review" forever. Reconcile once at boot — catching anything merged
   // while dispatchd was down — and then on the PR poller's cadence.
-  orchestrator.reconcileExternallyMergedRuns();
+  // A hosted planner has no runs to reconcile, and runs no git for them.
+  if (opts.hostedPlanner !== true) orchestrator.reconcileExternallyMergedRuns();
   const externalMergeTimer = setInterval(() => {
+    if (opts.hostedPlanner === true) return;
     watchdog.mark('reconcileExternallyMergedRuns tick');
     orchestrator.reconcileExternallyMergedRuns();
   }, opts.prPollIntervalMs ?? 60000);
@@ -2986,7 +2995,8 @@ async function bootServer(
   const port = server.port ?? 0;
   hubLink?.start(messaging.engine, port);
   const tlsPort = tlsServer === null ? undefined : (tlsServer.port ?? 0);
-  await a2a.start();
+  // A hosted planner opens no A2A listener: no outbound agent calls.
+  if (opts.hostedPlanner !== true) await a2a.start();
   if (shared) {
     for (const origin of tlsPort === undefined
       ? ownOrigins(port, networkInterfaces(), opts.publicOrigins)

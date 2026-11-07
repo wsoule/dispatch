@@ -32,7 +32,7 @@ let fakeHome: string;
 let handle: ServerHandle | null = null;
 let requests: GraphqlRequest[];
 
-async function boot(hostedPlanner: boolean): Promise<string> {
+async function boot(hostedPlanner: boolean, extraOrg = false): Promise<string> {
   fakeHome = realpathSync(
     mkdtempSync(join(tmpdir(), 'dispatch-hosted-conn-home-'))
   );
@@ -63,6 +63,12 @@ async function boot(hostedPlanner: boolean): Promise<string> {
     refreshedAt: null,
   };
   await writeLinearAccount(record);
+  if (extraOrg)
+    await writeLinearAccount({
+      ...record,
+      accessToken: 'lin_oauth_other_tenant_access_0001',
+      organization: { id: 'org-2', name: 'Other', urlKey: 'other' },
+    });
   const shape = new FakeLinearClient();
   const graphql = graphqlFetch({
     viewer: VIEWER,
@@ -123,6 +129,26 @@ describe('a hosted planner connects to Linear through its workspace install', ()
 
   it('leaves a normal daemon with only a sign-in unconnected, as before', async () => {
     const api = await boot(false);
+    const status = (await (await fetch(`${api}/linear/status`)).json()) as {
+      connected: boolean;
+    };
+    expect(status.connected).toBe(false);
+  });
+
+  it("ignores an API key in the host's environment", async () => {
+    process.env.LINEAR_API_KEY = 'lin_api_host_env_key_000000000000';
+    try {
+      const api = await boot(true);
+      await fetch(`${api}/linear/import`, { method: 'POST' });
+      for (const r of requests)
+        expect(r.authorization).toBe(`Bearer ${INSTALL_TOKEN}`);
+    } finally {
+      delete process.env.LINEAR_API_KEY;
+    }
+  });
+
+  it('refuses to pick an install when its home holds two workspaces', async () => {
+    const api = await boot(true, true);
     const status = (await (await fetch(`${api}/linear/status`)).json()) as {
       connected: boolean;
     };

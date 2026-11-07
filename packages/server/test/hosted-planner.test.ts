@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import type { ServerHandle } from '../src/index.js';
 import { judgmentsFor, startServer } from '../src/index.js';
 import { runGitSync } from './orchestrator/helpers.js';
-import { useTestAuth } from './testAuth.js';
+import { rawFetch, useTestAuth } from './testAuth.js';
 
 // A daemon hosted for other people (app.dispatch.foo's planner) answers only
 // the planning routes, whoever asks: even the operator's own token reaches no
@@ -47,6 +47,9 @@ const CLOSED_ROUTES: [string, string, unknown?][] = [
   ['POST', '/api/setup/agent-key', { provider: 'anthropic', apiKey: 'x' }],
   ['POST', '/api/daemon/shutdown', {}],
   ['GET', '/preview/anything'],
+  ['POST', '/api/linear/connect', { apiKey: 'lin_api_attacker_key_000000000' }],
+  ['POST', '/api/linear/disconnect', {}],
+  ['HEAD', '/api/team/tokens'],
 ];
 
 let fakeHome: string;
@@ -79,12 +82,16 @@ beforeAll(async () => {
   runGitSync(root, ['add', '-A']);
   runGitSync(root, ['commit', '-m', 'initial commit']);
   TaskStore.init(root);
+  const ui = realpathSync(mkdtempSync(join(tmpdir(), 'dispatch-hosted-ui-')));
+  writeFileSync(join(ui, 'index.html'), '<html>app</html>');
   handle = await startServer({
     rootDir: root,
     port: 0,
     writeDaemonFile: false,
     hubLink: false,
     hostedPlanner: true,
+    // Even given a UI, a hosted planner serves none (its page carries a token).
+    webDistDir: ui,
   });
   useTestAuth(handle);
   base = `http://127.0.0.1:${handle.port}`;
@@ -155,5 +162,71 @@ describe('hosted planner mode', () => {
       judgmentsFor({ hostedPlanner: true, judgments: passed }, root)
     ).toBeNull();
     expect(judgmentsFor({ judgments: passed }, root) === passed).toBe(true);
+  });
+
+  it('serves no UI page, so no page hands out a token', async () => {
+    expect((await fetch(`${base}/`)).status).toBe(404);
+    expect((await fetch(`${base}/index.html`)).status).toBe(404);
+  });
+
+  it('answers setup and sync with fixed data instead of running commands', async () => {
+    expect(await (await call('GET', '/api/setup')).json()).toEqual({
+      steps: [],
+      providers: [],
+    });
+    const sync = (await (await call('GET', '/api/sync')).json()) as {
+      state: string;
+    };
+    expect(sync.state).toBe('disabled');
+  });
+
+  it('takes only planning, status, label and Linear-team settings, at any tier', async () => {
+    for (const body of [
+      { notifications: { webhook: 'https://evil.test/hook' } },
+      { receipts: { repo: 'https://evil.test/r.git' } },
+      { verifyCommand: 'curl evil.test' },
+      { remotes: [] },
+      { linear: { oauthClientId: 'attacker' } },
+    ]) {
+      const res = await call('PATCH', '/api/config', body);
+      expect(`${JSON.stringify(body)} ${res.status}`).toBe(
+        `${JSON.stringify(body)} 403`
+      );
+    }
+    expect(
+      (await call('PATCH', '/api/config', { linear: { intervalSec: 120 } }))
+        .status
+    ).toBe(200);
+  });
+
+  it("lets only the host mint or revoke members' tokens", async () => {
+    const minted = await call('POST', '/api/team/tokens', {
+      email: 'ada@example.com',
+      displayName: 'Ada',
+      tier: 'decide',
+    });
+    expect(minted.status).toBe(201);
+    const { token } = (await minted.json()) as { token: string };
+    const asAda = (method: string, path: string, body?: unknown) =>
+      rawFetch(`${base}${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+    expect((await asAda('GET', '/api/whoami')).status).toBe(200);
+    expect(
+      (
+        await asAda('POST', '/api/team/tokens', {
+          email: 'sock@example.com',
+          displayName: 'Sock',
+          tier: 'decide',
+        })
+      ).status
+    ).toBe(404);
+    expect((await asAda('GET', '/api/team/tokens')).status).toBe(404);
+    expect((await asAda('DELETE', '/api/team/tokens/ada')).status).toBe(404);
   });
 });
