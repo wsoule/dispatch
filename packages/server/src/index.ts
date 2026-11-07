@@ -296,6 +296,10 @@ export interface ServerHandle {
 
 export interface StartServerOptions {
   rootDir: string;
+  /** Hosted for other people (app.dispatch.foo's planner): only the planning
+   * routes answer (hostedPlanner.ts), and no agent executor, planner or
+   * overseer is registered, so nothing here can run a model or a command. */
+  hostedPlanner?: boolean;
   /** Link to the machine hub (default: unless DISPATCH_HUB=0). */
   hubLink?: boolean;
   // 0 = ephemeral port, assigned by the OS; tests always pass this so
@@ -1566,6 +1570,8 @@ async function bootServer(
       `dispatchd: could not read carto config, defaulting to 'on': ${(err as Error).message}`
     );
   }
+  // A hosted planner has no code to map.
+  if (opts.hostedPlanner === true) cartoMode = 'off';
   const depMapCache = new DepMapCache(rootDir, {
     mode: cartoMode,
     onDegrade: ({ detail }) => {
@@ -1605,7 +1611,7 @@ async function bootServer(
   // Read per call so a config edit applies without restarting the daemon.
   const readDigestConfig = () => loadConfig(rootDir).repoDigest;
   const digestCache =
-    opts.registerExecutors === undefined
+    opts.registerExecutors === undefined && opts.hostedPlanner !== true
       ? new RepoDigestCache(
           rootDir,
           (dir) => generateRepoDigest(dir),
@@ -1652,7 +1658,9 @@ async function bootServer(
     riskChanged: (taskId) => docs.service.riskChangedDuringPublish(taskId),
   });
   if (syncConfig !== null) orchestrator.setRunIdMinter(generateSyncedRunId);
-  if (opts.registerExecutors !== undefined) {
+  if (opts.hostedPlanner === true) {
+    // No executor: a hosted planner never runs an agent.
+  } else if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);
   } else {
     orchestrator.registerExecutor('claude', new ClaudeExecutor());
@@ -1699,6 +1707,7 @@ async function bootServer(
   // The machine hub homes MCP sessions; this project links to it so runs and
   // sessions reach each other (messaging/hubLink.ts).
   const hubLink =
+    opts.hostedPlanner !== true &&
     (opts.hubLink ?? process.env.DISPATCH_HUB !== '0')
       ? new DaemonHubLink({
           rootDir,
@@ -1985,7 +1994,9 @@ async function bootServer(
     events,
     actorContext,
   });
-  if (opts.registerPlanners !== undefined) {
+  if (opts.hostedPlanner === true) {
+    // No planner either: plans are drafted by agents.
+  } else if (opts.registerPlanners !== undefined) {
     opts.registerPlanners(planManager);
   } else {
     planManager.registerPlanner('claude', new ClaudePlanner(rootDir));
@@ -2210,7 +2221,9 @@ async function bootServer(
       overseer: overseerAddress,
     }),
   });
-  if (opts.registerOverseers !== undefined) {
+  if (opts.hostedPlanner === true) {
+    // No overseer conversation on a hosted planner.
+  } else if (opts.registerOverseers !== undefined) {
     opts.registerOverseers(overseerManager);
   } else {
     overseerManager.registerBackend('claude', new ClaudeOverseer(rootDir));
@@ -2546,6 +2559,7 @@ async function bootServer(
     events,
     orchestrator,
     version: packageJson.version,
+    hostedPlanner: opts.hostedPlanner === true,
     planManager,
     overseerManager,
     milestoneEngine,
@@ -2838,6 +2852,8 @@ async function bootServer(
 
         // Before /api/ and the static fallback: this is the one path whose
         // content belongs to someone else's server.
+        if (url.pathname.startsWith('/preview/') && opts.hostedPlanner === true)
+          return new Response('Not found', { status: 404 });
         if (url.pathname.startsWith('/preview/')) {
           // A preview has no credential of its own — an iframe cannot send one
           // on every sub-resource — so on loopback it is exactly as private as

@@ -174,6 +174,7 @@ import type { EventBus } from './events.js';
 import type { FindingStorePort } from './findings.js';
 import { PATH_ESCAPE_ERROR, resolveWorktreeFilePath } from './git/commands.js';
 import { GitRepo } from './git/commands.js';
+import { hostedPlannerAllows } from './hostedPlanner.js';
 import { expiredTokenMessage, sha256 } from './identity.js';
 import type { TokenIdentity, TokenRegistry } from './identity.js';
 import type { InboxKind } from './inbox.js';
@@ -354,6 +355,8 @@ import type { WatchdogStatus } from './watchdog.js';
 // this is what makes it easy to hit with plain fetch() in tests.
 export interface ApiContext {
   rootDir: string;
+  /** Hosted for other people: only hostedPlanner.ts's routes answer. */
+  hostedPlanner?: boolean;
   // The port, not a concrete TaskStore: this daemon owns whichever backend
   // the project was opened with (markdown files or its SQLite database), and
   // every handler below works the same against either. A handler that needs
@@ -5264,6 +5267,12 @@ export async function handleApi(
     );
   }
 
+  // A hosted planner answers only the planning routes, to every credential.
+  if (
+    daemonCtx.hostedPlanner === true &&
+    !hostedPlannerAllows(method, segments)
+  )
+    return errorResponse(404, 'Not on a hosted planner.');
   const tier = requiredTier(method, segments, url.searchParams);
   if (tier !== null) {
     const unauthorized =
