@@ -40,6 +40,18 @@ interface DemoConfig {
   appToken: string | null;
 }
 
+/** Set on app.dispatch.foo's hosted planner (apps/web injects `hosted` into
+ * the demo config): the Linear workspace shown, with no machine behind it. */
+export function hostedPlanner(): { workspace: string } | null {
+  const value = (globalThis as { __DISPATCH_DEMO__?: { hosted?: unknown } })
+    .__DISPATCH_DEMO__?.hosted;
+  return typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { workspace?: unknown }).workspace === 'string'
+    ? { workspace: (value as { workspace: string }).workspace }
+    : null;
+}
+
 function injectedDemoConfig(): DemoConfig | undefined {
   const value = (globalThis as { __DISPATCH_DEMO__?: unknown })
     .__DISPATCH_DEMO__;

@@ -20,6 +20,7 @@ import {
   buildSettingsLink,
   buildShellNav,
   buildShellTabs,
+  HOSTED_DESTINATIONS,
   orbCountTone,
   planningProjectMark,
   type ProjectMark,
@@ -137,6 +138,35 @@ describe('buildSettingsLink', () => {
     expect(
       buildSettingsLink({ destination: 'runs', adminItems: [] }).current
     ).toBe(false);
+  });
+});
+
+describe('the hosted planner', () => {
+  test('the sidebar keeps only the planning destinations', () => {
+    const items = nav({ destination: 'timeline', hosted: true });
+    expect(items.map((item) => item.label)).toEqual([
+      'Issues',
+      'Needs you',
+      'My week',
+      'Timeline',
+      'Graph',
+    ]);
+    expect(items.find((item) => item.current)?.label).toBe('Timeline');
+  });
+
+  test('the phone tabs are the planning views', () => {
+    expect(buildShellTabs('graph', true).map((tab) => tab.label)).toEqual([
+      'Issues',
+      'My week',
+      'Timeline',
+      'Graph',
+    ]);
+  });
+
+  test('only the planning destinations are open on the web', () => {
+    expect(HOSTED_DESTINATIONS.has('timeline')).toBe(true);
+    for (const hidden of ['overseer', 'threads', 'docs', 'runs'] as const)
+      expect(HOSTED_DESTINATIONS.has(hidden)).toBe(false);
   });
 });
 

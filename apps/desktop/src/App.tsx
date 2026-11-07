@@ -27,7 +27,11 @@ import {
 } from 'react';
 
 import { PALETTE_DOCS_LIMIT } from './adapters/palette';
-import { buildProjectsSection, planningProjectMark } from './adapters/shell';
+import {
+  buildProjectsSection,
+  HOSTED_DESTINATIONS,
+  planningProjectMark,
+} from './adapters/shell';
 import styles from './App.module.css';
 import { AwayDigest, useNarratorSince } from './components/chat/AwayDigest';
 import { CapturedNotes } from './components/chat/CapturedNotes';
@@ -203,6 +207,7 @@ import {
   currentProjectRoot,
   ensureDispatchd,
   hasDispatch,
+  hostedPlanner,
   isTauri,
   listProjects,
   listRegisteredProjects,
@@ -2080,6 +2085,17 @@ function App() {
   const tasksPage = navState.tasksPage;
   // Which sidebar row is current, read off the same state the views render from.
   const shellDestination = currentShellDestination(navState);
+  // The hosted planner (app.dispatch.foo) has no machine behind it: a place
+  // that needs one (the Overseer, the app's own landing page) opens the
+  // Timeline instead.
+  const hosted = hostedPlanner() !== null;
+  const hostedElsewhere =
+    hosted &&
+    shellDestination !== 'settings' &&
+    !HOSTED_DESTINATIONS.has(shellDestination);
+  useEffect(() => {
+    if (hostedElsewhere) dispatchNav({ type: 'openTimeline', project: null });
+  }, [hostedElsewhere, dispatchNav]);
   const aboutTask =
     tasksPage.kind === 'task'
       ? {
@@ -2349,6 +2365,7 @@ function App() {
       projects={projectsSection}
       tier={data.myTier}
       teamSession={teamSession}
+      hosted={hosted}
       windowChrome={{ dragRegion: isTauri(), trafficLightInset }}
       onNavigate={navigate}
       onSearch={() => dispatchNav({ type: 'openPalette' })}
@@ -2585,13 +2602,15 @@ function App() {
           }
           renderPage={renderSidePage}
           composer={
-            <TasksComposer
-              overseer={overseer}
-              about={aboutTask}
-              onOpenOverseer={() => dispatchNav({ type: 'showOverseer' })}
-              disabled={revokedLocksComposer(overseer)}
-              project={activeProject?.path ?? ''}
-            />
+            hosted ? undefined : (
+              <TasksComposer
+                overseer={overseer}
+                about={aboutTask}
+                onOpenOverseer={() => dispatchNav({ type: 'showOverseer' })}
+                disabled={revokedLocksComposer(overseer)}
+                project={activeProject?.path ?? ''}
+              />
+            )
           }
         />
       }
