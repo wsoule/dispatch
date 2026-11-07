@@ -3051,6 +3051,9 @@ async function bootServer(
       await server.stop(true);
       await tlsServer?.stop(true);
       await a2a.close();
+      // The boot's PR probe is not awaited at boot; its `gh` and `git` must
+      // not outlive the daemon, or a restart loop accumulates their pipes.
+      await prCapability;
       if (shouldWriteDaemonFile) removeDaemonFile(rootDir);
       // Last: the database handle outlives every reader above, and closing it
       // while a request is still in flight would fail that request rather
