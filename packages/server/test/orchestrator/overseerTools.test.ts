@@ -336,6 +336,7 @@ describe('overseer tool sets', () => {
       'open_questions',
       'pending_approvals',
       'read_conversation',
+      'show_page',
       'show_tasks',
       'task_details',
     ]);
@@ -889,6 +890,7 @@ describe('applyAction performs the real effect', () => {
     const applied = await h.registry.applyAction(action.id, CONFIRMED);
 
     expect(applied.status).toBe('applied');
+    expect(applied.taskIds).toEqual([task.meta.id]);
     const runs = h.orchestrator.list();
     expect(runs).toHaveLength(1);
     expect(runs[0].taskId).toBe(task.meta.id);
@@ -1316,6 +1318,21 @@ describe('discard_run', () => {
     expect(h.store.get(taskId)?.body).toContain(`run ${runId} discarded`);
   });
 
+  it('discards a run whose task was deleted and whose worktree is gone', async () => {
+    const h = makeHarness();
+    const { runId, taskId } = await failedRun(h, 'Fake task');
+    const meta = h.orchestrator.getRun(runId)?.meta;
+    if (meta === undefined) throw new Error('no run');
+    runGitSync(repo, ['worktree', 'remove', '--force', meta.worktreePath]);
+    expect(h.store.remove(taskId)).toBe(true);
+
+    const action = h.registry.callMutatingTool('discard_run', { runId });
+    await h.registry.applyAction(action.id, CONFIRMED);
+
+    expect(h.orchestrator.getRun(runId)?.meta.reviewAction).toBe('discard');
+    expect(runGitSync(repo, ['branch', '--list', meta.branch]).trim()).toBe('');
+  });
+
   it('warns on the card that an interrupted-dirty run loses its uncommitted changes', async () => {
     const h = makeHarness();
     const { runId } = await failedRun(h, 'Died mid-write', { dirty: true });
@@ -1494,7 +1511,7 @@ describe('pending action bookkeeping', () => {
     );
   });
 
-  it('leaves an action pending when applying it fails, so it can be retried', async () => {
+  it('settles an action as failed when applying it fails, so it is not applied again', async () => {
     const h = makeHarness();
     const task = h.store.create({ title: 'Add feature' });
     h.cache.rebuild(h.store);
@@ -1506,8 +1523,11 @@ describe('pending action bookkeeping', () => {
     expect(h.registry.applyAction(action.id, CONFIRMED)).rejects.toThrow(
       /unknown executor/
     );
-    await waitFor(() => h.registry.getAction(action.id)?.status === 'pending');
-    expect(h.registry.listPending().map((x) => x.id)).toEqual([action.id]);
+    await waitFor(() => h.registry.getAction(action.id)?.status === 'failed');
+    expect(h.registry.listPending()).toEqual([]);
+    expect(h.registry.applyAction(action.id, CONFIRMED)).rejects.toThrow(
+      /already failed/
+    );
   });
 });
 
@@ -1528,6 +1548,19 @@ describe('the agent reaches into Tasks', () => {
     expect(() =>
       h.registry.callStatusTool('show_tasks', { milestoneId: task.meta.id })
     ).toThrow('not a milestone');
+  });
+
+  it('show_page leaves a door to an http(s) page and refuses anything else', () => {
+    const h = makeHarness();
+    expect(
+      h.registry.callStatusTool('show_page', { url: 'http://localhost:5173' })
+    ).toMatchObject({ door: { url: 'http://localhost:5173/' } });
+    expect(() =>
+      h.registry.callStatusTool('show_page', { url: 'file:///etc/passwd' })
+    ).toThrow('not an http(s) page');
+    expect(() =>
+      h.registry.callStatusTool('show_page', { url: 'localhost' })
+    ).toThrow('not a URL');
   });
 
   it('task_details fences the body as data', () => {
@@ -1689,8 +1722,9 @@ describe('the agent drives everything behind cards', () => {
     expect(h.cache.query().some((t) => t.meta.title === 'Spec the 403')).toBe(
       false
     );
-    await h.registry.applyAction(action.id, CONFIRMED);
+    const applied = await h.registry.applyAction(action.id, CONFIRMED);
     const made = h.cache.query().find((t) => t.meta.title === 'Spec the 403');
+    expect(applied.taskIds).toEqual([made?.meta.id ?? '']);
     expect(made?.meta.parent).toBe(milestone.meta.id);
     expect(made?.meta.priority).toBe('high');
   });
@@ -1708,7 +1742,7 @@ describe('the agent drives everything behind cards', () => {
     expect(action.summary).toBe(
       'Create milestone "Auth v2" with 3 tasks: "Schema", "Endpoints", "UI"'
     );
-    await h.registry.applyAction(action.id, CONFIRMED);
+    const applied = await h.registry.applyAction(action.id, CONFIRMED);
     const all = h.cache.query();
     const milestone = all.find((t) => t.meta.title === 'Auth v2');
     const byTitle = (title: string) => {
@@ -1720,6 +1754,10 @@ describe('the agent drives everything behind cards', () => {
     expect(byTitle('Schema').parent).toBe(milestone?.meta.id ?? null);
     expect(byTitle('Endpoints').blockedBy).toEqual([byTitle('Schema').id]);
     expect(byTitle('UI').blockedBy).toEqual([byTitle('Endpoints').id]);
+    // The plan's tasks, in order, never the milestone that holds them.
+    expect(applied.taskIds).toEqual(
+      ['Schema', 'Endpoints', 'UI'].map((title) => byTitle(title).id)
+    );
   });
 
   it('create_plan sends agents on its new milestone once approved, and says so first', async () => {

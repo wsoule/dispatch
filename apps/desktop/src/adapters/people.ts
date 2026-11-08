@@ -1,4 +1,5 @@
 import type { ActorKind, Assignee, Person } from '@dispatch-foo/core/browser';
+import { AGENT_POOL_LABEL, agentChoiceId } from '@dispatch/planning';
 import type { PersonChoice, UiTone } from '@dispatch/ui';
 
 import { assigneeLabel, assigneeRef } from '../lib/taskDisplay';
@@ -12,7 +13,7 @@ import { assigneeLabel, assigneeRef } from '../lib/taskDisplay';
 export const AGENT_POOL: Assignee = 'agent';
 /** How the pool reads in a picker and a cell (`assigneeLabel` says "Agent",
  * which beside named agents would read as one of them). */
-export const AGENT_POOL_LABEL = 'Any agent';
+export { AGENT_POOL_LABEL, agentChoiceId };
 /** The picker group the pool and the executors are listed under. */
 export const AGENTS_GROUP = 'Agents';
 
@@ -42,17 +43,6 @@ export interface PersonChoicesInput {
 function handleOf(ref: string): string {
   const colon = ref.indexOf(':');
   return colon === -1 ? ref : ref.slice(colon + 1);
-}
-
-/**
- * The assignee ref a dispatch for `me` writes for a run on `executor`:
- * `agent:<my handle>/<executor>` (an agent is owned by the human it works
- * for, see core's ActorRef), or `agent:<executor>` while nobody is signed in.
- */
-export function agentChoiceId(me: string | null, executor: string): string {
-  return me === null
-    ? `agent:${executor}`
-    : `agent:${handleOf(me)}/${executor}`;
 }
 
 /**

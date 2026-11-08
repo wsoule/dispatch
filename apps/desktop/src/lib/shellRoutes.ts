@@ -2,6 +2,7 @@ import type { ShellIcon } from '@dispatch/ui';
 import {
   BookText,
   Bot,
+  CalendarDays,
   CalendarRange,
   History,
   Inbox,
@@ -32,6 +33,7 @@ export type ShellDestination =
   | 'overseer'
   | 'issues'
   | 'needs-you'
+  | 'week'
   | 'timeline'
   | 'graph'
   | 'threads'
@@ -82,6 +84,14 @@ export const SHELL_ROUTES: readonly ShellRoute[] = [
     shortcut: ['G', 'I'],
     href: hrefFor('needs-you'),
     action: { type: 'showTasks', preset: 'needs-you' },
+  },
+  {
+    id: 'week',
+    label: 'My week',
+    icon: CalendarDays,
+    shortcut: ['G', 'W'],
+    href: hrefFor('week'),
+    action: { type: 'setProjectView', view: 'week' },
   },
   {
     id: 'timeline',
@@ -203,6 +213,7 @@ const UNLISTED_PAGE_TITLES: Partial<Record<HostedView, string>> = {
   files: 'Files',
   terminals: 'Terminals',
   projects: 'Projects',
+  allocation: 'Allocation',
 };
 
 /** Whether a hosted page is one of the sidebar's rows (Threads, Timeline,
@@ -212,5 +223,10 @@ const UNLISTED_PAGE_TITLES: Partial<Record<HostedView, string>> = {
 function hasOwnRow(
   view: HostedView
 ): view is Extract<HostedView, ShellDestination> {
-  return view === 'threads' || view === 'timeline' || view === 'graph';
+  return (
+    view === 'threads' ||
+    view === 'timeline' ||
+    view === 'graph' ||
+    view === 'week'
+  );
 }

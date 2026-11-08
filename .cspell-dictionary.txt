@@ -4,6 +4,7 @@ acks
 ACMR
 acodex
 addext
+Adeyemi
 adminless
 affordances
 allowbuilds
@@ -34,10 +35,12 @@ backgrounding
 badgrant
 baselining
 basenames
+BCDFGHJKLMNPQRSTVWXZ
 bceb
 behaviour
 behavioural
 behaviours
+Bianchi
 bigmap
 Bingbot
 birpc
@@ -150,6 +153,7 @@ dunder
 dupdup
 DWIM
 eabi
+EFGH
 elkjs
 emnapi
 emphasised
@@ -177,6 +181,7 @@ fastq
 favourite
 fdir
 fedcba
+Femi
 ffee
 fini
 fixloop
@@ -215,6 +220,7 @@ granularities
 greppable
 grpcurl
 hact
+Haddad
 hardlink
 hashery
 hbblocked
@@ -229,6 +235,9 @@ hbrevn
 hcaret
 headerless
 headlessly
+headphnes
+healthcheck
+healthz
 hexdigit
 HIDEABLE
 hjkmnp
@@ -258,6 +267,7 @@ jridgewell
 jsdiff
 jsdiff's
 jsonpointer
+Kapoor
 katex
 keepalives
 keepme
@@ -352,6 +362,7 @@ nosuch
 NOSYSTEM
 notekind
 noul
+Novak
 nscurl
 numstat
 nvim
@@ -415,6 +426,7 @@ qwen
 RAII
 Railpack
 railwayignore
+Raman
 rcfile
 readdirp
 reask
@@ -441,6 +453,7 @@ refmove
 refspec
 refspecs
 regate
+regid
 registrator
 rehome
 rehomed
@@ -473,6 +486,7 @@ restackable
 resynced
 retheme
 retuned
+reuid
 reusify
 revset
 rightless
@@ -488,7 +502,9 @@ rustls
 rustup
 sandboxing
 satteri
+setpriv
 sslip
+streamable
 subshell
 Sätteri
 scandir
@@ -551,6 +567,7 @@ syncer's
 syncers
 syscalls
 tailwindlabs
+Tanaka
 taskfile
 taskless
 taskview
@@ -566,6 +583,7 @@ textareas
 textful
 textconv
 theanshsonkar
+Theo
 thiserror
 timsort
 tinyexec
@@ -757,8 +775,6 @@ bulkbar
 cbox
 chipsbar
 choosable
-dagre
-dagrejs
 dotc
 edgesep
 ellipsized

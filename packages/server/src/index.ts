@@ -13,6 +13,7 @@ import {
   loadConfig,
   MAX_HANDLE_BYTES,
   openProjectStores,
+  resolvePeople,
   SqliteTaskStore,
   syncPlace,
   syncSettings,
@@ -54,6 +55,7 @@ import {
 } from './api.js';
 import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
 import { goneFileBodyResponse } from './api/files.js';
+import { rosterMembers } from './api/people.js';
 import { closeAsksOfRevoked, speaksForRevoked } from './api/revoke.js';
 import { storageErrorResponse } from './api/storageErrors.js';
 import { installBlockingSpawner, spawnGitSync } from './blockingGit.js';
@@ -159,7 +161,10 @@ import {
 } from './orchestrator/overseerStore.js';
 import { OverseerToolRegistry } from './orchestrator/overseerTools.js';
 import {
+  allocationRunsPath,
   boardSyncDir,
+  planningAuditPath,
+  planningWarningsPath,
   remoteAccessPath,
   taskAuthorshipPath,
 } from './orchestrator/paths.js';
@@ -185,6 +190,20 @@ import {
   TERMINAL_RUN_STATES,
 } from './orchestrator/types.js';
 import { VerificationRunner } from './orchestrator/verify.js';
+import { AllocationRunStore } from './planning/allocationRuns.js';
+import { PlanningAuditStore } from './planning/audit.js';
+import {
+  type AllocationDeps,
+  applyAllocation,
+  dailyRunDue,
+  startDailyJobs,
+} from './planning/dailyAllocation.js';
+import {
+  dailyWarningsDue,
+  runWarnings,
+  type WarningDeps,
+  WarningStore,
+} from './planning/warningRuns.js';
 import {
   policyActivityAppender,
   policyDecisionClassifier,
@@ -198,6 +217,7 @@ import {
   previewRequestHeaders,
   previewResponseHeaders,
   previewUpstreamUrl,
+  sandboxPreview,
 } from './previewHeaders.js';
 import type { ReceiptsStep } from './receipts/exporter.js';
 import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
@@ -735,6 +755,9 @@ async function serveIndexHtml(
         'content-type': CONTENT_TYPES['.html'],
         // A page carrying a credential must not sit in a shared cache.
         'cache-control': 'no-store',
+        // Nor in a frame: the app's browser pane frames with
+        // `allow-same-origin`, and a page there can navigate itself here.
+        'content-security-policy': "frame-ancestors 'none'",
       },
     }
   );
@@ -1501,6 +1524,53 @@ async function bootServer(
   // Task comments: the database's table, or `.dispatch/comments/` on files.
   const commentStore: CommentStorePort =
     stores.records?.comments ?? new FileCommentStore(rootDir);
+
+  // The allocation run log, the warning memory and digest log, and the
+  // daemon's daily planning jobs: the allocation (planning.allocation: daily)
+  // applied as the daemon's owner, and the digest of milestones at risk
+  // (planning.warnings: notify) sent to leads and watchers.
+  const allocationRuns = new AllocationRunStore(allocationRunsPath(rootDir));
+  const warningStore = new WarningStore(planningWarningsPath(rootDir));
+  const planningAudit = new PlanningAuditStore(planningAuditPath(rootDir));
+  const allocationDeps: AllocationDeps = {
+    rootDir,
+    store,
+    runs: allocationRuns,
+    actor: actorContext.humanRef,
+    comments: {
+      add: (input) => {
+        const comment = commentStore.add(input);
+        events.broadcast({
+          type: 'comment.changed',
+          taskId: input.taskId,
+          commentIds: [comment.id],
+        });
+        return comment;
+      },
+    },
+    people: () =>
+      resolvePeople(loadConfig(rootDir).people ?? [], rosterMembers(rootDir)),
+    changed: (ids) => {
+      cache.refresh(store, ids);
+      events.broadcast({ type: 'task.changed', ids });
+    },
+  };
+  const warningDeps: WarningDeps = {
+    ...allocationDeps,
+    warnings: warningStore,
+  };
+  const dailyPlanning = startDailyJobs([
+    {
+      name: 'daily allocation',
+      due: (now) => dailyRunDue(allocationDeps, now),
+      run: () => applyAllocation(allocationDeps),
+    },
+    {
+      name: 'daily digest',
+      due: (now) => dailyWarningsDue(warningDeps, now),
+      run: () => runWarnings(warningDeps),
+    },
+  ]);
 
   // The reverse-dependency map ReviewRunner scopes reviews with. Carto backs
   // it when available; the built-in scanner is the fallback. Source changes
@@ -2511,6 +2581,9 @@ async function bootServer(
     mergeQueue,
     startedAt,
     noteStore: new NoteStore(rootDir),
+    allocationRuns,
+    warningStore,
+    planningAudit,
     inboxStore,
     inboxTriage,
     findingStore,
@@ -2800,7 +2873,7 @@ async function bootServer(
               { status: 403 }
             );
           }
-          return await proxyPreview(url, req, previews);
+          return sandboxPreview(await proxyPreview(url, req, previews));
         }
 
         if (url.pathname.startsWith('/api/')) {
@@ -2976,6 +3049,10 @@ async function bootServer(
       unsubscribeLinear();
       unsubscribeRevokedAsks();
       linearSignIn.stop();
+      dailyPlanning.stop();
+      allocationRuns.close();
+      warningStore.close();
+      planningAudit.close();
       await linearSync.stop();
       unsubscribeBoardSync();
       unsubscribeDocPublishes();
@@ -2998,6 +3075,9 @@ async function bootServer(
       await server.stop(true);
       await tlsServer?.stop(true);
       await a2a.close();
+      // The boot's PR probe is not awaited at boot; its `gh` and `git` must
+      // not outlive the daemon, or a restart loop accumulates their pipes.
+      await prCapability;
       if (shouldWriteDaemonFile) removeDaemonFile(rootDir);
       // Last: the database handle outlives every reader above, and closing it
       // while a request is still in flight would fail that request rather

@@ -6,6 +6,7 @@ import {
   Bot,
   BotMessageSquare,
   Brain,
+  CalendarRange,
   Cpu,
   FileDiff,
   FolderSearch,
@@ -49,11 +50,14 @@ import {
 } from '../components/settings/DaemonConfigGroups';
 import { DaemonSection } from '../components/settings/DaemonSection';
 import { DiffsSection } from '../components/settings/DiffsSection';
+import { DigestsGroup } from '../components/settings/DigestsGroup';
 import { GeneralSection } from '../components/settings/GeneralSection';
 import { IntegrationsSection } from '../components/settings/IntegrationsSection';
 import { LicenseSection } from '../components/settings/LicenseSection';
 import { MemorySection } from '../components/settings/MemorySection';
 import { NotificationsSection } from '../components/settings/NotificationsSection';
+import { PlanningAuditGroup } from '../components/settings/PlanningAuditGroup';
+import { PlanningSection } from '../components/settings/PlanningSection';
 import { PolicySection } from '../components/settings/PolicySection';
 import { PreviewsSection } from '../components/settings/PreviewsSection';
 import { QueueWeightsGroup } from '../components/settings/QueueWeightsGroup';
@@ -79,6 +83,7 @@ import { TeamSection } from '../components/settings/TeamSection';
 import { AgentStep } from '../components/setup/AgentStep';
 import { CliCommandStep } from '../components/setup/CliCommandStep';
 import { GitStep } from '../components/setup/GitStep';
+import { LinearStep } from '../components/setup/LinearStep';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { SETTINGS_PAGE_LABELS, type SettingsPage } from '../lib/appNav';
 import { isInsufficientTier } from '../lib/daemonAuth';
@@ -128,6 +133,8 @@ interface PageContext {
   canOperate: boolean;
   activeProject: { path: string; name: string };
   onOpenTask?: (taskId: string) => void;
+  /** Moves to another Settings page (Setup's Linear step opens Linear). */
+  selectPage: (page: SettingsPage) => void;
 }
 
 interface PageSpec {
@@ -181,6 +188,10 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
                 continueLabel="Save"
               />
             )}
+            <LinearStep
+              connected={ctx.data.linearStatus?.connected ?? null}
+              onConnect={() => ctx.selectPage('integrations')}
+            />
             <CliCommandStep />
           </>
         ),
@@ -281,6 +292,29 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
             onSave={ctx.save}
             canOperate={ctx.canOperate}
           />
+        )),
+      },
+      {
+        id: 'planning',
+        label: SETTINGS_PAGE_LABELS.planning,
+        icon: CalendarRange,
+        intro:
+          'How the milestone planner judges risk, which projects it counts as active, and who hears about milestones at risk.',
+        savesConfig: true,
+        render: withConfig((ctx) => (
+          <>
+            <PlanningSection
+              config={ctx.config}
+              people={ctx.data.people}
+              onSave={ctx.save}
+            />
+            <DigestsGroup
+              config={ctx.config}
+              data={ctx.data}
+              onSave={ctx.save}
+            />
+            <PlanningAuditGroup data={ctx.data} />
+          </>
         )),
       },
       {
@@ -575,6 +609,7 @@ export function SettingsView({
     canOperate: access.canOperate,
     activeProject,
     onOpenTask,
+    selectPage,
   };
 
   const navGroups: SettingsNavGroup[] = [

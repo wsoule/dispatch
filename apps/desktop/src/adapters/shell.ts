@@ -67,12 +67,15 @@ export interface ShellNavInput {
   threadsUnread: number;
   /** "⌘" or "Ctrl", for the shortcut hints. */
   modLabel: string;
+  /** The hosted planner on app.dispatch.foo: planning destinations only. */
+  hosted?: boolean;
 }
 
 const NAV_DESTINATIONS: readonly ShellDestination[] = [
   'overseer',
   'issues',
   'needs-you',
+  'week',
   'timeline',
   'graph',
   'threads',
@@ -80,9 +83,24 @@ const NAV_DESTINATIONS: readonly ShellDestination[] = [
   'runs',
 ];
 
+/** What the hosted planner (a Linear workspace on app.dispatch.foo, no
+ * machine behind it) can open: the planning views. Agents, threads, docs and
+ * runs need a daemon of your own. */
+export const HOSTED_DESTINATIONS: ReadonlySet<ShellDestination> = new Set([
+  'issues',
+  'needs-you',
+  'week',
+  'timeline',
+  'graph',
+]);
+
 /** The sidebar's primary rows (Settings sits in the footer). */
 export function buildShellNav(input: ShellNavInput): ShellNavItem[] {
-  return NAV_DESTINATIONS.map((id) => {
+  const ids =
+    input.hosted === true
+      ? NAV_DESTINATIONS.filter((id) => HOSTED_DESTINATIONS.has(id))
+      : NAV_DESTINATIONS;
+  return ids.map((id) => {
     const route = shellRoute(id);
     const item: ShellNavItem = {
       id,
@@ -131,9 +149,19 @@ const TAB_DESTINATIONS: readonly ShellDestination[] = [
   'docs',
 ];
 
+const HOSTED_TAB_DESTINATIONS: readonly ShellDestination[] = [
+  'issues',
+  'week',
+  'timeline',
+  'graph',
+];
+
 /** The phone tab bar's cells; the shell appends "More". */
-export function buildShellTabs(destination: ShellDestination): ShellTab[] {
-  return TAB_DESTINATIONS.map((id) => {
+export function buildShellTabs(
+  destination: ShellDestination,
+  hosted = false
+): ShellTab[] {
+  return (hosted ? HOSTED_TAB_DESTINATIONS : TAB_DESTINATIONS).map((id) => {
     const route = shellRoute(id);
     return {
       id,

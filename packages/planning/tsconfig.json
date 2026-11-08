@@ -8,5 +8,10 @@
     "checkJs": false,
     "isolatedDeclarations": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "references": [
+    {
+      "path": "../core/tsconfig.json"
+    }
+  ]
 }

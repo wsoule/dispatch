@@ -247,6 +247,45 @@ export function receiptsDir(rootDir: string): string {
 }
 
 /**
+ * The daily digest's warning memory and log (planning/warningRuns): daemon
+ * state under DISPATCH_HOME, never in the project.
+ */
+export function planningWarningsPath(rootDir: string): string {
+  return join(
+    dispatchHome(),
+    '.dispatch',
+    'projects',
+    projectKeyOf(rootDir),
+    'planning',
+    'warnings.db'
+  );
+}
+
+/** The planning audit of a project (planning/audit), beside it. */
+export function planningAuditPath(rootDir: string): string {
+  return join(
+    dispatchHome(),
+    '.dispatch',
+    'projects',
+    projectKeyOf(rootDir),
+    'planning',
+    'audit.db'
+  );
+}
+
+/** The allocation run log of a project (planning/allocationRuns), beside it. */
+export function allocationRunsPath(rootDir: string): string {
+  return join(
+    dispatchHome(),
+    '.dispatch',
+    'projects',
+    projectKeyOf(rootDir),
+    'planning',
+    'allocation-runs.db'
+  );
+}
+
+/**
  * Where board sync keeps this replica's state: its identity, what it knows of
  * every synced field, and its clone of the sync branch (see
  * packages/server/src/boardSync). Machine-local by definition — it is this

@@ -26,6 +26,8 @@ const EXPECTED: Record<string, string> = {
   '@dispatch-foo/a2a': 'MIT',
   // Shared with the relay: log verification and the license check.
   '@dispatch-foo/federation': 'Elastic-2.0',
+  // The hosted service at app.dispatch.foo: the team tier.
+  '@dispatch/web': 'Elastic-2.0',
   // The daemon is FSL, except its team features (see LICENSED_DIRS).
   '@dispatch/server': 'FSL-1.1-ALv2 AND Elastic-2.0',
   '@dispatch/tokens': 'FSL-1.1-ALv2',
@@ -33,7 +35,6 @@ const EXPECTED: Record<string, string> = {
   // by the desktop app (2026-10-26); the product's licence.
   '@dispatch/ui': 'FSL-1.1-ALv2',
   '@dispatch/planning': 'FSL-1.1-ALv2',
-  '@dispatch/web': 'FSL-1.1-ALv2',
   '@dispatch/demo': 'FSL-1.1-ALv2',
   '@dispatch/sandbox': 'FSL-1.1-ALv2',
   '@dispatch/desktop': 'FSL-1.1-ALv2',

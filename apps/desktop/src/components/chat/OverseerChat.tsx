@@ -4,6 +4,7 @@ import type {
   OverseerApproval,
   OverseerAttachment,
   OverseerRecordView,
+  RunMeta,
 } from '@dispatch/client';
 import {
   Button,
@@ -27,6 +28,12 @@ import { cardRaw } from '../../lib/cardContent';
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import { DEFAULT_EFFORT_ID, effortOptions, MODELS } from '../../lib/models';
 import {
+  appliedTaskCard,
+  isTaskTool,
+  proposedTaskCard,
+  type TaskCardModel,
+} from '../../lib/overseerTaskCard';
+import {
   buildOverseerThread,
   doorLabel,
   findInThread,
@@ -45,6 +52,7 @@ import { CardErrorBoundary } from '../shell/CardErrorBoundary';
 import { StreamingText } from '../transcript/StreamingText';
 import { ToolChip, ToolChipGroup } from '../transcript/ToolChip';
 import styles from './OverseerChat.module.css';
+import { OverseerTaskCard } from './OverseerTaskCard';
 import { PromptBar } from './PromptBar';
 
 // Ways into an empty Overseer: each fills the composer, so the question can be
@@ -265,8 +273,6 @@ function OverseerNarration({ text, at }: { text: string; at: string }) {
 
 interface OverseerConfirmCardProps {
   action: OverseerAction;
-  /** The server's explanation when the last approval attempt threw. */
-  failure: string | null;
   /** A decision for *this* action is currently in flight — this card owns the
    * spinner. */
   deciding: boolean;
@@ -275,6 +281,10 @@ interface OverseerConfirmCardProps {
    * disabling the others, their buttons stay live and eat the click. */
   locked: boolean;
   onDecide: (approve: boolean) => void;
+  /** The tasks a create_plan, create_task or dispatch_task proposes, listed in
+   * place of the summary sentence. */
+  card?: TaskCardModel | null;
+  onOpenTask?: (taskId: string) => void;
 }
 
 /** The shield every approval card leads with, in the card's warning ink. */
@@ -291,10 +301,11 @@ const APPROVAL_ICON = <Shield size={14} strokeWidth={1.8} aria-hidden />;
  */
 function OverseerConfirmCard({
   action,
-  failure,
   deciding,
   locked,
   onDecide,
+  card = null,
+  onOpenTask,
 }: OverseerConfirmCardProps) {
   return (
     <DecisionCard
@@ -320,7 +331,7 @@ function OverseerConfirmCard({
               )
             }
           >
-            {failure !== null ? 'Retry' : 'Approve'}
+            Approve
           </Button>
           <Button
             size="sm"
@@ -335,8 +346,11 @@ function OverseerConfirmCard({
         </>
       }
     >
-      <p className={styles.summary}>{action.summary}</p>
-      {failure !== null && <ErrorLine>{failure}</ErrorLine>}
+      {card === null ? (
+        <p className={styles.summary}>{action.summary}</p>
+      ) : (
+        <OverseerTaskCard card={card} onOpenTask={onOpenTask} />
+      )}
     </DecisionCard>
   );
 }
@@ -377,18 +391,23 @@ function OverseerConfirmBatch({
   locked,
   onDecide,
   onDecideAll,
+  cardFor,
+  onOpenTask,
 }: {
-  actions: { action: OverseerAction; failure: string | null }[];
+  actions: OverseerAction[];
   decidingId: string | null;
   locked: boolean;
   onDecide: (actionId: string, approve: boolean) => void;
   onDecideAll: (approve: boolean) => void;
+  /** A task action's tasks, listed in its row in place of the summary. */
+  cardFor?: (action: OverseerAction) => TaskCardModel | null;
+  onOpenTask?: (taskId: string) => void;
 }) {
-  const tools = new Set(actions.map((a) => a.action.tool));
+  const tools = new Set(actions.map((a) => a.tool));
   const label =
     tools.size === 1 ? (
       <>
-        <span className="mono">{actions[0].action.tool}</span>
+        <span className="mono">{actions[0].tool}</span>
         {` ×${actions.length}`}
       </>
     ) : (
@@ -427,34 +446,42 @@ function OverseerConfirmBatch({
       }
     >
       <ul className={styles.batchRows}>
-        {actions.map(({ action, failure }) => (
-          <li key={action.id} className={styles.batchRow}>
-            <div className={styles.batchLine}>
-              <p className={styles.batchSummary}>{action.summary}</p>
-              <TipIconButton
-                tip="Approve"
-                label={`Approve: ${action.summary}`}
-                disabled={locked}
-                onClick={() => onDecide(action.id, true)}
-                icon={
-                  decidingId === action.id ? (
-                    <Spinner size="xs" label="" />
-                  ) : (
-                    <Check size={14} strokeWidth={1.8} />
-                  )
-                }
-              />
-              <TipIconButton
-                tip="Deny"
-                label={`Deny: ${action.summary}`}
-                disabled={locked}
-                onClick={() => onDecide(action.id, false)}
-                icon={<X size={14} strokeWidth={1.8} />}
-              />
-            </div>
-            {failure !== null && <ErrorLine>{failure}</ErrorLine>}
-          </li>
-        ))}
+        {actions.map((action) => {
+          const card = cardFor?.(action) ?? null;
+          return (
+            <li key={action.id} className={styles.batchRow}>
+              <div className={styles.batchLine}>
+                {card === null ? (
+                  <p className={styles.batchSummary}>{action.summary}</p>
+                ) : (
+                  <div className={styles.batchSummary}>
+                    <OverseerTaskCard card={card} onOpenTask={onOpenTask} />
+                  </div>
+                )}
+                <TipIconButton
+                  tip="Approve"
+                  label={`Approve: ${action.summary}`}
+                  disabled={locked}
+                  onClick={() => onDecide(action.id, true)}
+                  icon={
+                    decidingId === action.id ? (
+                      <Spinner size="xs" label="" />
+                    ) : (
+                      <Check size={14} strokeWidth={1.8} />
+                    )
+                  }
+                />
+                <TipIconButton
+                  tip="Deny"
+                  label={`Deny: ${action.summary}`}
+                  disabled={locked}
+                  onClick={() => onDecide(action.id, false)}
+                  icon={<X size={14} strokeWidth={1.8} />}
+                />
+              </div>
+            </li>
+          );
+        })}
       </ul>
     </DecisionCard>
   );
@@ -771,6 +798,17 @@ interface OverseerChatProps {
   disabled?: boolean;
   /** Opens a show_tasks door; without it a door reads as a plain line. */
   onOpenDoor?: (door: OverseerDoor) => void;
+  /** The board and its runs, so the tasks an action proposes or sends out
+   * list as a card with each run's state; without it they stay sentences. */
+  work?: OverseerWork;
+}
+
+/** What the chat's task cards read: task titles, runs, and where a row opens. */
+interface OverseerWork {
+  tasks: readonly { meta: { id: string; title: string } }[];
+  runs: readonly RunMeta[];
+  /** Opens a task beside the talk; without it the rows do not open. */
+  onOpenTask?: (taskId: string) => void;
 }
 
 /**
@@ -787,6 +825,7 @@ export function OverseerChat({
   aboveComposer,
   disabled = false,
   onOpenDoor,
+  work,
 }: OverseerChatProps) {
   // The composer's text is the session's, not this component's: leaving the
   // Overseer page unmounts this chat, and the session outlives it. Only one of
@@ -827,6 +866,19 @@ export function OverseerChat({
   const decidingId = overseer.decidingActionId;
   const decidingRequestId = overseer.decidingRequestId;
   const decideError = overseer.decideError;
+
+  // A task's title by id, for the task cards; a task the board dropped keeps its id.
+  const titles = useMemo(
+    () => new Map(work?.tasks.map((t) => [t.meta.id, t.meta.title]) ?? []),
+    [work?.tasks]
+  );
+  const taskTitle = (taskId: string) => titles.get(taskId);
+  const runs = work?.runs ?? [];
+  // The tasks a pending task action proposes, or null for any other action.
+  const taskCardFor = (action: OverseerAction): TaskCardModel | null =>
+    work !== undefined && isTaskTool(action.tool)
+      ? proposedTaskCard(action, taskTitle, runs)
+      : null;
 
   const fullThread = useMemo(
     () => buildOverseerThread(overseer.record, overseer.live),
@@ -1002,11 +1054,16 @@ export function OverseerChat({
             decidingId={decidingId}
             locked={decidingId !== null}
             onDecide={decide}
+            cardFor={taskCardFor}
+            onOpenTask={work?.onOpenTask}
             onDecideAll={(approve) => {
-              // One at a time: the session decides one action per call.
+              // One at a time, stopping at the first that fails: the rest
+              // likely fail the same way, and one error is enough to read.
               void (async () => {
-                for (const { action } of item.actions) {
-                  await overseer.confirmAction(action.id, approve);
+                for (const action of item.actions) {
+                  if (!(await overseer.confirmAction(action.id, approve))) {
+                    return;
+                  }
                 }
               })();
             }}
@@ -1017,10 +1074,11 @@ export function OverseerChat({
           <OverseerConfirmCard
             key={item.key}
             action={item.action}
-            failure={item.failure}
             deciding={decidingId === item.action.id}
             locked={decidingId !== null}
             onDecide={(approve) => decide(item.action.id, approve)}
+            card={taskCardFor(item.action)}
+            onOpenTask={work?.onOpenTask}
           />
         );
       case 'approve':
@@ -1035,6 +1093,20 @@ export function OverseerChat({
           />
         );
       case 'outcome':
+        if (
+          work !== undefined &&
+          item.taskIds !== undefined &&
+          item.taskIds.length > 0
+        ) {
+          return (
+            <OverseerTaskCard
+              key={item.key}
+              className={styles.card}
+              card={appliedTaskCard(item.taskIds, taskTitle, runs)}
+              onOpenTask={work.onOpenTask}
+            />
+          );
+        }
         return (
           <OverseerOutcomeRow
             key={item.key}

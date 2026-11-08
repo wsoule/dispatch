@@ -9,7 +9,6 @@ import { describe, expect, test } from 'bun:test';
 
 import { buildFlightPlan, tasksWithRunBranch } from './flightPlan';
 import { childrenByParent, flightScope } from './flightScope';
-import { queuePositions } from './flightViews';
 
 function child(
   id: string,
@@ -329,21 +328,6 @@ describe('teammates in the plan', () => {
       opts()
     );
     expect(stateById(plan)).toEqual({ 't-a': 'teammate', 't-b': 'queued' });
-  });
-
-  test('queue positions skip a teammate’s node', () => {
-    const plan = buildFlightPlan(
-      [
-        child('t-a', { assignee: 'human:sam', priority: 'urgent' }),
-        child('t-b', { priority: 'high' }),
-        child('t-c', { priority: 'low' }),
-      ],
-      { ...opts(), me: 'human:wyat' }
-    );
-    const queue = queuePositions(plan.nodes, () => 1);
-    expect(queue.has('t-a')).toBe(false);
-    expect(queue.get('t-b')).toEqual({ position: 0, free: 1 });
-    expect(queue.get('t-c')).toEqual({ position: 1, free: 1 });
   });
 });
 

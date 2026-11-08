@@ -18,6 +18,7 @@ export const GOTO_CHORDS: readonly { key: string; label: string }[] = [
   { key: 'F', label: 'Moving' },
   { key: 'R', label: 'Review' },
   { key: 'M', label: 'Threads' },
+  { key: 'W', label: 'My week' },
   { key: 'L', label: 'Timeline' },
   { key: 'G', label: 'Graph' },
   { key: 'S', label: 'Settings' },

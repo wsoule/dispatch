@@ -8,6 +8,7 @@ import {
   type MilestoneAssessment,
   type Snapshot,
 } from '@dispatch/planning';
+import { buildEvalContext, buildWorkspaceData } from '@dispatch/planning';
 import { describe, expect, test } from 'bun:test';
 
 import type { ContainerStatus } from '../lib/containerStatus';
@@ -19,13 +20,13 @@ import {
   buildSettingsLink,
   buildShellNav,
   buildShellTabs,
+  HOSTED_DESTINATIONS,
   orbCountTone,
   planningProjectMark,
   type ProjectMark,
   projectMark,
   SHELL_DESTINATION_LABELS,
 } from './shell';
-import { buildEvalContext, buildWorkspaceData } from './workspaceData';
 
 const QUIET = {
   count: null,
@@ -45,12 +46,13 @@ function nav(over: Partial<Parameters<typeof buildShellNav>[0]> = {}) {
 }
 
 describe('buildShellNav', () => {
-  test('eight rows in order, the current one marked, keys as the shell prints them', () => {
+  test('nine rows in order, the current one marked, keys as the shell prints them', () => {
     const items = nav({ destination: 'threads' });
     expect(items.map((item) => item.label)).toEqual([
       'Overseer',
       'Issues',
       'Needs you',
+      'My week',
       'Timeline',
       'Graph',
       'Threads',
@@ -63,15 +65,17 @@ describe('buildShellNav', () => {
       false,
       false,
       false,
+      false,
       true,
       false,
       false,
     ]);
     expect(items[0].shortcut).toEqual(['⌘', '1']);
     expect(items[2].shortcut).toEqual(['G', 'I']);
-    expect(items[3].shortcut).toEqual(['G', 'L']);
-    expect(items[4].shortcut).toEqual(['G', 'G']);
-    expect(items[6].shortcut).toBeUndefined();
+    expect(items[3].shortcut).toEqual(['G', 'W']);
+    expect(items[4].shortcut).toEqual(['G', 'L']);
+    expect(items[5].shortcut).toEqual(['G', 'G']);
+    expect(items[7].shortcut).toBeUndefined();
     expect(items.every((item) => item.href === `#/${item.id}`)).toBe(true);
   });
 
@@ -134,6 +138,35 @@ describe('buildSettingsLink', () => {
     expect(
       buildSettingsLink({ destination: 'runs', adminItems: [] }).current
     ).toBe(false);
+  });
+});
+
+describe('the hosted planner', () => {
+  test('the sidebar keeps only the planning destinations', () => {
+    const items = nav({ destination: 'timeline', hosted: true });
+    expect(items.map((item) => item.label)).toEqual([
+      'Issues',
+      'Needs you',
+      'My week',
+      'Timeline',
+      'Graph',
+    ]);
+    expect(items.find((item) => item.current)?.label).toBe('Timeline');
+  });
+
+  test('the phone tabs are the planning views', () => {
+    expect(buildShellTabs('graph', true).map((tab) => tab.label)).toEqual([
+      'Issues',
+      'My week',
+      'Timeline',
+      'Graph',
+    ]);
+  });
+
+  test('only the planning destinations are open on the web', () => {
+    expect(HOSTED_DESTINATIONS.has('timeline')).toBe(true);
+    for (const hidden of ['overseer', 'threads', 'docs', 'runs'] as const)
+      expect(HOSTED_DESTINATIONS.has(hidden)).toBe(false);
   });
 });
 
@@ -431,6 +464,7 @@ test('every destination has a label', () => {
     'settings',
     'threads',
     'timeline',
+    'week',
   ]);
 });
 

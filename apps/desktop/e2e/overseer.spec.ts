@@ -225,11 +225,15 @@ test.describe('overseer chat end to end', () => {
     await expect(confirmHeader).toBeVisible({ timeout: 15_000 });
 
     // Approving runs the dispatch server-side before the call resolves, so
-    // the applied row showing up means the run exists.
+    // once the confirm card is gone, the applied task card listing the task
+    // means the run exists.
     await approveButton.click();
-    await expect(page.getByText(/^Applied: Dispatch /)).toBeVisible({
-      timeout: 15_000,
-    });
+    await expect(confirmHeader).toHaveCount(0, { timeout: 15_000 });
+    await expect(
+      page
+        .getByTestId('overseer-task-card')
+        .locator(`[data-task-id="${taskId}"]`)
+    ).toBeVisible({ timeout: 15_000 });
 
     const afterApprove = await listRunIds(request);
     const created = [...afterApprove].filter((id) => !baselineRunIds.has(id));

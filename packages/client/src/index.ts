@@ -15,6 +15,17 @@ export {
   wsUrl,
 } from './api';
 export type {
+  PlanningAuditEntry,
+  PlanningDigest,
+  PlanningDigestItem,
+  PlanningDigestRecord,
+  AllocationItemOutcome,
+  AllocationRun,
+  AllocationRunInput,
+  AllocationRunItem,
+  AllocationRunMode,
+  AllocationRunProject,
+  AllocationRunSummary,
   A2AClientSummary,
   A2AListenerSettings,
   A2AListenerStatus,

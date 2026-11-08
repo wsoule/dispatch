@@ -3,6 +3,7 @@ import {
   Button,
   ChipButton,
   COPIED_MS,
+  cx,
   EmptyState,
   type PickerOption,
   PickerPopover,
@@ -75,7 +76,10 @@ import { CHART_STATE, STATE_ORDER } from './chartTones';
 import styles from './MilestoneMap.module.css';
 import { type ChartViewportApi, useChartViewport } from './useChartViewport';
 
-type ChartView = 'milestones' | 'tasks';
+/** The chart's two views: milestones as cards, or every linked task. */
+export type ChartView = 'milestones' | 'tasks';
+
+const ALL_VIEWS: readonly ChartView[] = ['milestones', 'tasks'];
 
 const GRAPH_MODES: { id: ChartView; label: string }[] = [
   { id: 'milestones', label: 'Milestones' },
@@ -86,13 +90,15 @@ const GRAPH_MODES: { id: ChartView; label: string }[] = [
  * layout): the Tasks chart asks to be narrowed instead. */
 export const TASK_DRAW_CAP = 400;
 
-// Remembered per project; storage that throws just means it is not remembered.
-function storedMode(key: string): ChartView {
+// Remembered per project; storage that throws just means it is not remembered. A view the
+// host does not offer reads as its first one.
+function storedMode(key: string, views: readonly ChartView[]): ChartView {
+  const fallback = views[0] ?? 'milestones';
   try {
     const stored = localStorage.getItem(key);
-    return GRAPH_MODES.find((m) => m.id === stored)?.id ?? 'milestones';
+    return views.find((view) => view === stored) ?? fallback;
   } catch {
-    return 'milestones';
+    return fallback;
   }
 }
 
@@ -105,7 +111,7 @@ function storeMode(key: string, mode: ChartView): void {
 }
 
 /** The chart's display choices, remembered per project like the layout. */
-interface ChartPrefs {
+export interface ChartPrefs {
   hideLanded: boolean;
   showUnlinked: boolean;
   /** Box the Tasks chart's cards by milestone (off by default: boxes stretch the layout). */
@@ -120,14 +126,15 @@ const DEFAULT_PREFS: ChartPrefs = {
   inspector: true,
 };
 
-// Reads each flag on its own, so a stored object from an older shape keeps what still fits.
-function storedPrefs(key: string): ChartPrefs {
+// Reads each flag on its own, so a stored object from an older shape keeps what still fits;
+// a flag never stored takes the host's default.
+function storedPrefs(key: string, defaults: ChartPrefs): ChartPrefs {
   try {
     const raw: unknown = JSON.parse(localStorage.getItem(key) ?? 'null');
-    if (typeof raw !== 'object' || raw === null) return DEFAULT_PREFS;
+    if (typeof raw !== 'object' || raw === null) return defaults;
     const flag = (name: keyof ChartPrefs) => {
       const value: unknown = Reflect.get(raw, name);
-      return typeof value === 'boolean' ? value : DEFAULT_PREFS[name];
+      return typeof value === 'boolean' ? value : defaults[name];
     };
     return {
       hideLanded: flag('hideLanded'),
@@ -136,7 +143,7 @@ function storedPrefs(key: string): ChartPrefs {
       inspector: flag('inspector'),
     };
   } catch {
-    return DEFAULT_PREFS;
+    return defaults;
   }
 }
 
@@ -434,6 +441,19 @@ export interface MilestoneMapViewProps {
   renderTooLarge?: (count: number) => ReactNode;
   /** Opens a task (the drawer); `plan` asks for a milestone's own page. */
   onOpenTask: (taskId: string, tab?: TaskTab) => void;
+  /** The views the toolbar offers, the first the default; one view hides the switch. */
+  views?: readonly ChartView[];
+  /** Display choices before the user makes their own (a plan shows its unlinked tasks). */
+  defaultPrefs?: Partial<ChartPrefs>;
+  /** The host's verbs in a selected task's inspector (a plan's Send agent). */
+  taskActions?: (taskId: string) => ReactNode;
+  /** The host's verbs in a selected milestone's inspector (a plan band's fan-out). */
+  milestoneActions?: (milestoneId: string) => ReactNode;
+  /** A chart inside a scrolling page: a plain scroll scrolls the page, a pinch zooms. */
+  embedded?: boolean;
+  /** With the inspector toggled off, a selection still opens it, for the host's verbs. */
+  inspectorOnSelect?: boolean;
+  className?: string;
 }
 
 /**
@@ -452,19 +472,30 @@ export function MilestoneMapView({
   arrivalTaskId = null,
   renderTooLarge,
   onOpenTask,
+  views = ALL_VIEWS,
+  defaultPrefs,
+  taskActions,
+  milestoneActions,
+  embedded = false,
+  inspectorOnSelect = false,
+  className,
 }: MilestoneMapViewProps) {
   const storageKey = `dispatch:graph-mode:${projectKey}`;
   const prefsKey = `dispatch:graph-chart:${projectKey}`;
   const [mode, setMode] = useState<ChartView>(() =>
-    arrivalTaskId !== null ? 'tasks' : storedMode(storageKey)
+    arrivalTaskId !== null && views.includes('tasks')
+      ? 'tasks'
+      : storedMode(storageKey, views)
   );
-  const [prefs, setPrefs] = useState<ChartPrefs>(() => storedPrefs(prefsKey));
+  const [prefs, setPrefs] = useState<ChartPrefs>(() =>
+    storedPrefs(prefsKey, { ...DEFAULT_PREFS, ...defaultPrefs })
+  );
   const view: ChartView = mode;
   const [copied, setCopied] = useState(false);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [displayOpen, setDisplayOpen] = useState(false);
-  const viewport = useChartViewport();
+  const viewport = useChartViewport({ pageScroll: embedded });
 
   const map = useMemo(() => milestoneMap(groups), [groups]);
   const chart = useMemo(
@@ -1091,6 +1122,7 @@ export function MilestoneMapView({
           onFitChain={(ids) => focusOn(ids, 1, false)}
           onOpen={(id) => onOpenTask(id)}
           onClear={clear}
+          extraActions={taskActions?.(active.id)}
         />
       );
     }
@@ -1122,6 +1154,7 @@ export function MilestoneMapView({
             showSet({ kind: 'tasks-of', milestone: mid }, 'tasks')
           }
           onClear={clear}
+          extraActions={milestoneActions?.(id)}
         />
       );
     }
@@ -1204,11 +1237,14 @@ export function MilestoneMapView({
   const nothingDrawn = view === 'tasks' && empty === null && drawn.length === 0;
 
   const searchOptions = useMemo((): PickerOption[] => {
-    const out: PickerOption[] = map.nodes.map((n) => ({
-      value: `m:${n.id}`,
-      label: n.title,
-      group: 'Milestones',
-    }));
+    // A chart without the Milestones view finds tasks only.
+    const out: PickerOption[] = views.includes('milestones')
+      ? map.nodes.map((n) => ({
+          value: `m:${n.id}`,
+          label: n.title,
+          group: 'Milestones',
+        }))
+      : [];
     for (const id of findable) {
       const task = chart.tasks.get(id);
       if (task === undefined) continue;
@@ -1225,7 +1261,7 @@ export function MilestoneMapView({
       });
     }
     return out;
-  }, [map, findable, chart]);
+  }, [map, findable, chart, views]);
 
   const onSearchPick = (value: string | null) => {
     if (value === null) return;
@@ -1239,25 +1275,34 @@ export function MilestoneMapView({
     }
   };
 
-  const summary = `${map.nodes.length} ${map.nodes.length === 1 ? 'milestone' : 'milestones'} · ${
-    waits === 0
-      ? 'no waits between them'
-      : `${waits} ${waits === 1 ? 'wait' : 'waits'} between them`
-  } · ${landed}/${total} landed`;
+  const modes = GRAPH_MODES.filter((m) => views.includes(m.id));
+  // A tasks-only chart counts tasks and waits; with the Milestones view, milestones too.
+  const taskSummary = `${chart.tasks.size} ${chart.tasks.size === 1 ? 'task' : 'tasks'} · ${chart.edges.length} ${chart.edges.length === 1 ? 'wait' : 'waits'} · ${landed}/${total} landed`;
+  const showInspector =
+    prefs.inspector || (inspectorOnSelect && active !== null);
+  const summary = !views.includes('milestones')
+    ? taskSummary
+    : `${map.nodes.length} ${map.nodes.length === 1 ? 'milestone' : 'milestones'} · ${
+        waits === 0
+          ? 'no waits between them'
+          : `${waits} ${waits === 1 ? 'wait' : 'waits'} between them`
+      } · ${landed}/${total} landed`;
 
   return (
-    <div data-testid="milestone-map" className={styles.root}>
+    <div data-testid="milestone-map" className={cx(styles.root, className)}>
       <div data-testid="chart-toolbar" className={styles.toolbar}>
-        <SegmentedControl
-          label="Graph of"
-          size="sm"
-          options={GRAPH_MODES}
-          value={mode}
-          onChange={(next) => {
-            const picked = GRAPH_MODES.find((m) => m.id === next);
-            if (picked !== undefined) pick(picked.id);
-          }}
-        />
+        {modes.length > 1 && (
+          <SegmentedControl
+            label="Graph of"
+            size="sm"
+            options={modes}
+            value={mode}
+            onChange={(next) => {
+              const picked = modes.find((m) => m.id === next);
+              if (picked !== undefined) pick(picked.id);
+            }}
+          />
+        )}
         {empty === null && (
           <>
             <PickerPopover
@@ -1430,12 +1475,13 @@ export function MilestoneMapView({
               ariaLabel={
                 view === 'tasks' ? 'Task dependencies' : 'Milestone map'
               }
+              zoomHint={embedded ? 'pinch to zoom' : undefined}
             />
           )}
           <div role="status" className={styles.srOnly}>
             {status}
           </div>
-          {prefs.inspector && (
+          {showInspector && (
             <aside
               ref={asideRef}
               data-testid="chart-inspector"

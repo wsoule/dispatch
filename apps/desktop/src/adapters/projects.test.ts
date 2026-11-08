@@ -6,6 +6,7 @@ import type {
   TimelineLane,
   TimelineView,
 } from '@dispatch/planning';
+import { noProjectId } from '@dispatch/planning';
 import { describe, expect, test } from 'bun:test';
 
 import {
@@ -17,7 +18,6 @@ import {
   type LiveRunsByContainer,
   parseProjectFilter,
 } from './projects';
-import { noProjectId } from './workspaceData';
 
 // Hand-built planning view models, as adapters/timeline.test.ts builds them:
 // only the fields the register reads are meaningful; the rest are plausible

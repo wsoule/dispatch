@@ -73,6 +73,18 @@ export function previewResponseHeaders(headers: Headers): Headers {
   return copy;
 }
 
+// The preview tab's iframe flags. Flags intersect with a frame's own, so this
+// only takes away what a frame would otherwise keep: its origin.
+const PREVIEW_CSP = 'sandbox allow-scripts allow-forms allow-popups';
+
+/** Pins a `/preview/` response to an opaque origin, even in a frame that kept
+ *  its own (the browser pane's) and navigated here: on the daemon's origin,
+ *  agent code could fetch `/` and read the agent token. */
+export function sandboxPreview(response: Response): Response {
+  response.headers.append('content-security-policy', PREVIEW_CSP);
+  return response;
+}
+
 /** The dev server URL a proxied request goes to, or null when it would leave
  *  the preview's port. The path is set on a URL whose host is already fixed:
  *  resolving it against a base instead reads `//host/…` (or `/\\host/…`) as

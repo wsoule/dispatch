@@ -1,4 +1,4 @@
-# Build context for apps/demo/Dockerfile and apps/site/Dockerfile is the repo
+# Build context for apps/demo, apps/site and apps/web's Dockerfiles is the repo
 # root, not the app directory — both need workspace deps, and the demo needs
 # the desktop bundle. Only excludes what a fresh `pnpm install` + filtered
 # `pnpm run build` never reads.
@@ -34,3 +34,6 @@ docs
 # moon's local task cache — potentially hundreds of MB of hashes and cached
 # outputs, and the image never runs moon (the build uses pnpm directly).
 .moon/cache
+
+# apps/web's local dev database (moonx web:dev).
+apps/web/data

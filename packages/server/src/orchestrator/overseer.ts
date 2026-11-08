@@ -123,6 +123,9 @@ export interface OverseerMessage {
   actionId?: string;
   /** `approval` entries: the OverseerApproval this entry reports on. */
   requestId?: string;
+  /** Applied `action` entries: the tasks the action created or dispatched,
+   *  in order, so a client can show them as a list it links to. */
+  taskIds?: string[];
   /**
    * `action` and `approval` entries only. `failed` means the human approved
    * an action but the effect itself threw — the action stays pending so it
@@ -1268,9 +1271,8 @@ export class OverseerManager {
    *
    * `approve: true` calls the registry's `applyAction` — the only call to it
    * in this class — and folds its real outcome into the transcript: `applied`
-   * when the effect ran, `failed` (with the thrown message, the action left
-   * pending to retry, and its gate raised again with the error) when it
-   * didn't. `approve: false` never calls it and records a denial.
+   * when the effect ran, `failed` (with the thrown message, settled like the
+   * other outcomes) when it didn't. `approve: false` never calls it and records a denial.
    *
    * Deliberately allowed while a turn is `running`: the action was queued by
    * an earlier turn, and making a human wait for the assistant to stop talking
@@ -1313,9 +1315,13 @@ export class OverseerManager {
       this.settleAction(conversationId, applied, 'applied');
     } catch (err) {
       const message = (err as Error).message;
-      // The registry restores a failed action to `pending`, so restore it here
-      // too — the human approved it and may well want to retry.
-      this.restorePendingAction(conversationId, action);
+      // Reported once and settled: the action stays off the confirmation list
+      // and its gate is not raised again, so one failure is one row.
+      this.ctx.bus?.closeGate(
+        conversationId,
+        { actionId },
+        'the action was approved, but it failed'
+      );
       this.appendMessage(conversationId, {
         role: 'action',
         tool: action.tool,
@@ -1327,7 +1333,6 @@ export class OverseerManager {
         conversationId,
         `${action.summary} — the human approved it, but it failed: ${message}`
       );
-      await this.raiseActionGate(conversationId, action, message);
       throw err;
     }
     return this.get(conversationId);
@@ -1647,26 +1652,18 @@ export class OverseerManager {
     void this.raiseActionGate(conversationId, action);
   }
 
-  // Raises an action's gate, replacing an open one with the last error if any;
-  // a gate written after its action was decided closes at once. Never rejects.
+  // Raises an action's gate; a gate written after its action was decided
+  // closes at once. Never rejects.
   private async raiseActionGate(
     conversationId: string,
-    action: OverseerAction,
-    lastError?: string
+    action: OverseerAction
   ): Promise<void> {
     const bus = this.ctx.bus;
     if (bus === undefined) return;
-    if (lastError !== undefined)
-      bus.closeGate(
-        conversationId,
-        { actionId: action.id },
-        'the action is asked about again'
-      );
     try {
       await bus.raiseAction(conversationId, {
         id: action.id,
         summary: action.summary,
-        ...(lastError !== undefined ? { lastError } : {}),
       });
     } catch (err) {
       console.error(
@@ -1707,6 +1704,9 @@ export class OverseerManager {
       actionId: action.id,
       outcome,
       text: `${verb}: ${action.summary}`,
+      ...(outcome === 'applied' && action.taskIds !== undefined
+        ? { taskIds: action.taskIds }
+        : {}),
     });
     this.noteDecision(
       conversationId,
@@ -1721,18 +1721,6 @@ export class OverseerManager {
     if (record === undefined) return;
     this.updateRecord(conversationId, {
       pendingActions: record.pendingActions.filter((a) => a.id !== actionId),
-    });
-  }
-
-  private restorePendingAction(
-    conversationId: string,
-    action: OverseerAction
-  ): void {
-    const record = this.conversations.get(conversationId);
-    if (record === undefined) return;
-    if (record.pendingActions.some((a) => a.id === action.id)) return;
-    this.updateRecord(conversationId, {
-      pendingActions: [...record.pendingActions, { ...action }],
     });
   }
 

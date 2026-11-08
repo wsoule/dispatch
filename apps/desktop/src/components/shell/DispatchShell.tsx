@@ -69,6 +69,8 @@ export interface DispatchShellProps {
   tier: string | null;
   /** Set on a team-local page: who is signed in, and how to stop. */
   teamSession?: { handle: string; onSignOut: () => void };
+  /** The hosted planner on app.dispatch.foo: planning destinations only. */
+  hosted?: boolean;
   windowChrome?: WindowChrome;
   /** Every link in the shell (a sidebar row, a project row, a crumb, the
    * Projects section's "All") dispatches the actions its href parses to
@@ -304,6 +306,7 @@ export function DispatchShell({
   projects,
   tier,
   teamSession,
+  hosted = false,
   windowChrome,
   onNavigate,
   onSearch,
@@ -374,7 +377,7 @@ export function DispatchShell({
           <AppShell
             appName="Dispatch"
             workspaceName={projectName ?? undefined}
-            brandHref={hrefFor('overseer')}
+            brandHref={hrefFor(hosted ? 'timeline' : 'overseer')}
             workspaceSwitcher={workspaceSwitcher}
             nav={buildShellNav({
               destination,
@@ -382,6 +385,7 @@ export function DispatchShell({
               needsYou,
               threadsUnread,
               modLabel,
+              hosted,
             })}
             sections={[projects]}
             settings={buildSettingsLink({ destination, adminItems })}
@@ -404,7 +408,7 @@ export function DispatchShell({
             onSearch={onSearch}
             topbarActions={topbarActions}
             banner={banner}
-            tabs={buildShellTabs(destination)}
+            tabs={buildShellTabs(destination, hosted)}
             storageKey={SHELL_STORAGE_KEY}
             sidebarShortcut={false}
             chromeAttributes={

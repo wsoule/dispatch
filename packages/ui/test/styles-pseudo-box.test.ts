@@ -101,11 +101,10 @@ describe('pseudo-element box sizing', () => {
     const boxes = pseudoBoxes();
     const dependent = [...boxes].filter(([, b]) => b.sized && b.edged);
     // The scan finds the boxes it is about (the done ticks, the activity
-    // ring, the Mermaid gutter, the timeline legend's diamond).
+    // ring, the timeline legend's diamond).
     expect(dependent.map(([id]) => id)).toEqual(
       expect.arrayContaining([
         'components/status-mark.module.css .done::after',
-        'graph/mermaid-source.module.css .line::before',
         'task/task-activity-list.module.css .mark::before',
         'tasks/checklist.module.css .mark::after',
         'timeline/timeline-chart.module.css .legendDiamond::after',

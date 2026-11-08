@@ -40,6 +40,9 @@ export type ProjectView =
    * milestone, lead and allocation, grouped by initiative; a page under
    * Tasks, reached from the Projects section's "All". */
   | 'projects'
+  /** The allocation preview and run log; a page under Tasks, reached from
+   * the Projects page and the palette. */
+  | 'allocation'
   /** Everything in motion at once: a Flight Plan band per container with work
    * moving; a page under Runs (Runs › Live), reached from the Runs page's Live
    * button and the palette, and left back to the Runs page. */
@@ -72,6 +75,8 @@ export type ProjectView =
   | 'terminals'
   /** The Gantt of every project's milestones, grouped by initiative (Phase 4). */
   | 'timeline'
+  /** One person's open issues by milestone, deadlines and attention (My week). */
+  | 'week'
   /** The dependency graph at every level (initiatives, projects, milestones,
    * issues), a sidebar destination of its own (Phase 5). */
   | 'graph'
@@ -140,6 +145,7 @@ export type SettingsPage =
   | 'autonomy'
   | 'memory'
   | 'previews'
+  | 'planning'
   | 'notifications'
   | 'team'
   | 'connected-agents'
@@ -167,6 +173,7 @@ export const SETTINGS_PAGE_LABELS: Readonly<Record<NavSettingsPage, string>> = {
   autonomy: 'Autonomy',
   memory: 'Memory',
   previews: 'Previews',
+  planning: 'Planning',
   notifications: 'Notifications',
   team: 'Members',
   'connected-agents': 'Connected agents',
@@ -202,7 +209,15 @@ export type TasksMode = 'list' | 'board';
  * Runs › Live and closing it returns to the Runs page. */
 export type HostedView = Extract<
   ProjectView,
-  'files' | 'terminals' | 'threads' | 'timeline' | 'graph' | 'projects' | 'live'
+  | 'files'
+  | 'terminals'
+  | 'threads'
+  | 'timeline'
+  | 'graph'
+  | 'projects'
+  | 'allocation'
+  | 'live'
+  | 'week'
 >;
 
 /** A hosted view as a page, with the parameters its route carries: the
@@ -431,7 +446,9 @@ export function projectViewDestination(view: ProjectView): NavDestination {
     case 'terminals':
     case 'threads':
     case 'projects':
+    case 'allocation':
     case 'live':
+    case 'week':
       return { kind: 'page', page: { kind: 'view', view } };
     case 'timeline':
       return {
@@ -526,6 +543,8 @@ export function keyAction(
       return { type: 'setProjectView', view: 'threads' };
     case 'goto-timeline':
       return { type: 'openTimeline', project: null };
+    case 'goto-week':
+      return { type: 'setProjectView', view: 'week' };
     case 'goto-graph':
       return { type: 'openGraph', scope: DEFAULT_GRAPH_SCOPE, nodeId: null };
     case 'goto-settings':

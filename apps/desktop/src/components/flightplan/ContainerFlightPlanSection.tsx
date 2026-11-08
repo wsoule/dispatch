@@ -1,7 +1,9 @@
+import type { TaskListItem } from '@dispatch-foo/core/browser';
 import { createContext, useContext } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import type { TaskTab } from '../../lib/appNav';
+import type { TaskBucket } from '../../lib/taskStatus';
 import { FlightPlan } from './FlightPlanView';
 
 /**
@@ -11,6 +13,12 @@ import { FlightPlan } from './FlightPlanView';
  */
 export interface FlightPlanHost {
   data: DispatchProjectData;
+  /** An open task's one bucket, for the chart's state words. */
+  bucketOf: (task: TaskListItem) => TaskBucket | null;
+  /** Open asks per task. */
+  asksByTask: ReadonlyMap<string, number>;
+  /** The project's path: keys the chart's remembered choices. */
+  projectKey: string;
   /** Dispatches without following the run; rejects on failure. */
   dispatchTask: (taskId: string) => Promise<void>;
   onDispatchFailed: (taskId: string, message: string) => void;
@@ -55,6 +63,9 @@ export function ContainerFlightPlanSection({
     <FlightPlan
       containerId={containerId}
       data={host.data}
+      bucketOf={host.bucketOf}
+      asksByTask={host.asksByTask}
+      projectKey={host.projectKey}
       dispatchTask={host.dispatchTask}
       onDispatchFailed={host.onDispatchFailed}
       onOpenTask={host.onOpenTask}

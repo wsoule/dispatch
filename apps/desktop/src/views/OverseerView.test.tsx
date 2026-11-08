@@ -41,7 +41,7 @@ function session(over: Partial<OverseerSession>): OverseerSession {
     sending: false,
     sendError: null,
     revoked: false,
-    confirmAction: () => Promise.resolve(),
+    confirmAction: () => Promise.resolve(true),
     decidingActionId: null,
     decideApproval: () => Promise.resolve(true),
     decidingRequestId: null,
@@ -88,6 +88,7 @@ function Harness({
     port: 4321,
     portLoading: false,
     portError: false,
+    tasks: [],
     ...project,
   } as unknown as DispatchProjectData;
   return (
@@ -109,6 +110,7 @@ function Harness({
 
 beforeEach(() => {
   window.localStorage.removeItem('dispatch:overseer-dock:/repo');
+  window.localStorage.removeItem('dispatch:browser-url:/repo');
 });
 
 async function send(text: string): Promise<void> {
@@ -180,6 +182,54 @@ test('a follow-up, a slash command, or no reading stays in the conversation', as
   expect(judged).toBe(1);
 });
 
+test('Browser opens a pane beside the talk, in place of the columns', () => {
+  render(
+    <Harness
+      overseer={session({})}
+      client={{ getOverseer: (id: string) => Promise.resolve(record(id, 'x')) }}
+    />
+  );
+  expect(screen.queryByTestId('browser-pane')).toBeNull();
+  fireEvent.click(screen.getByTestId('overseer-browser-toggle'));
+  expect(screen.getByTestId('browser-pane')).toBeTruthy();
+  expect(screen.queryByTestId('overseer-outflow')).toBeNull();
+  const field = screen.getByRole('textbox', { name: 'Address' });
+  fireEvent.change(field, { target: { value: '5173' } });
+  fireEvent.submit(field);
+  expect(screen.getByTitle('Browser page').getAttribute('src')).toBe(
+    'http://localhost:5173/'
+  );
+  // Remembered for the project, so reopening returns to it.
+  expect(window.localStorage.getItem('dispatch:browser-url:/repo')).toBe(
+    'http://localhost:5173/'
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Close browser' }));
+  expect(screen.queryByTestId('browser-pane')).toBeNull();
+});
+
+test("an agent's show_page door opens its page in the pane", () => {
+  const withDoor = record('w-1', 'show me the app');
+  withDoor.messages.push({
+    role: 'tool',
+    tool: 'show_page',
+    text: JSON.stringify({ door: { url: 'http://localhost:3000/' } }),
+    at: '2026-10-06T09:00:01Z',
+  });
+  const opened: unknown[] = [];
+  render(
+    <Harness
+      overseer={session({ record: withDoor })}
+      client={{ getOverseer: (id: string) => Promise.resolve(record(id, 'x')) }}
+      extra={{ onOpenDoor: (door) => opened.push(door) }}
+    />
+  );
+  fireEvent.click(screen.getByTestId('overseer-door'));
+  expect(opened).toEqual([]);
+  expect(screen.getByTitle('Browser page').getAttribute('src')).toBe(
+    'http://localhost:3000/'
+  );
+});
+
 test('Set aside docks the conversation and empties the composer', () => {
   let resets = 0;
   render(
@@ -220,6 +270,7 @@ function FocusHarness({
     port: 4321,
     portLoading: false,
     portError: false,
+    tasks: [],
   } as unknown as DispatchProjectData;
   return (
     <QueryClientProvider client={queryClient}>
