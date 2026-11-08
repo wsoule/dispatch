@@ -15,6 +15,7 @@
     "@dispatch-foo/core": "workspace:*",
     "@dispatch-foo/protocol": "workspace:*",
     "@dispatch/planning": "workspace:*",
+    "@dispatch/server": "workspace:*",
     "@modelcontextprotocol/sdk": "catalog:",
     "zod": "catalog:"
   },
