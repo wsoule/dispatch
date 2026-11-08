@@ -1,0 +1,35 @@
+{
+  "name": "@dispatch/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "license": "FSL-1.1-ALv2",
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "ios": "expo run:ios",
+    "export": "expo export --platform ios",
+    "tsc": "tsgo --noEmit --pretty"
+  },
+  "dependencies": {
+    "@dispatch/client": "workspace:*",
+    "@dispatch/remote": "workspace:*",
+    "@expo/metro-runtime": "catalog:mobile",
+    "expo": "catalog:mobile",
+    "expo-camera": "catalog:mobile",
+    "expo-constants": "catalog:mobile",
+    "expo-crypto": "catalog:mobile",
+    "expo-haptics": "catalog:mobile",
+    "expo-linking": "catalog:mobile",
+    "expo-router": "catalog:mobile",
+    "expo-secure-store": "catalog:mobile",
+    "expo-status-bar": "catalog:mobile",
+    "react": "catalog:mobile",
+    "react-native": "catalog:mobile",
+    "react-native-safe-area-context": "catalog:mobile",
+    "react-native-screens": "catalog:mobile"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "typescript": "catalog:"
+  }
+}

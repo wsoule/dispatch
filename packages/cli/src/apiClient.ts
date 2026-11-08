@@ -666,6 +666,24 @@ interface FanoutResult {
   variants: FanoutVariantResult[];
 }
 
+/** GET /api/remote, mirroring server's remoteAccess/service.ts. */
+export interface RemoteAccessStatus {
+  enabled: boolean;
+  relay: string;
+  link:
+    | { kind: 'stopped' }
+    | { kind: 'connecting' }
+    | { kind: 'connected'; daemonId: string; sessions: number }
+    | { kind: 'error'; message: string };
+  devices: Array<{
+    id: string;
+    name: string;
+    pairedAt: string;
+    lastSeenAt: string | null;
+  }>;
+  offerExpiresAt: string | null;
+}
+
 export interface ApiClient {
   baseUrl: string;
   /** Clone a task once per agent and dispatch each, for a side-by-side compare. */
@@ -796,6 +814,12 @@ export interface ApiClient {
   getLicense(): Promise<LicenseStatus>;
   /** Installs a license key (operator tier). */
   installLicense(key: string): Promise<LicenseStatus>;
+  /** Phones paired through the remote relay (operator tier). */
+  getRemoteAccess(): Promise<RemoteAccessStatus>;
+  /** A fresh pairing URL for a QR code (operator tier). */
+  pairPhone(): Promise<{ url: string; expiresAt: string }>;
+  /** Unpairs one phone (operator tier). */
+  unpairPhone(id: string): Promise<void>;
   /** Decide-tier: imports ledger lessons into memory and reports count
    *  parity; `dryRun` reports without writing. */
   importLedger(
@@ -1328,6 +1352,13 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
         ...jsonBody({ key }),
         method: 'PUT',
       }),
+    getRemoteAccess: () => request(target, '/api/remote'),
+    pairPhone: () => request(target, '/api/remote/pair', jsonBody({})),
+    unpairPhone: async (id) => {
+      await request(target, `/api/remote/devices/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+    },
     getTeamKeys: () => request(target, '/api/team/keys'),
     getTeamStatus: () => request(target, '/api/team/status'),
     startTeam: (input) =>

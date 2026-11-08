@@ -33,6 +33,7 @@ import { registerMergeTaskCommand } from './commands/mergeTask.js';
 import { registerMergeTeamCommand } from './commands/mergeTeam.js';
 import { registerMigrateCommand } from './commands/migrate.js';
 import { registerOrchestrateCommands } from './commands/orchestrate.js';
+import { registerPhoneCommands } from './commands/phone.js';
 import { registerPlanCommands } from './commands/plan.js';
 import { registerReceiptsCommands } from './commands/receipts.js';
 import { registerRemoteCommands } from './commands/remote.js';
@@ -346,6 +347,7 @@ export function makeProgram(ctx: CliContext): Command {
   registerReceiptsCommands(program, ctx);
   registerDocsCommands(program, ctx);
   registerLicenseCommands(program, ctx);
+  registerPhoneCommands(program, ctx);
   registerMigrateCommand(program, ctx);
   registerA2ACommands(program, ctx);
 

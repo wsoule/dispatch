@@ -35,7 +35,7 @@ import { printable } from '@dispatch-foo/federation';
 import { timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { hostname, networkInterfaces } from 'node:os';
-import { dirname, extname, join } from 'node:path';
+import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import packageJson from '../package.json';
@@ -165,6 +165,7 @@ import {
   boardSyncDir,
   planningAuditPath,
   planningWarningsPath,
+  remoteAccessPath,
   taskAuthorshipPath,
 } from './orchestrator/paths.js';
 import { PlanManager } from './orchestrator/plan.js';
@@ -220,6 +221,8 @@ import {
 } from './previewHeaders.js';
 import type { ReceiptsStep } from './receipts/exporter.js';
 import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
+import { relayFromEnv, RemoteAccess } from './remoteAccess/service.js';
+import { fileRemoteStore } from './remoteAccess/store.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { sessionOrigins, sessionToken } from './session.js';
 import type { SharedPageConfig } from './shared.js';
@@ -278,6 +281,8 @@ export interface ServerHandle {
   messaging: Messaging;
   /** The link to the machine hub, when this daemon makes one. */
   hubLink: DaemonHubLink | null;
+  /** Phones paired through the remote relay. */
+  remoteAccess: RemoteAccess;
   // The A2A bridge: its listener status, store and port.
   a2a: A2ABridge;
   // Exposed for introspection/tests — e.g. calling pollOnce() directly to
@@ -298,6 +303,10 @@ export interface StartServerOptions {
   rootDir: string;
   /** Link to the machine hub (default: unless DISPATCH_HUB=0). */
   hubLink?: boolean;
+  // Phones paired through the remote relay (remoteAccess/). On unless
+  // DISPATCH_REMOTE=off; the relay is DISPATCH_REMOTE_RELAY or
+  // the hosted one. Nothing dials out until a phone is paired.
+  remoteAccess?: { enabled?: boolean; relay?: string };
   // 0 = ephemeral port, assigned by the OS; tests always pass this so
   // multiple server instances can run concurrently without colliding.
   port?: number;
@@ -1091,12 +1100,23 @@ async function bootServer(
   // one of the daemon's own two.
   const tokenPair = opts.tokens ?? mintDaemonTokens();
   const team = createTeam(rootDir, actorContext.member.handle);
+  const remoteAccess = new RemoteAccess({
+    store: fileRemoteStore(remoteAccessPath(rootDir)),
+    relay:
+      opts.remoteAccess?.relay ??
+      relayFromEnv(process.env.DISPATCH_REMOTE_RELAY),
+    name: `${hostname().split('.')[0] ?? 'machine'} · ${basename(rootDir)}`,
+    enabled:
+      opts.remoteAccess?.enabled ?? process.env.DISPATCH_REMOTE !== 'off',
+    log: (line) => console.log(line),
+  });
   const tokens: DaemonTokens = {
     ...tokenPair,
     registry: new TokenRegistry(
       tokenPair,
       actorContext.member.handle,
-      team.teammates
+      team.teammates,
+      remoteAccess
     ),
   };
 
@@ -2552,6 +2572,7 @@ async function bootServer(
     taskAuthorship,
     messaging,
     hubLink,
+    remoteAccess,
     docs: docs.service,
     memory,
     a2a,
@@ -2958,6 +2979,7 @@ async function bootServer(
   // assertion.
   const port = server.port ?? 0;
   hubLink?.start(messaging.engine, port);
+  remoteAccess.start(port);
   const tlsPort = tlsServer === null ? undefined : (tlsServer.port ?? 0);
   await a2a.start();
   if (shared) {
@@ -2995,12 +3017,14 @@ async function bootServer(
     orchestrator,
     messaging,
     hubLink,
+    remoteAccess,
     a2a,
     prManager,
     prWorktrees,
     memory,
     async stop() {
       hubLink?.stop();
+      remoteAccess.stop();
       sharing.clear();
       watchdog.stop();
       idle?.stop();
