@@ -229,4 +229,20 @@ describe('hosted planner mode', () => {
     expect((await asAda('GET', '/api/team/tokens')).status).toBe(404);
     expect((await asAda('DELETE', '/api/team/tokens/ada')).status).toBe(404);
   });
+
+  it('counts no seats for the people a hosted planner serves', async () => {
+    for (const name of ['p1', 'p2', 'p3', 'p4', 'p5']) {
+      const minted = await call('POST', '/api/team/tokens', {
+        email: `${name}@example.com`,
+        displayName: name,
+        tier: 'decide',
+      });
+      expect(`${name} ${minted.status}`).toBe(`${name} 201`);
+      const { token } = (await minted.json()) as { token: string };
+      const who = await rawFetch(`${base}/api/whoami`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(`${name} ${who.status}`).toBe(`${name} 200`);
+    }
+  });
 });

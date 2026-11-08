@@ -1120,15 +1120,19 @@ async function bootServer(
   // Elastic License 2.0); the registry asks it about any token that is not
   // one of the daemon's own two.
   const tokenPair = opts.tokens ?? mintDaemonTokens();
-  const team = createTeam(rootDir, actorContext.member.handle);
+  const team = createTeam(rootDir, actorContext.member.handle, {
+    hostedPlanner: opts.hostedPlanner === true,
+  });
   const remoteAccess = new RemoteAccess({
     store: fileRemoteStore(remoteAccessPath(rootDir)),
     relay:
       opts.remoteAccess?.relay ??
       relayFromEnv(process.env.DISPATCH_REMOTE_RELAY),
     name: `${hostname().split('.')[0] ?? 'machine'} · ${basename(rootDir)}`,
+    // A hosted planner opens no relay connection: no egress but Linear.
     enabled:
-      opts.remoteAccess?.enabled ?? process.env.DISPATCH_REMOTE !== 'off',
+      opts.hostedPlanner !== true &&
+      (opts.remoteAccess?.enabled ?? process.env.DISPATCH_REMOTE !== 'off'),
     log: (line) => console.log(line),
   });
   const tokens: DaemonTokens = {
