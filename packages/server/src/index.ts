@@ -1111,7 +1111,9 @@ async function bootServer(
   // Elastic License 2.0); the registry asks it about any token that is not
   // one of the daemon's own two.
   const tokenPair = opts.tokens ?? mintDaemonTokens();
-  const team = createTeam(rootDir, actorContext.member.handle);
+  const team = createTeam(rootDir, actorContext.member.handle, {
+    hostedPlanner: opts.hostedPlanner === true,
+  });
   const tokens: DaemonTokens = {
     ...tokenPair,
     registry: new TokenRegistry(
