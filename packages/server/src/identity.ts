@@ -96,6 +96,12 @@ export function expiredTokenMessage(handle: string, expiredAt: string): string {
   );
 }
 
+/** Credentials the operator's own paired devices present: in memory only,
+ *  minted fresh each daemon start, and always resolved at the decide tier. */
+export interface OperatorDeviceCredentials {
+  matches: (digest: Buffer) => boolean;
+}
+
 /**
  * Every credential this daemon accepts, and who each one speaks for.
  *
@@ -114,7 +120,8 @@ export class TokenRegistry {
   constructor(
     pair: { agentToken: string; appToken: string },
     private readonly operatorHandle: string,
-    private readonly teammates: CredentialSource | null = null
+    private readonly teammates: CredentialSource | null = null,
+    private readonly operatorDevices: OperatorDeviceCredentials | null = null
   ) {
     // Highest tier first, so the app token still wins if the two were ever
     // the same string — the pre-existing behaviour, kept on purpose. The app
@@ -159,6 +166,19 @@ export class TokenRegistry {
           tier: own.tier,
           ...(own.agentToken === true ? { agentToken: true } : {}),
           ...(own.appToken === true ? { appToken: true } : {}),
+        },
+      };
+    }
+    // A paired phone speaks for the operator, but only at the decide tier:
+    // it can answer gates and approve merges, never open a shell or write
+    // files on this machine (see remoteAccess/).
+    if (this.operatorDevices?.matches(digest) === true) {
+      return {
+        kind: 'valid',
+        identity: {
+          handle: this.operatorHandle,
+          ref: humanRef(this.operatorHandle),
+          tier: 'decide',
         },
       };
     }

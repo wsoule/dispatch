@@ -1,0 +1,24 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+language: 'typescript'
+layer: 'application'
+
+tasks:
+  # The end-to-end test imports and boots the daemon, which loads server's
+  # dependencies from dist; `^:build` never reaches them, since server has no
+  # build task.
+  typecheck:
+    deps:
+      - 'server:build-deps'
+  test:
+    deps:
+      - 'server:build-deps'
+  # The container entrypoint (Dockerfile), not a dev server.
+  start:
+    command: 'bun run src/main.ts'
+    deps:
+      - '^:build'
+    options:
+      cache: false
+      persistent: true
+      runInCI: 'skip'

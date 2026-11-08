@@ -3248,6 +3248,13 @@ interface ApiTarget {
   baseUrl: string;
   /** The daemon token; omitted only when none is available, which 401s. */
   token?: string;
+  /** Stands in for global fetch, such as the phone's relay tunnel. */
+  fetch?: typeof fetch;
+}
+
+interface ApiClientOptions {
+  /** How requests reach the daemon; global fetch when omitted. */
+  fetch?: typeof fetch;
 }
 
 // The daemon injects its agent token into the HTML it serves, because a
@@ -3305,7 +3312,10 @@ async function send(
   if (target.token !== undefined) {
     headers.set('authorization', `Bearer ${target.token}`);
   }
-  const res = await fetch(`${target.baseUrl}${path}`, { ...init, headers });
+  const res = await (target.fetch ?? fetch)(`${target.baseUrl}${path}`, {
+    ...init,
+    headers,
+  });
   if (!res.ok && !allowed.includes(res.status)) {
     throw apiError(res.status, await res.json().catch(() => null));
   }
@@ -4729,8 +4739,16 @@ export interface ApiClient {
 // the decide-tier calls and to answer gates; the agent token reaches
 // everything else. Omitting it falls back to the token the daemon injected
 // into the page it served, which is how the browser UI gets one at all.
-export function createApiClient(baseUrl: string, token?: string): ApiClient {
-  const target: ApiTarget = { baseUrl, token: token ?? injectedDaemonToken() };
+export function createApiClient(
+  baseUrl: string,
+  token?: string,
+  options: ApiClientOptions = {}
+): ApiClient {
+  const target: ApiTarget = {
+    baseUrl,
+    token: token ?? injectedDaemonToken(),
+    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+  };
   return {
     baseUrl,
     fetchHealth: () => request(target, '/api/health'),
@@ -5307,21 +5325,12 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, '/api/merge-queue/ready', { method: 'POST' }),
     recheckMergeQueue: () =>
       request(target, '/api/merge-queue/recheck', { method: 'POST' }),
-    // Not routed through the shared `request()` helper: the server answers
-    // this one with 204 No Content (per the merge queue's REST contract), and
-    // `request()` always tries to parse a JSON body on success — which throws
-    // on an empty 204 body. This mirrors `request()`'s own error-handling
-    // shape otherwise (throw the server's `{ error }` message on non-2xx).
+    // Through `send()`, not `request()`: the server answers this one with
+    // 204 No Content (per the merge queue's REST contract), and `request()`
+    // always tries to parse a JSON body on success, which throws on an empty
+    // 204 body. `send()` still presents the token and throws on non-2xx.
     removeFromMergeQueue: async (runId) => {
-      const res = await fetch(`${baseUrl}/api/merge-queue/${runId}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as {
-          error?: string;
-        };
-        throw new Error(body.error ?? `request failed: ${res.status}`);
-      }
+      await send(target, `/api/merge-queue/${runId}`, { method: 'DELETE' });
     },
     fetchFindings: (filter = {}) => {
       const params = new URLSearchParams();
