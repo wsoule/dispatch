@@ -26,6 +26,7 @@
     "@dispatch-foo/protocol": "workspace:*",
     "@dispatch/memory": "workspace:*",
     "@dispatch/planning": "workspace:*",
+    "@dispatch/remote": "workspace:*",
     "@typesafe-ai/sdk": "catalog:",
     "yaml": "catalog:",
     "zod": "catalog:"
