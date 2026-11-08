@@ -15,6 +15,7 @@ import {
   listLinearAccounts,
   readLinearAccount,
   removeLinearAccount,
+  removeTeammateLinearAccounts,
   replaceLinearAccountTokens,
   teammateGrantKey,
   withLinearRefreshLock,
@@ -403,14 +404,15 @@ export class LinearAccounts {
       await this.revoke(previous);
   }
 
-  /** Forgets a teammate's grant for a workspace and revokes it; never throws
-   *  for a grant already gone. */
-  async removeTeammate(handle: string, orgId: string): Promise<void> {
+  /** Forgets every grant a teammate holds, in every workspace, and revokes
+   *  each at Linear (best effort). Needs no Linear connection. */
+  async removeTeammate(handle: string): Promise<number> {
     const removed = await withLinearRefreshLock(() =>
-      removeLinearAccount(teammateGrantKey(handle, orgId))
+      removeTeammateLinearAccounts(handle)
     );
-    this.deps.onChange?.();
-    if (removed !== null) await this.revoke(removed);
+    if (removed.length > 0) this.deps.onChange?.();
+    for (const record of removed) await this.revoke(record);
+    return removed.length;
   }
 
   /** Revokes a grant at Linear; never throws. */

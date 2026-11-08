@@ -85,6 +85,7 @@ import type {
   RemoteRecord,
 } from './reconcile.js';
 import { emptySummary, LinearPass } from './reconcile.js';
+import { resolveLinearSignInConfig } from './signIn.js';
 import type {
   ConflictRecord,
   LinearBulkOutcome,
@@ -193,6 +194,16 @@ export interface WebhookReply {
   body: Record<string, unknown>;
 }
 
+// A LinearAuth for one fixed access token (no refresh), to ask Linear who a
+// grant belongs to before keeping it.
+function staticBearer(token: string): LinearAuth {
+  return {
+    header: () => Promise.resolve({ ok: true, value: `Bearer ${token}` }),
+    secrets: () => [token],
+    renew: () => Promise.resolve(false),
+  };
+}
+
 export interface LinearSyncDeps {
   rootDir: string;
   store: TaskStorePort;
@@ -225,6 +236,9 @@ export interface LinearSyncDeps {
    *  one Linear account in its home, sent as Bearer, when no API key is set.
    *  Off for every other daemon, where a sign-in is only its owner's. */
   connectionFromSignIn?: boolean;
+  /** Whether `handle` holds a live teammate token here; a teammate's grant
+   *  is used only while it does. Absent: no teammate grant is ever used. */
+  teammateActive?: (handle: string) => boolean;
   /** Where Linear can deliver webhooks (a public HTTPS URL), or null to poll. */
   webhookUrl?: string | null;
   /** Delay before a webhook's changes are fetched, coalescing a burst. */
@@ -973,6 +987,8 @@ export class LinearSync {
       });
     for (const teammate of listTeammateLinearAccounts(orgId)) {
       if (!teammate.record.scope.includes('write')) continue;
+      // A grant outliving its teammate's token is never used.
+      if (this.deps.teammateActive?.(teammate.handle) !== true) continue;
       writers.push({
         client: this.clientFor(accounts.authFor(teammate.key)),
         userId: teammate.record.user.id,
@@ -1006,16 +1022,39 @@ export class LinearSync {
       };
     if (!record.scope.includes('write'))
       return { ok: false, status: 400, error: 'The grant has no write scope.' };
+    // Refreshed with this daemon's own app: a grant another app issued would
+    // fail its first refresh and quietly stop carrying their edits.
+    const app = resolveLinearSignInConfig(this.safeConfig()?.linear ?? null);
+    if (record.clientId !== app.clientId)
+      return {
+        ok: false,
+        status: 400,
+        error:
+          "That grant was issued by another Linear app than this daemon's.",
+      };
+    // Who the grant really is, asked of Linear with its own token: the record
+    // names a user and a workspace, but only Linear's answer is trusted.
+    const probe = await this.clientFor(
+      staticBearer(record.accessToken)
+    ).identity();
+    if (
+      !probe.ok ||
+      probe.data.viewer.id !== record.user.id ||
+      probe.data.organization.id !== connection.data.organization.id
+    )
+      return {
+        ok: false,
+        status: 409,
+        error: 'Linear does not confirm that grant for this workspace.',
+      };
     await accounts.saveTeammate(handle, record);
     return { ok: true };
   }
 
-  /** Forgets and revokes a teammate's grant for the connection's workspace. */
-  async removeTeammateGrant(handle: string): Promise<void> {
-    const accounts = this.deps.accounts;
-    const connection = await this.connection();
-    if (accounts === undefined || connection === null || !connection.ok) return;
-    await accounts.removeTeammate(handle, connection.data.organization.id);
+  /** Forgets and revokes every grant a teammate holds; needs no Linear
+   *  connection, so revoking their access never waits on Linear. */
+  async removeTeammateGrant(handle: string): Promise<number> {
+    return (await this.deps.accounts?.removeTeammate(handle)) ?? 0;
   }
 
   /** The owner's own writer, for the actions only the owner takes as

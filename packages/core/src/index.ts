@@ -388,6 +388,7 @@ export {
   publicLinearAccount,
   readLinearAccount,
   removeLinearAccount,
+  removeTeammateLinearAccounts,
   replaceLinearAccountTokens,
   teammateGrantKey,
   withLinearRefreshLock,

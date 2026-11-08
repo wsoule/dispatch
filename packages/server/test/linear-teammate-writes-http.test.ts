@@ -5,7 +5,9 @@
 // linearGraphqlFake.ts, OAuth from linearOAuthFake.ts); nothing leaves the
 // process.
 import {
+  readLinearAccount,
   TaskStore,
+  teammateGrantKey,
   writeLinearAccount,
   writeProjectCredential,
 } from '@dispatch-foo/core';
@@ -216,6 +218,24 @@ function bobGrant(orgId = 'org-1'): LinearAccountRecord {
   };
 }
 
+// Stores Bob's grant while Linear answers as Bob, so the daemon's check of
+// who the grant belongs to passes.
+async function postGrant(record = bobGrant()): Promise<number> {
+  const was = world.viewer;
+  world.viewer = {
+    ...was,
+    id: 'u-bob',
+    name: 'Bob',
+    displayName: 'bob',
+    email: 'bob@example.com',
+  };
+  try {
+    return (await call('POST', '/team/tokens/bob/linear', record)).status;
+  } finally {
+    world.viewer = was;
+  }
+}
+
 describe("teammates' writes through the real client", () => {
   it("sends a teammate's edit with their grant, and the owner's with theirs", async () => {
     const imported = await call('POST', '/linear/import');
@@ -228,9 +248,7 @@ describe("teammates' writes through the real client", () => {
     if (id === undefined) throw new Error('the issue was not imported');
     const owner = await signIn();
     const bobToken = await teammate();
-    expect(
-      (await call('POST', '/team/tokens/bob/linear', bobGrant())).status
-    ).toBe(204);
+    expect(await postGrant()).toBe(204);
 
     let from = requests.length;
     await call('PATCH', `/tasks/${id}`, { title: 'Bob renamed' }, bobToken);
@@ -272,5 +290,59 @@ describe("teammates' writes through the real client", () => {
       body: JSON.stringify(bobGrant()),
     });
     expect(asBob.status).toBe(403);
+  });
+
+  it('refuses a grant for the owner or for anyone without a teammate token', async () => {
+    await call('POST', '/linear/import');
+    expect(
+      (await call('POST', '/team/tokens/nobody/linear', bobGrant())).status
+    ).toBe(404);
+    const ownerHandle = (await call('GET', '/whoami')).body as {
+      handle: string;
+    };
+    expect(
+      (
+        await call(
+          'POST',
+          `/team/tokens/${ownerHandle.handle}/linear`,
+          bobGrant()
+        )
+      ).status
+    ).toBe(404);
+  });
+
+  it("forgets a teammate's grant when their token is revoked, and stops using it", async () => {
+    const imported = await call('POST', '/linear/import');
+    expect(imported.status).toBe(200);
+    const tasks = (await call('GET', '/tasks')).body as {
+      meta: { id: string; external: string | null };
+    }[];
+    const id =
+      tasks.find((t) => t.meta.external?.includes('iss-1') === true)?.meta.id ??
+      '';
+    const bobToken = await teammate();
+    expect(await postGrant()).toBe(204);
+    await call('PATCH', `/tasks/${id}`, { title: 'Bob renamed' }, bobToken);
+    expect((await call('DELETE', '/team/tokens/bob')).status).toBe(200);
+    expect(readLinearAccount(teammateGrantKey('bob', 'org-1'))).toBeNull();
+    const from = requests.length;
+    await call('POST', '/linear/sync', { taskIds: [id] });
+    for (const auth of updatesSince(from))
+      expect(auth).not.toBe(`Bearer ${BOB_TOKEN}`);
+  });
+
+  it("keeps only a grant Linear confirms, from this daemon's own app", async () => {
+    await call('POST', '/linear/import');
+    await teammate();
+    // Linear answers as someone else: the record's claim is not enough.
+    expect(
+      (await call('POST', '/team/tokens/bob/linear', bobGrant())).status
+    ).toBe(409);
+    expect(await postGrant({ ...bobGrant(), clientId: 'another-app' })).toBe(
+      400
+    );
+    expect(await postGrant()).toBe(204);
+    expect((await call('DELETE', '/team/tokens/bob/linear')).status).toBe(204);
+    expect((await call('DELETE', '/team/tokens/bob/linear')).status).toBe(404);
   });
 });

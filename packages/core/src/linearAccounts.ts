@@ -198,6 +198,33 @@ export function listLinearAccounts(): LinearAccountRecord[] {
   });
 }
 
+/**
+ * Deletes every grant a teammate holds, in every workspace, and answers what
+ * was deleted (so the caller can revoke each at Linear). Revoking their
+ * access must not depend on reaching Linear first.
+ */
+export async function removeTeammateLinearAccounts(
+  handle: string
+): Promise<LinearAccountRecord[]> {
+  const removed: LinearAccountRecord[] = [];
+  await updateCredentialsFileAsync((file) => {
+    const slot = { ...slotOf(file, 'teammateLinearAccounts') };
+    let changed = false;
+    for (const key of Object.keys(slot)) {
+      if (key.slice(0, key.lastIndexOf('@')) !== handle) continue;
+      const record = parseRecord(slot[key]);
+      if (record !== null) removed.push(record);
+      delete slot[key];
+      changed = true;
+    }
+    if (!changed) return null;
+    const next: CredentialsFile = { ...file, teammateLinearAccounts: slot };
+    if (Object.keys(slot).length === 0) delete next.teammateLinearAccounts;
+    return next;
+  });
+  return removed;
+}
+
 /** Whether any teammate's grant is stored: a cheap check, like
  *  hasLinearAccounts, so a host with none never looks its workspace up. */
 export function hasTeammateLinearAccounts(): boolean {

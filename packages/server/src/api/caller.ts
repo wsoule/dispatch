@@ -111,5 +111,8 @@ export function linearCreditRef(
   if (ctx.viaRun !== undefined) return null;
   if (ctx.ownerCredential === true) return ctx.actorContext.humanRef;
   const ref = humanCredentialRef(ctx);
-  return ref !== null && ref.startsWith('human:') ? ref : null;
+  // The owner's credit (and so their sign-in) belongs to their own token
+  // only, never to another credential that resolves to the owner's ref.
+  if (ref === null || ref === ctx.actorContext.humanRef) return null;
+  return ref.startsWith('human:') ? ref : null;
 }

@@ -15,7 +15,8 @@ type CascadeContext = Pick<
   | 'events'
   | 'a2a'
   | 'actorContext'
->;
+> &
+  Partial<Pick<ApiContext, 'linearSync'>>;
 
 /**
  * XH-R3: what revoking teammate `handle` takes with it, once their token is
@@ -29,6 +30,14 @@ export async function revokeCascade(
   ctx: CascadeContext,
   handle: string
 ): Promise<void> {
+  // Their Linear grants go first and need no Linear connection.
+  try {
+    await ctx.linearSync?.removeTeammateGrant(handle);
+  } catch (err) {
+    console.error(
+      `revoke: could not forget ${handle}'s Linear grants: ${(err as Error).message}`
+    );
+  }
   const human = `human:${handle}`;
   const prefix = `agent:${handle}/`;
   const reason = `${human}'s access was revoked`;

@@ -4942,6 +4942,13 @@ async function setTeammateLinear(
 ): Promise<Response> {
   if (!/^[a-z0-9][a-z0-9._-]*$/.test(handle))
     return errorResponse(400, 'Not a handle.');
+  // Only someone holding a teammate token here, and never the owner, whose
+  // sign-in is their own (Settings, not this route).
+  if (
+    `human:${handle}` === ctx.actorContext.humanRef ||
+    ctx.team.teammates.issuedTier(handle) === null
+  )
+    return errorResponse(404, `no issued token for "${handle}"`);
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
   const record = parseLinearAccountRecord(parsed.value);
@@ -5523,8 +5530,12 @@ export async function handleApi(
         if (method === 'POST')
           return await setTeammateLinear(req, ctx, segments[2] ?? '');
         if (method === 'DELETE') {
-          await ctx.linearSync.removeTeammateGrant(segments[2] ?? '');
-          return new Response(null, { status: 204 });
+          const removed = await ctx.linearSync.removeTeammateGrant(
+            segments[2] ?? ''
+          );
+          return removed > 0
+            ? new Response(null, { status: 204 })
+            : errorResponse(404, `no Linear grant for "${segments[2] ?? ''}"`);
         }
       }
     }
