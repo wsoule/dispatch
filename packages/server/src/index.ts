@@ -299,8 +299,25 @@ export interface ServerHandle {
   stop(): Promise<void>;
 }
 
+/** The TypeSafe judgment client a daemon boots with: the one a test passes,
+ * none on a hosted planner (it calls a model, and a hosted planner runs no
+ * model for anyone), else the project's own. */
+export function judgmentsFor(
+  opts: Pick<StartServerOptions, 'judgments' | 'hostedPlanner'>,
+  rootDir: string
+): JudgmentClient | null {
+  if (opts.hostedPlanner === true) return null;
+  return opts.judgments === undefined
+    ? createJudgmentClient(rootDir)
+    : opts.judgments;
+}
+
 export interface StartServerOptions {
   rootDir: string;
+  /** Hosted for other people (app.dispatch.foo's planner): only the planning
+   * routes answer (hostedPlanner.ts), and no agent executor, planner or
+   * overseer is registered, so nothing here can run a model or a command. */
+  hostedPlanner?: boolean;
   /** Link to the machine hub (default: unless DISPATCH_HUB=0). */
   hubLink?: boolean;
   // Phones paired through the remote relay (remoteAccess/). On unless
@@ -1060,14 +1077,18 @@ async function bootServer(
   // expects an injected token that shared mode will never inject. With no
   // desktop build on disk, shared mode serves no UI at all rather than one
   // that cannot sign in — the API still answers the CLI and the MCP server.
+  // A hosted planner serves no UI: its host serves the bundle, and the page
+  // here would carry the agent token to anyone who loaded it.
   const webDistDir =
-    opts.webDistDir !== undefined
-      ? opts.webDistDir
-      : shared
-        ? existsSync(join(DESKTOP_DIST_DIR, 'index.html'))
-          ? DESKTOP_DIST_DIR
-          : null
-        : DEFAULT_WEB_DIST_DIR;
+    opts.hostedPlanner === true
+      ? null
+      : opts.webDistDir !== undefined
+        ? opts.webDistDir
+        : shared
+          ? existsSync(join(DESKTOP_DIST_DIR, 'index.html'))
+            ? DESKTOP_DIST_DIR
+            : null
+          : DEFAULT_WEB_DIST_DIR;
   if (shared && webDistDir === null) {
     console.error(
       'dispatchd: team-local mode found no desktop build to serve — run `moonx desktop:build` or pass --web-dist <dir>'
@@ -1281,8 +1302,9 @@ async function bootServer(
   // copies task *files* into a git worktree and commits them. A
   // database-backed project has no such files; exporting its state to git is
   // the receipts exporter's job, not this one's.
+  // A hosted planner pushes nowhere: no board sync and no receipts export.
   const syncWorktree =
-    store instanceof TaskStore
+    store instanceof TaskStore && opts.hostedPlanner !== true
       ? SyncWorktree.open(rootDir, defaultGitRunner)
       : null;
   // The one serialized writer to origin's default branch, shared by the board
@@ -1337,7 +1359,7 @@ async function bootServer(
   // Memory opens further down; until it does, its step writes nothing.
   let memoryReceipts: ReceiptsStep | null = null;
   const receiptsScheduler =
-    store instanceof TaskStore
+    store instanceof TaskStore || opts.hostedPlanner === true
       ? null
       : new ReceiptsScheduler({
           rootDir,
@@ -1586,6 +1608,8 @@ async function bootServer(
       `dispatchd: could not read carto config, defaulting to 'on': ${(err as Error).message}`
     );
   }
+  // A hosted planner has no code to map.
+  if (opts.hostedPlanner === true) cartoMode = 'off';
   const depMapCache = new DepMapCache(rootDir, {
     mode: cartoMode,
     onDegrade: ({ detail }) => {
@@ -1625,7 +1649,7 @@ async function bootServer(
   // Read per call so a config edit applies without restarting the daemon.
   const readDigestConfig = () => loadConfig(rootDir).repoDigest;
   const digestCache =
-    opts.registerExecutors === undefined
+    opts.registerExecutors === undefined && opts.hostedPlanner !== true
       ? new RepoDigestCache(
           rootDir,
           (dir) => generateRepoDigest(dir),
@@ -1635,10 +1659,7 @@ async function bootServer(
   // The TypeSafe judgment client, resolved once at boot: a key added later
   // needs a restart, same as the executors. Tests pass `judgments`
   // explicitly (null disables).
-  const judgments =
-    opts.judgments === undefined
-      ? createJudgmentClient(rootDir)
-      : opts.judgments;
+  const judgments = judgmentsFor(opts, rootDir);
   const orchestrator = new Orchestrator({
     rootDir,
     store,
@@ -1672,7 +1693,9 @@ async function bootServer(
     riskChanged: (taskId) => docs.service.riskChangedDuringPublish(taskId),
   });
   if (syncConfig !== null) orchestrator.setRunIdMinter(generateSyncedRunId);
-  if (opts.registerExecutors !== undefined) {
+  if (opts.hostedPlanner === true) {
+    // No executor: a hosted planner never runs an agent.
+  } else if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);
   } else {
     orchestrator.registerExecutor('claude', new ClaudeExecutor());
@@ -1719,6 +1742,7 @@ async function bootServer(
   // The machine hub homes MCP sessions; this project links to it so runs and
   // sessions reach each other (messaging/hubLink.ts).
   const hubLink =
+    opts.hostedPlanner !== true &&
     (opts.hubLink ?? process.env.DISPATCH_HUB !== '0')
       ? new DaemonHubLink({
           rootDir,
@@ -2005,7 +2029,9 @@ async function bootServer(
     events,
     actorContext,
   });
-  if (opts.registerPlanners !== undefined) {
+  if (opts.hostedPlanner === true) {
+    // No planner either: plans are drafted by agents.
+  } else if (opts.registerPlanners !== undefined) {
     opts.registerPlanners(planManager);
   } else {
     planManager.registerPlanner('claude', new ClaudePlanner(rootDir));
@@ -2044,9 +2070,11 @@ async function bootServer(
   // health check or review action would be wasted work.
   // Not awaited: `gh --version` alone costs a few hundred ms, and nothing at
   // boot needs the answer. PrManager awaits it; health refetches on the event.
-  const prCapability = detectPrCapability(rootDir, opts.prCommandRunner).catch(
-    () => false
-  );
+  // A hosted planner runs no gh or git for PRs.
+  const prCapability =
+    opts.hostedPlanner === true
+      ? Promise.resolve(false)
+      : detectPrCapability(rootDir, opts.prCommandRunner).catch(() => false);
   void prCapability.then(
     (capable) => capable && events.broadcast({ type: 'health.changed' })
   );
@@ -2116,8 +2144,10 @@ async function bootServer(
   // either of the two paths above, so they'd sit in the review queue as
   // "needs review" forever. Reconcile once at boot — catching anything merged
   // while dispatchd was down — and then on the PR poller's cadence.
-  orchestrator.reconcileExternallyMergedRuns();
+  // A hosted planner has no runs to reconcile, and runs no git for them.
+  if (opts.hostedPlanner !== true) orchestrator.reconcileExternallyMergedRuns();
   const externalMergeTimer = setInterval(() => {
+    if (opts.hostedPlanner === true) return;
     watchdog.mark('reconcileExternallyMergedRuns tick');
     orchestrator.reconcileExternallyMergedRuns();
   }, opts.prPollIntervalMs ?? 60000);
@@ -2230,7 +2260,9 @@ async function bootServer(
       overseer: overseerAddress,
     }),
   });
-  if (opts.registerOverseers !== undefined) {
+  if (opts.hostedPlanner === true) {
+    // No overseer conversation on a hosted planner.
+  } else if (opts.registerOverseers !== undefined) {
     opts.registerOverseers(overseerManager);
   } else {
     overseerManager.registerBackend('claude', new ClaudeOverseer(rootDir));
@@ -2334,6 +2366,7 @@ async function bootServer(
     accounts: linearAccounts,
     personEdits: linearPersonEdits,
     localHumanRef: actorContext.humanRef,
+    connectionFromSignIn: opts.hostedPlanner === true,
     comments: commentStore,
     webhookUrl: webhookUrlFor(opts.publicOrigins ?? []),
     documents: {
@@ -2566,6 +2599,7 @@ async function bootServer(
     events,
     orchestrator,
     version: packageJson.version,
+    hostedPlanner: opts.hostedPlanner === true,
     planManager,
     overseerManager,
     milestoneEngine,
@@ -2859,6 +2893,8 @@ async function bootServer(
 
         // Before /api/ and the static fallback: this is the one path whose
         // content belongs to someone else's server.
+        if (url.pathname.startsWith('/preview/') && opts.hostedPlanner === true)
+          return new Response('Not found', { status: 404 });
         if (url.pathname.startsWith('/preview/')) {
           // A preview has no credential of its own — an iframe cannot send one
           // on every sub-resource — so on loopback it is exactly as private as
@@ -2981,7 +3017,8 @@ async function bootServer(
   hubLink?.start(messaging.engine, port);
   remoteAccess.start(port);
   const tlsPort = tlsServer === null ? undefined : (tlsServer.port ?? 0);
-  await a2a.start();
+  // A hosted planner opens no A2A listener: no outbound agent calls.
+  if (opts.hostedPlanner !== true) await a2a.start();
   if (shared) {
     for (const origin of tlsPort === undefined
       ? ownOrigins(port, networkInterfaces(), opts.publicOrigins)

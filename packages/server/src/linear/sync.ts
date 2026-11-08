@@ -5,6 +5,7 @@ import {
   hasLinearAccounts,
   isDoneStatus,
   isOutstanding,
+  listLinearAccounts,
   loadConfig,
   parseLinearExternal,
   readLinearAccount,
@@ -217,6 +218,10 @@ export interface LinearSyncDeps {
   pushDebounceMs?: number;
   /** The local human's person ref; the API key's Linear user maps to it. */
   localHumanRef?: string;
+  /** A hosted planner's project connection is its workspace install: the
+   *  one Linear account in its home, sent as Bearer, when no API key is set.
+   *  Off for every other daemon, where a sign-in is only its owner's. */
+  connectionFromSignIn?: boolean;
   /** Where Linear can deliver webhooks (a public HTTPS URL), or null to poll. */
   webhookUrl?: string | null;
   /** Delay before a webhook's changes are fetched, coalescing a burst. */
@@ -775,7 +780,7 @@ export class LinearSync {
     const config = this.safeConfig();
     const linear = config?.linear ?? DEFAULT_LINEAR;
     const state = readLinearState(this.deps.rootDir);
-    const { source } = resolveLinearApiKey(this.deps.rootDir);
+    const source = this.projectCredential()?.source ?? null;
     const enabled = config !== null && linear.enabled;
     // The pause's message outlives the pass that hit the limit: paused passes
     // never call Linear, so they record no error of their own.
@@ -845,9 +850,45 @@ export class LinearSync {
   /** Builds a client for ad-hoc reads (the team/state pickers), or null when no key is available. */
   client(): LinearClient | null {
     if (this.deps.client !== undefined) return this.deps.client;
-    const { apiKey } = resolveLinearApiKey(this.deps.rootDir);
-    if (apiKey === null) return null;
-    return this.clientFor(apiKey);
+    const project = this.projectCredential();
+    return project === null ? null : this.clientFor(project.credential);
+  }
+
+  // The project connection's credential. A hosted planner's is its workspace
+  // install and nothing else: no API key (a member could otherwise swap in
+  // their own, or the host's environment could leak one into every
+  // workspace), and only when its home holds exactly one account, so it never
+  // runs on another workspace's grant. Any other daemon uses an API key
+  // (project, env, then the machine-wide one) and never a sign-in.
+  // `key` identifies the credential for the connection cache.
+  private projectCredential(): {
+    credential: string | LinearAuth;
+    key: string;
+    source: Exclude<CredentialSource, null>;
+  } | null {
+    if (this.deps.connectionFromSignIn === true) {
+      const accounts = this.deps.accounts;
+      const installs = listLinearAccounts();
+      const install = installs[0];
+      if (
+        accounts === undefined ||
+        installs.length !== 1 ||
+        install === undefined
+      )
+        return null;
+      return {
+        credential: accounts.authFor(install.organization.id),
+        key: `install:${install.organization.id}`,
+        source: 'project',
+      };
+    }
+    const { apiKey, source } = resolveLinearApiKey(this.deps.rootDir);
+    if (apiKey === null || source === null) return null;
+    return {
+      credential: apiKey,
+      key: createHash('sha256').update(apiKey).digest('hex'),
+      source,
+    };
   }
 
   /** A client for one credential: an API key (sent bare, as always) or a
@@ -879,10 +920,10 @@ export class LinearSync {
       key = 'injected';
       client = this.deps.client;
     } else {
-      const { apiKey } = resolveLinearApiKey(this.deps.rootDir);
-      if (apiKey === null) return null;
-      key = createHash('sha256').update(apiKey).digest('hex');
-      client = this.clientFor(apiKey);
+      const project = this.projectCredential();
+      if (project === null) return null;
+      key = project.key;
+      client = this.clientFor(project.credential);
     }
     const cached = this.connectionCache;
     if (cached !== null && cached.key === key)

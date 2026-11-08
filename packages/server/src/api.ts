@@ -174,6 +174,12 @@ import type { EventBus } from './events.js';
 import type { FindingStorePort } from './findings.js';
 import { PATH_ESCAPE_ERROR, resolveWorktreeFilePath } from './git/commands.js';
 import { GitRepo } from './git/commands.js';
+import {
+  hostedConfigProblem,
+  hostedFixedAnswer,
+  hostedOwnerOnly,
+  hostedPlannerAllows,
+} from './hostedPlanner.js';
 import { expiredTokenMessage, sha256 } from './identity.js';
 import type { TokenIdentity, TokenRegistry } from './identity.js';
 import type { InboxKind } from './inbox.js';
@@ -356,6 +362,8 @@ import type { WatchdogStatus } from './watchdog.js';
 // this is what makes it easy to hit with plain fetch() in tests.
 export interface ApiContext {
   rootDir: string;
+  /** Hosted for other people: only hostedPlanner.ts's routes answer. */
+  hostedPlanner?: boolean;
   // The port, not a concrete TaskStore: this daemon owns whichever backend
   // the project was opened with (markdown files or its SQLite database), and
   // every handler below works the same against either. A handler that needs
@@ -4919,6 +4927,30 @@ export function isSelfAuthenticated(
   );
 }
 
+// A hosted planner's checks once the caller is known: members' tokens are
+// the host's alone to mint and revoke, routes whose handlers run commands
+// answer fixed data, and config takes only the planning keys at any tier.
+async function hostedRefusal(
+  req: Request,
+  method: string,
+  segments: readonly string[],
+  ownerCredential: boolean
+): Promise<Response | null> {
+  if (hostedOwnerOnly(segments) && !ownerCredential)
+    return errorResponse(404, 'Not on a hosted planner.');
+  const fixed = hostedFixedAnswer(method, segments);
+  if (fixed !== undefined) return Response.json(fixed);
+  if (method === 'PATCH' && segments.length === 1 && segments[0] === 'config') {
+    const body: unknown = await req
+      .clone()
+      .json()
+      .catch(() => null);
+    const problem = hostedConfigProblem(body);
+    if (problem !== null) return errorResponse(403, problem);
+  }
+  return null;
+}
+
 /**
  * The tier a request to `/api/<segments>` must present, or null when open.
  * `GET /api/health` is the only open route, because the CLI, MCP and the
@@ -5213,6 +5245,14 @@ export async function handleApi(
   if (isLinearWebhook(method, segments)) {
     return await linearWebhook(req, daemonCtx);
   }
+  // A hosted planner answers only the planning routes, to every credential,
+  // ahead of the hub link and download tickets as much as the rest.
+  if (
+    daemonCtx.hostedPlanner === true &&
+    !hostedPlannerAllows(method, segments)
+  )
+    return errorResponse(404, 'Not on a hosted planner.');
+
   // The machine hub's calls carry the token this daemon gave it when they
   // linked, not a daemon token (messaging/hubLink.ts).
   if (method === 'POST' && segments.length === 2 && segments[0] === 'hub-link')
@@ -5321,6 +5361,10 @@ export async function handleApi(
     };
   }
   if (principal !== undefined) ctx = { ...ctx, principal };
+  if (daemonCtx.hostedPlanner === true) {
+    const refused = await hostedRefusal(req, method, segments, ownerCredential);
+    if (refused !== null) return refused;
+  }
   const scope = run === null ? null : a2aRunScope(ctx, run.runId);
   if (scope !== null) {
     const bridge = ctx.a2a;
