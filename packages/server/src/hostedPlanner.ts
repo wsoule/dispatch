@@ -55,6 +55,8 @@ const ALLOWED: ReadonlyArray<readonly [method: string, path: string]> = [
   ['GET', 'team/tokens'],
   ['POST', 'team/tokens'],
   ['DELETE', 'team/tokens/*'],
+  ['POST', 'team/tokens/*/linear'],
+  ['DELETE', 'team/tokens/*/linear'],
   ['GET', 'team/status'],
   // What the app polls; empty or fixed on a planner-only daemon.
   ['GET', 'runs'],

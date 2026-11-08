@@ -289,9 +289,10 @@ export interface PassDeps {
    *  retired label), by team and lowercased name: the reason, and until when
    *  it is not looked up again. Kept across passes by the engine. */
   blockedLabels?: Map<string, { reason: string; until: number }>;
-  /** The signed-in person, when there is one. Absent: every write uses the
+  /** Everyone signed in with Linear here (the owner, and on a shared host
+   *  each teammate with a grant). Empty or absent: every write uses the
    *  project connection. Labels, containers and reads never ask. */
-  person?: PassPerson;
+  persons?: readonly PassPerson[];
   /** Hears the issue fields a push landed, so their credit is cleared, and
    *  those it did not, whose credit stays. */
   onSettled?: (
@@ -814,19 +815,23 @@ export class LinearPass {
     return pending;
   }
 
-  // The fields of one issue push by the client each goes out with: the
-  // signed-in person's for the fields they own, the project connection's for
-  // the rest. The person's go first; either list may be empty.
+  // The fields of one issue push by the client each goes out with: each
+  // signed-in person's for the fields they own (a part has one owner in the
+  // ledger, so no field is claimed twice), the project connection's for the
+  // rest. People go first; any list may be empty.
   private issueWriters(
     doc: TaskDoc,
     fields: readonly string[]
   ): { client: LinearClient; fields: string[] }[] {
-    const person = this.d.person;
-    const mine = new Set(person?.owned(doc, fields) ?? []);
+    const claimed = new Set<string>();
     const groups: { client: LinearClient; fields: string[] }[] = [];
-    if (person !== undefined && mine.size > 0)
-      groups.push({ client: person.client, fields: [...mine] });
-    const rest = fields.filter((f) => !mine.has(f));
+    for (const person of this.d.persons ?? []) {
+      const mine = person.owned(doc, fields).filter((f) => !claimed.has(f));
+      if (mine.length === 0) continue;
+      for (const field of mine) claimed.add(field);
+      groups.push({ client: person.client, fields: mine });
+    }
+    const rest = fields.filter((f) => !claimed.has(f));
     if (rest.length > 0) groups.push({ client: this.d.client, fields: rest });
     return groups;
   }

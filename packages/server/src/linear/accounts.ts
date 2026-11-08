@@ -15,7 +15,9 @@ import {
   listLinearAccounts,
   readLinearAccount,
   removeLinearAccount,
+  removeTeammateLinearAccounts,
   replaceLinearAccountTokens,
+  teammateGrantKey,
   withLinearRefreshLock,
   writeLinearAccount,
 } from '@dispatch-foo/core';
@@ -378,6 +380,39 @@ export class LinearAccounts {
     this.deps.onChange?.();
     if (previous !== null && previous.refreshToken !== record.refreshToken)
       await this.revoke(previous);
+  }
+
+  /**
+   * Stores a teammate's grant on a shared host (teammateGrantKey), replacing
+   * and revoking any they held for the workspace, so their own edits reach
+   * Linear as them. The owner's sign-in is untouched.
+   */
+  async saveTeammate(
+    handle: string,
+    record: LinearAccountRecord
+  ): Promise<void> {
+    const key = teammateGrantKey(handle, record.organization.id);
+    const previous = await withLinearRefreshLock(() =>
+      writeLinearAccount(record, handle)
+    );
+    this.ended.delete(key);
+    this.log(
+      `linear: ${handle} connected as ${record.user.id} in ${record.organization.urlKey}`
+    );
+    this.deps.onChange?.();
+    if (previous !== null && previous.refreshToken !== record.refreshToken)
+      await this.revoke(previous);
+  }
+
+  /** Forgets every grant a teammate holds, in every workspace, and revokes
+   *  each at Linear (best effort). Needs no Linear connection. */
+  async removeTeammate(handle: string): Promise<number> {
+    const removed = await withLinearRefreshLock(() =>
+      removeTeammateLinearAccounts(handle)
+    );
+    if (removed.length > 0) this.deps.onChange?.();
+    for (const record of removed) await this.revoke(record);
+    return removed.length;
   }
 
   /** Revokes a grant at Linear; never throws. */

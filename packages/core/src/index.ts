@@ -380,12 +380,17 @@ export type {
 } from './credentials.js';
 export {
   hasLinearAccounts,
+  hasTeammateLinearAccounts,
   listLinearAccounts,
+  listTeammateLinearAccounts,
   linearRefreshLockPath,
+  parseLinearAccountRecord,
   publicLinearAccount,
   readLinearAccount,
   removeLinearAccount,
+  removeTeammateLinearAccounts,
   replaceLinearAccountTokens,
+  teammateGrantKey,
   withLinearRefreshLock,
   writeLinearAccount,
 } from './linearAccounts.js';

@@ -3,9 +3,11 @@ import {
   DEFAULT_LINEAR,
   fieldHash,
   hasLinearAccounts,
+  hasTeammateLinearAccounts,
   isDoneStatus,
   isOutstanding,
   listLinearAccounts,
+  listTeammateLinearAccounts,
   loadConfig,
   parseLinearExternal,
   readLinearAccount,
@@ -19,6 +21,7 @@ import type {
   CommentStorePort,
   CredentialSource,
   DispatchConfig,
+  LinearAccountRecord,
   LinearComment,
   LinearConfig,
   LinearInitiative,
@@ -82,6 +85,7 @@ import type {
   RemoteRecord,
 } from './reconcile.js';
 import { emptySummary, LinearPass } from './reconcile.js';
+import { resolveLinearSignInConfig } from './signIn.js';
 import type {
   ConflictRecord,
   LinearBulkOutcome,
@@ -190,6 +194,16 @@ export interface WebhookReply {
   body: Record<string, unknown>;
 }
 
+// A LinearAuth for one fixed access token (no refresh), to ask Linear who a
+// grant belongs to before keeping it.
+function staticBearer(token: string): LinearAuth {
+  return {
+    header: () => Promise.resolve({ ok: true, value: `Bearer ${token}` }),
+    secrets: () => [token],
+    renew: () => Promise.resolve(false),
+  };
+}
+
 export interface LinearSyncDeps {
   rootDir: string;
   store: TaskStorePort;
@@ -222,6 +236,9 @@ export interface LinearSyncDeps {
    *  one Linear account in its home, sent as Bearer, when no API key is set.
    *  Off for every other daemon, where a sign-in is only its owner's. */
   connectionFromSignIn?: boolean;
+  /** Whether `handle` holds a live teammate token here; a teammate's grant
+   *  is used only while it does. Absent: no teammate grant is ever used. */
+  teammateActive?: (handle: string) => boolean;
   /** Where Linear can deliver webhooks (a public HTTPS URL), or null to poll. */
   webhookUrl?: string | null;
   /** Delay before a webhook's changes are fetched, coalescing a burst. */
@@ -945,24 +962,106 @@ export class LinearSync {
   }
 
   /**
-   * The signed-in person this daemon writes as, for its owner's own edits:
-   * their client, Linear user and ref, when a sign-in with `write` exists for
-   * the project connection's workspace. Null otherwise. Nothing reaches
-   * Linear when no sign-in is stored on this machine at all.
+   * Everyone this daemon writes to Linear as, for their own edits: the
+   * owner's sign-in, and on a shared host each teammate's grant
+   * (teammateGrantKey), each with `write` for the project connection's
+   * workspace. A teammate's ref is `human:<handle>`, the ref their own
+   * credential writes as. Empty when nobody has one.
    */
-  private async personWriter(): Promise<LinearPersonWriter | null> {
+  private async personWriters(): Promise<LinearPersonWriter[]> {
     const accounts = this.deps.accounts;
-    if (accounts === undefined || !hasLinearAccounts()) return null;
+    // Nobody signed in: never ask Linear who the connection is.
+    const anyOwner = hasLinearAccounts();
+    if (accounts === undefined || (!anyOwner && !hasTeammateLinearAccounts()))
+      return [];
     const connection = await this.connection();
-    if (connection === null || !connection.ok) return null;
+    if (connection === null || !connection.ok) return [];
     const orgId = connection.data.organization.id;
-    const record = readLinearAccount(orgId);
-    if (record === null || !record.scope.includes('write')) return null;
-    return {
-      client: this.clientFor(accounts.authFor(orgId)),
-      userId: record.user.id,
-      ref: this.deps.localHumanRef ?? 'human:me',
-    };
+    const writers: LinearPersonWriter[] = [];
+    const owner = anyOwner ? readLinearAccount(orgId) : null;
+    if (owner !== null && owner.scope.includes('write'))
+      writers.push({
+        client: this.clientFor(accounts.authFor(orgId)),
+        userId: owner.user.id,
+        ref: this.deps.localHumanRef ?? 'human:me',
+      });
+    for (const teammate of listTeammateLinearAccounts(orgId)) {
+      if (!teammate.record.scope.includes('write')) continue;
+      // A grant outliving its teammate's token is never used.
+      if (this.deps.teammateActive?.(teammate.handle) !== true) continue;
+      writers.push({
+        client: this.clientFor(accounts.authFor(teammate.key)),
+        userId: teammate.record.user.id,
+        ref: `human:${teammate.handle}`,
+      });
+    }
+    return writers;
+  }
+
+  /**
+   * Holds a teammate's Linear grant on this shared host, so their own edits
+   * reach Linear as them. Refused unless the grant is for the project
+   * connection's workspace (a grant for any other would never be used, and
+   * must not be kept) and carries `write`.
+   */
+  async saveTeammateGrant(
+    handle: string,
+    record: LinearAccountRecord
+  ): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+    const accounts = this.deps.accounts;
+    if (accounts === undefined)
+      return { ok: false, status: 409, error: 'Linear sign-ins are off here.' };
+    const connection = await this.connection();
+    if (connection === null || !connection.ok)
+      return { ok: false, status: 409, error: 'Linear is not connected.' };
+    if (record.organization.id !== connection.data.organization.id)
+      return {
+        ok: false,
+        status: 409,
+        error: 'That grant is for another Linear workspace.',
+      };
+    if (!record.scope.includes('write'))
+      return { ok: false, status: 400, error: 'The grant has no write scope.' };
+    // Refreshed with this daemon's own app: a grant another app issued would
+    // fail its first refresh and quietly stop carrying their edits.
+    const app = resolveLinearSignInConfig(this.safeConfig()?.linear ?? null);
+    if (record.clientId !== app.clientId)
+      return {
+        ok: false,
+        status: 400,
+        error:
+          "That grant was issued by another Linear app than this daemon's.",
+      };
+    // Who the grant really is, asked of Linear with its own token: the record
+    // names a user and a workspace, but only Linear's answer is trusted.
+    const probe = await this.clientFor(
+      staticBearer(record.accessToken)
+    ).identity();
+    if (
+      !probe.ok ||
+      probe.data.viewer.id !== record.user.id ||
+      probe.data.organization.id !== connection.data.organization.id
+    )
+      return {
+        ok: false,
+        status: 409,
+        error: 'Linear does not confirm that grant for this workspace.',
+      };
+    await accounts.saveTeammate(handle, record);
+    return { ok: true };
+  }
+
+  /** Forgets and revokes every grant a teammate holds; needs no Linear
+   *  connection, so revoking their access never waits on Linear. */
+  async removeTeammateGrant(handle: string): Promise<number> {
+    return (await this.deps.accounts?.removeTeammate(handle)) ?? 0;
+  }
+
+  /** The owner's own writer, for the actions only the owner takes as
+   *  themselves (sharing a doc). */
+  private async ownerWriter(): Promise<LinearPersonWriter | null> {
+    const ref = this.deps.localHumanRef ?? 'human:me';
+    return (await this.personWriters()).find((w) => w.ref === ref) ?? null;
   }
 
   /** Stores an API key for this project only — the daemon's own `rootDir` is the credential's
@@ -1218,7 +1317,7 @@ export class LinearSync {
       throw new DocsError('unavailable', 'Linear documents are off');
     // The owner sharing on their own credential shares as themselves when
     // signed in; anyone else shares through the project connection.
-    const person = opts.asOwner === true ? await this.personWriter() : null;
+    const person = opts.asOwner === true ? await this.ownerWriter() : null;
     let client: LinearClient | null = person?.client ?? null;
     const adapter = binding.adapter({
       port: this.documentsPort(
@@ -1941,10 +2040,10 @@ export class LinearSync {
     // workspace: an issue push sends the fields the ledger says are theirs
     // with their client and the rest with the project connection.
     const edits = this.deps.personEdits;
-    const person =
+    const persons =
       mayPush && !archiving && edits !== undefined
-        ? await this.personWriter()
-        : null;
+        ? await this.personWriters()
+        : [];
     const pass = new LinearPass({
       store,
       client: session.client,
@@ -1959,14 +2058,14 @@ export class LinearSync {
       note: (failure) => this.note(failure),
       onLabel: (label) => this.cacheLabel(session, label),
       blockedLabels: this.blockedLabels,
-      ...(person === null || edits === undefined
+      ...(edits === undefined
         ? {}
         : {
-            person: {
+            persons: persons.map((person) => ({
               client: person.client,
               owned: (doc: TaskDoc, fields: readonly string[]) =>
                 edits.owned(doc, fields, person.ref),
-            },
+            })),
           }),
       ...(edits === undefined
         ? {}
@@ -2000,16 +2099,16 @@ export class LinearSync {
           : new CommentSync({
               comments: this.deps.comments,
               client: session.client,
-              person:
-                person === null || edits === undefined
-                  ? null
-                  : {
+              persons:
+                edits === undefined
+                  ? []
+                  : persons.map((person) => ({
                       ...person,
                       wrote: (id: string, body: string) =>
                         edits.wroteComment(id, body, person.ref),
                       deleted: (id: string) =>
                         edits.deletedComment(id, person.ref),
-                    },
+                    })),
               onSettled: (id: string) => edits?.commentSettled(id),
               state,
               ctx,

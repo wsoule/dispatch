@@ -2367,6 +2367,7 @@ async function bootServer(
     personEdits: linearPersonEdits,
     localHumanRef: actorContext.humanRef,
     connectionFromSignIn: opts.hostedPlanner === true,
+    teammateActive: (handle) => team.teammates.issuedTier(handle) !== null,
     comments: commentStore,
     webhookUrl: webhookUrlFor(opts.publicOrigins ?? []),
     documents: {

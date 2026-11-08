@@ -22,10 +22,13 @@ import type { LinearAccountRecord } from '../src/linearAccounts.js';
 import {
   hasLinearAccounts,
   linearRefreshLockPath,
+  listLinearAccounts,
+  listTeammateLinearAccounts,
   publicLinearAccount,
   readLinearAccount,
   removeLinearAccount,
   replaceLinearAccountTokens,
+  teammateGrantKey,
   withLinearRefreshLock,
   writeLinearAccount,
 } from '../src/linearAccounts.js';
@@ -221,5 +224,54 @@ describe('withLinearRefreshLock', () => {
     expect(linearRefreshLockPath()).toBe(
       `${credentialsPath()}.linear-refresh.lock`
     );
+  });
+});
+
+describe("teammates' grants", () => {
+  it('are kept apart from the owner, listed by organization and keyed by handle', async () => {
+    await writeLinearAccount(record());
+    await writeLinearAccount(
+      record({
+        accessToken: 'lin_oauth_bob_1',
+        user: { ...record().user, id: 'u-bob' },
+      }),
+      'bob'
+    );
+    await writeLinearAccount(
+      record({ organization: { id: 'org-2', name: 'Other', urlKey: 'other' } }),
+      'bob'
+    );
+    expect(listLinearAccounts().map((r) => r.user.id)).toEqual(['u-ada']);
+    expect(readLinearAccount('org-1')?.user.id).toBe('u-ada');
+    const team = listTeammateLinearAccounts('org-1');
+    expect(team.map((t) => [t.handle, t.record.user.id])).toEqual([
+      ['bob', 'u-bob'],
+    ]);
+    expect(team[0]?.key).toBe(teammateGrantKey('bob', 'org-1'));
+    expect(
+      readLinearAccount(teammateGrantKey('bob', 'org-1'))?.accessToken
+    ).toBe('lin_oauth_bob_1');
+  });
+
+  it('refresh and remove by their key, leaving the owner alone', async () => {
+    await writeLinearAccount(record());
+    await writeLinearAccount(record({ refreshToken: 'bob_refresh' }), 'bob');
+    const key = teammateGrantKey('bob', 'org-1');
+    expect(
+      await replaceLinearAccountTokens(key, 'bob_refresh', {
+        accessToken: 'bob_access_2',
+        refreshToken: 'bob_refresh_2',
+        expiresAt: '2031-01-01T00:00:00.000Z',
+        scope: ['read', 'write'],
+        refreshedAt: '2026-11-07T00:00:00.000Z',
+      })
+    ).toBe(true);
+    expect(readLinearAccount(key)?.accessToken).toBe('bob_access_2');
+    expect(readLinearAccount('org-1')?.accessToken).toBe('lin_oauth_access_1');
+    expect((await removeLinearAccount(key))?.refreshToken).toBe(
+      'bob_refresh_2'
+    );
+    expect(readLinearAccount(key)).toBeNull();
+    expect(readLinearAccount('org-1')).not.toBeNull();
   });
 });

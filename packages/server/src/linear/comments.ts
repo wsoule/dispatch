@@ -49,8 +49,9 @@ interface CommentPerson extends LinearPersonWriter {
 export interface CommentSyncDeps {
   comments: CommentStorePort;
   client: LinearClient;
-  /** The signed-in person; absent, every comment write uses `client`. */
-  person?: CommentPerson | null;
+  /** Everyone signed in here (the owner, and on a shared host each teammate
+   *  with a grant); empty or absent, every comment write uses `client`. */
+  persons?: readonly CommentPerson[];
   /** Hears each comment whose write or delete reached Linear. */
   onSettled?: (commentId: string) => void;
   state: LinearSyncState;
@@ -99,15 +100,15 @@ export class CommentSync {
   // person's when Linear says they wrote it and the owner made this change
   // here (`mine`), else the project connection. Linear lets only a
   // comment's author change it, so anything else stays as it is today.
-  private editorFor(localId: string, mine: boolean): LinearClient {
-    const person = this.d.person;
+  private editorFor(
+    localId: string,
+    mine: (person: CommentPerson) => boolean
+  ): LinearClient {
     const author = this.d.state.comments[localId]?.[3];
-    return person !== undefined &&
-      person !== null &&
-      mine &&
-      author === person.userId
-      ? person.client
-      : this.d.client;
+    const person = (this.d.persons ?? []).find(
+      (p) => author === p.userId && mine(p)
+    );
+    return person?.client ?? this.d.client;
   }
 
   private unlink(localId: string): void {
@@ -282,9 +283,10 @@ export class CommentSync {
   private async sendDelete(localId: string): Promise<boolean> {
     const link = this.d.state.comments[localId];
     if (link === undefined) return true;
-    const mine = this.d.person?.deleted(localId) === true;
     const done = this.d.pass.take(
-      await this.editorFor(localId, mine).deleteComment(link[0])
+      await this.editorFor(localId, (p) => p.deleted(localId)).deleteComment(
+        link[0]
+      )
     );
     if (done === null) return false;
     this.unlink(localId);
@@ -303,9 +305,10 @@ export class CommentSync {
     const link = state.comments[local.id];
     if (link !== undefined) {
       if (fieldHash(local.body) === link[2]) return true;
-      const mine = this.d.person?.wrote(local.id, local.body) === true;
       const updated = pass.take(
-        await this.editorFor(local.id, mine).updateComment(link[0], local.body)
+        await this.editorFor(local.id, (p) =>
+          p.wrote(local.id, local.body)
+        ).updateComment(link[0], local.body)
       );
       if (updated === null) return false;
       pass.recordEcho(updated.id, updated.updatedAt);
@@ -342,14 +345,10 @@ export class CommentSync {
     // A comment the owner wrote here goes out as them when they are signed
     // in; one that only claims them as author (a file from git or board
     // sync) goes through the project connection.
-    const person = this.d.person;
     const writer =
-      person !== undefined &&
-      person !== null &&
-      local.author === person.ref &&
-      person.wrote(local.id, local.body)
-        ? person.client
-        : this.d.client;
+      (this.d.persons ?? []).find(
+        (p) => local.author === p.ref && p.wrote(local.id, local.body)
+      )?.client ?? this.d.client;
     const created = pass.take(
       await writer.createComment({
         issueId,

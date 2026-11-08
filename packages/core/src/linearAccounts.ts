@@ -73,6 +73,14 @@ const isText = (v: unknown): v is string => isString(v) && v !== '';
 
 // A stored record narrowed to its shape, or null when anything is off: a
 // malformed record reads as signed out rather than half a token pair.
+/** A Linear account record from untrusted JSON, or null when it is not a
+ *  well-formed one (the same check every stored record passes). */
+export function parseLinearAccountRecord(
+  raw: unknown
+): LinearAccountRecord | null {
+  return parseRecord(raw);
+}
+
 function parseRecord(raw: unknown): LinearAccountRecord | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
     return null;
@@ -126,9 +134,29 @@ function parseRecord(raw: unknown): LinearAccountRecord | null {
   };
 }
 
+/**
+ * The key a teammate's grant is stored under: their handle and the Linear
+ * organization. A shared host (a hosted planner, a team-local daemon) keeps
+ * one grant per teammate beside the owner's own, so each person's edits reach
+ * Linear as them. Handles cannot contain `@` and organization ids are UUIDs,
+ * so a key with `@` is always a teammate's and never an owner's.
+ */
+export function teammateGrantKey(handle: string, orgId: string): string {
+  return `${handle}@${orgId}`;
+}
+
+// Teammates' grants live in their own slot, so the owner's sign-ins (and
+// everything that lists them) never see one.
+function slotName(key: string): 'linearAccounts' | 'teammateLinearAccounts' {
+  return key.includes('@') ? 'teammateLinearAccounts' : 'linearAccounts';
+}
+
 // The slot as an own-keys record, or empty when it is missing or malformed.
-function slotOf(file: CredentialsFile): Record<string, unknown> {
-  const slot: unknown = file.linearAccounts;
+function slotOf(
+  file: CredentialsFile,
+  name: 'linearAccounts' | 'teammateLinearAccounts' = 'linearAccounts'
+): Record<string, unknown> {
+  const slot: unknown = file[name];
   return typeof slot === 'object' && slot !== null && !Array.isArray(slot)
     ? (slot as Record<string, unknown>)
     : {};
@@ -141,11 +169,12 @@ function withRecord(
   orgId: string,
   record: LinearAccountRecord | null
 ): CredentialsFile {
-  const slot = { ...slotOf(file) };
+  const name = slotName(orgId);
+  const slot = { ...slotOf(file, name) };
   if (record === null) delete slot[orgId];
   else slot[orgId] = record;
-  const next: CredentialsFile = { ...file, linearAccounts: slot };
-  if (Object.keys(slot).length === 0) delete next.linearAccounts;
+  const next: CredentialsFile = { ...file, [name]: slot };
+  if (Object.keys(slot).length === 0) delete next[name];
   return next;
 }
 
@@ -154,7 +183,7 @@ function withRecord(
 export function readLinearAccount(orgId: string): LinearAccountRecord | null {
   const loaded = loadCredentialsFile();
   if (loaded.kind !== 'ok') return null;
-  const slot = slotOf(loaded.file);
+  const slot = slotOf(loaded.file, slotName(orgId));
   return Object.hasOwn(slot, orgId) ? parseRecord(slot[orgId]) : null;
 }
 
@@ -167,6 +196,61 @@ export function listLinearAccounts(): LinearAccountRecord[] {
     const record = parseRecord(raw);
     return record === null ? [] : [record];
   });
+}
+
+/**
+ * Deletes every grant a teammate holds, in every workspace, and answers what
+ * was deleted (so the caller can revoke each at Linear). Revoking their
+ * access must not depend on reaching Linear first.
+ */
+export async function removeTeammateLinearAccounts(
+  handle: string
+): Promise<LinearAccountRecord[]> {
+  const removed: LinearAccountRecord[] = [];
+  await updateCredentialsFileAsync((file) => {
+    const slot = { ...slotOf(file, 'teammateLinearAccounts') };
+    let changed = false;
+    for (const key of Object.keys(slot)) {
+      if (key.slice(0, key.lastIndexOf('@')) !== handle) continue;
+      const record = parseRecord(slot[key]);
+      if (record !== null) removed.push(record);
+      delete slot[key];
+      changed = true;
+    }
+    if (!changed) return null;
+    const next: CredentialsFile = { ...file, teammateLinearAccounts: slot };
+    if (Object.keys(slot).length === 0) delete next.teammateLinearAccounts;
+    return next;
+  });
+  return removed;
+}
+
+/** Whether any teammate's grant is stored: a cheap check, like
+ *  hasLinearAccounts, so a host with none never looks its workspace up. */
+export function hasTeammateLinearAccounts(): boolean {
+  const loaded = loadCredentialsFile();
+  return (
+    loaded.kind === 'ok' &&
+    Object.keys(slotOf(loaded.file, 'teammateLinearAccounts')).length > 0
+  );
+}
+
+/** Every teammate's grant for one Linear organization, by handle. Takes no
+ *  lock. */
+export function listTeammateLinearAccounts(
+  orgId: string
+): { handle: string; key: string; record: LinearAccountRecord }[] {
+  const loaded = loadCredentialsFile();
+  if (loaded.kind !== 'ok') return [];
+  return Object.entries(slotOf(loaded.file, 'teammateLinearAccounts')).flatMap(
+    ([key, raw]) => {
+      const at = key.lastIndexOf('@');
+      const record = parseRecord(raw);
+      return record === null || at <= 0 || key.slice(at + 1) !== orgId
+        ? []
+        : [{ handle: key.slice(0, at), key, record }];
+    }
+  );
 }
 
 /** Whether any sign-in is stored at all: a cheap check, so a machine where
@@ -182,12 +266,18 @@ export function hasLinearAccounts(): boolean {
  * Throws CredentialsUnreadableError, writing nothing, on an unreadable file.
  */
 export async function writeLinearAccount(
-  record: LinearAccountRecord
+  record: LinearAccountRecord,
+  /** A teammate's handle: stores their grant (teammateGrantKey), not the
+   *  owner's sign-in. */
+  holder?: string
 ): Promise<LinearAccountRecord | null> {
   let previous: LinearAccountRecord | null = null;
   await updateCredentialsFileAsync((file) => {
-    const slot = slotOf(file);
-    const orgId = record.organization.id;
+    const orgId =
+      holder === undefined
+        ? record.organization.id
+        : teammateGrantKey(holder, record.organization.id);
+    const slot = slotOf(file, slotName(orgId));
     previous = Object.hasOwn(slot, orgId) ? parseRecord(slot[orgId]) : null;
     return withRecord(file, orgId, { ...record });
   });
@@ -209,7 +299,7 @@ export async function replaceLinearAccountTokens(
 ): Promise<boolean> {
   let replaced = false;
   await updateCredentialsFileAsync((file) => {
-    const slot = slotOf(file);
+    const slot = slotOf(file, slotName(orgId));
     const current = Object.hasOwn(slot, orgId)
       ? parseRecord(slot[orgId])
       : null;
@@ -240,7 +330,7 @@ export async function removeLinearAccount(
 ): Promise<LinearAccountRecord | null> {
   let removed: LinearAccountRecord | null = null;
   await updateCredentialsFileAsync((file) => {
-    const slot = slotOf(file);
+    const slot = slotOf(file, slotName(orgId));
     if (!Object.hasOwn(slot, orgId)) return null;
     const current = parseRecord(slot[orgId]);
     if (

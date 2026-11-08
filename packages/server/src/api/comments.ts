@@ -6,7 +6,7 @@ import {
 import type { CommentStorePort, TaskComment } from '@dispatch-foo/core';
 
 import type { ApiContext } from '../api.js';
-import { humanActor } from './caller.js';
+import { humanActor, linearCreditRef } from './caller.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 // The comment routes under /api/tasks/:id/comments. Comments are records of
@@ -31,7 +31,10 @@ type CommentRouteContext = Pick<
   | 'runActor'
 > &
   Partial<
-    Pick<ApiContext, 'orchestrator' | 'ownerCredential' | 'linearPersonEdits'>
+    Pick<
+      ApiContext,
+      'orchestrator' | 'ownerCredential' | 'linearPersonEdits' | 'viaAgentToken'
+    >
   >;
 
 // The daemon's owner on their own app token: only then may their Linear
@@ -42,8 +45,9 @@ function ownerLedger(ctx: CommentRouteContext): {
   ref: string;
 } | null {
   const ledger = ctx.linearPersonEdits;
-  if (ctx.ownerCredential !== true || ledger === undefined) return null;
-  return { ledger, ref: ctx.actorContext.humanRef };
+  const ref = linearCreditRef(ctx);
+  if (ref === null || ledger === undefined) return null;
+  return { ledger, ref };
 }
 
 // The daemon passes the backend's store; a hand-built test context without
