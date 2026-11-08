@@ -8,7 +8,7 @@ notifications are a second change.
 
 ## Shape
 
-```
+```text
 iPhone (apps/mobile)  ── wss ──▶  relay (apps/remote-relay)  ◀── wss ──  dispatchd on the Mac
         RemoteConnection          routes opaque frames            DaemonLink → loopback API
 ```
