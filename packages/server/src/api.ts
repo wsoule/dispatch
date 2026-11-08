@@ -10,6 +10,7 @@ import {
   isValidAssignee,
   KINDS,
   loadConfig,
+  parseLinearAccountRecord,
   PRIORITIES,
   resolvePeople,
   resolveStatusName,
@@ -84,6 +85,7 @@ import {
 import {
   humanActor,
   humanOperator,
+  linearCreditRef,
   requestActor,
   runActorFor,
 } from './api/caller.js';
@@ -860,9 +862,10 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
   });
   if (!created.ok) return errorResponse(400, created.error);
   ctx.taskAuthorship?.created(created.doc, humanOperator(ctx));
-  // Only the owner's own credential: their sign-in may then carry the push.
-  if (ctx.ownerCredential === true)
-    ctx.linearPersonEdits?.created(created.doc, ctx.actorContext.humanRef);
+  // A human's own credential: their Linear grant may then carry the push.
+  const creditRef = linearCreditRef(ctx);
+  if (creditRef !== null)
+    ctx.linearPersonEdits?.created(created.doc, creditRef);
   return jsonResponse(created.doc, 201);
 }
 
@@ -1023,8 +1026,9 @@ async function updateTask(
   const doc = ctx.store.update(id, patch);
   markA2AChild(ctx, id, doc.meta.parent);
   ctx.taskAuthorship?.edited(existing, doc, humanOperator(ctx));
-  if (ctx.ownerCredential === true)
-    ctx.linearPersonEdits?.edited(existing, doc, ctx.actorContext.humanRef);
+  const creditRef = linearCreditRef(ctx);
+  if (creditRef !== null)
+    ctx.linearPersonEdits?.edited(existing, doc, creditRef);
   ctx.cache.refresh(ctx.store, [id]);
   ctx.events.broadcast({ type: 'task.changed', ids: [id] });
   return jsonResponse(doc);
@@ -4659,6 +4663,17 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'GET', segments: ['team', 'address'], tier: 'decide' },
   { method: 'POST', segments: ['team', 'tokens'], tier: 'decide' },
   { method: 'DELETE', segments: ['team', 'tokens', '*'], tier: 'decide' },
+  // A teammate's Linear grant is a secret the host holds for them.
+  {
+    method: 'POST',
+    segments: ['team', 'tokens', '*', 'linear'],
+    tier: 'operator',
+  },
+  {
+    method: 'DELETE',
+    segments: ['team', 'tokens', '*', 'linear'],
+    tier: 'operator',
+  },
   // Settings are the project's policy — autonomy gates, caps, what a run may
   // do — so changing them is an adjudication, never something an agent
   // holding the on-disk token may do to itself. Keys that run commands, send
@@ -4916,6 +4931,26 @@ export function isSelfAuthenticated(
   return SELF_AUTHENTICATED_ROUTES.some(
     (route) => route.method === method && matchesRoute(route.segments, segments)
   );
+}
+
+// POST /api/team/tokens/<handle>/linear: the host stores a teammate's Linear
+// grant (a LinearAccountRecord) so their own edits reach Linear as them.
+async function setTeammateLinear(
+  req: Request,
+  ctx: ApiContext,
+  handle: string
+): Promise<Response> {
+  if (!/^[a-z0-9][a-z0-9._-]*$/.test(handle))
+    return errorResponse(400, 'Not a handle.');
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const record = parseLinearAccountRecord(parsed.value);
+  if (record === null)
+    return errorResponse(400, 'Not a Linear account record.');
+  const saved = await ctx.linearSync.saveTeammateGrant(handle, record);
+  return saved.ok
+    ? new Response(null, { status: 204 })
+    : errorResponse(saved.status, saved.error);
 }
 
 // A hosted planner's checks once the caller is known: members' tokens are
@@ -5483,6 +5518,14 @@ export async function handleApi(
       }
       if (segments.length === 3 && method === 'DELETE') {
         return await revokeTeamToken(ctx, segments[2]);
+      }
+      if (segments.length === 4 && segments[3] === 'linear') {
+        if (method === 'POST')
+          return await setTeammateLinear(req, ctx, segments[2] ?? '');
+        if (method === 'DELETE') {
+          await ctx.linearSync.removeTeammateGrant(segments[2] ?? '');
+          return new Response(null, { status: 204 });
+        }
       }
     }
 

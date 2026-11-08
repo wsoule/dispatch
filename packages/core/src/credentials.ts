@@ -70,6 +70,7 @@ export interface CredentialsFile {
   /** This person's Linear sign-ins on this machine, by Linear organization
    *  id; owned by linearAccounts.ts. */
   linearAccounts?: Record<string, unknown>;
+  teammateLinearAccounts?: Record<string, unknown>;
 }
 
 // The { apiKey } integrations, e.g. `'linear'`: not `'projects'`, and not
