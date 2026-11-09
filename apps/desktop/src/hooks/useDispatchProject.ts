@@ -108,6 +108,7 @@ import {
   findToolApprovalGate,
   foldsIntoOpenApproval,
   gateNotification,
+  gateReminderNotification,
   openGatesAfter,
   openGatesKey,
   questionsByRun,
@@ -1901,6 +1902,24 @@ export function useDispatchProject(
               queryKey: agentRosterKey(port),
             });
           }
+        } else if (event.type === 'decision.reminder') {
+          // A scope request still undecided: ping again from the gate this
+          // window holds, under the same rules as its first notification.
+          const note = auth.canDecide
+            ? gateReminderNotification(
+                queryClient.getQueryData<{ items: Message[] }>(
+                  openGatesKey(port)
+                )?.items ?? NO_GATES,
+                event.messageId,
+                (runId) =>
+                  queryClient
+                    .getQueryData<RunMeta[]>(runsQueryKey)
+                    ?.find((r) => r.id === runId)?.taskTitle,
+                queryClient.getQueryData<{ ref: string }>(whoamiQueryKey)
+                  ?.ref ?? null
+              )
+            : null;
+          if (note !== null) void notify(note.title, note.body, note.kind);
         } else if (event.type === 'plan.changed') {
           void queryClient.invalidateQueries({
             queryKey: ['dispatch-plan', port, event.planId],

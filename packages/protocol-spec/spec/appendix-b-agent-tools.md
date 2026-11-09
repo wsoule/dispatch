@@ -40,6 +40,7 @@ answer route in requests of at most 45 seconds, for at most:
 
 | Recipients                      | Longest wait                                                                              |
 | ------------------------------- | ----------------------------------------------------------------------------------------- |
+| a `scope` request               | 24 hours                                                                                  |
 | any `human:` address among them | 30 minutes                                                                                |
 | no `human:` address             | the project's `agentBlockingTimeoutSec`: 600 seconds by default, and at most 1800 seconds |
 
@@ -49,8 +50,9 @@ session. When the wait ends with no answer, the tool returns the message with
 question stays open, and a late answer still reaches the sender: pushed to a
 live session, or held in its mailbox. An answer the tool does receive arrives
 that usual way too, and the tool's result says where, so an agent does not act
-on it twice. Dispatch denies a `scope` gate that no one decided 29 minutes after
-it was sent, so a session hears the denial before its 30-minute wait ends
+on it twice. A `scope` gate never expires: the session stays paused on it until
+someone decides. When even its 24-hour wait ends, the note tells the agent to
+stay inside its writes and stop, and the gate stays open
 ([Appendix C](appendix-c-dispatch-profile.md#sC.4)).
 
 The waits are the tool's own, outside the rules a host follows, and the kit does

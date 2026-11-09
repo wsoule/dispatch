@@ -121,7 +121,7 @@ export async function openRecovered(
   events: EventBus = new EventBus(),
   extra: Pick<
     Parameters<typeof openMessaging>[0],
-    'scopeExpiry' | 'deciders'
+    'scopeSweep' | 'deciders'
   > = {}
 ): Promise<Messaging> {
   const messaging = openMessaging({

@@ -326,12 +326,14 @@ function answerCopyNote(kind: MessagingCredential['kind']): string {
         'it twice';
 }
 
-// A scope request's timeout note. The daemon denies an undecided scope gate
-// before this wait ends, so reaching it means the daemon could not answer.
-export const SCOPE_EXPIRED_NOTE =
-  'No one decided in time. Treat this as denied: proceed within your ' +
-  'original fence, and report the blocker in your final summary and in a ' +
-  'task_comment.';
+// A scope request's timeout note. Scope gates never expire, so the request
+// is still open in the app: the run stops cleanly rather than finishing a
+// partial job, and a later grant reaches the task's next run.
+export const SCOPE_UNDECIDED_NOTE =
+  'No one has decided yet; the request stays open in the app. Do not edit ' +
+  'outside your fence. Commit what you have, report the blocker in a ' +
+  'task_comment and your final summary, and end your turn: the task can be ' +
+  're-run once someone decides.';
 
 // True for a scope request's gate payload (`data: { type: 'scope', … }`).
 function isScopeData(data: unknown): boolean {
@@ -391,9 +393,12 @@ async function msgSend(
   if (args.blocking !== true) return toolResult(result);
 
   const isHuman = args.to.some((addr) => addr.startsWith('human:'));
-  const totalWaitMs = isHuman
-    ? timing.humanTotalWaitMs
-    : await agentBlockingTimeoutMs(rootDir, timing.defaultAgentTotalWaitMs);
+  const isScope = isScopeData(args.data);
+  const totalWaitMs = isScope
+    ? timing.scopeTotalWaitMs
+    : isHuman
+      ? timing.humanTotalWaitMs
+      : await agentBlockingTimeoutMs(rootDir, timing.defaultAgentTotalWaitMs);
   const outcome = await pollForAnswer(
     rootDir,
     server,
@@ -407,8 +412,8 @@ async function msgSend(
     return toolResult({
       message: result.message,
       answer: null,
-      note: isScopeData(args.data)
-        ? SCOPE_EXPIRED_NOTE
+      note: isScope
+        ? SCOPE_UNDECIDED_NOTE
         : 'no answer yet — it will arrive in your inbox',
     });
   }
@@ -966,7 +971,8 @@ export function registerMessagingTools(
         'on it twice. Inside a dispatch run, to edit outside your declared ' +
         'writes, send kind "question", blocking true, choices ' +
         '["grant","deny"], data { type: "scope", paths, reason } to your ' +
-        'human; no decision before the wait ends means denied. Your human: ' +
+        'human; it never expires, and waits up to 24 hours with your run ' +
+        'paused. Your human: ' +
         'inside a run, the address in ' +
         'your task prompt; otherwise human:<handle> from your own ' +
         'agent:<handle>/<name>. ' +

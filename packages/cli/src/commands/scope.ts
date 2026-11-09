@@ -56,7 +56,7 @@ export function registerScopeCommands(program: Command, ctx: CliContext): void {
           ctx.log(JSON.stringify({ message: gate.message, answer }, null, 2));
           return;
         }
-        // An expiry or a closed gate answers without `grant`, so it reads as denied.
+        // A closed gate (or an old expiry) answers without `grant`, so it reads as denied.
         const state =
           answer === null
             ? 'pending'

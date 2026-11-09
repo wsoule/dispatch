@@ -1324,6 +1324,8 @@ export type ServerEvent =
   // is derived on every read, so there is no increment to carry. Mirrors
   // packages/server/src/events.ts exactly.
   | { type: 'decisions.changed' }
+  // A blocking item waited long enough to ping a human again; once per item.
+  | { type: 'decision.reminder'; itemId: string; messageId?: string }
   // The PR poll's cached repo-PR set changed (a delta in number, head sha,
   // state, mergeable, review decision, checks, draft-ness, or updatedAt) —
   // refetch GET /api/landing. No payload: the cache itself is the source of

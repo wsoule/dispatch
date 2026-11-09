@@ -70,6 +70,7 @@ import {
   writeDaemonFile,
 } from './daemonfile.js';
 import { DecisionFeed } from './decisionFeed.js';
+import { DecisionReminders } from './decisionReminders.js';
 import {
   createSourceChangeHandler,
   DepMapCache,
@@ -2550,6 +2551,12 @@ async function bootServer(
     readConfig: () => loadConfig(rootDir).notifications,
   });
   const stopWebhookDelivery = webhookDelivery.start();
+  // Scope requests never expire, so one still undecided after 30 minutes
+  // pings the app and the webhook again rather than sitting unseen.
+  const stopDecisionReminders = new DecisionReminders({
+    feed: decisionFeed,
+    events,
+  }).start();
 
   // The gate hooks themselves — verify-retry and merge consult the project's
   // policy off the daemon's own signals; the scope gate consults it in
@@ -3133,6 +3140,7 @@ async function bootServer(
       unsubscribeBoardSync();
       unsubscribeDocPublishes();
       stopWebhookDelivery();
+      stopDecisionReminders();
       stopDecisionFeed();
       stopPolicyEngine();
       stopDifficultyAutopilot();

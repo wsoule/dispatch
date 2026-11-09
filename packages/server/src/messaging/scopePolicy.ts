@@ -10,11 +10,10 @@ import type { LedgerStorePort } from '../ledger.js';
 import { consultProjectPolicy } from '../policyEngine.js';
 import { SYSTEM_SENDER } from './gates.js';
 
-// Under the MCP's 30-minute wait, so the daemon's deny is what the agent hears.
-export const SCOPE_GATE_TTL_MS = 29 * 60_000;
-export const SCOPE_EXPIRY_SWEEP_MS = 30_000;
-
-const SCOPE_EXPIRED_BODY = `Expired: no one decided within ${SCOPE_GATE_TTL_MS / 60_000} minutes. Treat this as denied: proceed within your original fence, and report the blocker in your final summary and in a task_comment.`;
+// How often the daemon re-tries policy grants on open scope gates. Gates
+// never expire: an undecided one keeps its run paused until a human answers
+// (decisionReminders.ts nudges them once it has waited a while).
+export const SCOPE_SWEEP_MS = 30_000;
 
 /**
  * Whether every path an agent asked to edit lies inside one of the given
@@ -183,53 +182,15 @@ async function grantScopeGatesByPolicy(
   return granted;
 }
 
-// One pass of the daemon's scope sweep: grants what policy covers, then
-// expires the rest, so a failing grant phase never stops the expiry.
+// One pass of the daemon's scope sweep: grants every open gate policy covers.
+// Never rejects; a failing pass is logged and the next one tries again.
 export async function sweepScopeGates(
   engine: DeliveryEngine,
-  deps: ScopePolicyDeps,
-  nowMs: () => number
+  deps: ScopePolicyDeps
 ): Promise<void> {
   try {
     await grantScopeGatesByPolicy(engine, deps);
   } catch (err) {
     console.error('messaging: scope grant sweep failed', err);
   }
-  try {
-    await expireScopeGates(engine, nowMs());
-  } catch (err) {
-    console.error('messaging: scope expiry sweep failed', err);
-  }
-}
-
-// Denies, as the system, every open scope gate nobody decided within the TTL.
-// One that cannot be denied is logged and left for the next sweep.
-export async function expireScopeGates(
-  engine: DeliveryEngine,
-  nowMs: number
-): Promise<number> {
-  let expired = 0;
-  for (const question of engine.openBlocking()) {
-    if (gateOf(question)?.type !== 'scope') continue;
-    if (nowMs - Date.parse(question.createdAt) <= SCOPE_GATE_TTL_MS) continue;
-    try {
-      await engine.reply(
-        question.id,
-        {
-          body: SCOPE_EXPIRED_BODY,
-          choice: 'deny',
-          data: { type: 'x-expired' },
-        },
-        SYSTEM_SENDER
-      );
-      expired++;
-    } catch (err) {
-      if (!(err instanceof MessagingError && err.code === 'conflict'))
-        console.error(
-          `messaging: could not expire scope gate ${question.id}`,
-          err
-        );
-    }
-  }
-  return expired;
 }

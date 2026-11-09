@@ -50,7 +50,7 @@ import { createRunTokens } from './runTokens.js';
 import {
   applyScopeAnswer,
   installScopePolicy,
-  SCOPE_EXPIRY_SWEEP_MS,
+  SCOPE_SWEEP_MS,
   sweepScopeGates,
 } from './scopePolicy.js';
 import {
@@ -176,8 +176,8 @@ export function openMessaging(deps: {
   ledgerStore?: Pick<LedgerStorePort, 'add' | 'entriesFor'>;
   // The task Activity line a policy grant writes; defaults to none.
   appendPolicyActivity?: (taskId: string, text: string) => void;
-  // How often the scope-gate sweep runs, and its clock; tests shorten both.
-  scopeExpiry?: { sweepMs?: number; now?: () => number };
+  // How often the scope-gate grant sweep runs; tests shorten it.
+  scopeSweep?: { sweepMs?: number };
   // Federation's hooks, and a nudge for the next pass once mail is stored.
   federation?: FederationHooks;
   onFederatedMessage?: () => void;
@@ -601,14 +601,10 @@ export function openMessaging(deps: {
   });
   const uninstallScopePolicy = installScopePolicy(engine, scopeDeps);
   const uninstallOperatorNotices = installOperatorNotices(engine, routing);
-  // Grants what policy covers before expiring, so a covered gate is never denied.
+  // Catches a policy grant the live subscription missed; undecided gates stay open.
   const scopeSweep = setInterval(() => {
-    void sweepScopeGates(
-      engine,
-      scopeDeps,
-      () => deps.scopeExpiry?.now?.() ?? Date.now()
-    );
-  }, deps.scopeExpiry?.sweepMs ?? SCOPE_EXPIRY_SWEEP_MS);
+    void sweepScopeGates(engine, scopeDeps);
+  }, deps.scopeSweep?.sweepMs ?? SCOPE_SWEEP_MS);
   scopeSweep.unref();
   const sessionSweep = setInterval(
     () => pruneIdleSessions(store, Date.now(), SESSION_MAX_IDLE_MS),

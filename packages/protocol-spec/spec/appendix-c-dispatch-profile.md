@@ -115,9 +115,9 @@ with a non-empty list of non-empty paths and a reason that is not blank. A
 request that breaks one of these rules fails `invalid` on `data`, `data.paths`
 or `data.reason`; other members of its data are not checked. `grant` widens the
 session's writes by the paths; `deny` leaves them as they were. The system
-grants a request the autonomy policy allows, with an `x-policy` marker, and
-denies one that no one decided within 29 minutes, with an `x-expired` marker
-([§C.4](appendix-c-dispatch-profile.md#sC.4)). Vectors:
+grants a request the autonomy policy allows, with an `x-policy` marker
+([§C.4](appendix-c-dispatch-profile.md#sC.4)). It never denies an undecided
+request on its own: the request waits for a human. Vectors:
 `env.envelope.only-sessions-raise-scope-gates`,
 `env.envelope.scope-gates-have-a-fixed-shape`,
 `env.envelope.a-scope-gate-names-a-path`,
@@ -201,10 +201,10 @@ Besides the core system markers `x-closed` and `x-breaker`
 of its own. They are listed here for information, are not registry entries, and
 mean something only from the system address.
 
-| Marker      | Data                                                                         | Meaning                                                                                                                                                                        |
-| ----------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `x-policy`  | `{ "type": "x-policy", "gate", "rung" }`, `gate` being `approval` or `scope` | on the system's answer to a `tool-approval` or `scope` gate: the project's autonomy policy decided it at that rung                                                             |
-| `x-expired` | `{ "type": "x-expired" }`                                                    | on the system's `deny` answer to a `scope` gate that no one decided within 29 minutes, and its `reject` answer to a `memory` gate that no one decided within `proposalTtlDays` |
+| Marker      | Data                                                                         | Meaning                                                                                                            |
+| ----------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `x-policy`  | `{ "type": "x-policy", "gate", "rung" }`, `gate` being `approval` or `scope` | on the system's answer to a `tool-approval` or `scope` gate: the project's autonomy policy decided it at that rung |
+| `x-expired` | `{ "type": "x-expired" }`                                                    | on the system's `reject` answer to a `memory` gate that no one decided within `proposalTtlDays`                    |
 
 Both are answers from the system address, so the gate's effect applies as for
 any deciding answer ([§5.5](05-gates.md#s5.5)). A close carries
@@ -323,9 +323,9 @@ Vectors: `core.render.dispatch-push-format`,
 
 A project overrides them in its configuration as positive integers, read once
 when the daemon starts; a malformed file falls back to the defaults. A blocking
-wait on a human lasts at most 30 minutes
-([§B.2](appendix-b-agent-tools.md#sB.2)). The breaker's owner is the human the
-stopped session acts for, else the project's owner
+wait on a human lasts at most 30 minutes, and on a `scope` request at most 24
+hours ([§B.2](appendix-b-agent-tools.md#sB.2)). The breaker's owner is the human
+the stopped session acts for, else the project's owner
 ([§C.2](appendix-c-dispatch-profile.md#sC.2)), who gets one notice per thread
 and hour.
 

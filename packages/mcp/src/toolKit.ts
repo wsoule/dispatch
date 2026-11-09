@@ -60,6 +60,9 @@ export function pollSignal(
 export interface MessageBlockingTiming {
   /** Total budget when any recipient is a human. */
   humanTotalWaitMs: number;
+  /** Total budget for a scope request (`data.type: 'scope'`). Scope gates
+   *  never expire, so this is long: the run stays paused on the gate. */
+  scopeTotalWaitMs: number;
   /** Total budget for a non-human recipient when `GET /api/config` can't be
    *  read; `messaging.agentBlockingTimeoutSec` wins whenever available. */
   defaultAgentTotalWaitMs: number;
@@ -70,10 +73,11 @@ export interface MessageBlockingTiming {
   errorDelayMs: number;
 }
 
-// The executor sets the MCP client's tool timeout above `humanTotalWaitMs` (see
+// The executor sets the MCP client's tool timeout above `scopeTotalWaitMs` (see
 // dispatchMcp.ts); the agent fallback matches DEFAULT_MESSAGING's 600s.
 export const DEFAULT_MESSAGE_BLOCKING_TIMING: MessageBlockingTiming = {
   humanTotalWaitMs: 30 * 60_000,
+  scopeTotalWaitMs: 24 * 60 * 60_000,
   defaultAgentTotalWaitMs: 600_000,
   requestTimeoutMs: 45_000,
   retryDelayMs: 250,
