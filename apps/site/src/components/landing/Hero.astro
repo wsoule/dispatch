@@ -1,6 +1,6 @@
 ---
 import AppDemo from './AppDemo.astro';
-import { DMG, RELEASES } from '../../lib/downloads';
+import { DMG, RELEASES, WEB_APP } from '../../lib/downloads';
 import InstallCommand from './InstallCommand.astro';
 ---
 
@@ -20,7 +20,8 @@ import InstallCommand from './InstallCommand.astro';
         <InstallCommand />
       </div>
       <p class="alt">
-        Apple Silicon. <a href={DMG.x64}>Intel Mac</a> or <a href={RELEASES}>Linux</a>.
+        Apple Silicon. <a href={DMG.x64}>Intel Mac</a> or <a href={RELEASES}>Linux</a>. Or{' '}
+        <a href={WEB_APP}>open the web app</a>.
       </p>
     </div>
   </div>

@@ -71,6 +71,7 @@ import { DaemonUnavailable } from './components/shell/DaemonUnavailable';
 import {
   DeepLinkProvider,
   useCopyTaskLink,
+  useWebLinkActions,
 } from './components/shell/DeepLinkContext';
 import {
   DispatchShell,
@@ -162,6 +163,7 @@ import { dispatchConfigKey } from './lib/configEvents';
 import { containerStatus } from './lib/containerStatus';
 import { mentions, subjectOf } from './lib/conversationScope';
 import { type DecisionItem, decisionTarget } from './lib/decisionFeed';
+import { resolveIssueTask } from './lib/deepLink';
 import { draftTrayViewModel } from './lib/draftTray';
 import { formTaskInput, guideProvider } from './lib/firstTaskGuide';
 import {
@@ -713,7 +715,11 @@ function App() {
   // received `dispatch://task/…` link (or the harness's `?task=`) into "switch project if
   // needed, then open the task once its tasks have loaded".
   const copyTaskLink = useCopyTaskLink(activeProject?.path ?? null);
-  const deepLinkActions = useMemo(() => ({ copyTaskLink }), [copyTaskLink]);
+  const webLinkActions = useWebLinkActions(hostedPlanner() !== null);
+  const deepLinkActions = useMemo(
+    () => ({ copyTaskLink, ...webLinkActions }),
+    [copyTaskLink, webLinkActions]
+  );
   useDeepLinkRouter({
     activeProjectPath: activeProject?.path ?? null,
     tasksReady: data.tasksReady,
@@ -721,6 +727,32 @@ function App() {
     hasDispatch,
     switchProject: selectSwitchProject,
     openTask: (id) => openTaskView(id),
+    // Fresh links, so an issue linked since the last refetch still resolves;
+    // the cached map stands in when the daemon cannot answer.
+    findIssueTask: async (identifier) => {
+      const links =
+        data.client === null
+          ? data.linearLinks
+          : await data.client.fetchLinearLinks().catch(() => data.linearLinks);
+      return resolveIssueTask(identifier, links, data.tasksIncludingArchived);
+    },
+    openRun: async (runId) => {
+      const run =
+        rawData.runs.find((r) => r.id === runId) ??
+        (data.client === null
+          ? undefined
+          : await data.client
+              .fetchRun(runId)
+              .then((detail) => detail.meta)
+              .catch(() => undefined));
+      if (run === undefined) return false;
+      openTaskView(
+        run.taskId,
+        isTerminalRunState(run.state) ? 'review' : 'run',
+        run.id
+      );
+      return true;
+    },
     notify: toasts.push,
   });
 
