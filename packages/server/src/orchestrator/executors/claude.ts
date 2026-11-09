@@ -209,10 +209,10 @@ export function experimentOptions(
     env: withAccount(
       withProtoPath(
         cwd,
-      agentEnv(
-        experiments.includes('cache-1h')
-          ? { ENABLE_PROMPT_CACHING_1H: '1' }
-          : {}
+        agentEnv(
+          experiments.includes('cache-1h')
+            ? { ENABLE_PROMPT_CACHING_1H: '1' }
+            : {}
         )
       ),
       account
