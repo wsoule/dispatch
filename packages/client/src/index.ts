@@ -276,6 +276,21 @@ export type {
   LiveSegment,
   LiveText,
 } from './api';
+export {
+  isOverseerCardTool,
+  OVERSEER_CARD_TOOLS,
+  overseerActionInputs,
+  overseerCard,
+  overseerCardIds,
+  overseerCardWaves,
+} from './overseerCards';
+export type {
+  OverseerCard,
+  OverseerCardChange,
+  OverseerCardRow,
+  OverseerCardState,
+  OverseerCardTool,
+} from './overseerCards';
 export { reduceProposal } from './proposalReducer';
 export type { ProposalAction } from './proposalReducer';
 export { useTasks } from './useTasks';

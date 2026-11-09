@@ -1726,6 +1726,11 @@ export interface OverseerMessage {
   notice?: 'stopped' | 'rollover' | 'restarted';
   /** `user` entries: the files the human attached to the line. */
   attachments?: OverseerAttachment[];
+  /** `action` entries at `pending`: the action's validated input, so a decided
+   *  action's card can still show what was proposed. */
+  input?: unknown;
+  /** `action` entries at `applied`: the task ids the effect created or changed. */
+  entities?: string[];
 }
 
 // Mirrors OverseerAttachment in packages/server/src/orchestrator/overseer.ts —
@@ -1814,6 +1819,8 @@ export interface OverseerAction {
   status: 'pending' | 'applied' | 'denied' | 'failed';
   /** Once applied: the tasks it created or dispatched. */
   taskIds?: string[];
+  /** Once applied: the task (and milestone) ids the effect created or changed, in card order. */
+  entities?: string[];
 }
 
 // Mirrors OverseerRecord in packages/server/src/orchestrator/overseer.ts — the

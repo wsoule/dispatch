@@ -1722,11 +1722,14 @@ describe('the agent drives everything behind cards', () => {
     expect(h.cache.query().some((t) => t.meta.title === 'Spec the 403')).toBe(
       false
     );
+    expect(action.entities).toBeUndefined();
     const applied = await h.registry.applyAction(action.id, CONFIRMED);
     const made = h.cache.query().find((t) => t.meta.title === 'Spec the 403');
     expect(applied.taskIds).toEqual([made?.meta.id ?? '']);
     expect(made?.meta.parent).toBe(milestone.meta.id);
     expect(made?.meta.priority).toBe('high');
+    // The chat's result card links the task it made.
+    expect(applied.entities).toEqual([made?.meta.id ?? '']);
   });
 
   it('create_plan makes a milestone and its tasks on one card, #n wiring order', async () => {
@@ -1758,6 +1761,13 @@ describe('the agent drives everything behind cards', () => {
     expect(applied.taskIds).toEqual(
       ['Schema', 'Endpoints', 'UI'].map((title) => byTitle(title).id)
     );
+    // The milestone first, then the tasks in plan order: the card's rows.
+    expect(applied.entities).toEqual([
+      milestone?.meta.id ?? '',
+      byTitle('Schema').id,
+      byTitle('Endpoints').id,
+      byTitle('UI').id,
+    ]);
   });
 
   it('create_plan sends agents on its new milestone once approved, and says so first', async () => {
