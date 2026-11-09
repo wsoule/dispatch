@@ -1,3 +1,7 @@
+import type {
+  HostedWorkspaces,
+  InstalledWorkspace,
+} from '../hosting/workspaces.js';
 import { GrantGone } from './grants.js';
 import type { LinearGrants } from './grants.js';
 import { LinearApiError } from './linear/gateway.js';
@@ -52,5 +56,21 @@ export function linearWorkspace(
         throw err;
       }
     },
+  };
+}
+
+/** An installed workspace: its own dispatchd answers, as each member. */
+export function hostedWorkspace(
+  hosted: HostedWorkspaces,
+  grants: LinearGrants,
+  org: InstalledWorkspace
+): WorkspaceSource {
+  return {
+    name: org.name,
+    viewerFor: (userId) =>
+      userId === null ? null : grants.member(userId, org.orgId),
+    load: () => Promise.reject(new Error('served by its daemon')),
+    daemon: (userId, pathAndQuery, req) =>
+      hosted.request(userId, org.orgId, pathAndQuery, req),
   };
 }

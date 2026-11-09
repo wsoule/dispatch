@@ -1,14 +1,21 @@
+import type { LinearAccountRecord } from '@dispatch-foo/core';
 import { join } from 'node:path';
 
 import { TeamDb } from './db.js';
 import type { Device } from './db.js';
+import { WorkspaceHost } from './hosting/host.js';
+import { HostedWorkspaces } from './hosting/workspaces.js';
 import type { Connection } from './hub.js';
 import { deviceOfRow, TeamHubs } from './hub.js';
 import { LinearError, linearOp, Sealer, TeamLinear } from './linear.js';
 import { mcpHandler } from './mcp.js';
 import { LinearGrants } from './planner/grants.js';
 import { plannerHandler } from './planner/routes.js';
-import { demoWorkspace, linearWorkspace } from './planner/sources.js';
+import {
+  demoWorkspace,
+  hostedWorkspace,
+  linearWorkspace,
+} from './planner/sources.js';
 import type { WebConfig } from './web.js';
 import { webHandler, webUserOf } from './web.js';
 
@@ -26,6 +33,9 @@ export interface TeamServiceConfig extends WebConfig {
   linearFetch?: typeof fetch;
   /** The desktop Vite bundle the hosted planner serves; null turns it off. */
   desktopDistDir?: string | null;
+  /** The per-workspace daemon's entry (hosting/daemonEntry.ts); null hosts
+   * none, and installs are off. */
+  daemonEntry?: string | null;
 }
 
 export interface TeamService {
@@ -36,8 +46,19 @@ export interface TeamService {
   stop(): Promise<void>;
 }
 
-// A machine hub's link to its team, or a planner page's live-update socket.
-type SocketData = HubSocket | { kind: 'planner' };
+// A machine hub's link to its team, a planner page's live-update socket (the
+// stand-in sends no events; an open socket stops the app retrying), or one
+// bridged to an installed workspace's daemon as the member.
+type SocketData =
+  | HubSocket
+  | { kind: 'planner' }
+  | {
+      kind: 'bridge';
+      orgId: string;
+      userId: string;
+      upstream: WebSocket | null;
+      closed: boolean;
+    };
 
 interface HubSocket {
   kind: 'hub';
@@ -58,22 +79,45 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
     config.origin,
     config.linearFetch
   );
-  // People's Linear read grants need both the seal and the public Linear app.
+  const sealer =
+    config.teamSecret === null || config.teamSecret === ''
+      ? null
+      : new Sealer(config.teamSecret);
+  // People's Linear grants need both the seal and the public Linear app.
   const linearClientId = config.linearClientId ?? null;
   const grants =
-    config.teamSecret === null ||
-    config.teamSecret === '' ||
-    linearClientId === null
+    sealer === null || linearClientId === null
       ? undefined
-      : new LinearGrants(
-          db.db,
-          new Sealer(config.teamSecret),
-          linearClientId,
-          config.linearFetch
-        );
+      : new LinearGrants(db.db, sealer, linearClientId, config.linearFetch);
+  const secret = config.linearClientSecret ?? '';
+  const entry = config.daemonEntry ?? null;
+  const host =
+    entry === null || grants === undefined || linearClientId === null
+      ? null
+      : new WorkspaceHost({
+          dataDir: config.dataDir,
+          entry,
+          env: {
+            DISPATCH_LINEAR_CLIENT_ID: linearClientId,
+            ...(secret === '' ? {} : { DISPATCH_LINEAR_CLIENT_SECRET: secret }),
+          },
+        });
+  const hosted =
+    host === null ||
+    sealer === null ||
+    grants === undefined ||
+    linearClientId === null
+      ? null
+      : new HostedWorkspaces(db.db, sealer, host, grants, linearClientId);
   const web = webHandler({
     db,
     ...(grants === undefined ? {} : { grants }),
+    ...(hosted === null
+      ? {}
+      : {
+          install: (userId: string, record: LinearAccountRecord) =>
+            hosted.install(userId, record),
+        }),
     config,
     linear,
     sessions: (teamId) => hubs.sessions(teamId),
@@ -94,6 +138,9 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
     userOf: (req) => webUserOf(db, req)?.id ?? null,
     workspace: (key) => {
       if (key === 'demo') return demo;
+      const installed = hosted?.byKey(key) ?? null;
+      if (installed !== null && hosted !== null && grants !== undefined)
+        return hostedWorkspace(hosted, grants, installed);
       const org = grants?.workspace(key) ?? null;
       return org === null || grants === undefined
         ? null
@@ -187,17 +234,30 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
       }
       // A planner page's live-update socket, for its view token.
       const watch = /^\/w\/([a-z0-9-]{1,64})\/ws$/.exec(url.pathname);
-      if (
-        watch !== null &&
-        planner.watches(
-          watch[1] ?? '',
-          url.searchParams.get('token') ?? '',
-          req
-        )
-      )
-        return srv.upgrade(req, { data: { kind: 'planner' } })
+      const watcher =
+        watch === null
+          ? null
+          : planner.watches(
+              watch[1] ?? '',
+              url.searchParams.get('token') ?? '',
+              req
+            );
+      if (watch !== null && watcher !== null) {
+        const installed = hosted?.byKey(watch[1] ?? '') ?? null;
+        const data: SocketData =
+          installed === null || watcher.userId === null
+            ? { kind: 'planner' }
+            : {
+                kind: 'bridge',
+                orgId: installed.orgId,
+                userId: watcher.userId,
+                upstream: null,
+                closed: false,
+              };
+        return srv.upgrade(req, { data })
           ? undefined
           : Response.json({ error: 'upgrade to a WebSocket' }, { status: 426 });
+      }
       const fromPlanner = await planner.fetch(req);
       if (fromPlanner !== null) return fromPlanner;
       const fromMcp = await mcp(req);
@@ -211,6 +271,28 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
       idleTimeout: 120,
       sendPings: true,
       open(ws) {
+        const bridge = ws.data;
+        if (bridge.kind === 'bridge' && hosted !== null) {
+          void hosted
+            .socket(bridge.userId, bridge.orgId)
+            .then(({ url, token }) => {
+              if (bridge.closed) return;
+              const upstream = new WebSocket(url, {
+                headers: { authorization: `Bearer ${token}` },
+              });
+              bridge.upstream = upstream;
+              upstream.onmessage = (event) => {
+                ws.send(
+                  typeof event.data === 'string'
+                    ? event.data
+                    : new Uint8Array(event.data as ArrayBuffer)
+                );
+              };
+              upstream.onclose = () => ws.close(1011, 'workspace restarted');
+            })
+            .catch(() => ws.close(1011, 'workspace unavailable'));
+          return;
+        }
         if (ws.data.kind !== 'hub') return;
         const hub = hubs.of(ws.data.device.teamId);
         ws.data.conn = hub.connect(
@@ -226,6 +308,11 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
           ws.close(1008, 'another machine on this team links as that replica');
       },
       async message(ws, message) {
+        if (ws.data.kind === 'bridge') {
+          if (ws.data.upstream?.readyState === WebSocket.OPEN)
+            ws.data.upstream.send(message);
+          return;
+        }
         if (ws.data.kind !== 'hub') return;
         const conn = ws.data.conn;
         if (conn === null) return;
@@ -242,6 +329,11 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
           );
       },
       close(ws) {
+        if (ws.data.kind === 'bridge') {
+          ws.data.closed = true;
+          ws.data.upstream?.close();
+          return;
+        }
         if (ws.data.kind === 'hub' && ws.data.conn !== null)
           hubs.of(ws.data.device.teamId).disconnect(ws.data.conn);
       },
@@ -255,6 +347,7 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
     linear,
     async stop() {
       hubs.close();
+      await host?.close();
       await server.stop(true);
       db.close();
     },

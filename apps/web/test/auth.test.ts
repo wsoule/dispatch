@@ -1,3 +1,4 @@
+import type { LinearAccountRecord } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createHash } from 'node:crypto';
 
@@ -17,6 +18,7 @@ let ghUser: { id: number; login: string };
 let grants: LinearGrants;
 const ORG = { id: 'org-1', name: 'Acme', urlKey: 'acme' };
 const seen: { url: string; body: string; auth: string | null }[] = [];
+const installs: { userId: string; record: LinearAccountRecord }[] = [];
 
 const fakeFetch = ((input: string | URL | Request, init?: RequestInit) => {
   const url = input instanceof Request ? input.url : input.toString();
@@ -55,6 +57,10 @@ function setup(linearClientId: string | null): void {
   );
   handle = webHandler({
     grants,
+    install: (userId, record) => {
+      installs.push({ userId, record });
+      return Promise.resolve();
+    },
     db,
     config: {
       origin: ORIGIN,
@@ -70,6 +76,7 @@ function setup(linearClientId: string | null): void {
 
 beforeEach(() => {
   seen.length = 0;
+  installs.length = 0;
   viewer = { id: 'lin-grace', name: 'Grace Hopper', displayName: 'grace' };
   ghUser = { id: 42, login: 'grace-gh' };
   setup('lin-client');
@@ -260,7 +267,9 @@ describe('opening a Linear workspace', () => {
   it('signs a newcomer in with Linear and keeps a sealed read grant', async () => {
     const start = await call('/auth/linear/workspace');
     const target = new URL(start.headers.get('location') ?? '');
-    expect(target.searchParams.get('scope')).toBe('read');
+    // Read and write: the person's edits go back to Linear as them.
+    expect(target.searchParams.get('scope')).toBe('read,write');
+    expect(target.searchParams.get('actor')).toBeNull();
     const done = await complete(start, 'linear');
     expect(done.status).toBe(303);
     expect(done.headers.get('location')).toBe('/w/acme/');
@@ -306,5 +315,63 @@ describe('opening a Linear workspace', () => {
     expect(home).toContain('href="/w/acme/"');
     expect(home).toContain('href="/w/demo/"');
     expect(home).toContain('href="/auth/linear/workspace"');
+  });
+});
+
+describe('installing Dispatch on a workspace', () => {
+  it('asks a signed-out visitor to sign in first', async () => {
+    const res = await call('/auth/linear/install');
+    expect(res.headers.get('location')).toBe(
+      `/auth/linear?next=${encodeURIComponent('/auth/linear/install')}`
+    );
+  });
+
+  it('installs as the app, then opens the workspace as the installer', async () => {
+    const session = cookieOf(
+      await complete(await call('/auth/github'), 'github')
+    );
+    const start = await call('/auth/linear/install', {
+      headers: { cookie: session },
+    });
+    const target = new URL(start.headers.get('location') ?? '');
+    expect(target.searchParams.get('actor')).toBe('app');
+    expect(target.searchParams.get('scope')).toBe('read,write');
+    viewer = { id: 'lin-app', name: 'Dispatch', displayName: 'dispatch' };
+    const done = await complete(start, 'linear', session);
+    expect(done.headers.get('location')).toBe('/auth/linear/workspace');
+    const ada = db.webSessionUser(session.slice('dt_session='.length))!;
+    expect(installs).toHaveLength(1);
+    expect(installs[0]?.userId).toBe(ada.id);
+    expect(installs[0]?.record).toMatchObject({
+      clientId: 'lin-client',
+      accessToken: 'lin-token',
+      refreshToken: 'lin-refresh',
+      organization: ORG,
+      user: { id: 'lin-app', email: 'lin-app@users.linear.app' },
+    });
+    // The app's grant is the install's, never a person's read grant.
+    expect(grants.member(ada.id, 'org-1')).toBeNull();
+    expect(
+      seen.some((x) => x.url === 'https://api.linear.app/oauth/revoke')
+    ).toBe(false);
+  });
+
+  it('records who a member is, so their teammate token names them', async () => {
+    viewer = {
+      id: 'lin-grace',
+      name: 'Grace Hopper',
+      displayName: 'grace',
+      email: 'grace@acme.test',
+      guest: true,
+    } as typeof viewer;
+    const done = await complete(await call('/auth/linear/workspace'), 'linear');
+    const user = db.webSessionUser(cookieOf(done).slice('dt_session='.length))!;
+    expect(grants.profile(user.id, 'org-1')).toEqual({
+      name: 'Grace Hopper',
+      displayName: 'grace',
+      email: 'grace@acme.test',
+      guest: true,
+      admin: false,
+    });
   });
 });

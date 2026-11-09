@@ -151,6 +151,8 @@ export interface PlannerLinks {
   workspaces: { urlKey: string; name: string }[];
   /** Whether this server can hold a new Linear grant. */
   canOpen: boolean;
+  /** Whether this server can host a workspace's own planner (an install). */
+  canInstall?: boolean;
 }
 
 function plannerBox(planner: PlannerLinks): string {
@@ -163,6 +165,10 @@ function plannerBox(planner: PlannerLinks): string {
   return `<div class="label">Planner</div><div class="box">${rows}<div class="row"><a href="/w/demo/">Northwind (demo)</a><span class="meta">Try it</span></div>${
     planner.canOpen
       ? '<div class="row"><span>Your timeline, projects and dependency graph, from Linear.</span><a class="btn small" href="/auth/linear/workspace">Open a Linear workspace</a></div>'
+      : ''
+  }${
+    planner.canInstall === true
+      ? '<div class="row"><span>Linear admin? Install Dispatch on your workspace so everyone can plan, and edits sync back to Linear.</span><a class="btn small" href="/auth/linear/install">Install Dispatch</a></div>'
       : ''
   }</div>`;
 }

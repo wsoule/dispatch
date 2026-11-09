@@ -134,8 +134,8 @@ describe('hosted planner routes', () => {
     expect((await api(p, 'acme', page.config!.agentToken))!.status).toBe(401);
     expect((await api(p, 'demo', 'made-up'))!.status).toBe(401);
     const req = new Request(`${ORIGIN}/w/demo/ws`);
-    expect(p.watches('demo', page.config!.agentToken, req)).toBe(true);
-    expect(p.watches('acme', page.config!.agentToken, req)).toBe(false);
+    expect(p.watches('demo', page.config!.agentToken, req)).not.toBeNull();
+    expect(p.watches('acme', page.config!.agentToken, req)).toBeNull();
   });
 
   it('expires view tokens after 12 hours', async () => {

@@ -22,6 +22,9 @@ RUN pnpm --filter-prod "@dispatch/web^..." --filter "@dispatch/desktop..." run b
 
 # Debian slim, not alpine: the entrypoint drops root with util-linux's setpriv.
 FROM oven/bun:1.4.2-slim
+# Each hosted workspace's dispatchd reads its identity from a git repo.
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV NODE_ENV=production \
     PORT=8080 \

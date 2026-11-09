@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import type { LinearAccountRecord } from '@dispatch-foo/core';
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,7 +22,8 @@ afterAll(async () => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-const json = async (res: Response) => (await res.json()) as Record<string, unknown>;
+const json = async (res: Response) =>
+  (await res.json()) as Record<string, unknown>;
 
 describe('WorkspaceHost', () => {
   it('boots a hosted planner per workspace that only answers planning routes', async () => {
@@ -38,11 +39,20 @@ describe('WorkspaceHost', () => {
     const minted = await host.request('org-a', '/api/team/tokens', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email: 'ada@example.com', displayName: 'Ada', tier: 'decide' }),
+      body: JSON.stringify({
+        email: 'ada@example.com',
+        displayName: 'Ada',
+        tier: 'decide',
+      }),
     });
     expect(minted.status).toBe(201);
-    const { token, handle } = (await minted.json()) as { token: string; handle: string };
-    const who = await json(await host.request('org-a', '/api/whoami', {}, token));
+    const { token, handle } = (await minted.json()) as {
+      token: string;
+      handle: string;
+    };
+    const who = await json(
+      await host.request('org-a', '/api/whoami', {}, token)
+    );
     expect(who).toMatchObject({ ref: `human:${handle}`, tier: 'decide' });
   }, 60_000);
 
@@ -54,14 +64,25 @@ describe('WorkspaceHost', () => {
       refreshToken: 'lin_oauth_install_refresh_0000001',
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
       scope: ['read', 'write'],
-      user: { id: 'u-app', name: 'Dispatch', displayName: 'dispatch', email: 'app@dispatch.foo', guest: false, admin: false },
+      user: {
+        id: 'u-app',
+        name: 'Dispatch',
+        displayName: 'dispatch',
+        email: 'app@dispatch.foo',
+        guest: false,
+        admin: false,
+      },
       organization: { id: 'org-b', name: 'Bee', urlKey: 'bee' },
       signedInAt: new Date().toISOString(),
       refreshedAt: null,
     };
-    expect((await json(await host.request('org-b', '/api/linear/status'))).connected).toBe(false);
+    expect(
+      (await json(await host.request('org-b', '/api/linear/status'))).connected
+    ).toBe(false);
     await host.install('org-b', record);
-    expect((await json(await host.request('org-b', '/api/linear/status'))).connected).toBe(true);
+    expect(
+      (await json(await host.request('org-b', '/api/linear/status'))).connected
+    ).toBe(true);
   }, 60_000);
 
   it('starts a stopped workspace again on the next request', async () => {

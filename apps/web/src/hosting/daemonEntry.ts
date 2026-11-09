@@ -32,6 +32,10 @@ if (existsSync(pending)) {
   await writeLinearAccount(record);
 }
 
+// Read once and dropped, so nothing the daemon spawns inherits it.
+const clientSecret = process.env.DISPATCH_LINEAR_CLIENT_SECRET?.trim() ?? '';
+delete process.env.DISPATCH_LINEAR_CLIENT_SECRET;
+
 const handle = await startServer({
   rootDir: resolve(rootArg),
   port: 0,
@@ -39,6 +43,7 @@ const handle = await startServer({
   hubLink: false,
   writeDaemonFile: false,
   hostedPlanner: true,
+  ...(clientSecret === '' ? {} : { linearOAuth: { clientSecret } }),
 });
 
 console.log(`dispatchd listening on http://127.0.0.1:${String(handle.port)}`);
