@@ -226,6 +226,15 @@ const DISPATCH_BRANCH_PREFIX = 'dispatch/';
 // A commit named in full (SHA-1 or SHA-256), as `git rev-list` prints it.
 const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
+// A merge commit to look for on origin's copy of `base`. `runId` names the
+// run that made it, for when git no longer has the commit to read its
+// trailer from (see Orchestrator.rewrittenOnto).
+interface MergeOnBase {
+  commit: string;
+  base: string;
+  runId?: string;
+}
+
 // Minimum gap between opportunistic claims refreshes for one run — see
 // scheduleClaimsRefresh.
 const CLAIMS_REFRESH_COOLDOWN_MS = 5_000;
@@ -511,11 +520,12 @@ export class Orchestrator {
   // When each failed run was last re-surveyed for orphan-landed work — see
   // scheduleOrphanRecheck.
   private readonly lastOrphanCheck = new Map<string, number>();
-  // Per base: the origin tip last seen, and which merge commits it contains.
-  // See pushedMerges.
+  // Per base: the origin tip last seen, and for each merge commit asked
+  // about, the commit on that tip carrying it (null when none does). See
+  // landedOnOrigin.
   private readonly pushedAtTip = new Map<
     string,
-    { tip: string; commits: Map<string, boolean> }
+    { tip: string; commits: Map<string, string | null> }
   >();
   // The newest release tag last seen and which merge commits it contains.
   // See releasedMerges.
@@ -952,8 +962,9 @@ export class Orchestrator {
   // Adds where each finished run lands (or landed) to its meta, computed fresh
   // per request (never persisted):
   // - `pushedToOrigin` on every merged run: whether its merge commit is on
-  //   origin's copy of its base. Memoized by (mergeCommit, baseBranch) so runs
-  //   sharing a base pay once.
+  //   origin's copy of its base, under its recorded sha or (after a rebase)
+  //   a new one. Memoized by (mergeCommit, baseBranch) so runs sharing a base
+  //   pay once.
   // - `landsOn` on every finished run that is unreviewed or merged: 'origin'
   //   when Land pushes to origin (the project has a remote), 'local' when it
   //   merges into the local base only (no remote, or a milestone branch).
@@ -962,7 +973,7 @@ export class Orchestrator {
   decorateRunsWithPushed(runs: RunMeta[]): DecoratedRunMeta[] {
     const merged = runs.flatMap((run) =>
       run.reviewAction === 'merge' && run.mergeCommit !== undefined
-        ? [{ commit: run.mergeCommit, base: run.baseBranch }]
+        ? [{ commit: run.mergeCommit, base: run.baseBranch, runId: run.id }]
         : []
     );
     const landable = runs.some(
@@ -973,10 +984,15 @@ export class Orchestrator {
     // Asked only when some run is landable or merged: a board with none
     // spawns no git.
     const hasOrigin = landable && this.worktrees.hasOriginRemote();
-    const isPushed =
-      hasOrigin && merged.length > 0 ? this.pushedMerges(merged) : () => false;
-    const release =
-      hasOrigin && merged.length > 0 ? this.releasedMerges(merged) : null;
+    const landedOn =
+      hasOrigin && merged.length > 0 ? this.landedOnOrigin(merged) : () => null;
+    // Asked about the sha origin has, which differs from the recorded one
+    // when a rebase rewrote the squash.
+    const onOrigin = merged.flatMap(({ commit, base }) => {
+      const sha = landedOn(commit, base);
+      return sha === null ? [] : [{ commit: sha }];
+    });
+    const release = onOrigin.length > 0 ? this.releasedMerges(onOrigin) : null;
     return runs.map((run) => {
       if (!TERMINAL_RUN_STATES.has(run.state)) return run;
       const isMerged =
@@ -985,8 +1001,9 @@ export class Orchestrator {
       const landsOn =
         hasOrigin && !isMilestoneBranch(run.baseBranch) ? 'origin' : 'local';
       if (!isMerged) return { ...run, landsOn };
-      const pushedToOrigin = isPushed(run.mergeCommit!, run.baseBranch);
-      const tag = pushedToOrigin ? release?.(run.mergeCommit!) : undefined;
+      const landedAs = landedOn(run.mergeCommit!, run.baseBranch);
+      const pushedToOrigin = landedAs !== null;
+      const tag = landedAs !== null ? release?.(landedAs) : undefined;
       return {
         ...run,
         landsOn,
@@ -1058,6 +1075,7 @@ export class Orchestrator {
       candidates.map((run) => ({
         commit: run.mergeCommit!,
         base: run.baseBranch,
+        runId: run.id,
       }))
     );
     return candidates.filter(
@@ -1073,47 +1091,167 @@ export class Orchestrator {
 
   /**
    * Which of these merge commits have reached origin's copy of their base.
+   * See landedOnOrigin, which also counts a squash rebased under a new sha.
+   */
+  private pushedMerges(
+    merges: readonly MergeOnBase[]
+  ): (commit: string, base: string) => boolean {
+    const landedOn = this.landedOnOrigin(merges);
+    return (commit, base) => landedOn(commit, base) !== null;
+  }
+
+  /**
+   * The commit on origin's copy of each base that carries each merge: the
+   * merge commit itself when origin has it, the same run's squash under a
+   * new sha when a rebase rewrote it, null when origin has neither.
    *
    * Asked per commit, that is a git process per merged run on every GET
    * /api/runs: 300 merged runs stalled the daemon for 8s a request. Instead
    * each base's origin tip is read once, one `git rev-list` names the commits
    * it does not contain, and the answers are kept for as long as that tip
    * stands — they cannot change until origin moves.
+   *
+   * The rewrite case: a `git pull --rebase` in the main checkout replays a
+   * local squash onto origin and pushes the copy, so the recorded sha never
+   * reaches origin although the work did. Ancestry alone would read that run
+   * as "merged locally, not on GitHub yet" forever. The squash's subject
+   * keeps its `(run r-…)` trailer through the rebase, so a commit on the tip
+   * naming the same run is where the work landed.
    */
-  private pushedMerges(
-    merges: readonly { commit: string; base: string }[]
-  ): (commit: string, base: string) => boolean {
-    const byBase = new Map<string, Set<string>>();
-    for (const { commit, base } of merges) {
-      const commits = byBase.get(base) ?? new Set<string>();
-      commits.add(commit);
+  private landedOnOrigin(
+    merges: readonly MergeOnBase[]
+  ): (commit: string, base: string) => string | null {
+    // Per base, each commit and the run it merged (when the caller knows it).
+    const byBase = new Map<string, Map<string, string | undefined>>();
+    for (const { commit, base, runId } of merges) {
+      const commits = byBase.get(base) ?? new Map<string, string | undefined>();
+      commits.set(commit, commits.get(commit) ?? runId);
       byBase.set(base, commits);
     }
-    const answers = new Map<string, Map<string, boolean>>();
+    const answers = new Map<string, Map<string, string | null>>();
     for (const [base, commits] of byBase) {
-      // No origin/<base> locally: unpushed is the safe answer.
-      const tip = this.worktrees.originBaseTip(base);
+      // No origin tip to check against: unpushed is the safe answer.
+      const tip = this.originTipFor(base);
       if (tip === null) continue;
       let known = this.pushedAtTip.get(base);
       if (known?.tip !== tip) {
         known = { tip, commits: new Map() };
         this.pushedAtTip.set(base, known);
       }
-      const unknown = [...commits].filter((c) => !known.commits.has(c));
+      const unknown = [...commits.keys()].filter((c) => !known.commits.has(c));
       const full = unknown.filter((c) => FULL_SHA.test(c));
       const unpushed =
         full.length > 0 ? this.worktrees.commitsNotOn(full, tip) : null;
+      const notOnTip: string[] = [];
       for (const commit of unknown) {
-        known.commits.set(
-          commit,
+        const onTip =
           unpushed !== null && FULL_SHA.test(commit)
             ? !unpushed.has(commit)
-            : this.worktrees.isMergedInto(commit, tip)
-        );
+            : this.worktrees.isMergedInto(commit, tip);
+        if (onTip) known.commits.set(commit, commit);
+        else notOnTip.push(commit);
+      }
+      const rewritten = this.rewrittenOnto(tip, notOnTip, commits);
+      for (const commit of notOnTip) {
+        known.commits.set(commit, rewritten.get(commit) ?? null);
       }
       answers.set(base, known.commits);
     }
-    return (commit, base) => answers.get(base)?.get(commit) ?? false;
+    return (commit, base) => answers.get(base)?.get(commit) ?? null;
+  }
+
+  // The origin tip a merge into `base` has to reach to count as pushed.
+  // Usually origin/<base>. A run stacked on another run's branch merges into
+  // that local `dispatch/…` branch, which is never pushed under its own name:
+  // the parent's squash carries the work to origin's default branch. Asking
+  // origin/<parent branch> (absent) read every such run as "not on GitHub
+  // yet" forever, so a base origin does not have falls back to the default
+  // branch's tip. Milestone bases keep no fallback: landing on one is local by
+  // design and reads as such until the milestone itself ships.
+  private originTipFor(base: string): string | null {
+    const tip = this.worktrees.originBaseTip(base);
+    if (tip !== null || isMilestoneBranch(base)) return tip;
+    const fallback = this.worktrees.defaultBaseBranch();
+    return fallback === base ? null : this.worktrees.originBaseTip(fallback);
+  }
+
+  // landedOnOrigin's rebase fallback: for each merge commit `tip` does not
+  // contain, the commit on `tip` whose subject names the same run. The run is
+  // read from the commit's own subject first (a superseded predecessor
+  // records its successor's squash, so the run it belongs to is not always
+  // the run holding it), then from the caller's run id when git no longer
+  // has the commit. Two git processes at most, and none when every commit
+  // is on the tip.
+  private rewrittenOnto(
+    tip: string,
+    commits: readonly string[],
+    runIdFor: ReadonlyMap<string, string | undefined>
+  ): Map<string, string> {
+    const found = new Map<string, string>();
+    if (commits.length === 0) return found;
+    const trailers = this.worktrees.runIdsOfCommits(commits);
+    let onTip: Map<string, string> | undefined;
+    for (const commit of commits) {
+      const runId = trailers.get(commit) ?? runIdFor.get(commit);
+      if (runId === undefined) continue;
+      onTip ??= this.worktrees.runCommitsOn(tip);
+      const sha = onTip.get(runId);
+      if (sha !== undefined) found.set(commit, sha);
+    }
+    return found;
+  }
+
+  /**
+   * Points every merged run whose squash was rebased onto origin under a new
+   * sha (see landedOnOrigin) at the sha origin has, so links, release checks
+   * and every other "where did this land?" read the commit that exists on
+   * GitHub. landedOnOrigin already answers "pushed" for such a run; this
+   * makes the record agree. Runs at boot, which repairs runs a rebase
+   * stranded while the daemon was down, and on the external-merge tick for
+   * a rebase done while it runs. One run's failure is isolated.
+   */
+  repairRewrittenMerges(): RunMeta[] {
+    const merged = this.registry
+      .list()
+      .filter(
+        (run) =>
+          run.reviewAction === 'merge' &&
+          run.mergeCommit !== undefined &&
+          !isMilestoneBranch(run.baseBranch)
+      );
+    if (merged.length === 0 || !this.worktrees.hasOriginRemote()) return [];
+    const landedOn = this.landedOnOrigin(
+      merged.map((run) => ({
+        commit: run.mergeCommit!,
+        base: run.baseBranch,
+        runId: run.id,
+      }))
+    );
+    const repaired: RunMeta[] = [];
+    for (const run of merged) {
+      const onOrigin = landedOn(run.mergeCommit!, run.baseBranch);
+      if (onOrigin === null || onOrigin === run.mergeCommit) continue;
+      try {
+        this.transition(run.id, run.state, {
+          reviewedAt: run.reviewedAt,
+          reviewAction: 'merge',
+          mergeCommit: onOrigin,
+        });
+        this.noteTaskActivity(
+          run.taskId,
+          `run ${run.id}'s merge ${run.mergeCommit!.slice(0, 7)} was rebased onto origin/${run.baseBranch} as ${onOrigin.slice(0, 7)}`
+        );
+        repaired.push(this.registry.get(run.id)!);
+      } catch (err) {
+        console.error(
+          `dispatchd: rewritten-merge repair failed for run ${run.id}: ${(err as Error).message}`
+        );
+      }
+    }
+    if (repaired.length > 0) {
+      this.ctx.events.broadcast({ type: 'run.changed' });
+    }
+    return repaired;
   }
 
   // Thin passthroughs so MergeQueue can gate its own push-retry/auto-refresh
@@ -4533,7 +4671,7 @@ export class Orchestrator {
         const run = newestMergedByTask.get(task.meta.id);
         return run?.mergeCommit === undefined
           ? []
-          : [{ commit: run.mergeCommit, base: run.baseBranch }];
+          : [{ commit: run.mergeCommit, base: run.baseBranch, runId: run.id }];
       })
     );
     for (const task of doneTasks) {
@@ -4638,6 +4776,8 @@ export class Orchestrator {
     // Reviews whose daemon restarted mid-flight: nothing in this process is
     // listening for them, so boot has to be the one that retires them.
     const retiredRunIds = this.retireLostDerivedRuns(bootRuns);
+    // Before the archive sweep, so it reads repaired merge commits.
+    this.repairRewrittenMerges();
     this.reconcileArchives();
     // Deferred, not awaited — reconcileOnBoot() stays synchronous, so each
     // crashed run's worktree is surveyed and upgraded in the background, and

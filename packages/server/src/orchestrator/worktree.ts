@@ -99,6 +99,24 @@ function runGitAsync(cwd: string, args: string[]): Promise<CommandResult> {
   return defaultCommandRunner(cwd, ['git', ...args]);
 }
 
+// The run trailer dispatch writes on every squash subject:
+// `dispatch: <task title> (run r-…)`. The last match wins, so a title that
+// happens to mention another run cannot shadow the real trailer.
+const RUN_TRAILER = /\(run (r-[0-9a-z]+)\)/g;
+
+// `<sha>\t<subject>` lines as [sha, run id] pairs, for the lines whose
+// subject carries a run trailer.
+function parseRunSubjects(stdout: string): [string, string][] {
+  const pairs: [string, string][] = [];
+  for (const line of stdout.split('\n')) {
+    const tab = line.indexOf('\t');
+    if (tab < 0) continue;
+    const runId = [...line.slice(tab + 1).matchAll(RUN_TRAILER)].at(-1)?.[1];
+    if (runId !== undefined) pairs.push([line.slice(0, tab), runId]);
+  }
+  return pairs;
+}
+
 const ORIGIN_HEAD_ARGS = ['symbolic-ref', 'refs/remotes/origin/HEAD'];
 const CURRENT_BRANCH_ARGS = ['rev-parse', '--abbrev-ref', 'HEAD'];
 const STATUS_ARGS = ['status', '--porcelain'];
@@ -480,6 +498,52 @@ export class WorktreeManager {
       for (const line of result.stdout.split('\n')) listed.add(line);
     }
     return new Set(commits.filter((commit) => listed.has(commit)));
+  }
+
+  /**
+   * The run id each of `commits` names in its subject's `(run r-…)` trailer,
+   * for the commits git still has and whose subject carries one. One
+   * `git log --no-walk` for the lot; a commit git no longer has is skipped
+   * rather than failing the others.
+   */
+  runIdsOfCommits(commits: readonly string[]): Map<string, string> {
+    const ids = new Map<string, string>();
+    if (commits.length === 0) return ids;
+    const result = runGit(this.mainRepoDir, [
+      'log',
+      '--no-walk=unsorted',
+      '--ignore-missing',
+      '--format=%H%x09%s',
+      ...commits,
+    ]);
+    if (!result.ok) return ids;
+    for (const [sha, runId] of parseRunSubjects(result.stdout)) {
+      ids.set(sha, runId);
+    }
+    return ids;
+  }
+
+  /**
+   * The newest commit reachable from `tip` whose subject carries each run's
+   * `(run r-…)` trailer, keyed by run id. This is a squash's identity that
+   * survives a rebase: `git pull --rebase` replays the commit under a new sha
+   * but keeps its message. One `git log` over the tip's history.
+   */
+  runCommitsOn(tip: string): Map<string, string> {
+    const commits = new Map<string, string>();
+    const result = runGit(this.mainRepoDir, [
+      'log',
+      '--fixed-strings',
+      '--grep=(run r-',
+      '--format=%H%x09%s',
+      tip,
+    ]);
+    if (!result.ok) return commits;
+    // Newest first, so the first commit naming a run wins.
+    for (const [sha, runId] of parseRunSubjects(result.stdout)) {
+      if (!commits.has(runId)) commits.set(runId, sha);
+    }
+    return commits;
   }
 
   // False when origin/<base> doesn't exist locally — unpushed is the safe answer.

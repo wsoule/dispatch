@@ -2160,6 +2160,10 @@ async function bootServer(
     if (opts.hostedPlanner === true) return;
     watchdog.mark('reconcileExternallyMergedRuns tick');
     orchestrator.reconcileExternallyMergedRuns();
+    // A `git pull --rebase` in the main checkout rewrites a local squash
+    // onto origin under a new sha; point the run at the one origin has.
+    watchdog.mark('repairRewrittenMerges tick');
+    orchestrator.repairRewrittenMerges();
   }, opts.prPollIntervalMs ?? 60000);
 
   // Shares the exact same command-runner seam as PrManager (opts.prCommandRunner,

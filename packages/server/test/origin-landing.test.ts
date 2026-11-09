@@ -535,12 +535,16 @@ describe('direct merges', () => {
 // 2026-10-06 case, made here by merging with the remote detached and then
 // re-attaching it while origin moves on).
 describe('merged locally, not on origin', () => {
-  async function splitBrainRun(harness: Harness, file: string) {
+  async function splitBrainRun(
+    harness: Harness,
+    file: string,
+    teammate = 'teammate.txt'
+  ) {
     const runId = await finishedRunWithFile(harness, file);
     runGitSync(repo, ['remote', 'remove', 'origin']);
     harness.orchestrator.review(runId, 'merge');
     runGitSync(repo, ['remote', 'add', 'origin', origin]);
-    pushFromElsewhere('teammate.txt');
+    pushFromElsewhere(teammate);
     runGitSync(repo, ['fetch', '-q', 'origin', 'main']);
     return runId;
   }
@@ -594,6 +598,82 @@ describe('merged locally, not on origin', () => {
         .some((i) => i.runId === runId)
     ).toBe(false);
     expect(harness.orchestrator.unpublishedMerges()).toEqual([]);
+  });
+
+  // The 2026-10 case: a `git pull --rebase` in the main checkout replays the
+  // local squash onto origin and pushes the copy, so the recorded sha is
+  // orphaned while the same work sits on origin under a new one.
+  it('reads a squash a rebase carried to origin as pushed, and repairs its sha', async () => {
+    const harness = makeHarness();
+    const rebased = await splitBrainRun(harness, 'rebased.txt');
+    const orphan = harness.orchestrator.getRun(rebased)!.meta.mergeCommit!;
+    runGitSync(repo, ['pull', '-q', '--rebase', 'origin', 'main']);
+    runGitSync(repo, ['push', '-q', 'origin', 'main']);
+    // A second split-brain merge that is genuinely not on origin.
+    const stranded = await splitBrainRun(harness, 'stranded.txt', 'later.txt');
+    const unpushed = harness.orchestrator.getRun(stranded)!.meta.mergeCommit;
+
+    expect(runGitSync(repo, ['branch', '-r', '--contains', orphan])).toBe('');
+    expect(
+      harness.orchestrator.unpublishedMerges().map((run) => run.id)
+    ).toEqual([stranded]);
+    const [decorated] = harness.orchestrator.decorateRunsWithPushed([
+      harness.orchestrator.getRun(rebased)!.meta,
+    ]);
+    expect(decorated.pushedToOrigin).toBe(true);
+    expect(
+      feedFor(harness)
+        .list()
+        .some((i) => i.runId === rebased)
+    ).toBe(false);
+
+    const repaired = harness.orchestrator.repairRewrittenMerges();
+
+    const onOrigin = runGitSync(repo, [
+      'log',
+      '--format=%H',
+      '--fixed-strings',
+      `--grep=(run ${rebased})`,
+      'origin/main',
+    ]).trim();
+    expect(onOrigin).toMatch(/^[0-9a-f]{40}$/);
+    expect(onOrigin).not.toBe(orphan);
+    expect(repaired.map((run) => run.id)).toEqual([rebased]);
+    expect(harness.orchestrator.getRun(rebased)!.meta.mergeCommit).toBe(
+      onOrigin
+    );
+    expect(harness.orchestrator.getRun(stranded)!.meta.mergeCommit).toBe(
+      unpushed
+    );
+    expect(harness.orchestrator.repairRewrittenMerges()).toEqual([]);
+  });
+
+  // A run stacked on another run's branch merges into that local
+  // `dispatch/…` branch, which origin never has under its own name: the
+  // parent's squash carries the work to origin/main. Asking origin/<parent>
+  // read every stacked run as "not on GitHub yet" forever.
+  it('judges a run stacked on an unpushed run branch against origin/main', async () => {
+    const harness = makeHarness();
+    const landedId = await finishedRunWithFile(harness, 'parent.txt');
+    const landed = await makeQueue(harness, defaultCommandRunner).mergeNow(
+      landedId
+    );
+    const strandedId = await splitBrainRun(harness, 'stacked.txt');
+    const stranded = harness.orchestrator.getRun(strandedId)!.meta;
+    runGitSync(repo, ['branch', 'dispatch/t-parent-stack', 'main']);
+    const stack = 'dispatch/t-parent-stack';
+
+    const [onOrigin, notOnOrigin, milestone] =
+      harness.orchestrator.decorateRunsWithPushed([
+        { ...landed, baseBranch: stack },
+        { ...stranded, baseBranch: stack },
+        { ...landed, baseBranch: 'milestone/m-local' },
+      ]);
+
+    expect(onOrigin.pushedToOrigin).toBe(true);
+    expect(notOnOrigin.pushedToOrigin).toBe(false);
+    expect(milestone.landsOn).toBe('local');
+    expect(milestone.pushedToOrigin).toBe(false);
   });
 
   it('refuses to publish a run that never merged', async () => {
