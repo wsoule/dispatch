@@ -17,6 +17,13 @@ const service = startTeamService({
   githubClientId: env.GITHUB_CLIENT_ID ?? null,
   githubClientSecret: env.GITHUB_CLIENT_SECRET ?? null,
   linearClientId: env.LINEAR_CLIENT_ID ?? null,
+  linearClientSecret:
+    env.LINEAR_CLIENT_SECRET ?? env.DISPATCH_LINEAR_CLIENT_SECRET ?? null,
+  // Each installed Linear workspace gets its own dispatchd (hosting/).
+  daemonEntry:
+    env.HOST_WORKSPACES === '0'
+      ? null
+      : fileURLToPath(new URL('./hosting/daemonEntry.ts', import.meta.url)),
   desktopDistDir:
     env.DESKTOP_DIST_DIR ??
     fileURLToPath(new URL('../../desktop/dist/', import.meta.url)),

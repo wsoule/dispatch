@@ -23,6 +23,13 @@ export interface WorkspaceSource {
   load(userId: string | null): Promise<DaemonModel>;
   /** Everyone sees the same workspace (the demo), so one copy serves all. */
   shared?: boolean;
+  /** Set when the workspace has its own dispatchd: its API answers there,
+   * as the signed-in member, instead of from `load`. */
+  daemon?: (
+    userId: string,
+    pathAndQuery: string,
+    req: Request
+  ) => Promise<Response>;
 }
 
 export interface PlannerDeps {
@@ -73,10 +80,13 @@ function injected(html: string, config: Record<string, unknown>): string {
 export interface Planner {
   /** Answers the planner's routes; null for any other path. */
   fetch: (req: Request) => Promise<Response | null>;
-  /** Whether `token` may open `/w/<key>/ws`, the live-update socket, for
-   * this request's session. The hosted planner sends no events yet; an open
-   * socket stops the app retrying. */
-  watches: (key: string, token: string, req: Request) => boolean;
+  /** Who `token` opens `/w/<key>/ws`, the live-update socket, for in this
+   * request's session, or null when it may not. */
+  watches: (
+    key: string,
+    token: string,
+    req: Request
+  ) => { userId: string | null } | null;
 }
 
 export function plannerHandler(deps: PlannerDeps): Planner {
@@ -199,6 +209,27 @@ export function plannerHandler(deps: PlannerDeps): Planner {
       );
       if (grant === null || source === null)
         return json({ error: 'Open the planner again to continue.' }, 401);
+      if (source.daemon !== undefined) {
+        if (grant.userId === null)
+          return json({ error: 'Open the planner again to continue.' }, 401);
+        // Checked on every request, not just when the page opened.
+        if (source.viewerFor(grant.userId) === null)
+          return json(
+            {
+              error:
+                'Open the workspace from app.dispatch.foo again to continue.',
+            },
+            401
+          );
+        try {
+          return await source.daemon(grant.userId, rest + url.search, req);
+        } catch {
+          return json(
+            { error: 'The workspace did not answer. Try again in a minute.' },
+            502
+          );
+        }
+      }
       try {
         const data = await model(key, grant.userId, source);
         const viewer =
@@ -233,6 +264,10 @@ export function plannerHandler(deps: PlannerDeps): Planner {
     // A workspace you may not open looks the same as one that does not exist.
     const userId = deps.userOf(req);
     const viewer = source?.viewerFor(userId) ?? null;
+    // An installed workspace asks a signed-in person to confirm their
+    // membership through Linear again (it lapses after a week).
+    if (source?.daemon !== undefined && viewer === null && userId !== null)
+      return Response.redirect(`${deps.origin}/auth/linear/workspace`, 303);
     if (source === null || viewer === null)
       return json({ error: 'No such workspace.' }, 404);
     if (dist === null || !existsSync(join(dist, 'index.html')))
@@ -257,6 +292,6 @@ export function plannerHandler(deps: PlannerDeps): Planner {
 
   return {
     fetch,
-    watches: (key, token, req) => valid(key, token, req) !== null,
+    watches: (key, token, req) => valid(key, token, req),
   };
 }

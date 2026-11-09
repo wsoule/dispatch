@@ -18,8 +18,21 @@ CREATE TABLE IF NOT EXISTS linear_grants (
 CREATE INDEX IF NOT EXISTS linear_grants_url_key ON linear_grants (url_key);
 `;
 
+// Who the person is in Linear, kept so a hosted workspace's daemon can mint
+// their teammate token and take their grant. Added after the table shipped.
+const PROFILE_COLUMN = 'ALTER TABLE linear_grants ADD COLUMN profile TEXT';
+
 const TOKEN_URL = 'https://api.linear.app/oauth/token';
 const REFRESH_EARLY_MS = 5 * 60_000;
+
+/** Who a person is in a Linear workspace. */
+export interface LinearProfile {
+  name: string;
+  displayName: string;
+  email: string;
+  guest: boolean;
+  admin: boolean;
+}
 
 export interface GrantTokens {
   accessToken: string;
@@ -37,6 +50,18 @@ interface Row {
   expires_at: number | null;
 }
 
+/** A grant's tokens and profile, for handing to a workspace's daemon. */
+export interface GrantHandoff {
+  linearUserId: string;
+  org: { id: string; name: string; urlKey: string };
+  profile: LinearProfile;
+  tokens: GrantTokens & { refreshToken: string };
+}
+
+// A handed-off grant keeps its row (membership) and no tokens: the daemon
+// alone refreshes it from then on, so two refreshers never race.
+const HANDED_OFF = '';
+
 export class LinearGrants {
   constructor(
     private readonly db: Database,
@@ -46,6 +71,10 @@ export class LinearGrants {
     private readonly now: () => number = Date.now
   ) {
     db.exec(SCHEMA);
+    const columns = db
+      .query<{ name: string }, []>('PRAGMA table_info(linear_grants)')
+      .all();
+    if (!columns.some((c) => c.name === 'profile')) db.exec(PROFILE_COLUMN);
   }
 
   /** Stores (or replaces) a person's grant; also follows a workspace rename. */
@@ -53,16 +82,18 @@ export class LinearGrants {
     userId: string,
     org: { id: string; name: string; urlKey: string },
     linearUserId: string,
-    tokens: GrantTokens
+    tokens: GrantTokens,
+    profile: LinearProfile | null = null
   ): void {
     this.db.transaction(() => {
       this.db
         .query(
-          `INSERT INTO linear_grants (user_id, org_id, url_key, org_name, linear_user_id, access_sealed, refresh_sealed, expires_at, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO linear_grants (user_id, org_id, url_key, org_name, linear_user_id, access_sealed, refresh_sealed, expires_at, created_at, profile)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (user_id, org_id) DO UPDATE SET linear_user_id = excluded.linear_user_id,
              access_sealed = excluded.access_sealed, refresh_sealed = excluded.refresh_sealed,
-             expires_at = excluded.expires_at`
+             expires_at = excluded.expires_at, profile = coalesce(excluded.profile, profile),
+             created_at = excluded.created_at`
         )
         .run(
           userId,
@@ -75,7 +106,8 @@ export class LinearGrants {
             ? null
             : this.sealer.seal(tokens.refreshToken),
           tokens.expiresAt,
-          this.now()
+          this.now(),
+          profile === null ? null : JSON.stringify(profile)
         );
       this.db
         .query(
@@ -93,6 +125,25 @@ export class LinearGrants {
       )
       .get(urlKey);
     return row === null ? null : { orgId: row.org_id, name: row.org_name };
+  }
+
+  /** A person's standing in a workspace, only if Linear confirmed it (a
+   *  fresh OAuth round trip) within `maxAgeMs`: a grant handed to a daemon is
+   *  never refreshed here, so this is how someone removed from the workspace
+   *  stops getting in. */
+  freshMember(
+    userId: string,
+    orgId: string,
+    maxAgeMs: number
+  ): { linearUserId: string } | null {
+    const row = this.db
+      .query<{ linear_user_id: string; created_at: number }, [string, string]>(
+        'SELECT linear_user_id, created_at FROM linear_grants WHERE user_id = ? AND org_id = ?'
+      )
+      .get(userId, orgId);
+    return row === null || this.now() - row.created_at > maxAgeMs
+      ? null
+      : { linearUserId: row.linear_user_id };
   }
 
   /** A person's standing in a workspace: who they are in Linear, or null. */
@@ -127,6 +178,8 @@ export class LinearGrants {
       )
       .get(userId, orgId);
     if (row === null) throw new GrantGone('no grant');
+    if (row.access_sealed === HANDED_OFF)
+      throw new GrantGone('the workspace daemon holds this grant');
     if (
       row.expires_at === null ||
       row.expires_at - this.now() > REFRESH_EARLY_MS
@@ -167,6 +220,64 @@ export class LinearGrants {
         orgId
       );
     return body.access_token;
+  }
+
+  /**
+   * A grant ready to hand to a hosted workspace's daemon, or null when there
+   * is nothing to hand (already handed off, no refresh token, no profile).
+   */
+  handoff(userId: string, orgId: string): GrantHandoff | null {
+    const row = this.db
+      .query<
+        Row & {
+          url_key: string;
+          org_name: string;
+          linear_user_id: string;
+          profile: string | null;
+        },
+        [string, string]
+      >(
+        'SELECT access_sealed, refresh_sealed, expires_at, url_key, org_name, linear_user_id, profile FROM linear_grants WHERE user_id = ? AND org_id = ?'
+      )
+      .get(userId, orgId);
+    if (
+      row === null ||
+      row.access_sealed === HANDED_OFF ||
+      row.refresh_sealed === null ||
+      row.profile === null
+    )
+      return null;
+    return {
+      linearUserId: row.linear_user_id,
+      org: { id: orgId, name: row.org_name, urlKey: row.url_key },
+      profile: JSON.parse(row.profile) as LinearProfile,
+      tokens: {
+        accessToken: this.sealer.open(row.access_sealed),
+        refreshToken: this.sealer.open(row.refresh_sealed),
+        expiresAt: row.expires_at,
+      },
+    };
+  }
+
+  /** The person's profile in a workspace, if their grant recorded one. */
+  profile(userId: string, orgId: string): LinearProfile | null {
+    const row = this.db
+      .query<{ profile: string | null }, [string, string]>(
+        'SELECT profile FROM linear_grants WHERE user_id = ? AND org_id = ?'
+      )
+      .get(userId, orgId);
+    if (row === null || row.profile === null) return null;
+    return JSON.parse(row.profile) as LinearProfile;
+  }
+
+  /** Forgets a grant's tokens once a workspace's daemon holds them; the row
+   *  stays, as the person's membership. */
+  release(userId: string, orgId: string): void {
+    this.db
+      .query(
+        'UPDATE linear_grants SET access_sealed = ?, refresh_sealed = NULL, expires_at = NULL WHERE user_id = ? AND org_id = ?'
+      )
+      .run(HANDED_OFF, userId, orgId);
   }
 
   /** Drops a person's grant (Linear stopped honouring it). */

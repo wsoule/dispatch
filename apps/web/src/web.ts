@@ -1,3 +1,4 @@
+import type { LinearAccountRecord } from '@dispatch-foo/core';
 import { createHash, randomBytes } from 'node:crypto';
 
 import type { Identity, TeamDb, User } from './db.js';
@@ -15,7 +16,11 @@ import {
   teamPage,
 } from './pages.js';
 import type { LiveSession } from './pages.js';
-import type { GrantTokens, LinearGrants } from './planner/grants.js';
+import type {
+  GrantTokens,
+  LinearGrants,
+  LinearProfile,
+} from './planner/grants.js';
 
 // The browser side of the team service (GitHub and Linear sign-in, account
 // linking, teams, invites, the device approval page) and the device-code API an
@@ -28,6 +33,9 @@ export interface WebConfig {
   githubClientSecret: string | null;
   /** The public Linear OAuth app (PKCE, no secret). Null hides Linear sign-in. */
   linearClientId?: string | null;
+  /** The Linear app's secret, sent with a code exchange when set (an
+   * `actor=app` install may need it). */
+  linearClientSecret?: string | null;
   /** Lets /auth/dev sign anyone in by name: tests and local runs only. */
   devLogin: boolean;
 }
@@ -44,6 +52,9 @@ export interface WebDeps {
   /** People's Linear read grants, for the hosted planner; absent when the
    * server cannot seal them. */
   grants?: LinearGrants;
+  /** Installs Dispatch on a Linear workspace (its own hosted dispatchd);
+   * absent when this server hosts none. */
+  install?: (userId: string, record: LinearAccountRecord) => Promise<void>;
   /** GitHub's and Linear's endpoints, swappable in tests. */
   fetch?: typeof fetch;
 }
@@ -56,8 +67,9 @@ const LINEAR_API = 'https://api.linear.app';
 
 // What an OAuth round trip is for: signing in, adding the provider to the
 // account signed in (only ever started from a form on /account), or opening a
-// Linear workspace in the hosted planner (which keeps a read grant).
-type OAuthMode = 'signin' | 'link' | 'workspace';
+// Linear workspace in the hosted planner (which keeps the person's grant), or
+// installing Dispatch on a workspace (an `actor=app` grant, by an admin).
+type OAuthMode = 'signin' | 'link' | 'workspace' | 'install';
 
 function cookies(req: Request): Map<string, string> {
   const out = new Map<string, string>();
@@ -144,6 +156,7 @@ export function webHandler(
   const secure = config.origin.startsWith('https://');
   const github = deps.fetch ?? fetch;
   const linearClientId = config.linearClientId ?? null;
+  const linearClientSecret = config.linearClientSecret ?? null;
 
   function signedIn(req: Request): User | null {
     return webUserOf(db, req);
@@ -230,7 +243,12 @@ export function webHandler(
       `${config.origin}/auth/linear/callback`
     );
     target.searchParams.set('response_type', 'code');
-    target.searchParams.set('scope', 'read');
+    // Opening and installing keep the grant, and edits go back to Linear.
+    target.searchParams.set(
+      'scope',
+      mode === 'workspace' || mode === 'install' ? 'read,write' : 'read'
+    );
+    if (mode === 'install') target.searchParams.set('actor', 'app');
     target.searchParams.set('state', state);
     target.searchParams.set(
       'code_challenge',
@@ -293,11 +311,16 @@ export function webHandler(
   async function linearAuthorize(
     code: string,
     verifier: string,
-    keep: boolean
+    keep: boolean,
+    install = false
   ): Promise<{
     viewer: { id: string; displayName: string; name: string | null };
+    /** The grant acts as an app (an `actor=app` install), not a person. */
+    isApp: boolean;
+    profile: LinearProfile;
     organization: { id: string; name: string; urlKey: string } | null;
     tokens: GrantTokens;
+    scope: string[];
   }> {
     const tokenRes = await github(`${LINEAR_API}/oauth/token`, {
       method: 'POST',
@@ -308,12 +331,16 @@ export function webHandler(
         redirect_uri: `${config.origin}/auth/linear/callback`,
         client_id: linearClientId ?? '',
         code_verifier: verifier,
+        ...(linearClientSecret === null
+          ? {}
+          : { client_secret: linearClientSecret }),
       }).toString(),
     });
     const token = (await tokenRes.json()) as {
       access_token?: string;
       refresh_token?: string;
       expires_in?: number;
+      scope?: string | string[];
     };
     if (token.access_token === undefined) throw new Error('no access token');
     const auth = { authorization: `Bearer ${token.access_token}` };
@@ -324,12 +351,22 @@ export function webHandler(
         headers: { ...auth, 'content-type': 'application/json' },
         body: JSON.stringify({
           query:
-            '{ viewer { id name displayName } organization { id name urlKey } }',
+            // `app` is asked only on an install, so a sign-in never
+            // depends on it.
+            `{ viewer { id name displayName email guest admin${install ? ' app' : ''} } organization { id name urlKey } }`,
         }),
       });
       const { data } = (await res.json()) as {
         data?: {
-          viewer?: { id?: string; name?: string | null; displayName?: string };
+          viewer?: {
+            id?: string;
+            name?: string | null;
+            displayName?: string;
+            email?: string | null;
+            guest?: boolean;
+            admin?: boolean;
+            app?: boolean;
+          };
           organization?: { id?: string; name?: string; urlKey?: string };
         };
       };
@@ -344,9 +381,28 @@ export function webHandler(
         /^[a-z0-9-]{1,64}$/.test(o.urlKey)
           ? { id: o.id, name: o.name, urlKey: o.urlKey }
           : null;
-      kept = keep && organization !== null;
+      kept = keep && organization !== null && (!install || v.app === true);
       return {
         viewer: { id: v.id, displayName: v.displayName, name: v.name ?? null },
+        isApp: v.app === true,
+        profile: {
+          name: v.name ?? v.displayName,
+          displayName: v.displayName,
+          // The app user an install acts as has no mailbox; one is needed
+          // only to name a member's teammate token.
+          email:
+            typeof v.email === 'string' && v.email.includes('@')
+              ? v.email
+              : `${v.id}@users.linear.app`,
+          guest: v.guest === true,
+          admin: v.admin === true,
+        },
+        scope:
+          typeof token.scope === 'string'
+            ? token.scope.split(/[ ,]+/).filter((x) => x !== '')
+            : Array.isArray(token.scope)
+              ? token.scope
+              : [],
         organization,
         tokens: {
           accessToken: token.access_token,
@@ -389,9 +445,69 @@ export function webHandler(
       db.upsertLinearUser(viewer.id, viewer.displayName, viewer.name);
     if (current !== null && !db.identities(current.id).linear)
       db.linkIdentity(current.id, { provider: 'linear', id: viewer.id });
-    deps.grants.save(user.id, organization, viewer.id, tokens);
+    deps.grants.save(
+      user.id,
+      organization,
+      viewer.id,
+      tokens,
+      authorized.profile
+    );
     const to = `/w/${organization.urlKey}/`;
     return current === null ? signIn(user, to) : redirect(to);
+  }
+
+  // Finishes "Install Dispatch": the app's grant becomes the workspace's own
+  // planner connection, then the installer opens the workspace as themselves
+  // (a second round trip: the install's grant is the app's, not theirs).
+  // Linear lets only a workspace admin approve an `actor=app` install.
+  async function installWorkspace(
+    req: Request,
+    authorized: Awaited<ReturnType<typeof linearAuthorize>>
+  ): Promise<Response> {
+    const user = signedIn(req);
+    const { organization, tokens, viewer, profile } = authorized;
+    const failed = (text: string, status: number) =>
+      html(messagePage(user, 'Dispatch was not installed', text), status);
+    if (user === null)
+      return failed('Sign in first, then install from your home page.', 401);
+    if (organization === null || deps.install === undefined)
+      return failed('Linear did not name a workspace. Try again.', 502);
+    // The authorize URL passed through the browser, so `actor=app` may have
+    // been stripped: only Linear's word that this grant is the app's counts.
+    if (!authorized.isApp)
+      return failed(
+        'Linear did not install Dispatch as an app. Only a workspace admin can install it.',
+        403
+      );
+    if (tokens.refreshToken === null)
+      return failed(
+        'Linear gave no refresh token, so the install would stop working within a day. Try again.',
+        502
+      );
+    const at = new Date().toISOString();
+    try {
+      await deps.install(user.id, {
+        version: 1,
+        clientId: linearClientId ?? '',
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresAt: new Date(
+          tokens.expiresAt ?? Date.now() + 86_400_000
+        ).toISOString(),
+        scope:
+          authorized.scope.length > 0 ? authorized.scope : ['read', 'write'],
+        user: { id: viewer.id, ...profile },
+        organization,
+        signedInAt: at,
+        refreshedAt: null,
+      });
+    } catch {
+      return failed(
+        'The workspace planner did not start. Try installing again in a minute.',
+        502
+      );
+    }
+    return redirect('/auth/linear/workspace');
   }
 
   // Finishes a link flow: the identity joins the account signed in now. A flow
@@ -489,6 +605,22 @@ export function webHandler(
         );
       return startLinear('/', 'workspace');
     }
+    if (path === '/auth/linear/install' && method === 'GET') {
+      if (deps.install === undefined || deps.grants === undefined)
+        return html(
+          messagePage(
+            null,
+            'Installs are not set up',
+            'This server does not host workspace planners.'
+          ),
+          503
+        );
+      if (signedIn(req) === null)
+        return redirect(
+          `/auth/linear?next=${encodeURIComponent('/auth/linear/install')}`
+        );
+      return startLinear('/', 'install');
+    }
     if (path === '/auth/linear' && method === 'GET')
       return startLinear(safeNext(url.searchParams.get('next')), 'signin');
     if (
@@ -549,7 +681,8 @@ export function webHandler(
         authorized = await linearAuthorize(
           code,
           verifier,
-          mode === 'workspace'
+          mode === 'workspace' || mode === 'install',
+          mode === 'install'
         );
       } catch {
         return html(
@@ -565,6 +698,7 @@ export function webHandler(
       if (mode === 'link')
         return link(req, { provider: 'linear', id: viewer.id }, 'Linear');
       if (mode === 'workspace') return openWorkspace(req, authorized);
+      if (mode === 'install') return installWorkspace(req, authorized);
       return signIn(
         db.upsertLinearUser(viewer.id, viewer.displayName, viewer.name),
         safeNext(next ?? null)
@@ -631,6 +765,7 @@ export function webHandler(
         homePage(user, teams, {
           workspaces: deps.grants?.workspacesOf(user.id) ?? [],
           canOpen: deps.grants !== undefined,
+          canInstall: deps.grants !== undefined && deps.install !== undefined,
         })
       );
     }
