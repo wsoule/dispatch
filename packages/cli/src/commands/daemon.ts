@@ -14,7 +14,7 @@ import {
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
 import { type CliContext, CliError } from '../context.js';
@@ -560,8 +560,8 @@ export async function ensureDaemon(
   // recovered — deliberately, since `dispatch` runs inside agent shells whose
   // stdout the agent reads, and relaying that line there would hand the
   // decide-tier credential to the very caller the tier split excludes. Use
-  // `dispatch serve` when you need an app token; `dispatch approve`, `message`
-  // and `scope` say so when they have none.
+  // `dispatch serve --app-token-file <path>` when you need an app token;
+  // `dispatch approve`, `message` and `scope` say so when they have none.
   //
   // On the bun-script
   // path no `env` override is passed, so the child inherits this process's
@@ -656,11 +656,21 @@ export interface ServeOptions {
   a2aTlsCert?: string;
   a2aTlsKey?: string;
   replace?: boolean;
+  printToken?: boolean;
+  appTokenFile?: string;
 }
 
 // The dispatchd arguments `dispatch serve` passes, in a stable order; throws
 // when a certificate comes without its key or a key without its certificate.
+//
+// The app token flag comes last. A terminal's scrollback, and any agent tool
+// log capturing it, keeps whatever serve prints, so by default dispatchd
+// prints only a masked token; `--app-token-file` writes it to a 0600 file
+// instead, and `--print-token` restores the full DISPATCH_APP_TOKEN= line.
 export function serveArgs(root: string, o: ServeOptions): string[] {
+  if (o.printToken === true && o.appTokenFile !== undefined) {
+    throw new CliError('--print-token and --app-token-file are alternatives');
+  }
   if ((o.tlsCert === undefined) !== (o.tlsKey === undefined)) {
     throw new CliError('--tls-cert and --tls-key go together');
   }
@@ -685,6 +695,9 @@ export function serveArgs(root: string, o: ServeOptions): string[] {
   for (const [flag, value] of flags) {
     if (value !== undefined) args.push(flag, value);
   }
+  if (o.appTokenFile !== undefined)
+    args.push('--app-token-file', o.appTokenFile);
+  else if (o.printToken !== true) args.push('--mask-app-token');
   return args;
 }
 
@@ -927,6 +940,14 @@ export function registerDaemonCommands(
       `A2A listener private key ${A2A_OVERRIDE_HELP}`
     )
     .option(
+      '--app-token-file <path>',
+      'write the app token (which authorizes approval decisions) to this file, readable only by you, instead of printing it masked'
+    )
+    .option(
+      '--print-token',
+      'print the full app token instead of a masked one; your terminal scrollback keeps it'
+    )
+    .option(
       '--replace',
       'also take over a daemon the Dispatch app or another `dispatch serve` started (a background one is taken over without it); refused while it has live work'
     )
@@ -941,7 +962,9 @@ export function registerDaemonCommands(
       process.exitCode = await serveInForeground(
         ctx,
         projectRoot(ctx.cwd),
-        opts
+        opts.appTokenFile === undefined
+          ? opts
+          : { ...opts, appTokenFile: resolve(ctx.cwd, opts.appTokenFile) }
       );
     });
 

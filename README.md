@@ -704,9 +704,21 @@ cards. From a terminal:
 A run can park several tool calls at once, each its own gate: name the one to
 answer by the request id `dispatch run show <runId>` lists. These act as a
 human, so each needs the daemon's app token: pass `--token` or set
-`DISPATCH_APP_TOKEN` to the value `dispatch serve` prints at startup. The agent
-token in the daemon file is refused. A daemon that another command started in
-the background printed its app token to `/dev/null`; stop it and run
+`DISPATCH_APP_TOKEN` to it. The agent token in the daemon file is refused.
+
+`dispatch serve` prints the app token only masked (`ab12…ef90`), because
+terminal scrollback and agent tool logs keep whatever it prints. To use it, ask
+for it at startup:
+
+    dispatch serve --app-token-file ~/secrets/dispatch-app-token  # mode 0600
+    export DISPATCH_APP_TOKEN="$(cat ~/secrets/dispatch-app-token)"
+
+Pick a path your agents do not read: they run as you, so the file mode keeps out
+other users, not them, and the CLI never reads the token from disk on its own.
+`dispatch serve --print-token` prints the full `DISPATCH_APP_TOKEN=` line
+instead. A minted token changes every time the daemon starts, so restarting
+`dispatch serve` rotates one that leaked. A daemon that another command started
+in the background printed its app token to `/dev/null`; stop it and run
 `dispatch serve` instead.
 
 ## Dependency graph with Carto (optional)

@@ -6,8 +6,16 @@ import {
   widenedPath,
   writeGitAttributes,
 } from '@dispatch-foo/core';
-import { existsSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 
 import { parseListenerFlags } from './a2a/settings.js';
 import { FakeAiTaskFilter } from './aiTaskFilter.js';
@@ -428,6 +436,32 @@ function readFlag(args: string[], name: string): string | undefined {
   return args[index + 1];
 }
 
+// The first and last four characters of a token: enough to match it against
+// one you hold, too little to use. 64 hex characters leave 224 bits hidden.
+function maskToken(token: string): string {
+  return token.length <= 16 ? '…' : `${token.slice(0, 4)}…${token.slice(-4)}`;
+}
+
+// Writes `contents` to `path` readable only by this user. The bytes go to a
+// fresh sibling created 0600 (`wx` refuses one that already exists, so no
+// planted file or symlink is followed) and are renamed over `path`, so an
+// older file with looser permissions is replaced rather than reused.
+function writePrivateFile(path: string, contents: string): void {
+  const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
+  const fd = openSync(tmp, 'wx', 0o600);
+  try {
+    writeSync(fd, contents);
+  } finally {
+    closeSync(fd);
+  }
+  try {
+    renameSync(tmp, path);
+  } catch (err) {
+    rmSync(tmp, { force: true });
+    throw err;
+  }
+}
+
 const args = process.argv.slice(2);
 const rootDir = resolve(readFlag(args, '--root') ?? process.cwd());
 // Before anything spawns, so every run and verify step inherits it.
@@ -586,6 +620,18 @@ const a2aOverrides = a2aFlags.overrides;
 // file (the CLI's ensureDaemon passes it alongside --idle-timeout).
 const startedBy = readFlag(args, '--started-by');
 
+// Where the app token goes besides the desktop sidecar's stdout pipe.
+// `dispatch serve` runs in a terminal whose scrollback (and any agent tool log
+// capturing it) keeps whatever is printed, so it passes one of these:
+// `--app-token-file <path>` writes the token to a 0600 file the user named and
+// prints nothing of it; `--mask-app-token` prints only its ends, enough to tell
+// two tokens apart. Without either, the full `DISPATCH_APP_TOKEN=` line is
+// printed, which the sidecar and the e2e harnesses parse.
+const appTokenFileArg = readFlag(args, '--app-token-file');
+const appTokenFile =
+  appTokenFileArg === undefined ? undefined : resolve(appTokenFileArg);
+const maskAppToken = args.includes('--mask-app-token');
+
 const serverOpts: Parameters<typeof startServer>[0] = {
   rootDir,
   port,
@@ -732,18 +778,37 @@ let handle = await startServer({
 });
 console.log(`dispatchd listening on http://127.0.0.1:${handle.port}`);
 
-// The only place the app token leaves this process — it is never written to
-// disk, so anything capturing this stdout must not persist the line either.
+// The only places the app token leaves this process: stdout for the desktop
+// sidecar, or the file `--app-token-file` names. It is never written anywhere
+// else on disk, so anything capturing this stdout must not persist the line.
 //
 // Unless it came in through DISPATCH_APP_TOKEN: then whoever launched the
 // daemon already holds it, and printing it only hands a copy to wherever
 // stdout goes. Under a service manager that is a journal kept on disk, which
-// is the one place the token is meant never to be. The notice deliberately
-// does not start with `DISPATCH_APP_TOKEN=`, the prefix the desktop sidecar
-// parses — that spawner never presets one, and Playwright's never reads it.
-if (presetAppToken !== undefined && presetAppToken !== '') {
+// is the one place the token is meant never to be. The notices deliberately
+// do not start with `DISPATCH_APP_TOKEN=`, the prefix the desktop sidecar
+// parses — that spawner never presets one or masks it, and Playwright's never
+// reads it.
+if (appTokenFile !== undefined) {
+  try {
+    writePrivateFile(appTokenFile, `${handle.tokens.appToken}\n`);
+  } catch (err) {
+    console.error(
+      `dispatchd: could not write the app token to ${appTokenFile}: ${(err as Error).message}`
+    );
+    await handle.stop();
+    process.exit(1);
+  }
+  console.log(
+    `dispatchd: app token written to ${appTokenFile} (mode 0600); it changes every time this daemon starts`
+  );
+} else if (presetAppToken !== undefined && presetAppToken !== '') {
   console.log(
     'dispatchd: using the app token from DISPATCH_APP_TOKEN; not printing it'
+  );
+} else if (maskAppToken) {
+  console.log(
+    `dispatchd: app token ${maskToken(handle.tokens.appToken)} (masked). It authorizes approval decisions and changes every time this daemon starts; to get it, restart with \`dispatch serve --app-token-file <path>\` or \`--print-token\`.`
   );
 } else {
   console.log(`DISPATCH_APP_TOKEN=${handle.tokens.appToken}`);

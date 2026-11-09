@@ -205,8 +205,8 @@ describe('request tier', () => {
     const body = await json<AuthError>(res);
     expect(body.code).toBe('auth_invalid_token');
     expect(body.error).toContain('restarted daemon');
-    // Someone holding a stale app token is told which line it comes from.
-    expect(body.error).toContain('DISPATCH_APP_TOKEN line');
+    // Someone holding a stale app token is told where a fresh one comes from.
+    expect(body.error).toContain('--app-token-file');
   });
 
   it('says an invite link is not a daemon token, in every form', async () => {

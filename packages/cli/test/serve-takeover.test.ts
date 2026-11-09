@@ -8,6 +8,8 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -126,7 +128,10 @@ async function until(
   }
 }
 
-const TOKEN_LINE = /^DISPATCH_APP_TOKEN=[0-9a-f]{64}$/m;
+// What a booted `dispatch serve` prints by default: the app token masked, so
+// terminal scrollback and agent tool logs never hold it (t-89072f10).
+const TOKEN_LINE = /^dispatchd: app token [0-9a-f]{4}…[0-9a-f]{4} \(masked\)/m;
+const FULL_TOKEN_LINE = /^DISPATCH_APP_TOKEN=[0-9a-f]{64}$/m;
 
 beforeEach(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'dispatch-takeover-')));
@@ -182,6 +187,45 @@ async function startFakeRun(
     await Bun.sleep(100);
   }
 }
+
+describe('dispatch serve keeps the app token out of its output', () => {
+  it('prints it masked by default, never in full', async () => {
+    const s = serve();
+    await until(() => TOKEN_LINE.test(s.out()), 'the masked token');
+    spawned.push(daemonFile().pid);
+    expect(FULL_TOKEN_LINE.test(s.out())).toBe(false);
+    expect(s.out()).not.toMatch(/[0-9a-f]{64}/);
+  }, 90_000);
+
+  it('writes it to a 0600 file with --app-token-file, replacing a looser one, and prints none of it', async () => {
+    const file = join(home, 'app-token');
+    writeFileSync(file, 'stale\n', { mode: 0o644 });
+    const s = serve('--app-token-file', file);
+    await until(
+      () => s.out().includes(`app token written to ${file}`),
+      'the token file notice'
+    );
+    const daemon = daemonFile() as { pid: number; port: number };
+    spawned.push(daemon.pid);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    const token = readFileSync(file, 'utf8').trim();
+    expect(token).toMatch(/^[0-9a-f]{64}$/);
+    expect(s.out()).not.toContain(token);
+    expect(s.out()).not.toContain(token.slice(0, 8));
+    expect(TOKEN_LINE.test(s.out())).toBe(false);
+    // It is the daemon's live app token, not just some hex.
+    const res = await fetch(`http://127.0.0.1:${daemon.port}/api/tasks`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(200);
+  }, 90_000);
+
+  it('prints the full DISPATCH_APP_TOKEN line only with --print-token', async () => {
+    const s = serve('--print-token');
+    await until(() => FULL_TOKEN_LINE.test(s.out()), 'the full token');
+    spawned.push(daemonFile().pid);
+  }, 90_000);
+});
 
 describe('dispatch serve takes over', () => {
   it('an idle background daemon: the old pid exits, then the new one serves and prints a token', async () => {

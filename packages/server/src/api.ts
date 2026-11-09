@@ -5151,8 +5151,8 @@ const MISSING_TOKEN_MESSAGE =
 
 const INVALID_TOKEN_MESSAGE =
   'daemon token not recognized: it belongs to a different or restarted daemon. ' +
-  'The app token is the DISPATCH_APP_TOKEN line this daemon printed at startup ' +
-  '(a restarted daemon prints a new one); the CLI and MCP read `agentToken` ' +
+  'The app token is the one this daemon printed or wrote to --app-token-file ' +
+  'at startup (a restarted daemon has a new one); the CLI and MCP read `agentToken` ' +
   'from ~/.dispatch/daemons/<key>.json.';
 
 const INVITE_AS_TOKEN_MESSAGE =
@@ -5166,8 +5166,8 @@ function wrongTierMessage(required: AuthTier, held: AuthTier): string {
   return (
     `this route needs the ${required} tier and this credential carries ` +
     `${held}. On your own machine, pass the daemon app token with --token or ` +
-    'DISPATCH_APP_TOKEN (the DISPATCH_APP_TOKEN line the daemon prints at ' +
-    'startup; restart the daemon if you no longer have it). As a teammate, ask ' +
+    'DISPATCH_APP_TOKEN (the token `dispatch serve --app-token-file <path>` ' +
+    'writes at startup; restart the daemon if you no longer have it). As a teammate, ask ' +
     `whoever runs the daemon for \`dispatch team invite <you> --tier ${required}\`.`
   );
 }

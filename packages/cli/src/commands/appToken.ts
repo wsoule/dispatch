@@ -17,8 +17,8 @@ export function noAppTokenMessage(
   const lead =
     `${command} needs the daemon app token, which only a human holds; the ` +
     'agent token in the daemon file cannot decide. Pass --token, or set ' +
-    'DISPATCH_APP_TOKEN, to the value on the DISPATCH_APP_TOKEN line ' +
-    '`dispatch serve` prints at startup.';
+    'DISPATCH_APP_TOKEN, to the token `dispatch serve --app-token-file ' +
+    '<path>` writes to that file (or `dispatch serve --print-token` prints).';
   if (daemon === undefined) return lead;
   const which = `pid ${daemon.pid}, port ${daemon.port}`;
   const inApp = command.startsWith('dispatch team join')
@@ -31,7 +31,7 @@ export function noAppTokenMessage(
       `the background by ${daemon.startedBy ?? 'a dispatch command'}, so its ` +
       'app token went nowhere, on purpose: agents read that output. Run ' +
       '`dispatch serve` in a terminal you keep open; it takes over the ' +
-      'background daemon (once it has no live work) and prints a token. Or ' +
+      'background daemon (once it has no live work) and hands you a token. Or ' +
       'open the project in the Dispatch app and press Restart Dispatch from ' +
       `this app${inApp === '' ? '' : `, then use ${inApp.slice(2, -1)}`}.`
     );
@@ -40,7 +40,7 @@ export function noAppTokenMessage(
     'the Dispatch app or by `dispatch serve`, which hold its token: copy it ' +
     `from that terminal, or do it in the app${inApp}. Failing both, run ` +
     '`dispatch serve --replace` in a terminal you keep open; it stops that ' +
-    'daemon once it has no live work, takes over and prints a token.'
+    'daemon once it has no live work, takes over and hands you a token.'
   );
 }
 
@@ -76,8 +76,8 @@ export function optionalAppToken(
   if (value !== undefined && looksLikeInvite(value))
     throw new CliError(
       'that is a team invite link, not a daemon token: run `dispatch team join` ' +
-        'and paste it at the prompt. The app token is the DISPATCH_APP_TOKEN ' +
-        'line `dispatch serve` prints at startup.'
+        'and paste it at the prompt. The app token is the one ' +
+        '`dispatch serve --app-token-file <path>` writes at startup.'
     );
   return value === '' ? undefined : value;
 }
