@@ -4799,6 +4799,15 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'POST', segments: ['a2a', 'pairings', 'accept'], tier: 'decide' },
   { method: 'DELETE', segments: ['a2a', 'pairings', '*'], tier: 'decide' },
   { method: 'GET', segments: ['a2a', 'links'], tier: 'decide' },
+  // An intake link is a credential outside people submit requests with; the
+  // list names every form's label and client.
+  { method: 'GET', segments: ['a2a', 'intake'], tier: 'decide' },
+  { method: 'POST', segments: ['a2a', 'intake'], tier: 'decide' },
+  {
+    method: 'POST',
+    segments: ['a2a', 'intake', '*', 'revoke'],
+    tier: 'decide',
+  },
 
   // ---- operator: acting on the host machine as its owner --------------------
   // Writing a file straight to disk bypasses the orchestrator, which is what

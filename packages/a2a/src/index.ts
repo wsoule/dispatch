@@ -231,6 +231,8 @@ export type {
   AuthMode,
   ClientRow,
   HostRow,
+  IntakeLinkRow,
+  IntakeRequestRow,
   KeyEvent,
   PendingNotice,
   KeyPin,

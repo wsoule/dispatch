@@ -2018,6 +2018,9 @@ async function bootServer(
         }),
     mark: (label) => watchdog.mark(label),
     track: (fn) => (idle === null ? fn() : idle.track(fn)),
+    // Intake requests' request.changed events go to the same webhook as
+    // decision.opened; read per event so an edit applies live.
+    notificationsWebhook: () => loadConfig(rootDir).notifications.webhook,
   });
   docsHost.bindA2AOrigin((taskId) => a2a.taskOrigin(taskId) === 'a2a');
 

@@ -30,6 +30,7 @@ import { tokenHash } from './auth.js';
 import type { A2ABridge } from './bridge.js';
 import { gatherFacts } from './facts.js';
 import { hostPublicUrl, isHostName, mintHost } from './hosts.js';
+import { intakeFormUrl, mintIntakeLink } from './intake.js';
 import { acceptLinkPairing, offerLinkPairing } from './linkPairing.js';
 import { acceptPairing, offerPairing, pairingSummaries } from './pairing.js';
 import type { PeerAddInput, PeerChange } from './peers.js';
@@ -548,6 +549,87 @@ async function hostRoute(
   return null;
 }
 
+// The listener's public URL while it is open, else null.
+function listenerUrl(a2a: Running['a2a']): string | null {
+  const status = a2a.status();
+  return status.listening ? status.url : null;
+}
+
+// /api/a2a/intake: intake links, the web forms outside people submit
+// requests through. Every route is decide tier (ELEVATED_ROUTES), which the
+// shared agent token never reaches. A link's token is shown once at minting,
+// as its form URL; listing never returns it.
+async function intakeRoute(
+  req: Request,
+  ctx: ApiContext,
+  b: Running,
+  segments: string[],
+  method: string
+): Promise<Response | null> {
+  if (segments.length === 1 && method === 'GET') {
+    return jsonResponse({
+      links: b.store.intakeLinks().map(({ tokenHash: _hash, ...row }) => row),
+    });
+  }
+  if (segments.length === 1 && method === 'POST') {
+    const parsed = await readJsonBody(req);
+    if (!parsed.ok) return parsed.response;
+    const { client, label } = parsed.value as {
+      client?: unknown;
+      label?: unknown;
+    };
+    if (typeof client !== 'string' || client.trim() === '')
+      return invalid('client', 'client must name an A2A client');
+    if (label !== undefined && typeof label !== 'string')
+      return invalid('label', 'label must be text');
+    const rows = clientsNamed(b.store, client.trim());
+    if (rows.length === 0)
+      return errorResponse(404, `no A2A client ${client.trim()}`);
+    if (rows.length > 1)
+      return errorResponse(
+        409,
+        `${client.trim()} names more than one client (${rows.map((r) => r.address).join(', ')}); pass its address`
+      );
+    try {
+      const { row, token } = mintIntakeLink(
+        b.store,
+        (address) => ctx.messaging.store.getAgent(address)?.status ?? null,
+        {
+          client: rows[0].address,
+          label: label ?? 'Send a request',
+          createdBy: humanActor(ctx),
+        }
+      );
+      changed(ctx);
+      const base = listenerUrl(b.a2a);
+      return jsonResponse(
+        {
+          id: row.id,
+          client: row.client,
+          label: row.label,
+          token,
+          url: base === null ? null : intakeFormUrl(base, token),
+        },
+        201
+      );
+    } catch (err) {
+      if (err instanceof MessagingError)
+        return err.code === 'not-found'
+          ? errorResponse(404, err.message)
+          : invalid(err.field ?? 'client', err.message);
+      throw err;
+    }
+  }
+  if (segments.length === 3 && segments[2] === 'revoke' && method === 'POST') {
+    const id = decodeURIComponent(segments[1]);
+    if (!b.store.revokeIntakeLink(id, new Date().toISOString()))
+      return errorResponse(404, `no live intake link ${id}`);
+    changed(ctx);
+    return new Response(null, { status: 204 });
+  }
+  return null;
+}
+
 // This side's card URL at the open listener, or null when it is closed.
 function ourCardUrl(a2a: Running['a2a']): string | null {
   const status = a2a.status();
@@ -787,6 +869,10 @@ export async function handleA2ARoute(
     (segments[0] === 'listener' && segments[1] === 'standalone')
   )
     return hostRoute(req, ctx, segments, method);
+  if (segments[0] === 'intake') {
+    const b = bridge(ctx);
+    return b.ok ? intakeRoute(req, ctx, b, segments, method) : b.response;
+  }
   const withId = segments.length === 3;
   const key = withId
     ? `${method} ${segments[0]}/*/${segments[2]}`

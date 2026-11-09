@@ -1638,6 +1638,19 @@ export interface A2AApiClient {
     publicUrl: string
   ): Promise<{ id: string; name: string; publicUrl: string; token: string }>;
   removeHost(id: string): Promise<void>;
+  intakeLinks(): Promise<{ links: A2AIntakeLinkSummary[] }>;
+  addIntakeLink(
+    client: string,
+    label?: string
+  ): Promise<{
+    id: string;
+    client: string;
+    label: string;
+    token: string;
+    // Null while the listener is closed: the form lives on it.
+    url: string | null;
+  }>;
+  revokeIntakeLink(id: string): Promise<void>;
   setStandalone(enabled: boolean): Promise<{ standalone: boolean }>;
   createPairing(input: {
     alias: string;
@@ -1671,6 +1684,16 @@ export interface A2AApiClient {
 }
 
 // A standalone host as /api/a2a/hosts lists it; never its token or hash.
+// One row of GET /api/a2a/intake: an intake link, never its token.
+interface A2AIntakeLinkSummary {
+  id: string;
+  client: string;
+  label: string;
+  createdBy: string;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
 interface A2AHostSummary {
   id: string;
   name: string;
@@ -1740,6 +1763,17 @@ export function createA2AApiClient(
     removeHost: (id) =>
       request(target, `/api/a2a/hosts/${encodeURIComponent(id)}`, {
         method: 'DELETE',
+      }),
+    intakeLinks: () => request(target, '/api/a2a/intake'),
+    addIntakeLink: (client, label) =>
+      request(
+        target,
+        '/api/a2a/intake',
+        jsonBody(label === undefined ? { client } : { client, label })
+      ),
+    revokeIntakeLink: (id) =>
+      request(target, `/api/a2a/intake/${encodeURIComponent(id)}/revoke`, {
+        method: 'POST',
       }),
     setStandalone: (enabled) =>
       request(target, '/api/a2a/listener/standalone', {
