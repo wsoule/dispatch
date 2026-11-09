@@ -23,10 +23,14 @@ export interface WorkspaceSource {
   load(userId: string | null): Promise<DaemonModel>;
   /** Everyone sees the same workspace (the demo), so one copy serves all. */
   shared?: boolean;
+  /** Starts the workspace's daemon, so the page's first calls find it up. */
+  warm?: () => Promise<void>;
+  /** Whether this person was a member whose membership has lapsed. */
+  lapsed?: (userId: string) => boolean;
   /** Set when the workspace has its own dispatchd: its API answers there,
    * as the signed-in member, instead of from `load`. */
   daemon?: (
-    userId: string,
+    userId: string | null,
     pathAndQuery: string,
     req: Request
   ) => Promise<Response>;
@@ -210,8 +214,6 @@ export function plannerHandler(deps: PlannerDeps): Planner {
       if (grant === null || source === null)
         return json({ error: 'Open the planner again to continue.' }, 401);
       if (source.daemon !== undefined) {
-        if (grant.userId === null)
-          return json({ error: 'Open the planner again to continue.' }, 401);
         // Checked on every request, not just when the page opened.
         if (source.viewerFor(grant.userId) === null)
           return json(
@@ -264,14 +266,24 @@ export function plannerHandler(deps: PlannerDeps): Planner {
     // A workspace you may not open looks the same as one that does not exist.
     const userId = deps.userOf(req);
     const viewer = source?.viewerFor(userId) ?? null;
-    // An installed workspace asks a signed-in person to confirm their
-    // membership through Linear again (it lapses after a week).
-    if (source?.daemon !== undefined && viewer === null && userId !== null)
+    // A member of an installed workspace confirms their membership through
+    // Linear again (it lapses after a week). Only someone whose own grant
+    // names it is told the workspace exists.
+    if (viewer === null && userId !== null && source?.lapsed?.(userId) === true)
       return Response.redirect(`${deps.origin}/auth/linear/workspace`, 303);
     if (source === null || viewer === null)
       return json({ error: 'No such workspace.' }, 404);
     if (dist === null || !existsSync(join(dist, 'index.html')))
       return json({ error: 'The planner is not built on this server.' }, 503);
+    if (source.warm !== undefined)
+      try {
+        await source.warm();
+      } catch {
+        return json(
+          { error: 'The workspace is starting. Reload in a minute.' },
+          503
+        );
+      }
     const html = await Bun.file(join(dist, 'index.html')).text();
     return new Response(
       injected(html, {

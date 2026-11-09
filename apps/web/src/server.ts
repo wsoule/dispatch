@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import { TeamDb } from './db.js';
 import type { Device } from './db.js';
+import { HostedDemo } from './hosting/demo.js';
 import { WorkspaceHost } from './hosting/host.js';
 import { HostedWorkspaces } from './hosting/workspaces.js';
 import type { Connection } from './hub.js';
@@ -131,7 +132,10 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
     linearSignIn: (config.linearClientId ?? null) !== null,
   });
 
-  const demo = demoWorkspace();
+  const demo = demoWorkspace(
+    Date.now,
+    host === null ? null : new HostedDemo(host)
+  );
   const planner = plannerHandler({
     origin: config.origin,
     distDir: config.desktopDistDir ?? null,
@@ -147,6 +151,19 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
         : linearWorkspace(grants, org, config.linearFetch);
     },
   });
+
+  // Open bridges, re-checked every few minutes: a socket outliving its
+  // member's membership is closed.
+  const bridges = new Set<Bun.ServerWebSocket<SocketData>>();
+  const recheck = setInterval(() => {
+    for (const ws of bridges)
+      if (
+        ws.data.kind === 'bridge' &&
+        hosted !== null &&
+        !hosted.admits(ws.data.userId, ws.data.orgId)
+      )
+        ws.close(1008, 'open the workspace again');
+  }, 5 * 60_000);
 
   const server = Bun.serve<SocketData>({
     port: config.port,
@@ -273,6 +290,7 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
       open(ws) {
         const bridge = ws.data;
         if (bridge.kind === 'bridge' && hosted !== null) {
+          bridges.add(ws);
           void hosted
             .socket(bridge.userId, bridge.orgId)
             .then(({ url, token }) => {
@@ -330,6 +348,7 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
       },
       close(ws) {
         if (ws.data.kind === 'bridge') {
+          bridges.delete(ws);
           ws.data.closed = true;
           ws.data.upstream?.close();
           return;
@@ -346,6 +365,7 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
     hubs,
     linear,
     async stop() {
+      clearInterval(recheck);
       hubs.close();
       await host?.close();
       await server.stop(true);

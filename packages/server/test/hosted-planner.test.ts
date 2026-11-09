@@ -217,6 +217,17 @@ describe('hosted planner mode', () => {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
     expect((await asAda('GET', '/api/whoami')).status).toBe(200);
+    // The host links the Linear teams; a member cannot add a private one.
+    expect(
+      (
+        await asAda('PATCH', '/api/config', {
+          linear: { teamIds: ['private-team'] },
+        })
+      ).status
+    ).toBe(403);
+    expect(
+      (await call('PATCH', '/api/config', { linear: { teamIds: [] } })).status
+    ).toBe(200);
     expect(
       (
         await asAda('POST', '/api/team/tokens', {
