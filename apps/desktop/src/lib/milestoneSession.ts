@@ -256,6 +256,15 @@ export function defaultMaxRuns(taskCount: number): number {
   return taskCount;
 }
 
+/** What a fan-out starts with when `orchestrator.unlimitedSpend` skips the Send agents
+ * dialog: the project's default concurrency and no spend or run ceiling, so the session
+ * never pauses into a Raise ceiling… prompt. */
+export function unlimitedFanoutOptions(
+  concurrency: number
+): WorkMilestoneOptions {
+  return { concurrency, maxSpendUsd: null, maxRuns: null };
+}
+
 export interface MilestonePausedNotice {
   title: string;
   body: string;

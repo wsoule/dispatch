@@ -1336,6 +1336,12 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     }
     patch.autoCommit = body.autoCommit;
   }
+  if ('unlimitedSpend' in body) {
+    if (typeof body.unlimitedSpend !== 'boolean') {
+      return errorResponse(400, 'unlimitedSpend must be a boolean');
+    }
+    patch.unlimitedSpend = body.unlimitedSpend;
+  }
   for (const key of [
     'milestoneConcurrency',
     'verifyTimeoutSec',

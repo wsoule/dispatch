@@ -22,7 +22,13 @@ export interface OrchestratorConfig {
   /** Ceiling on one `verifyCommand` run. The merge queue is serial, so a verify
    *  that never returns holds up every entry behind it. */
   verifyTimeoutSec: number;
+  /** Always undefined in a loaded config while `unlimitedSpend` is on, whatever
+   *  the file says, so no executor or overseer is handed a cap. */
   maxBudgetUsd?: number;
+  /** "Spend doesn't matter here": no per-run budget cap, fan-outs never pause
+   *  at a spend or run ceiling, and the desktop sends agents without asking for
+   *  one. The on-disk `maxBudgetUsd` is kept, so turning this off restores it. */
+  unlimitedSpend: boolean;
   permissionMode: string;
   milestoneConcurrency: number;
   /** Hard ceiling on concurrent runs any one milestone session may hold, capped at
@@ -895,6 +901,7 @@ export interface ConfigPatch {
   /** `null` clears the key, restoring "no cap" — both are optional in OrchestratorConfig. */
   maxTurns?: number | null;
   maxBudgetUsd?: number | null;
+  unlimitedSpend?: boolean;
   permissionMode?: OrchestratorConfig['permissionMode'];
   models?: Partial<ModelConfig>;
   /** Per-role effort; `null` removes the role so the model default applies. */

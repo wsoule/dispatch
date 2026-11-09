@@ -284,3 +284,27 @@ test('a viewer who may not save config cannot press a mode', () => {
   fireEvent.click(narration);
   expect(r.saved).toEqual([]);
 });
+
+test('the unlimited spend switch saves unlimitedSpend', () => {
+  const r = recorder();
+  renderAgents({ onSave: r.onSave });
+  fireEvent.click(screen.getByRole('switch', { name: 'Unlimited spend' }));
+  expect(r.saved).toEqual([{ unlimitedSpend: true }]);
+});
+
+// The daemon ignores the per-run cap while the switch is on, so offering it
+// would be a field that does nothing.
+test('unlimited spend hides the per-run spend cap', () => {
+  renderAgents({
+    config: {
+      ...config,
+      orchestrator: { ...config.orchestrator, unlimitedSpend: true },
+    },
+  });
+  expect(screen.queryByLabelText('Spend per run')).toBeNull();
+  expect(
+    screen
+      .getByRole('switch', { name: 'Unlimited spend' })
+      .getAttribute('aria-checked')
+  ).toBe('true');
+});

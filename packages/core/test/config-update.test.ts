@@ -232,6 +232,23 @@ describe('updateConfig', () => {
     expect(cfg.orchestrator.maxBudgetUsd).toBeUndefined();
   });
 
+  // The switch waives the cap without forgetting it: turning it back off
+  // brings the saved per-run cap back.
+  test('unlimitedSpend hides the budget cap and keeps it on disk', () => {
+    const dir = root();
+    updateConfig(dir, { maxBudgetUsd: 12.5, unlimitedSpend: true });
+    expect(loadConfig(dir).orchestrator.unlimitedSpend).toBe(true);
+    expect(loadConfig(dir).orchestrator.maxBudgetUsd).toBeUndefined();
+    updateConfig(dir, { unlimitedSpend: false });
+    expect(loadConfig(dir).orchestrator.maxBudgetUsd).toBe(12.5);
+  });
+
+  test('refuses a non-boolean unlimitedSpend before it reaches disk', () => {
+    expect(() =>
+      updateConfig(root(), { unlimitedSpend: 'yes' as unknown as boolean })
+    ).toThrow(/invalid unlimitedSpend: must be a boolean/);
+  });
+
   test('refuses a non-positive turn cap before it reaches disk', () => {
     expect(() => updateConfig(root(), { maxTurns: 0 })).toThrow(
       /invalid maxTurns: must be a positive number/

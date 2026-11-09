@@ -23,6 +23,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
@@ -41,6 +42,7 @@ import {
 } from '../../lib/milestoneConcurrency';
 import {
   spendCellWords,
+  unlimitedFanoutOptions,
   waveSteps,
   type WorkMilestoneOptions,
 } from '../../lib/milestoneSession';
@@ -190,12 +192,44 @@ export function FlightPlan({
 }: FlightPlanProps) {
   const directory = usePeople();
   const [dialog, setDialog] = useState<FanoutDialogState | null>(null);
+  const unlimitedSpend = data.config?.orchestrator.unlimitedSpend === true;
+  const milestoneConcurrency =
+    data.config?.orchestrator.milestoneConcurrency ?? 3;
+  // Send agents… opens the fan-out dialog, unless the project has turned on unlimited
+  // spend: then there is no ceiling to choose, so the session starts at the default
+  // concurrency straight away and a refusal is toasted. Raise ceiling… is hidden then,
+  // and a paused session's Resume ignores its old ceilings daemon-side.
+  const sendAgents = useCallback(
+    (milestoneId: string) => {
+      if (!unlimitedSpend) {
+        setDialog({ milestoneId, mode: 'start' });
+        return;
+      }
+      data
+        .handleWorkMilestone(
+          milestoneId,
+          unlimitedFanoutOptions(milestoneConcurrency)
+        )
+        .catch((err: unknown) =>
+          onDispatchFailed(
+            milestoneId,
+            err instanceof Error
+              ? err.message
+              : 'The daemon refused the fan-out.'
+          )
+        );
+    },
+    [data, unlimitedSpend, milestoneConcurrency, onDispatchFailed]
+  );
   const sendAgentsNonce = sendAgentsRequest?.nonce ?? null;
+  // An effect event, so a config refetch never re-serves the same request.
+  const serveSendAgents = useEffectEvent((nonce: number) => {
+    sendAgents(containerId);
+    onSendAgentsServed?.(nonce);
+  });
   useEffect(() => {
-    if (sendAgentsNonce === null) return;
-    setDialog({ milestoneId: containerId, mode: 'start' });
-    onSendAgentsServed?.(sendAgentsNonce);
-  }, [sendAgentsNonce, containerId, onSendAgentsServed]);
+    if (sendAgentsNonce !== null) serveSendAgents(sendAgentsNonce);
+  }, [sendAgentsNonce]);
 
   const model = useMemo(
     () =>
@@ -567,10 +601,14 @@ export function FlightPlan({
         phases={false}
         spend={band}
         waves={band}
-        onSendAgents={(id) => setDialog({ milestoneId: id, mode: 'start' })}
+        onSendAgents={sendAgents}
         onPause={data.handlePauseMilestone}
         onResume={data.handleResumeMilestone}
-        onRaiseCeiling={(id) => setDialog({ milestoneId: id, mode: 'raise' })}
+        onRaiseCeiling={
+          unlimitedSpend
+            ? undefined
+            : (id) => setDialog({ milestoneId: id, mode: 'raise' })
+        }
         onStop={data.handleStopMilestone}
         onLand={data.handleLandMilestone}
         onOpenMilestone={(id) => onOpenTask(id)}
@@ -578,7 +616,7 @@ export function FlightPlan({
         iconVerbs={!band}
       />
     ),
-    [data, model, onOpenTask]
+    [data, model, onOpenTask, sendAgents, unlimitedSpend]
   );
 
   // The plan's own live session's slots control, drawn in the header's slots cell beside

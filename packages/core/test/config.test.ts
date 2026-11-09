@@ -65,6 +65,7 @@ describe('loadConfig', () => {
         verifyTimeoutSec: 600,
         maxConcurrency: 16,
         runCostEstimateUsd: 10,
+        unlimitedSpend: false,
         executor: 'claude',
       },
       models: DEFAULT_MODELS,
@@ -195,6 +196,7 @@ describe('loadConfig', () => {
         verifyTimeoutSec: 600,
         maxConcurrency: 16,
         runCostEstimateUsd: 10,
+        unlimitedSpend: false,
         executor: 'claude',
       });
     });
@@ -213,8 +215,31 @@ describe('loadConfig', () => {
         verifyTimeoutSec: 600,
         maxConcurrency: 16,
         runCostEstimateUsd: 10,
+        unlimitedSpend: false,
         executor: 'claude',
       });
+    });
+
+    it('drops maxBudgetUsd while unlimitedSpend is on', () => {
+      mkdirSync(join(root, '.dispatch'), { recursive: true });
+      writeFileSync(
+        join(root, '.dispatch/config.yml'),
+        'orchestrator:\n  maxBudgetUsd: 5\n  unlimitedSpend: true\n'
+      );
+      const { orchestrator } = loadConfig(root);
+      expect(orchestrator.unlimitedSpend).toBe(true);
+      expect(orchestrator.maxBudgetUsd).toBeUndefined();
+    });
+
+    it('rejects a non-boolean unlimitedSpend', () => {
+      mkdirSync(join(root, '.dispatch'), { recursive: true });
+      writeFileSync(
+        join(root, '.dispatch/config.yml'),
+        'orchestrator:\n  unlimitedSpend: "yes"\n'
+      );
+      expect(() => loadConfig(root)).toThrow(
+        /unlimitedSpend must be a boolean/
+      );
     });
 
     it('reads maxConcurrency and runCostEstimateUsd when set', () => {

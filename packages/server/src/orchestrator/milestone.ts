@@ -1107,11 +1107,15 @@ export class MilestoneEngine {
     }
     if (ready.length === 0) return 0;
 
-    if (session.maxRuns !== null || session.maxSpendUsd !== null) {
-      // Read per pass, like the merge queue's verifyCommand, so a config edit
-      // mid-session changes the next gate.
-      const estimate = loadConfig(this.ctx.rootDir).orchestrator
-        .runCostEstimateUsd;
+    // Read per pass, like the merge queue's verifyCommand, so a config edit
+    // mid-session changes the next gate. `unlimitedSpend` waives both
+    // ceilings, including ones a session was started with before it was on.
+    const orchestratorConfig = loadConfig(this.ctx.rootDir).orchestrator;
+    if (
+      !orchestratorConfig.unlimitedSpend &&
+      (session.maxRuns !== null || session.maxSpendUsd !== null)
+    ) {
+      const estimate = orchestratorConfig.runCostEstimateUsd;
       const spend = this.sessionSpend(
         milestoneId,
         session,

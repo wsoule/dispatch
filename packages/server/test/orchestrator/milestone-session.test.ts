@@ -357,6 +357,37 @@ describe('MilestoneEngine spend ceiling', () => {
       'milestone dispatch resumed (concurrency 2, ceiling $100.00)'
     );
   }, 20_000);
+
+  // The switch waives ceilings a session already carries, so turning it on
+  // mid-flight (or a CLI start that still sends ceilings) never pauses.
+  it('ignores both ceilings while orchestrator.unlimitedSpend is on', async () => {
+    const h = makeHarness({ costUsd: 10 });
+    writeFileSync(
+      join(repo, '.dispatch', 'config.yml'),
+      'orchestrator:\n  unlimitedSpend: true\n'
+    );
+    const { milestoneId, childIds } = createMilestoneWithChildren(h.store, 3);
+
+    // $15 fits one $10 run and maxRuns allows one; unlimited starts all three.
+    await h.milestones.start(milestoneId, {
+      executor: 'fake',
+      concurrency: 3,
+      maxSpendUsd: 15,
+      maxRuns: 1,
+    });
+    await waitFor(() => awaiting(h, childIds).length === 3);
+    for (const run of awaiting(h, childIds)) {
+      h.orchestrator.approve(run.id, 'go', true);
+    }
+    await waitFor(
+      () => h.milestones.progress(milestoneId).spend.settledUsd === 30
+    );
+    await sleep(60);
+    expect(h.milestones.progress(milestoneId).session?.state).not.toBe(
+      'paused'
+    );
+    expect(pausedEvents(h)).toHaveLength(0);
+  }, 20_000);
 });
 
 describe('MilestoneEngine session transitions', () => {

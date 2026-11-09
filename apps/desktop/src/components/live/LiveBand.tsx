@@ -58,7 +58,8 @@ export interface LiveBandActions {
   model: StatusModel;
   progressOf: (containerId: string) => MilestoneProgress | undefined;
   onSendAgents: (containerId: string) => void;
-  onRaiseCeiling: (containerId: string) => void;
+  /** Omitted under `orchestrator.unlimitedSpend`: there is no ceiling to raise. */
+  onRaiseCeiling?: (containerId: string) => void;
   onPause: (containerId: string) => Promise<void>;
   onResume: (containerId: string) => Promise<void>;
   onStop: (containerId: string) => Promise<void>;

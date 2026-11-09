@@ -111,6 +111,7 @@ export function BoardPane({
     milestoneId: string;
     mode: 'start' | 'raise';
   } | null>(null);
+  const unlimitedSpend = data.config?.orchestrator.unlimitedSpend === true;
 
   useEffect(() => {
     writeCollapsed(COLLAPSED_LANES_STORAGE_KEY, 'session', collapsedLaneKeys);
@@ -372,8 +373,13 @@ export function BoardPane({
           }
           hiddenColumnCount={hiddenColumns.size}
           onShowHiddenColumns={() => setHiddenColumns(new Set())}
-          onRequestWorkMilestone={(milestoneId) =>
-            setDispatchMilestone({ milestoneId, mode: 'start' })
+          // Unlimited spend skips the preview: the lane header then dispatches straight
+          // away at its picker's concurrency with no ceilings, so nothing pauses for one.
+          onRequestWorkMilestone={
+            unlimitedSpend
+              ? undefined
+              : (milestoneId) =>
+                  setDispatchMilestone({ milestoneId, mode: 'start' })
           }
           tasks={orderedBoardTasks}
           archivedTaskIds={archivedTaskIds}
@@ -398,8 +404,11 @@ export function BoardPane({
           onWorkMilestone={data.handleWorkMilestone}
           onPauseMilestone={data.handlePauseMilestone}
           onResumeMilestone={data.handleResumeMilestone}
-          onRaiseCeilingMilestone={(milestoneId) =>
-            setDispatchMilestone({ milestoneId, mode: 'raise' })
+          onRaiseCeilingMilestone={
+            unlimitedSpend
+              ? undefined
+              : (milestoneId) =>
+                  setDispatchMilestone({ milestoneId, mode: 'raise' })
           }
           onStopMilestone={data.handleStopMilestone}
           onLandMilestone={data.handleLandMilestone}

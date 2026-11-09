@@ -603,6 +603,7 @@ export interface DispatchProjectData {
     statusRoles?: StatusRoles | null;
     maxTurns?: number | null;
     maxBudgetUsd?: number | null;
+    unlimitedSpend?: boolean;
     fixLoop?: { cap?: number; escalation?: EscalationStep[] };
     verify?: { command?: string; url?: string; notes?: string };
     notifications?: {
@@ -3023,6 +3024,7 @@ export function useDispatchProject(
       statusRoles?: StatusRoles | null;
       maxTurns?: number | null;
       maxBudgetUsd?: number | null;
+      unlimitedSpend?: boolean;
       fixLoop?: { cap?: number; escalation?: EscalationStep[] };
       verify?: { command?: string; url?: string; notes?: string };
       notifications?: {
