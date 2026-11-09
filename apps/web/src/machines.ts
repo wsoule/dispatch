@@ -233,8 +233,16 @@ export function machinesHandler(deps: MachinesDeps): Machines {
     const user = deps.userOf(req);
     if (user === null) return deps.signIn(`/m/${scope}/`);
     // Someone else's machine looks the same as one that does not exist.
-    if (ownDevice(deviceId, user) === null)
+    const conn = ownDevice(deviceId, user);
+    if (conn === null)
       return json({ error: 'No such machine, or it is offline.' }, 404);
+    // The app names a project by its root's last segment: ask the machine
+    // for the project's own name, so the page reads `dispatch`, not the key.
+    const listed = await conn.call('projects', {}, PROJECTS_WAIT_MS);
+    const name =
+      (
+        listed.result as { projects?: LinkProject[] } | undefined
+      )?.projects?.find((p) => p.key === project)?.name ?? project;
     const dist = deps.distDir;
     if (dist === null || !existsSync(join(dist, 'index.html')))
       return json({ error: 'The app is not built on this server.' }, 503);
@@ -242,7 +250,7 @@ export function machinesHandler(deps: MachinesDeps): Machines {
     return new Response(
       injected(html, {
         baseUrl: `${deps.origin}/m/${scope}`,
-        root: `/m/${scope}`,
+        root: `/m/${scope}/${encodeURIComponent(name)}`,
         agentToken: mint(scope, user.id),
         appToken: null,
       }),

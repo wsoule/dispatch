@@ -144,6 +144,10 @@ describe('your machines from the web', () => {
       `"baseUrl":"${ORIGIN}/m/${ada.device}/a1b2c3d4e5f60718"`
     );
     expect(own.html).toContain('"appToken":null');
+    // Named by the project's own name, which the machine reports.
+    expect(own.html).toContain(
+      `"root":"/m/${ada.device}/a1b2c3d4e5f60718/dispatch"`
+    );
     const theirs = await get(`/m/${bob.device}/a1b2c3d4e5f60718/`, ada.cookie);
     expect(theirs!.status).toBe(404);
   });
