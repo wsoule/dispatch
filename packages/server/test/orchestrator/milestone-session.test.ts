@@ -366,10 +366,10 @@ describe('MilestoneEngine spend ceiling', () => {
       join(repo, '.dispatch', 'config.yml'),
       'orchestrator:\n  unlimitedSpend: true\n'
     );
-    const { epicId, childIds } = createEpicWithChildren(h.store, 3);
+    const { milestoneId, childIds } = createMilestoneWithChildren(h.store, 3);
 
     // $15 fits one $10 run and maxRuns allows one; unlimited starts all three.
-    await h.epics.start(epicId, {
+    await h.milestones.start(milestoneId, {
       executor: 'fake',
       concurrency: 3,
       maxSpendUsd: 15,
@@ -379,9 +379,13 @@ describe('MilestoneEngine spend ceiling', () => {
     for (const run of awaiting(h, childIds)) {
       h.orchestrator.approve(run.id, 'go', true);
     }
-    await waitFor(() => h.epics.progress(epicId).spend.settledUsd === 30);
+    await waitFor(
+      () => h.milestones.progress(milestoneId).spend.settledUsd === 30
+    );
     await sleep(60);
-    expect(h.epics.progress(epicId).session?.state).not.toBe('paused');
+    expect(h.milestones.progress(milestoneId).session?.state).not.toBe(
+      'paused'
+    );
     expect(pausedEvents(h)).toHaveLength(0);
   }, 20_000);
 });

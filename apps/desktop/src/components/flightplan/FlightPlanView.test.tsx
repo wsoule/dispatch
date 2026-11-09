@@ -13,6 +13,7 @@ import type { ReactNode } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { setActiveStatusModel } from '../../lib/statusModel';
+import { testConfig } from '../settings/fixtures.test-helper';
 
 /** What the plan's chart reads beyond the data: no buckets, no asks. */
 const CHART = {
@@ -832,6 +833,7 @@ describe('FlightPlan', () => {
     render(
       <FlightPlanHostContext.Provider
         value={{
+          ...CHART,
           data,
           dispatchTask: () => Promise.resolve(),
           onDispatchFailed: () => {},
