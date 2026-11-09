@@ -36,6 +36,7 @@ import {
   readDaemonFile,
   requestDeadline,
   startDaemon,
+  startDaemonAdvice,
 } from './daemon.js';
 import { registerDocTools, taskDocLines } from './docs.js';
 import { registerMemoryTools } from './memory.js';
@@ -268,9 +269,14 @@ function formatDaemonProblems(problems: string[]): string[] {
 // there.
 // ---------------------------------------------------------------------------
 
-const DAEMON_REQUIRED =
-  "dispatchd is not running — this project keeps its tasks in the daemon's " +
-  'database, which only dispatchd may open. Start it with: dispatch serve';
+// A function rather than a constant: the advice depends on whether the
+// desktop app is installed, which can change while this server runs.
+function daemonRequired(): string {
+  return (
+    "dispatchd is not running — this project keeps its tasks in the daemon's " +
+    `database, which only dispatchd may open. ${startDaemonAdvice()}`
+  );
+}
 
 type StoreRoute =
   | {
@@ -301,7 +307,7 @@ async function resolveStoreRoute(rootDir: string): Promise<StoreRoute> {
     };
   }
   if (daemonOwnsStore(projRoot)) {
-    return { via: 'refused', message: DAEMON_REQUIRED };
+    return { via: 'refused', message: daemonRequired() };
   }
   return { via: 'local', configRoot: rootDir };
 }
@@ -805,7 +811,7 @@ async function taskComment(
   if (daemonOwnsStore(projRoot)) {
     return toolError(
       proxyFailure === null
-        ? DAEMON_REQUIRED
+        ? daemonRequired()
         : `could not record the comment: ${proxyFailure}`
     );
   }
@@ -844,7 +850,9 @@ async function dispatchNote(
     // direct path to fall back to — start one if this process can.
     daemon = (await startDaemon(projRoot))?.info ?? null;
     if (daemon === null) {
-      return toolError('dispatchd not running — cannot add a note');
+      return toolError(
+        `dispatchd not running — cannot add a note. ${startDaemonAdvice()}`
+      );
     }
   }
   // Writes to the brain-dump inbox, which replaced the notes store. The tool's own vocabulary
@@ -915,7 +923,9 @@ async function recordEvidence(
   }
   const daemon = readDaemonFile(projectRoot(rootDir));
   if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
-    return toolError('dispatchd not running — cannot record evidence');
+    return toolError(
+      `dispatchd not running — cannot record evidence. ${startDaemonAdvice()}`
+    );
   }
   try {
     const res = await fetch(
@@ -955,7 +965,9 @@ async function recordMutation(
   }
   const daemon = readDaemonFile(projectRoot(rootDir));
   if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
-    return toolError('dispatchd not running — cannot record a mutation result');
+    return toolError(
+      `dispatchd not running — cannot record a mutation result. ${startDaemonAdvice()}`
+    );
   }
   try {
     const res = await fetch(

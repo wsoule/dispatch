@@ -4,7 +4,12 @@ import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { z } from 'zod';
 
-import { daemonAuth, readDaemonFile, requestDeadline } from './daemon.js';
+import {
+  daemonAuth,
+  readDaemonFile,
+  requestDeadline,
+  startDaemonAdvice,
+} from './daemon.js';
 import { knownEndpoint, liveEndpoint, scopeFor } from './endpoint.js';
 import type { Route } from './endpoint.js';
 import type { TeamFile } from './hub/team.js';
@@ -887,7 +892,9 @@ interface PeerSummaryWire {
 async function peerList(rootDir: string): Promise<ToolOutcome> {
   const daemon = readDaemonFile(projectRoot(rootDir));
   if (daemon === null)
-    return toolError('dispatchd not running — cannot list peers');
+    return toolError(
+      `dispatchd not running — cannot list peers. ${startDaemonAdvice()}`
+    );
   let res: Response;
   try {
     res = await fetch(`http://127.0.0.1:${daemon.port}/api/a2a/peers`, {

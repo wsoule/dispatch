@@ -3,7 +3,12 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { daemonAuth, isDaemonHealthy, readDaemonFile } from './daemon.js';
+import {
+  daemonAuth,
+  isDaemonHealthy,
+  readDaemonFile,
+  startDaemonAdvice,
+} from './daemon.js';
 
 // Where an MCP session's agent mail goes: the project's dispatchd when one
 // serves this project, else the machine hub, which every session on this
@@ -56,7 +61,6 @@ export async function knownEndpoint(scope: string): Promise<Endpoint | null> {
 }
 
 const HUB_START_TIMEOUT_MS = 5000;
-const NO_DAEMON = 'dispatchd not running — start it with: dispatch serve';
 
 /** A live endpoint for `scope`: the machine hub, started when none runs, or
  *  the project's dispatchd if it answers; an error says why there is none. */
@@ -66,7 +70,9 @@ export async function liveEndpoint(
   if (scope !== HUB_SCOPE) {
     const daemon = readDaemonFile(scope);
     if (daemon === null || !(await isDaemonHealthy(daemon.port)))
-      return { error: NO_DAEMON };
+      return {
+        error: `dispatchd not running — ${startDaemonAdvice()}`,
+      };
     return {
       kind: 'daemon',
       port: daemon.port,

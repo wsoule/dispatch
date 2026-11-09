@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os';
 import { dirname } from 'node:path';
 import { join } from 'node:path';
 
-import { daemonFilePath, readDaemonFile } from '../src/daemon.js';
+import {
+  daemonFilePath,
+  desktopAppCandidates,
+  desktopAppInstalled,
+  readDaemonFile,
+  startDaemonAdvice,
+} from '../src/daemon.js';
 
 let fakeHome: string;
 const originalDispatchHome = process.env.DISPATCH_HOME;
@@ -52,5 +58,36 @@ describe('readDaemonFile', () => {
       rootDir,
       startedAt: '2026-07-20T00:00:00.000Z',
     });
+  });
+});
+
+// The "dispatchd not running" errors used to say only "run: dispatch serve",
+// which is no help to someone whose daemon comes from the desktop app and who
+// may not have the CLI at all.
+describe('startDaemonAdvice', () => {
+  it('points at the desktop app when it is installed', () => {
+    expect(startDaemonAdvice(true)).toMatch(/Dispatch desktop app/);
+    expect(startDaemonAdvice(true)).toMatch(/dispatch serve/);
+  });
+
+  it('falls back to dispatch serve when the app is not installed', () => {
+    expect(startDaemonAdvice(false)).toBe('Start it with: dispatch serve');
+  });
+});
+
+describe('desktopAppInstalled', () => {
+  it('finds the app bundle under the user Applications folder', () => {
+    const [, userApp] = desktopAppCandidates('darwin', fakeHome);
+    expect(userApp).toBe(join(fakeHome, 'Applications', 'Dispatch.app'));
+    expect(desktopAppInstalled([userApp ?? ''])).toBe(false);
+    mkdirSync(join(fakeHome, 'Applications', 'Dispatch.app'), {
+      recursive: true,
+    });
+    expect(desktopAppInstalled([userApp ?? ''])).toBe(true);
+  });
+
+  it('looks nowhere off macOS', () => {
+    expect(desktopAppCandidates('linux', fakeHome)).toEqual([]);
+    expect(desktopAppInstalled([])).toBe(false);
   });
 });

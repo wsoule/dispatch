@@ -6,7 +6,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { daemonFilePath, setDaemonStarter } from '../src/daemon.js';
+import {
+  daemonFilePath,
+  setDaemonStarter,
+  startDaemonAdvice,
+} from '../src/daemon.js';
 import { createDispatchMcpServer } from '../src/index.js';
 
 // A background daemon exits after it sits unused, so `dispatch mcp` hands the
@@ -141,6 +145,8 @@ describe('starting dispatchd on demand', () => {
     expect(starts).toEqual([root]);
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toMatch(/dispatchd is not running/);
+    // Ends on how to start one, whichever way this machine can.
+    expect(result.content[0]?.text).toContain(startDaemonAdvice());
   });
 
   it('keeps the old "not running" answer when no starter was given', async () => {
