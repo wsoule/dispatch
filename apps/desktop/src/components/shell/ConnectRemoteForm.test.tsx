@@ -12,7 +12,7 @@ test('a pasted pairing link fills the URL and the code', async () => {
   render(<ConnectRemoteForm onConnected={onConnected} pair={pair} />);
   fireEvent.change(screen.getByLabelText('Daemon URL or pairing link'), {
     target: {
-      value: 'dispatch://pair?url=https%3A%2F%2Fdevbox%3A4771&code=ABCD-EFGH',
+      value: `dispatch://pair?url=${encodeURIComponent('https://devbox:4771')}&code=ABCD-EFGH`,
     },
   });
   expect(screen.queryByLabelText('Pairing code')).toBeNull();

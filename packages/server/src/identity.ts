@@ -28,6 +28,10 @@ export interface TokenIdentity {
   /** True for the built-in app token: the owner at this machine, the only
    *  caller who may re-issue another member's credential. */
   appToken?: boolean;
+  /** True for a request forwarded from app.dispatch.foo through this
+   *  machine's hub (messaging/hubLink.ts): the operator at the decide tier,
+   *  who may not hand out lasting access from the web (api.ts webRefusal). */
+  viaWeb?: boolean;
   /** The paired device (devices.ts) this token belongs to: the operator
    *  acting from another machine or a phone, at the tier it was paired with. */
   device?: string;
@@ -125,7 +129,8 @@ export class TokenRegistry {
     private readonly operatorHandle: string,
     private readonly teammates: CredentialSource | null = null,
     private readonly operatorDevices: OperatorDeviceCredentials | null = null,
-    private readonly devices: Pick<CredentialSource, 'lookup'> | null = null
+    private readonly devices: Pick<CredentialSource, 'lookup'> | null = null,
+    private readonly web: OperatorDeviceCredentials | null = null
   ) {
     // Highest tier first, so the app token still wins if the two were ever
     // the same string — the pre-existing behaviour, kept on purpose. The app
@@ -176,6 +181,17 @@ export class TokenRegistry {
     // A paired phone speaks for the operator, but only at the decide tier:
     // it can answer gates and approve merges, never open a shell or write
     // files on this machine (see remoteAccess/).
+    if (this.web?.matches(digest) === true) {
+      return {
+        kind: 'valid',
+        identity: {
+          handle: this.operatorHandle,
+          ref: humanRef(this.operatorHandle),
+          tier: 'decide',
+          viaWeb: true,
+        },
+      };
+    }
     if (this.operatorDevices?.matches(digest) === true) {
       return {
         kind: 'valid',

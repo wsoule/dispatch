@@ -464,7 +464,7 @@ export function machinesPage(user: User, machines: MachineRow[]): string {
     'Machines',
     user,
     `<h1>Your machines</h1>
-<p class="lede">The machines you signed in with <code>dispatch-mcp login</code>, and the projects open on them. Only you see them. Turn web access off for a machine in the desktop app's Settings, under This machine.</p>
+<p class="lede">The machines you signed in with <code>dispatch-mcp login</code>, and the projects open on them. Only you see them. A machine is reachable only after you turn on Web access in the desktop app's Settings, under This machine.</p>
 ${machines.length === 0 ? '<div class="box pad">No machine is signed in yet. Run <code>dispatch-mcp login</code> on one.</div>' : `<div class="box">${rows}</div>`}`
   );
 }

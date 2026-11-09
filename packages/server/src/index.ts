@@ -1145,7 +1145,7 @@ async function bootServer(
   });
   // The hub link is made further down; its web credential (requests a person
   // forwards from app.dispatch.foo through this machine's hub) speaks for the
-  // operator at the decide tier, as a paired phone does.
+  // operator at the decide tier, marked as from the web.
   let webForwarding: DaemonHubLink | null = null;
   // The operator's own other devices (devices.ts): the desktop app on another
   // machine, a phone. Each pairs with a one-time code and speaks as the
@@ -1162,12 +1162,9 @@ async function bootServer(
       tokenPair,
       actorContext.member.handle,
       team.teammates,
-      {
-        matches: (digest) =>
-          remoteAccess.matches(digest) ||
-          (webForwarding?.webMatches(digest) ?? false),
-      },
-      pairing.devices
+      remoteAccess,
+      pairing.devices,
+      { matches: (digest) => webForwarding?.webMatches(digest) ?? false }
     ),
   };
 

@@ -166,7 +166,17 @@ export function machinesHandler(deps: MachinesDeps): Machines {
         { error: answer.error ?? 'The machine did not answer.' },
         502
       );
-    const res = answer.result as LinkHttpResponse;
+    const res = answer.result as Partial<LinkHttpResponse> | null;
+    if (
+      res === null ||
+      typeof res.status !== 'number' ||
+      res.status < 200 ||
+      res.status > 599 ||
+      typeof res.headers !== 'object' ||
+      res.headers === null ||
+      typeof res.body !== 'string'
+    )
+      return json({ error: 'The machine sent a broken answer.' }, 502);
     const out = new Headers({ 'cache-control': 'no-store' });
     for (const name of RETURNED) {
       const value = res.headers[name];

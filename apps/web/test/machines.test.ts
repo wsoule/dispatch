@@ -198,6 +198,13 @@ describe('your machines from the web', () => {
     expect(await refused!.json()).toEqual({
       error: 'web access is off on this machine',
     });
+    answer = () => ({ ok: true, result: { status: 'oops' } });
+    const broken = await get(
+      `/m/${ada.device}/a1b2c3d4e5f60718/api/whoami`,
+      ada.cookie,
+      token
+    );
+    expect(broken!.status).toBe(502);
     online.delete(ada.device);
     const offline = await get(
       `/m/${ada.device}/a1b2c3d4e5f60718/api/whoami`,

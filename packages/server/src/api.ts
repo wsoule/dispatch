@@ -5454,6 +5454,10 @@ export async function handleApi(
     };
   }
   if (principal !== undefined) ctx = { ...ctx, principal };
+  if (caller?.viaWeb === true) {
+    const refused = webRefusal(method, segments);
+    if (refused !== null) return refused;
+  }
   if (daemonCtx.hostedPlanner === true) {
     const refused = await hostedRefusal(req, method, segments, ownerCredential);
     if (refused !== null) return refused;
@@ -7424,6 +7428,26 @@ export async function handleApi(
     if (storage !== null) return storage;
     throw err;
   }
+}
+
+// What a request forwarded from the web may not do, even at the decide tier:
+// hand out lasting access (pairing a device, a team token, a phone), change
+// the machine's own switches, or touch setup. Those outlive web access being
+// turned off, so they are for the person at the machine (or a paired
+// device) only.
+const WEB_REFUSED = new Set(['pair', 'devices', 'remote', 'machine', 'setup']);
+
+function webRefusal(
+  method: string,
+  segments: readonly string[]
+): Response | null {
+  const first = segments[0] ?? '';
+  const refused =
+    WEB_REFUSED.has(first) ||
+    (first === 'team' && method !== 'GET' && method !== 'HEAD');
+  return refused
+    ? errorResponse(403, 'Not from the web: do this on the machine itself.')
+    : null;
 }
 
 // The machine hub's web-access switch, through this project's hub link.

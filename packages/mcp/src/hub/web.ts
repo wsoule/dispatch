@@ -11,7 +11,8 @@ import type { HubLinks } from './links.js';
 
 // What the web (app.dispatch.foo) may reach on this machine: the projects
 // linked to this hub, and their daemons' APIs, over the team link. One
-// switch for the whole machine, on by default, kept beside the hub's other
+// switch for the whole machine, off until its owner turns it on (desktop's
+// Settings, This machine), kept beside the hub's other
 // files (web.json). Only the person who signed this machine in reaches it:
 // the team service checks that before it forwards anything.
 
@@ -34,14 +35,14 @@ export class HubWeb {
 
   /** Whether the web may reach this machine's projects. */
   enabled(): boolean {
-    if (!existsSync(this.file)) return true;
+    if (!existsSync(this.file)) return false;
     try {
       const saved = JSON.parse(readFileSync(this.file, 'utf8')) as {
         enabled?: unknown;
       };
-      return saved.enabled !== false;
+      return saved.enabled === true;
     } catch {
-      return true;
+      return false;
     }
   }
 

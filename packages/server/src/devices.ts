@@ -246,7 +246,7 @@ const DEFAULT_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_MAX_FAILURES = 10;
 
 /** A code as the user may type it: any case, with or without the dash or
- *  spaces, and the look-alikes Crockford folds (O → 0, I/L → 1). */
+ *  spaces, and the look-alike letters Crockford folds (O → 0, I/L → 1). */
 export function normalizePairingCode(raw: string): string {
   return raw
     .toUpperCase()

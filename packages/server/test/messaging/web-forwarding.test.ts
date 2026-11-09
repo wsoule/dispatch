@@ -122,6 +122,28 @@ describe('requests forwarded from the web', () => {
     expect((await forward({ path: '/index.html' })).answer?.status).toBe(404);
   });
 
+  it('never hand out lasting access: no pairing, team tokens or machine switches', async () => {
+    for (const [method, path] of [
+      ['POST', '/api/pair/offer'],
+      ['POST', '/api/team/tokens'],
+      ['GET', '/api/machine/web-access'],
+      ['GET', '/api/devices'],
+    ] as const) {
+      const { answer } = await forward({
+        method,
+        path,
+        body: { tier: 'decide' },
+      });
+      expect(`${method} ${path} ${String(answer?.status)}`).toBe(
+        `${method} ${path} 403`
+      );
+    }
+    // Reading the board's people is still fine from the web.
+    expect(
+      (await forward({ path: '/api/team/status' })).answer?.status
+    ).not.toBe(403);
+  });
+
   it('are refused without the token this daemon gave its hub', async () => {
     expect(
       (await forward({ path: '/api/whoami' }, 'not-the-link')).status

@@ -172,6 +172,20 @@ const hubApi = (path: string, init: RequestInit = {}) =>
   });
 
 describe('the web reaching this machine', () => {
+  it('is off until the machine turns it on', async () => {
+    expect(await (await hubApi('/api/web-access')).json()).toEqual({
+      enabled: false,
+    });
+    expect(await call('projects', {})).toMatchObject({
+      ok: false,
+      error: 'web access is off on this machine',
+    });
+    await hubApi('/api/web-access', {
+      method: 'PUT',
+      body: JSON.stringify({ enabled: true }),
+    });
+  });
+
   it('lists the linked project and forwards a request to it', async () => {
     const key = projectKey(root);
     const listed = await until('the linked project', async () => {

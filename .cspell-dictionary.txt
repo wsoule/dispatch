@@ -129,6 +129,7 @@ Deque
 dequoted
 destructures
 desynced
+devbox
 devlop
 dfaf
 DHKEM

@@ -47,6 +47,9 @@ const FORWARDED_HEADERS = [
   'if-none-match',
 ];
 const FORWARD_TIMEOUT_MS = 50_000;
+// The team link carries a reply in one frame of at most 4 MiB, and base64
+// grows it by a third: a larger answer would drop the machine's link.
+const MAX_FORWARD_REPLY_BYTES = 2.5 * 1024 * 1024;
 
 /** Whether `agent` is a mirror of one of the hub's agents. */
 export function isHubRow(agent: AgentRecord): boolean {
@@ -250,6 +253,11 @@ export class DaemonHubLink {
       redirect: 'manual',
       signal: AbortSignal.timeout(FORWARD_TIMEOUT_MS),
     });
+    const reply = await readCapped(res, MAX_FORWARD_REPLY_BYTES);
+    if (reply === null)
+      return webAnswer(413, {
+        error: 'That answer is too large to send to the web.',
+      });
     const out: Record<string, string> = {};
     res.headers.forEach((value, name) => {
       if (name !== 'set-cookie') out[name] = value;
@@ -257,7 +265,7 @@ export class DaemonHubLink {
     return {
       status: res.status,
       headers: out,
-      body: Buffer.from(await res.arrayBuffer()).toString('base64'),
+      body: Buffer.from(reply).toString('base64'),
     };
   }
 
@@ -568,4 +576,27 @@ function webAnswer(status: number, body: unknown): LinkHttpResponse {
     headers: { 'content-type': 'application/json; charset=utf-8' },
     body: Buffer.from(JSON.stringify(body)).toString('base64'),
   };
+}
+
+// A response body, or null once it passes `max` bytes (the read stops there,
+// so a streaming route is cancelled rather than buffered whole).
+async function readCapped(
+  res: Response,
+  max: number
+): Promise<Uint8Array | null> {
+  if (res.body === null) return new Uint8Array();
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks);
 }
