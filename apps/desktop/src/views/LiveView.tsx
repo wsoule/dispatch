@@ -195,6 +195,7 @@ export function LiveView({
     () => new Map(sessions.map((p) => [p.milestoneId, p])),
     [sessions]
   );
+  const startDependents = data.config?.orchestrator.startDependents;
   const withRunBranch = useMemo(
     () => tasksWithRunBranch(data.runs),
     [data.runs]
@@ -233,6 +234,7 @@ export function LiveView({
       sessions: sessionById,
       withRunBranch,
       withFinishedRun,
+      startDependents,
       landing,
     }),
     [
@@ -245,6 +247,7 @@ export function LiveView({
       sessionById,
       withRunBranch,
       withFinishedRun,
+      startDependents,
       landing,
     ]
   );

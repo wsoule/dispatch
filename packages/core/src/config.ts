@@ -72,6 +72,8 @@ import {
   RUN_STREAM_MODES,
 } from './configTypes.js';
 import { describeValue } from './describe.js';
+import { DEPENDENT_START_MODES } from './graph.js';
+import type { DependentStart } from './graph.js';
 import { labelDefinitionError, labelRef } from './labels.js';
 import type { LabelDefinition } from './labels.js';
 import { personError } from './people.js';
@@ -142,6 +144,7 @@ const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
   maxConcurrency: 16,
   runCostEstimateUsd: 10,
   unlimitedSpend: false,
+  startDependents: 'landed',
 };
 
 // `escalation` holds objects, so a shallow spread would share rows between the
@@ -648,6 +651,16 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
     );
   }
 
+  const { startDependents } = obj;
+  if (
+    startDependents !== undefined &&
+    !DEPENDENT_START_MODES.includes(startDependents as DependentStart)
+  ) {
+    throw new ConfigError(
+      `invalid .dispatch/config.yml: orchestrator.startDependents must be one of ${DEPENDENT_START_MODES.join('|')}`
+    );
+  }
+
   return {
     maxTurns: maxTurns ?? DEFAULT_ORCHESTRATOR.maxTurns,
     // Dropped here rather than at each consumer, so no executor can miss it.
@@ -660,6 +673,9 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
     runCostEstimateUsd:
       runCostEstimateUsd ?? DEFAULT_ORCHESTRATOR.runCostEstimateUsd,
     executor: executor?.trim() ?? DEFAULT_ORCHESTRATOR.executor,
+    startDependents:
+      (startDependents as DependentStart | undefined) ??
+      DEFAULT_ORCHESTRATOR.startDependents,
   };
 }
 

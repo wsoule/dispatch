@@ -21,6 +21,19 @@ particular what happens to in-flight child runs when the milestone branch moves.
   already use for non-default bases. A child stacked on an in-review sibling
   keeps stacking semantics unchanged: its base is the sibling's branch, which is
   itself rooted on the milestone branch.
+- **Dependents wait for their blocker to land by default.** A fan-out only
+  auto-starts a blocked child once every blocker is done (merged), set by
+  `orchestrator.startDependents` in `.dispatch/config.yml`:
+  - `landed` (default): an in-review blocker is still waiting on a human, so
+    nothing is built on top of it automatically. A plan that gates build tasks
+    behind an approval task actually gates them.
+  - `review`: a child starts as soon as its blocker's run reaches review (or the
+    landing queue) with a run branch to stack on, and is cut from that branch.
+    The merge queue restacks it once the blocker lands.
+
+  The mode only governs automatic starts. Dispatching a task by hand still
+  stacks it on an in-review blocker's branch.
+
 - **Merged onto, never through, the main checkout.** `review(id, 'merge')` for a
   run based on a milestone branch squash-merges in the object database
   (`WorktreeManager.squashMergeIntoRef`: `git merge-tree --write-tree` +

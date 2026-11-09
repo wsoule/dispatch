@@ -434,6 +434,7 @@ export function FlightPlan({
     return total;
   }, [sessions]);
 
+  const startDependents = data.config?.orchestrator.startDependents;
   const withRunBranch = useMemo(
     () => tasksWithRunBranch(data.runs),
     [data.runs]
@@ -456,6 +457,7 @@ export function FlightPlan({
         startedByOf,
         withRunBranch,
         withFinishedRun,
+        startDependents,
         lookup,
       }),
     [
@@ -471,6 +473,7 @@ export function FlightPlan({
       startedByOf,
       withRunBranch,
       withFinishedRun,
+      startDependents,
       lookup,
     ]
   );

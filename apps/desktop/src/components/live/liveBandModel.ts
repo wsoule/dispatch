@@ -1,4 +1,8 @@
-import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
+import type {
+  DependentStart,
+  StatusModel,
+  TaskListItem,
+} from '@dispatch-foo/core/browser';
 import { fanoutCoverers } from '@dispatch-foo/core/browser';
 import type { MergeQueueEntryState, MilestoneProgress } from '@dispatch/client';
 
@@ -33,6 +37,8 @@ export interface LiveShared {
   withRunBranch: ReadonlySet<string>;
   /** Tasks whose latest run has ended (`tasksWithFinishedRun`). */
   withFinishedRun: ReadonlySet<string>;
+  /** The project's `orchestrator.startDependents`; undefined before config loads. */
+  startDependents?: DependentStart;
   /** Tasks whose run sits in the merge queue. */
   landing: ReadonlyMap<string, MergeQueueEntryState>;
 }
@@ -142,6 +148,7 @@ export function buildLiveBand(
       shared.sessions.get(owner)?.session?.startedBy ?? null,
     withRunBranch: shared.withRunBranch,
     withFinishedRun: shared.withFinishedRun,
+    startDependents: shared.startDependents,
     lookup: (id) => shared.taskById.get(id),
   });
 

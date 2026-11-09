@@ -33,6 +33,7 @@ export const testConfig: DispatchConfig = {
     runCostEstimateUsd: 10,
     unlimitedSpend: false,
     executor: 'claude',
+    startDependents: 'landed',
   },
   models: DEFAULT_MODELS,
   linear: DEFAULT_LINEAR,

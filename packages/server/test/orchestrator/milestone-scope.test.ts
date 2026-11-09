@@ -343,6 +343,11 @@ describe('a project fans out what its Flight Plan draws', () => {
 
   it('dispatches milestone issues across milestones, never a sub-issue, on the P1 branches', async () => {
     const h = makeHarness();
+    // b1 stacks on a1's review below rather than waiting for it to land.
+    writeFileSync(
+      join(repo, '.dispatch', 'config.yml'),
+      'orchestrator:\n  startDependents: review\n'
+    );
     const t = project(h);
     const planned = fanoutScope(t.p, (id) =>
       h.cache.query({ parent: id, includeArchived: true })

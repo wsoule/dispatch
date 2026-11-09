@@ -1,3 +1,4 @@
+import type { DependentStart } from './graph.js';
 import type { LabelDefinition } from './labels.js';
 import { DEFAULT_STATUS_MAP } from './linearMap.js';
 import type { Person } from './people.js';
@@ -39,6 +40,10 @@ export interface OrchestratorConfig {
   runCostEstimateUsd: number;
   /** The executor a dispatch runs on when the caller names none. */
   executor: string;
+  /** When a milestone fan-out may start a task whose blocker is not done yet —
+   *  see `DependentStart`. Defaults to `landed`: a blocker in review is still
+   *  waiting on a human, so nothing is built on top of it automatically. */
+  startDependents: DependentStart;
 }
 
 /** The largest `maxConcurrency` the loader accepts. Browser-safe so the

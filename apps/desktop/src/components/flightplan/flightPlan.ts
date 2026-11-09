@@ -1,4 +1,8 @@
-import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
+import type {
+  DependentStart,
+  StatusModel,
+  TaskListItem,
+} from '@dispatch-foo/core/browser';
 import {
   fanoutHolder,
   fanoutWaitingOn,
@@ -103,6 +107,9 @@ export interface FlightPlanOptions {
   /** Tasks whose latest run has ended (`tasksWithFinishedRun`): where the review status is
    * also the dispatched one, only these read as review. Omitted: `withRunBranch`. */
   withFinishedRun?: ReadonlySet<string>;
+  /** The project's `orchestrator.startDependents`: whether a blocker in review releases its
+   * dependent at all. Omitted: core's default, `landed`. */
+  startDependents?: DependentStart;
   /** Blockers outside `children`, archived ones included: an unfinished one holds its
    * dependent as on the server, though never a wave. Omitted: none are known. */
   lookup?: (id: string) => TaskListItem | undefined;
@@ -187,6 +194,7 @@ export function buildFlightPlan(
     startedByOf,
     withRunBranch = NONE,
     withFinishedRun,
+    startDependents,
     lookup,
   }: FlightPlanOptions
 ): FlightPlan {
@@ -214,7 +222,8 @@ export function buildFlightPlan(
         ...(withFinishedRun === undefined
           ? {}
           : { finishedRun: withFinishedRun.has(b.meta.id) }),
-      })
+      }),
+      startDependents
     );
     return {
       task,

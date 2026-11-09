@@ -203,10 +203,11 @@ export {
   PRIORITY_ORDER,
   findDependencyCycles,
   computeStack,
+  DEPENDENT_START_MODES,
   fanoutWaitingOn,
   releasesFanoutDependents,
 } from './graph.js';
-export type { FanoutBlocker, TaskStack } from './graph.js';
+export type { DependentStart, FanoutBlocker, TaskStack } from './graph.js';
 export {
   AGE_HORIZON_DAYS,
   DEFAULT_QUEUE_WEIGHTS,
