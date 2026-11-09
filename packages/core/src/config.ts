@@ -65,6 +65,7 @@ import {
   MAX_CONCURRENCY_HARD_CAP,
   MODEL_ROLES,
   NOTIFICATION_KINDS,
+  OVERSEER_AUTONOMY_LEVELS,
   OVERSEER_STREAM_MODES,
   PLANNING_PROJECT_STATUSES,
   PLANNING_TUNING_NUMBERS,
@@ -72,6 +73,8 @@ import {
   RUN_STREAM_MODES,
 } from './configTypes.js';
 import { describeValue } from './describe.js';
+import { DEPENDENT_START_MODES } from './graph.js';
+import type { DependentStart } from './graph.js';
 import { labelDefinitionError, labelRef } from './labels.js';
 import type { LabelDefinition } from './labels.js';
 import { personError } from './people.js';
@@ -142,6 +145,7 @@ const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
   maxConcurrency: 16,
   runCostEstimateUsd: 10,
   unlimitedSpend: false,
+  startDependents: 'landed',
 };
 
 // `escalation` holds objects, so a shallow spread would share rows between the
@@ -177,6 +181,7 @@ const DEFAULTS: DispatchConfig = {
   messaging: { ...DEFAULT_MESSAGING },
   receipts: { ...DEFAULT_RECEIPTS },
   policy: { ...DEFAULT_POLICY, gates: {} },
+  overseer: { ...DEFAULT_OVERSEER },
   // No `queue` here: it is the one optional block, so a DEFAULTS entry could
   // only be read through a fallback anyway. Both readers call defaultQueue().
 };
@@ -648,6 +653,16 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
     );
   }
 
+  const { startDependents } = obj;
+  if (
+    startDependents !== undefined &&
+    !DEPENDENT_START_MODES.includes(startDependents as DependentStart)
+  ) {
+    throw new ConfigError(
+      `invalid .dispatch/config.yml: orchestrator.startDependents must be one of ${DEPENDENT_START_MODES.join('|')}`
+    );
+  }
+
   return {
     maxTurns: maxTurns ?? DEFAULT_ORCHESTRATOR.maxTurns,
     // Dropped here rather than at each consumer, so no executor can miss it.
@@ -660,6 +675,9 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
     runCostEstimateUsd:
       runCostEstimateUsd ?? DEFAULT_ORCHESTRATOR.runCostEstimateUsd,
     executor: executor?.trim() ?? DEFAULT_ORCHESTRATOR.executor,
+    startDependents:
+      (startDependents as DependentStart | undefined) ??
+      DEFAULT_ORCHESTRATOR.startDependents,
   };
 }
 
@@ -1745,19 +1763,36 @@ function parseOverseerConfig(raw: unknown): OverseerConfig {
       'invalid .dispatch/config.yml: overseer must be a mapping'
     );
   }
-  const stream = (raw as Record<string, unknown>).stream;
-  if (stream === undefined) return { ...DEFAULT_OVERSEER };
-  const normalized =
-    stream === true ? 'live' : stream === false ? 'off' : stream;
-  if (
-    typeof normalized !== 'string' ||
-    !OVERSEER_STREAM_MODES.includes(normalized as OverseerStreamMode)
-  ) {
-    throw new ConfigError(
-      `invalid .dispatch/config.yml: overseer.stream must be one of: ${OVERSEER_STREAM_MODES.join(', ')}`
-    );
+  const { stream, autonomy } = raw as Record<string, unknown>;
+  const result = { ...DEFAULT_OVERSEER };
+  if (stream !== undefined) {
+    const normalized =
+      stream === true ? 'live' : stream === false ? 'off' : stream;
+    if (
+      typeof normalized !== 'string' ||
+      !OVERSEER_STREAM_MODES.includes(normalized as OverseerStreamMode)
+    ) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: overseer.stream must be one of: ${OVERSEER_STREAM_MODES.join(', ')}`
+      );
+    }
+    result.stream = normalized as OverseerStreamMode;
   }
-  return { stream: normalized as OverseerStreamMode };
+  // An unknown autonomy is an error, not a silent fallback: a typo would
+  // otherwise leave the overseer asking (or not asking) while the file reads
+  // as the opposite.
+  if (autonomy !== undefined) {
+    if (
+      typeof autonomy !== 'string' ||
+      !(OVERSEER_AUTONOMY_LEVELS as readonly string[]).includes(autonomy)
+    ) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: overseer.autonomy must be one of ${OVERSEER_AUTONOMY_LEVELS.join('|')}`
+      );
+    }
+    result.autonomy = autonomy as OverseerConfig['autonomy'];
+  }
+  return result;
 }
 
 // Validates the optional `runs:` block, the way parseOverseerConfig does the
@@ -2454,6 +2489,7 @@ function applyBlockPatches(doc: YAML.Document, patch: ConfigPatch): void {
     ['receipts', patch.receipts],
     ['sync', patch.sync],
     ['preview', patch.preview],
+    ['overseer', patch.overseer],
     ['memory', patch.memory],
   ] as const;
   for (const [block, fields] of blocks) {
@@ -2517,28 +2553,37 @@ function applyPlanningPatch(
   }
 }
 
-// Writes the chat streaming switches, `overseer.stream` and `runs.stream`,
-// each checked before the write: `stream` is the only key either block has,
-// so any other would sit on disk unread, and a mode the block does not know
-// would make every later loadConfig throw. `null` removes the key, and the
-// block too once nothing is left in it, as effort does.
+// Writes the chat-behaviour switches, `overseer.stream`, `overseer.autonomy`
+// and `runs.stream`, each checked before the write: a field a block does not
+// have would sit on disk unread, and a value it does not know would make
+// every later loadConfig throw. `null` removes the key, and the block too
+// once nothing is left in it, as effort does.
 function applyStreamPatches(doc: YAML.Document, patch: ConfigPatch): void {
-  const blocks = [
-    ['overseer', patch.overseer, OVERSEER_STREAM_MODES],
-    ['runs', patch.runs, RUN_STREAM_MODES],
-  ] as const;
-  for (const [block, fields, modes] of blocks) {
+  const blocks: [
+    string,
+    object | undefined,
+    Record<string, readonly string[]>,
+  ][] = [
+    [
+      'overseer',
+      patch.overseer,
+      { stream: OVERSEER_STREAM_MODES, autonomy: OVERSEER_AUTONOMY_LEVELS },
+    ],
+    ['runs', patch.runs, { stream: RUN_STREAM_MODES }],
+  ];
+  for (const [block, fields, allowed] of blocks) {
     if (fields === undefined) continue;
     for (const [field, value] of Object.entries(fields)) {
-      if (field !== 'stream') {
+      const modes = allowed[field];
+      if (modes === undefined) {
         throw new ConfigError(
-          `invalid ${block} field: ${field} (expected stream)`
+          `invalid ${block} field: ${field} (expected ${Object.keys(allowed).join('|')})`
         );
       }
       if (value === undefined) continue;
       if (value !== null && !(modes as readonly unknown[]).includes(value)) {
         throw new ConfigError(
-          `invalid ${block}.stream: must be one of ${modes.join('|')}`
+          `invalid ${block}.${field}: must be one of ${modes.join('|')}`
         );
       }
       setOrDelete(doc, [block, field], value);

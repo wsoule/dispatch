@@ -28,6 +28,7 @@ function action(tool: string, input: unknown): OverseerAction {
     summary: 'summary',
     createdAt: '2026-11-01T09:00:00Z',
     status: 'pending',
+    tier: 'high',
   };
 }
 

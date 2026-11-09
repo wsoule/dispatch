@@ -3,6 +3,7 @@ import type {
   OverseerAction,
   OverseerApproval,
   OverseerAttachment,
+  OverseerFieldChange,
   OverseerRecordView,
   RunMeta,
 } from '@dispatch/client';
@@ -17,7 +18,15 @@ import {
   Spinner,
   Tooltip,
 } from '@dispatch/ui';
-import { Check, CircleAlert, FileIcon, Shield, Wrench, X } from 'lucide-react';
+import {
+  Check,
+  CheckCheck,
+  CircleAlert,
+  FileIcon,
+  Shield,
+  Wrench,
+  X,
+} from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
@@ -280,7 +289,8 @@ interface OverseerConfirmCardProps {
    * can queue several actions, and the session holds a single lock: without
    * disabling the others, their buttons stay live and eat the click. */
   locked: boolean;
-  onDecide: (approve: boolean) => void;
+  /** `scope: 'session'` also allows the tool for the rest of the conversation. */
+  onDecide: (approve: boolean, scope?: 'once' | 'session') => void;
   /** The tasks a create_plan, create_task or dispatch_task proposes, listed in
    * place of the summary sentence. */
   card?: TaskCardModel | null;
@@ -333,6 +343,18 @@ function OverseerConfirmCard({
           >
             Approve
           </Button>
+          {/* A medium-tier tool: approving it can also stop the asking. */}
+          {action.grantable === true && (
+            <Button
+              size="sm"
+              variant="quiet"
+              disabled={locked}
+              onClick={() => onDecide(true, 'session')}
+              aria-label={`Allow ${action.tool} for this conversation`}
+            >
+              Allow for this conversation
+            </Button>
+          )}
           <Button
             size="sm"
             variant="quiet"
@@ -397,7 +419,11 @@ function OverseerConfirmBatch({
   actions: OverseerAction[];
   decidingId: string | null;
   locked: boolean;
-  onDecide: (actionId: string, approve: boolean) => void;
+  onDecide: (
+    actionId: string,
+    approve: boolean,
+    scope?: 'once' | 'session'
+  ) => void;
   onDecideAll: (approve: boolean) => void;
   /** A task action's tasks, listed in its row in place of the summary. */
   cardFor?: (action: OverseerAction) => TaskCardModel | null;
@@ -471,6 +497,15 @@ function OverseerConfirmBatch({
                     )
                   }
                 />
+                {action.grantable === true && (
+                  <TipIconButton
+                    tip="Allow for this conversation"
+                    label={`Allow ${action.tool} for this conversation`}
+                    disabled={locked}
+                    onClick={() => onDecide(action.id, true, 'session')}
+                    icon={<CheckCheck size={14} strokeWidth={1.8} />}
+                  />
+                )}
                 <TipIconButton
                   tip="Deny"
                   label={`Deny: ${action.summary}`}
@@ -674,10 +709,19 @@ function OverseerOutcomeRow({
   outcome,
   text,
   at,
+  auto = false,
+  changes,
+  onOpenTask,
 }: {
   outcome: 'applied' | 'allowed' | 'denied' | 'failed';
   text: string;
   at: string;
+  /** The action ran with no card: this row is its receipt. */
+  auto?: boolean;
+  /** What an update changed, before → after. */
+  changes?: OverseerFieldChange[];
+  /** Opens the action's task in Tasks; absent when it has none to open. */
+  onOpenTask?: () => void;
 }) {
   const Mark =
     outcome === 'applied' || outcome === 'allowed'
@@ -690,6 +734,7 @@ function OverseerOutcomeRow({
       className={styles.outcome}
       data-tone={OUTCOME_TONE[outcome]}
       data-outcome={outcome}
+      data-testid={auto ? 'overseer-receipt' : undefined}
     >
       <Mark
         className={styles.outcomeMark}
@@ -697,13 +742,31 @@ function OverseerOutcomeRow({
         strokeWidth={1.8}
         aria-hidden
       />
-      <span>
-        {text}
-        <span className={styles.outcomeTime}>
-          {' '}
-          · {formatRelativeTimeFromIso(at)}
+      <div className="flex min-w-0 flex-col gap-1">
+        <span>
+          {text}
+          <span className={styles.outcomeTime}>
+            {auto ? ' · ran without a card' : ''} ·{' '}
+            {formatRelativeTimeFromIso(at)}
+          </span>
         </span>
-      </span>
+        {changes !== undefined && changes.length > 0 && (
+          <ul data-testid="overseer-receipt-diff" className="flex flex-col">
+            {changes.map((change) => (
+              <li key={change.field}>
+                <span className={styles.outcomeTime}>{change.field}</span>{' '}
+                <span className="line-through opacity-70">{change.before}</span>{' '}
+                → {change.after}
+              </li>
+            ))}
+          </ul>
+        )}
+        {onOpenTask !== undefined && (
+          <Button size="sm" variant="quiet" onClick={onOpenTask}>
+            Open in Tasks →
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
@@ -986,8 +1049,12 @@ export function OverseerChat({
 
   // The session owns the whole decide cycle — the re-entrancy guard, the lock
   // and the failure — so this is a plain forward rather than a wrapper.
-  function decide(actionId: string, approve: boolean) {
-    void overseer.confirmAction(actionId, approve);
+  function decide(
+    actionId: string,
+    approve: boolean,
+    scope?: 'once' | 'session'
+  ) {
+    void overseer.confirmAction(actionId, approve, scope);
   }
 
   // The card keeps its reason box only when its decision rejects; the session
@@ -1076,7 +1143,9 @@ export function OverseerChat({
             action={item.action}
             deciding={decidingId === item.action.id}
             locked={decidingId !== null}
-            onDecide={(approve) => decide(item.action.id, approve)}
+            onDecide={(approve, scope) =>
+              decide(item.action.id, approve, scope)
+            }
             card={taskCardFor(item.action)}
             onOpenTask={work?.onOpenTask}
           />
@@ -1093,8 +1162,11 @@ export function OverseerChat({
           />
         );
       case 'outcome':
+        // A receipt keeps its own row (it says the action ran unasked and
+        // shows what changed); a card-approved action lists its tasks.
         if (
           work !== undefined &&
+          item.auto !== true &&
           item.taskIds !== undefined &&
           item.taskIds.length > 0
         ) {
@@ -1113,6 +1185,15 @@ export function OverseerChat({
             outcome={item.outcome}
             text={item.text}
             at={item.at}
+            auto={item.auto}
+            changes={item.changes}
+            onOpenTask={
+              item.auto !== true ||
+              item.taskIds?.[0] === undefined ||
+              onOpenDoor === undefined
+                ? undefined
+                : () => onOpenDoor({ taskId: item.taskIds?.[0] })
+            }
           />
         );
       case 'pending':

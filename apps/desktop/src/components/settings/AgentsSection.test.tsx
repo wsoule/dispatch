@@ -249,7 +249,11 @@ test('pressing a mode saves it under its own block', () => {
 test('the configured mode is pressed and described, and pressing it again saves nothing', () => {
   const r = recorder();
   renderAgents({
-    config: { ...config, overseer: { stream: 'off' }, runs: { stream: 'off' } },
+    config: {
+      ...config,
+      overseer: { stream: 'off', autonomy: 'balanced' },
+      runs: { stream: 'off' },
+    },
     onSave: r.onSave,
   });
   expect(streamMode('Assistant', 'Off').getAttribute('aria-checked')).toBe(
@@ -307,4 +311,15 @@ test('unlimited spend hides the per-run spend cap', () => {
       .getByRole('switch', { name: 'Unlimited spend' })
       .getAttribute('aria-checked')
   ).toBe('true');
+});
+
+// A stock config has no overseer block, so the control reads the default.
+test('the overseer autonomy shows balanced by default and saves a new level', async () => {
+  const r = recorder();
+  renderAgents({ onSave: r.onSave });
+  const select = selectTrigger('What your agent does without asking');
+  expect(select.textContent).toContain('Balanced');
+  fireEvent.click(select);
+  await chooseOption('Cautious: ask about everything');
+  expect(r.saved).toEqual([{ overseer: { autonomy: 'cautious' } }]);
 });

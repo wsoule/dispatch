@@ -67,6 +67,7 @@ describe('loadConfig', () => {
         runCostEstimateUsd: 10,
         unlimitedSpend: false,
         executor: 'claude',
+        startDependents: 'landed',
       },
       models: DEFAULT_MODELS,
       // No effort sent until an effort: block names one.
@@ -198,6 +199,7 @@ describe('loadConfig', () => {
         runCostEstimateUsd: 10,
         unlimitedSpend: false,
         executor: 'claude',
+        startDependents: 'landed',
       });
     });
 
@@ -217,6 +219,7 @@ describe('loadConfig', () => {
         runCostEstimateUsd: 10,
         unlimitedSpend: false,
         executor: 'claude',
+        startDependents: 'landed',
       });
     });
 
@@ -293,6 +296,26 @@ describe('loadConfig', () => {
         'orchestrator:\n  milestoneConcurrency: 24\n  maxConcurrency: 24\n'
       );
       expect(loadConfig(root).orchestrator.milestoneConcurrency).toBe(24);
+    });
+
+    it('reads startDependents: review when set', () => {
+      mkdirSync(join(root, '.dispatch'), { recursive: true });
+      writeFileSync(
+        join(root, '.dispatch/config.yml'),
+        'orchestrator:\n  startDependents: review\n'
+      );
+      expect(loadConfig(root).orchestrator.startDependents).toBe('review');
+    });
+
+    it('throws on an unknown startDependents mode', () => {
+      mkdirSync(join(root, '.dispatch'), { recursive: true });
+      writeFileSync(
+        join(root, '.dispatch/config.yml'),
+        'orchestrator:\n  startDependents: merged\n'
+      );
+      expect(() => loadConfig(root)).toThrow(
+        /orchestrator\.startDependents must be one of landed\|review/
+      );
     });
 
     it('throws when runCostEstimateUsd is not positive', () => {
@@ -474,8 +497,12 @@ describe('the overseer block', () => {
   it('streams live text when the block is absent', () => {
     expect(loadConfig(writeConfig('statuses: [todo]\n')).overseer).toEqual({
       stream: 'live',
+      autonomy: 'balanced',
     });
-    expect(overseerSettings({} as DispatchConfig)).toEqual({ stream: 'live' });
+    expect(overseerSettings({} as DispatchConfig)).toEqual({
+      stream: 'live',
+      autonomy: 'balanced',
+    });
   });
 
   it('accepts narration and off, and reads YAML booleans as live/off', () => {

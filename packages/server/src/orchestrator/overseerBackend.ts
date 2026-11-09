@@ -36,12 +36,17 @@ export interface OverseerToolDescriptor {
    */
   inputSchema: z.ZodType<unknown>;
   /**
-   * True for the mutating tools. Calling one NEVER performs its effect: it
-   * queues an OverseerAction for a human to confirm. Exposed so a backend can
-   * say so in the tool's description rather than the model having to infer it
-   * from the result it gets back.
+   * True for the mutating tools. Exposed so a backend can say in the tool's
+   * description what calling it does, rather than the model having to infer
+   * it from the result it gets back.
    */
   mutating: boolean;
+  /**
+   * A mutating tool's route this turn (see overseerActionRoute): `auto` runs
+   * it at once, `ask-once` asks until the human allows it for the
+   * conversation, `ask` always queues it for a human. Absent reads as `ask`.
+   */
+  route?: 'auto' | 'ask-once' | 'ask';
 }
 
 /** The outcome of one tool call, as a backend hands it back to the model. */
@@ -208,11 +213,17 @@ export interface OverseerBackend {
   ): Promise<OverseerTurn>;
 }
 
-/** A tool's description as the model reads it: a mutating tool says it only queues. */
+/** A tool's description as the model reads it: a mutating tool says whether calling it acts or queues. */
 export function toolDescriptionForModel(
   descriptor: OverseerToolDescriptor
 ): string {
-  return descriptor.mutating
-    ? `${descriptor.description} QUEUES this action for human confirmation — calling it does not perform it.`
-    : descriptor.description;
+  if (!descriptor.mutating) return descriptor.description;
+  switch (descriptor.route ?? 'ask') {
+    case 'auto':
+      return `${descriptor.description} RUNS at once: calling it performs the action, with no approval card.`;
+    case 'ask-once':
+      return `${descriptor.description} Asks the human first: unless they already allowed it for this conversation, calling it QUEUES the action for confirmation. The result says whether it is done or queued.`;
+    case 'ask':
+      return `${descriptor.description} QUEUES this action for human confirmation — calling it does not perform it.`;
+  }
 }

@@ -2,6 +2,7 @@ import type {
   OverseerAction,
   OverseerApproval,
   OverseerAttachment,
+  OverseerFieldChange,
   OverseerLive,
   OverseerMessage,
   OverseerRecord,
@@ -57,6 +58,10 @@ export type OverseerThreadItem =
       tool?: string;
       /** An applied action's tasks (created or dispatched), which it lists as a card. */
       taskIds?: string[];
+      /** The action ran with no card: this row is its receipt. */
+      auto?: boolean;
+      /** What an update changed, before → after. */
+      changes?: OverseerFieldChange[];
     }
   | {
       kind: 'confirm';
@@ -364,6 +369,10 @@ function buildRow(
       ...(message.outcome === 'applied' && message.taskIds !== undefined
         ? { taskIds: message.taskIds }
         : {}),
+      ...(message.auto === true ? { auto: true } : {}),
+      ...(message.changes !== undefined && message.changes.length > 0
+        ? { changes: message.changes }
+        : {}),
     };
   }
   return null;
@@ -445,25 +454,52 @@ export type OverseerStreamItem =
       actions: OverseerAction[];
     };
 
-/** Folds each run of two or more queued actions into one card's row list. */
+/**
+ * Folds the actions one turn queued into one card's row list, at the first
+ * one's place: actions sharing a `batch` fold together even when receipts or
+ * tool rows sit between them. Actions from a daemon that sends no batch fold
+ * by adjacency instead, as before.
+ */
 export function groupConfirmRows(
   items: readonly OverseerStreamItem[]
 ): OverseerStreamItem[] {
   const out: OverseerStreamItem[] = [];
+  // Where each batch's card sits in `out`.
+  const batchAt = new Map<string, number>();
+  // Folds `row` into the card at `at`, turning a lone confirm into a batch.
+  const fold = (at: number, action: OverseerAction) => {
+    const card = out[at];
+    if (card.kind === 'confirms') card.actions.push(action);
+    else if (card.kind === 'confirm') {
+      out[at] = {
+        kind: 'confirms',
+        key: card.key,
+        actions: [card.action, action],
+      };
+    }
+  };
   for (const item of items) {
-    const last = out.at(-1);
     if (item.kind !== 'confirm') {
       out.push(item);
       continue;
     }
-    if (last?.kind === 'confirms') last.actions.push(item.action);
-    else if (last?.kind === 'confirm') {
-      out[out.length - 1] = {
-        kind: 'confirms',
-        key: last.key,
-        actions: [last.action, item.action],
-      };
-    } else out.push(item);
+    const batch = item.action.batch;
+    if (batch !== undefined) {
+      const at = batchAt.get(batch);
+      if (at !== undefined) fold(at, item.action);
+      else {
+        batchAt.set(batch, out.length);
+        out.push(item);
+      }
+      continue;
+    }
+    const last = out.at(-1);
+    const unbatched =
+      (last?.kind === 'confirm' && last.action.batch === undefined) ||
+      (last?.kind === 'confirms' &&
+        last.actions.every((a) => a.batch === undefined));
+    if (unbatched) fold(out.length - 1, item.action);
+    else out.push(item);
   }
   return out;
 }

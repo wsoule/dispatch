@@ -49,6 +49,7 @@ function overseerRecord(): OverseerRecord {
         summary: 'Cancel run r-1',
         createdAt: '2026-08-10T00:00:02Z',
         status: 'pending',
+        tier: 'high',
       },
     ],
     pendingApprovals: [],

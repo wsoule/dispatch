@@ -1,4 +1,8 @@
-import { TaskStore, updateConfig } from '@dispatch-foo/core';
+import {
+  OVERSEER_GRANT_ANSWER,
+  TaskStore,
+  updateConfig,
+} from '@dispatch-foo/core';
 import type { JsonValue, Message, Sender } from '@dispatch-foo/protocol';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -13,6 +17,7 @@ import type {
   SocketAudience,
 } from '../../src/events.js';
 import { LedgerStore } from '../../src/ledger.js';
+import { classifyLedgerEntry } from '../../src/memory/ledgerImport.js';
 import { closeOrphanedGates } from '../../src/messaging/gates.js';
 import {
   createOverseerBus,
@@ -24,6 +29,7 @@ import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
 import { MergeQueue } from '../../src/orchestrator/mergeQueue.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
 import {
+  overseerActionRoute,
   overseerLiveAudience,
   OverseerManager,
   ROLLOVER_TOKENS,
@@ -36,7 +42,10 @@ import type {
   OverseerTurnOptions,
 } from '../../src/orchestrator/overseerBackend.js';
 import { FakeOverseer } from '../../src/orchestrator/overseers/fake.js';
-import type { FakeOverseerScript } from '../../src/orchestrator/overseers/fake.js';
+import type {
+  FakeOverseerScript,
+  FakeOverseerTurn,
+} from '../../src/orchestrator/overseers/fake.js';
 import {
   fileOverseerStore,
   overseerDir,
@@ -1270,6 +1279,51 @@ describe('overseer on the bus', () => {
     expect(base.orchestrator.list()).toHaveLength(1);
     for (const run of base.orchestrator.list())
       await base.orchestrator.cancel(run.id).catch(() => {});
+    messaging.close();
+  });
+
+  it('a confirm answered "Allow for this conversation" grants the tool', async () => {
+    const { base, messaging, manager, record } = await busHarness();
+    const gate = messaging.engine
+      .openBlocking()
+      .find((m) => gateOfType(m) === 'overseer-action');
+    // The gate keeps the protocol's two choices; the grant rides on the body.
+    expect(gate?.choices).toEqual(['confirm', 'cancel']);
+    await messaging.engine.reply(
+      gate?.id ?? '',
+      { body: OVERSEER_GRANT_ANSWER, choice: 'confirm' },
+      { address: 'human:wyat', canDecide: true }
+    );
+    expect(base.orchestrator.list()).toHaveLength(1);
+    expect(manager.listGrants(record.id).map((g) => g.key)).toEqual([
+      'overseer action dispatch_task',
+    ]);
+    for (const run of base.orchestrator.list())
+      await base.orchestrator.cancel(run.id).catch(() => {});
+    messaging.close();
+  });
+
+  it('an auto-run action raises no gate', async () => {
+    const base = makeHarness();
+    const backend = new FakeOverseer({
+      ok: true,
+      calls: [{ tool: 'create_task', input: { title: 'No card' } }],
+      reply: 'done',
+    });
+    const { messaging, manager } = await openBus(base, backend);
+    const started = manager.start(
+      'file it',
+      'fake',
+      undefined,
+      undefined,
+      WYAT
+    );
+    await waitFor(() => manager.get(started.id).state !== 'running');
+    expect(
+      messaging.engine
+        .openBlocking()
+        .filter((m) => gateOfType(m) === 'overseer-action')
+    ).toEqual([]);
     messaging.close();
   });
 
@@ -2529,5 +2583,472 @@ describe('overseerLiveAudience', () => {
     expect(hears(who('human:cy', 'request'))).toBe(false);
     expect(hears(who('human:op', 'operator', true))).toBe(false);
     expect(hears(undefined)).toBe(false);
+  });
+});
+
+// Risk tiers: what runs at once, what asks once, what always asks
+// ---------------------------------------------------------------------------
+
+describe('overseer action tiers', () => {
+  // A harness whose registry can write tasks, as index.ts wires it.
+  function writableHarness(): Harness {
+    const base = makeHarness();
+    const ctx: OverseerToolContext = {
+      ...base,
+      tasks: {
+        create: (input) => {
+          const doc = base.store.create(input);
+          base.cache.rebuild(base.store);
+          return doc;
+        },
+        update: (id, patch) => {
+          const doc = base.store.update(id, patch);
+          base.cache.rebuild(base.store);
+          return doc;
+        },
+      },
+    };
+    return { ...base, ...ctx, registry: new OverseerToolRegistry(ctx) };
+  }
+
+  function managerOn(base: Harness, turns: FakeOverseerTurn[]): ManagerHarness {
+    const backend = new FakeOverseer({ ok: true, turns });
+    const manager = new OverseerManager({
+      rootDir: repo,
+      registry: base.registry,
+      events: base.events,
+    });
+    manager.registerBackend('fake', backend);
+    return { ...base, manager, backend };
+  }
+
+  async function nextTurn(h: ManagerHarness, id: string, text: string) {
+    h.manager.sendMessage(id, text);
+    await waitFor(() => h.manager.get(id).state !== 'running');
+    return h.manager.get(id);
+  }
+
+  // Waits out the turn a confirm starts to tell the model what was decided.
+  async function settled(h: ManagerHarness, id: string) {
+    await waitFor(() => h.manager.get(id).state !== 'running');
+    return h.manager.get(id);
+  }
+
+  function setAutonomy(level: 'cautious' | 'balanced' | 'trusting') {
+    updateConfig(repo, { overseer: { autonomy: level } });
+  }
+
+  it('routes each tier by the autonomy setting, and high always asks', () => {
+    const table = (['low', 'medium', 'high'] as const).map((tier) => [
+      tier,
+      overseerActionRoute(tier, 'cautious'),
+      overseerActionRoute(tier, 'balanced'),
+      overseerActionRoute(tier, 'trusting'),
+    ]);
+    expect(table).toEqual([
+      ['low', 'ask', 'auto', 'auto'],
+      ['medium', 'ask', 'ask-once', 'auto'],
+      ['high', 'ask', 'ask', 'ask'],
+    ]);
+  });
+
+  it('gives every mutating tool the tier the policy names', () => {
+    const base = makeHarness();
+    const tiers = Object.fromEntries(
+      base.registry.mutatingTools().map((t) => [t.name, t.tier])
+    );
+    expect(tiers).toEqual({
+      create_task: 'low',
+      update_task: 'low',
+      create_plan: 'low',
+      message_run: 'low',
+      dispatch_task: 'medium',
+      approve_run: 'medium',
+      deny_run: 'medium',
+      queue_merge: 'medium',
+      dequeue_merge: 'medium',
+      cancel_run: 'high',
+      discard_run: 'high',
+      send_as_you: 'high',
+    });
+  });
+
+  it('runs a low-tier call at once: no card, a receipt, a done result, an audit entry', async () => {
+    const base = writableHarness();
+    const h = managerOn(base, [
+      {
+        calls: [{ tool: 'create_task', input: { title: 'Write the docs' } }],
+        reply: 'done',
+      },
+    ]);
+    const record = await startAndSettle(h, 'file a task');
+
+    expect(record.pendingActions).toEqual([]);
+    const created = base.store
+      .list()
+      .find((t) => t.meta.title === 'Write the docs')?.meta;
+    expect(created).toBeDefined();
+    const receipt = record.messages.find((m) => m.role === 'action');
+    expect(receipt).toMatchObject({
+      tool: 'create_task',
+      outcome: 'applied',
+      auto: true,
+      tier: 'low',
+      taskIds: [created?.id],
+    });
+    expect(receipt?.text).toStartWith('Done: Create task');
+    const told = JSON.stringify(h.backend.observations[0].result.content);
+    expect(told).toContain('"done":true');
+    expect(told).toContain('ALREADY been carried out');
+    expect(told).not.toContain('NOTHING has happened');
+
+    const entries = base.ledgerStore.list();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      kind: 'decision',
+      sourceTaskId: created?.id,
+      authoredBy: 'human:test',
+    });
+    expect(entries[0].detail).toContain(
+      'auto-decided by overseer.autonomy balanced (low tier)'
+    );
+    expect(classifyLedgerEntry(entries[0]).to).toBe('audit');
+    expect(h.seen.some((e) => e.type === 'ledger.changed')).toBe(true);
+  });
+
+  it('an update_task receipt carries the diff of every field it changed', async () => {
+    const base = writableHarness();
+    const blocker = makeTask(base, 'Blocker');
+    const parent = makeTask(base, 'Parent');
+    const target = base.store.create({
+      title: 'Old title',
+      description: 'old spec',
+    }).meta.id;
+    base.cache.rebuild(base.store);
+    const h = managerOn(base, [
+      {
+        calls: [
+          {
+            tool: 'update_task',
+            input: {
+              taskId: target,
+              title: 'New title',
+              description: 'new spec',
+              priority: 'high',
+              parent,
+              blockedBy: [blocker],
+            },
+          },
+        ],
+        reply: 'updated',
+      },
+    ]);
+    const record = await startAndSettle(h, 'tidy it up');
+
+    const receipt = record.messages.find((m) => m.role === 'action');
+    expect(receipt).toMatchObject({ auto: true, taskIds: [target] });
+    expect(receipt?.changes).toEqual([
+      { field: 'title', before: 'Old title', after: 'New title' },
+      { field: 'description', before: 'old spec', after: 'new spec' },
+      { field: 'priority', before: 'none', after: 'high' },
+      { field: 'parent', before: 'none', after: parent },
+      { field: 'blockedBy', before: 'none', after: blocker },
+    ]);
+    const doc = base.store.get(target);
+    expect(doc?.meta).toMatchObject({
+      title: 'New title',
+      priority: 'high',
+      parent,
+      blockedBy: [blocker],
+    });
+  });
+
+  it('cautious asks about a low-tier call like everything else', async () => {
+    setAutonomy('cautious');
+    const base = writableHarness();
+    const h = managerOn(base, [
+      {
+        calls: [{ tool: 'create_task', input: { title: 'Held back' } }],
+        reply: 'queued',
+      },
+    ]);
+    const record = await startAndSettle(h, 'file a task');
+
+    expect(record.pendingActions).toHaveLength(1);
+    expect(record.pendingActions[0].grantable).toBeUndefined();
+    expect(base.store.list().some((t) => t.meta.title === 'Held back')).toBe(
+      false
+    );
+    expect(JSON.stringify(h.backend.observations[0].result.content)).toContain(
+      'NOTHING has happened yet'
+    );
+    expect(base.ledgerStore.list()).toEqual([]);
+  });
+
+  it('a medium-tier call asks once, and the grant runs the next one without a card', async () => {
+    const base = makeHarness();
+    const first = makeTask(base, 'First');
+    const second = makeTask(base, 'Second');
+    const h = managerOn(base, [
+      {
+        calls: [{ tool: 'dispatch_task', input: { taskId: first } }],
+        reply: 'q',
+      },
+      // The turn the approval wakes, which goes on to the second.
+      {
+        calls: [{ tool: 'dispatch_task', input: { taskId: second } }],
+        reply: 'd',
+      },
+    ]);
+    const opened = await startAndSettle(h, 'dispatch first');
+    const action = opened.pendingActions[0];
+    expect(action).toMatchObject({ tier: 'medium', grantable: true });
+
+    const decided = await h.manager.confirmAction(
+      opened.id,
+      action.id,
+      true,
+      'human:test',
+      false,
+      'session'
+    );
+    expect(decided.messages.at(-1)?.text).toContain(
+      'dispatch_task allowed for this conversation'
+    );
+    expect(h.manager.listGrants(opened.id).map((g) => g.key)).toEqual([
+      'overseer action dispatch_task',
+    ]);
+
+    const after = await settled(h, opened.id);
+    expect(after.pendingActions).toEqual([]);
+    expect(
+      h.orchestrator
+        .list()
+        .map((r) => r.taskId)
+        .sort()
+    ).toEqual([first, second].sort());
+    expect(after.messages.filter((m) => m.auto === true)).toHaveLength(1);
+    const audit = base.ledgerStore.list();
+    expect(audit).toHaveLength(1);
+    expect(audit[0].detail).toContain('a grant for this conversation');
+  });
+
+  it('a once answer grants nothing, and a revoked grant asks again', async () => {
+    const base = makeHarness();
+    const a = makeTask(base, 'A');
+    const b = makeTask(base, 'B');
+    const c = makeTask(base, 'C');
+    const h = managerOn(base, [
+      { calls: [{ tool: 'dispatch_task', input: { taskId: a } }], reply: '1' },
+      { reply: 'noted' },
+      { calls: [{ tool: 'dispatch_task', input: { taskId: b } }], reply: '2' },
+      { reply: 'noted' },
+      { calls: [{ tool: 'dispatch_task', input: { taskId: c } }], reply: '3' },
+    ]);
+    const opened = await startAndSettle(h, 'a');
+    await h.manager.confirmAction(opened.id, opened.pendingActions[0].id, true);
+    expect(h.manager.listGrants(opened.id)).toEqual([]);
+    await settled(h, opened.id);
+
+    const second = await nextTurn(h, opened.id, 'b');
+    expect(second.pendingActions).toHaveLength(1);
+    await h.manager.confirmAction(
+      opened.id,
+      second.pendingActions[0].id,
+      true,
+      'human:test',
+      false,
+      'session'
+    );
+    await settled(h, opened.id);
+    h.manager.revokeGrant(opened.id, 'overseer action dispatch_task');
+    const third = await nextTurn(h, opened.id, 'c');
+    expect(third.pendingActions).toHaveLength(1);
+  });
+
+  it('trusting runs the medium tier at once', async () => {
+    setAutonomy('trusting');
+    const base = makeHarness();
+    const taskId = makeTask(base, 'Go');
+    const h = managerOn(base, [
+      { calls: [{ tool: 'dispatch_task', input: { taskId } }], reply: 'ok' },
+    ]);
+    const record = await startAndSettle(h, 'dispatch it');
+    expect(record.pendingActions).toEqual([]);
+    expect(h.orchestrator.list().map((r) => r.taskId)).toEqual([taskId]);
+    expect(record.messages.find((m) => m.role === 'action')).toMatchObject({
+      auto: true,
+      tier: 'medium',
+      taskIds: [taskId],
+    });
+    expect(base.ledgerStore.list()[0].detail).toContain(
+      'overseer.autonomy trusting (medium tier)'
+    );
+  });
+
+  it('the high tier asks under trusting, and a session answer grants it nothing', async () => {
+    setAutonomy('trusting');
+    const base = makeHarness();
+    const one = await base.orchestrator.dispatch(makeTask(base, 'One'), 'slow');
+    const two = await base.orchestrator.dispatch(makeTask(base, 'Two'), 'slow');
+    const h = managerOn(base, [
+      { calls: [{ tool: 'cancel_run', input: { runId: one.id } }], reply: '1' },
+      { reply: 'noted' },
+      { calls: [{ tool: 'cancel_run', input: { runId: two.id } }], reply: '2' },
+    ]);
+    const opened = await startAndSettle(h, 'cancel one');
+    const action = opened.pendingActions[0];
+    expect(action).toMatchObject({ tier: 'high' });
+    expect(action.grantable).toBeUndefined();
+
+    await h.manager.confirmAction(
+      opened.id,
+      action.id,
+      true,
+      'human:test',
+      false,
+      'session'
+    );
+    expect(h.manager.listGrants(opened.id)).toEqual([]);
+    await settled(h, opened.id);
+    const next = await nextTurn(h, opened.id, 'cancel two');
+    expect(next.pendingActions.map((a) => a.tool)).toEqual(['cancel_run']);
+  });
+
+  it('a setting change applies to the very next call', async () => {
+    const base = writableHarness();
+    const h = managerOn(base, [
+      { calls: [{ tool: 'create_task', input: { title: 'One' } }], reply: '1' },
+      { calls: [{ tool: 'create_task', input: { title: 'Two' } }], reply: '2' },
+    ]);
+    const opened = await startAndSettle(h, 'one');
+    expect(opened.pendingActions).toEqual([]);
+    setAutonomy('cautious');
+    const next = await nextTurn(h, opened.id, 'two');
+    expect(next.pendingActions.map((a) => a.tool)).toEqual(['create_task']);
+  });
+
+  it('a config that breaks mid-turn asks about everything rather than widening', async () => {
+    const base = writableHarness();
+    // Breaks the config after the turn started, then makes a low-tier call.
+    const backend: OverseerBackend = {
+      async start(_prompt, toolset) {
+        appendFileSync(
+          join(repo, '.dispatch', 'config.yml'),
+          '\noverseer: nope\n'
+        );
+        await toolset.call('create_task', { title: 'X' });
+        return { reply: 'queued', sessionId: 's-1' };
+      },
+      sendMessage: () => Promise.resolve({ reply: '' }),
+    };
+    const manager = new OverseerManager({
+      rootDir: repo,
+      registry: base.registry,
+      events: base.events,
+    });
+    manager.registerBackend('broken', backend);
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
+    const started = manager.start('file it', 'broken');
+    await waitFor(() => manager.get(started.id).state !== 'running');
+    errors.mockRestore();
+    expect(manager.get(started.id).pendingActions.map((a) => a.tool)).toEqual([
+      'create_task',
+    ]);
+    expect(base.store.list()).toEqual([]);
+  });
+
+  it('tells the model per tool whether a call runs or queues, grants included', async () => {
+    const base = makeHarness();
+    const taskId = makeTask(base, 'T');
+    const h = managerOn(base, [
+      { calls: [{ tool: 'dispatch_task', input: { taskId } }], reply: 'q' },
+      { reply: 'ok' },
+    ]);
+    // Records every turn's tool descriptors on the way to the fake.
+    const seenTools: OverseerToolset['tools'][] = [];
+    const fake = h.backend;
+    h.manager.registerBackend('fake', {
+      start: (prompt, toolset, options) => {
+        seenTools.push(toolset.tools);
+        return fake.start(prompt, toolset, options);
+      },
+      sendMessage: (sessionId, message, toolset, options) => {
+        seenTools.push(toolset.tools);
+        return fake.sendMessage(sessionId, message, toolset, options);
+      },
+    });
+    const opened = await startAndSettle(h, 'go');
+    const routes = (i: number) =>
+      Object.fromEntries(
+        (seenTools[i] ?? [])
+          .filter((t) => t.mutating)
+          .map((t) => [t.name, t.route])
+      );
+    expect(routes(0)).toMatchObject({
+      create_task: 'auto',
+      dispatch_task: 'ask-once',
+      cancel_run: 'ask',
+    });
+    await h.manager.confirmAction(
+      opened.id,
+      opened.pendingActions[0].id,
+      true,
+      'human:test',
+      false,
+      'session'
+    );
+    // The turn the approval wakes already sees the grant.
+    await settled(h, opened.id);
+    expect(routes(1)).toMatchObject({
+      dispatch_task: 'auto',
+      cancel_run: 'ask',
+    });
+  });
+
+  it('an auto-run call that fails is reported as failed, not left pending', async () => {
+    // No task writer on this harness, so create_task's effect throws.
+    const base = makeHarness();
+    const h = managerOn(base, [
+      {
+        calls: [{ tool: 'create_task', input: { title: 'Nope' } }],
+        reply: 'x',
+      },
+    ]);
+    const record = await startAndSettle(h, 'file it');
+    expect(record.pendingActions).toEqual([]);
+    const row = record.messages.find((m) => m.role === 'action');
+    expect(row).toMatchObject({ outcome: 'failed', auto: true });
+    expect(row?.text).toContain('task writes are not available here');
+    expect(h.backend.observations[0].result.isError).toBe(true);
+    expect(h.registry.listPending()).toEqual([]);
+    expect(base.ledgerStore.list()).toEqual([]);
+  });
+
+  it('the actions one turn queues share a batch; the next turn gets its own', async () => {
+    const base = makeHarness();
+    const a = makeTask(base, 'A');
+    const b = makeTask(base, 'B');
+    const c = makeTask(base, 'C');
+    const h = managerOn(base, [
+      {
+        calls: [
+          { tool: 'dispatch_task', input: { taskId: a } },
+          { tool: 'dispatch_task', input: { taskId: b } },
+        ],
+        reply: 'two queued',
+      },
+      { calls: [{ tool: 'dispatch_task', input: { taskId: c } }], reply: '1' },
+    ]);
+    const opened = await startAndSettle(h, 'both');
+    const [first, second] = opened.pendingActions;
+    expect(first.batch).toBeDefined();
+    expect(second.batch).toBe(first.batch);
+    const next = await nextTurn(h, opened.id, 'and c');
+    const third = next.pendingActions.find(
+      (x) => x.id !== first.id && x.id !== second.id
+    );
+    expect(third?.batch).toBeDefined();
+    expect(third?.batch).not.toBe(first.batch);
   });
 });

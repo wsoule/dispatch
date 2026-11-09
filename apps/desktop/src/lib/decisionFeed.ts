@@ -65,6 +65,9 @@ export interface DecisionItem {
   /** Set while a dismissal hides this item; it returns once the condition
    * behind it changes, or on undo. */
   dismissedAt?: string;
+  /** An overseer-action gate's batch (the turn that queued it); gates sharing
+   * one are answered on one card. */
+  batch?: string;
   /** The policy engine's split: `blocking` items demand an answer, `recorded`
    * ones land quietly. Everything is `blocking` until milestone e-ad1978 ships. */
   disposition: 'blocking' | 'recorded';

@@ -214,3 +214,23 @@ export function needsYou(
     dismissed: dismissed.sort((a, b) => a.since.localeCompare(b.since)),
   };
 }
+
+/**
+ * The overseer actions one turn queued, by batch, for rows answered on one
+ * card: each batch with two or more open asks, in the order they appear. A
+ * lone action, or one from a daemon that sends no batch, keeps its own row.
+ */
+export function overseerActionBatches(
+  items: readonly DecisionItem[]
+): Map<string, DecisionItem[]> {
+  const byBatch = new Map<string, DecisionItem[]>();
+  for (const item of items) {
+    if (item.kind !== 'approval' || item.reason !== 'overseer-action') continue;
+    if (item.batch === undefined) continue;
+    byBatch.set(item.batch, [...(byBatch.get(item.batch) ?? []), item]);
+  }
+  for (const [batch, rows] of byBatch) {
+    if (rows.length < 2) byBatch.delete(batch);
+  }
+  return byBatch;
+}

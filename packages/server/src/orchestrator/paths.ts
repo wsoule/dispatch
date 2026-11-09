@@ -330,6 +330,21 @@ export function pairedDevicesPath(rootDir: string): string {
   );
 }
 
+/**
+ * Where the mobile app's state lives (mobile/host.ts): push subscriptions, the
+ * VAPID key and the listener settings. Beside the paired devices and outside
+ * the repo for the same reason.
+ */
+export function mobileDir(rootDir: string): string {
+  return join(
+    dispatchHome(),
+    '.dispatch',
+    'projects',
+    projectKeyOf(rootDir),
+    'mobile'
+  );
+}
+
 // Where a project's terminal sessions keep their scrollback and index (see
 // terminals.ts). Under `runs/` rather than beside the repo for the same reason
 // transcripts are: this is per-machine scratch a person never diffs, and it

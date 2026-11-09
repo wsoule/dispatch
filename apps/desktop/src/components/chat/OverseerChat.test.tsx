@@ -46,6 +46,7 @@ function overseerAction(over: Partial<OverseerAction> = {}): OverseerAction {
     summary: 'Cancel run r-1',
     createdAt: '2026-08-10T00:00:02Z',
     status: 'pending',
+    tier: 'high',
     ...over,
   };
 }
@@ -1812,4 +1813,99 @@ test('a batch lists a task action as a card beside a plain one', () => {
   expect(
     screen.getByRole('button', { name: 'Approve: Create task "Spec the 403"' })
   ).toBeDefined();
+});
+
+test('a grantable action offers "Allow for this conversation", which approves with session scope', async () => {
+  const decisions: [string, boolean, string | undefined][] = [];
+  const action = overseerAction({
+    id: 'act-d',
+    tool: 'dispatch_task',
+    summary: 'Dispatch t-1',
+    tier: 'medium',
+    grantable: true,
+  });
+  render(
+    <OverseerChat
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: overseerRecord({
+          pendingActions: [action],
+          messages: [
+            {
+              role: 'action',
+              tool: 'dispatch_task',
+              actionId: 'act-d',
+              outcome: 'pending',
+              text: 'Dispatch t-1',
+              at: '2026-08-10T00:00:02Z',
+            },
+          ],
+        }),
+        confirmAction: (id, approve, scope) => {
+          decisions.push([id, approve, scope]);
+          return Promise.resolve(true);
+        },
+      })}
+    />
+  );
+  await clickAndSettle(
+    screen.getByRole('button', {
+      name: 'Allow dispatch_task for this conversation',
+    })
+  );
+  expect(decisions).toEqual([['act-d', true, 'session']]);
+});
+
+test('a high-tier action never offers the conversation-wide allow', () => {
+  render(
+    <OverseerChat
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: overseerRecord({
+          pendingActions: [overseerAction({ tier: 'high' })],
+        }),
+      })}
+    />
+  );
+  expect(
+    screen.queryByRole('button', { name: /for this conversation/ })
+  ).toBeNull();
+  expect(
+    screen.getByRole('button', { name: 'Approve: Cancel run r-1' })
+  ).toBeDefined();
+});
+
+test('an auto-run receipt shows its diff and opens its task in Tasks', () => {
+  const opened: unknown[] = [];
+  render(
+    <OverseerChat
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: overseerRecord({
+          messages: [
+            {
+              role: 'action',
+              tool: 'update_task',
+              actionId: 'wa-1',
+              outcome: 'applied',
+              auto: true,
+              tier: 'low',
+              taskIds: ['t-7'],
+              changes: [{ field: 'priority', before: 'none', after: 'high' }],
+              text: 'Done: Update t-7 ("Docs"): priority none → high',
+              at: '2026-08-10T00:00:02Z',
+            },
+          ],
+        }),
+      })}
+      onOpenDoor={(door) => opened.push(door)}
+    />
+  );
+  const receipt = screen.getByTestId('overseer-receipt');
+  expect(receipt.textContent).toContain('ran without a card');
+  expect(screen.getByTestId('overseer-receipt-diff').textContent).toContain(
+    'priority'
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Open in Tasks →' }));
+  expect(opened).toEqual([{ taskId: 't-7' }]);
 });

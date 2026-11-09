@@ -3,12 +3,14 @@ import type {
   DispatchConfig,
   EffortConfig,
   ModelConfig,
+  OverseerAutonomy,
   OverseerStreamMode,
   RunStreamMode,
 } from '@dispatch-foo/core/browser';
 import {
   EFFORT_ROLES,
   MODEL_ROLES,
+  overseerAutonomy,
   overseerSettings,
   runSettings,
 } from '@dispatch-foo/core/browser';
@@ -32,6 +34,14 @@ import {
 } from './fields';
 import { JudgmentStatusRow } from './JudgmentStatusRow';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
+
+// The overseer's autonomy levels, each saying what it asks about. Cancelling
+// or discarding a run and sending as you always ask, whichever is picked.
+const AUTONOMY_CHOICES: { value: OverseerAutonomy; label: string }[] = [
+  { value: 'cautious', label: 'Cautious: ask about everything' },
+  { value: 'balanced', label: 'Balanced: ask once per conversation' },
+  { value: 'trusting', label: 'Trusting: only ask about risky actions' },
+];
 
 interface AgentsSectionProps {
   config: DispatchConfig;
@@ -349,6 +359,15 @@ export function AgentsSection({
             </SettingsHint>
           )}
         </SettingsRow>
+        <ChoiceSetting
+          id="overseer-autonomy"
+          title="What your agent does without asking"
+          subtitle="Balanced files and edits tasks at once and asks once per conversation before dispatching or merging. Cancelling or discarding a run and sending as you always ask."
+          keywords="overseer autonomy assistant approve card cautious balanced trusting"
+          value={overseerAutonomy(config)}
+          choices={AUTONOMY_CHOICES}
+          onSave={(autonomy) => void onSave({ overseer: { autonomy } })}
+        />
       </SettingsGroup>
 
       <SettingsGroup title="Defaults">

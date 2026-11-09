@@ -94,6 +94,15 @@ function makeHarness(): Harness {
   return { orchestrator, milestones, store: watched, cache, events };
 }
 
+// Writes the project's `orchestrator.startDependents`. Call after makeHarness,
+// whose TaskStore.init creates `.dispatch`; the engine reads config per fill.
+function useStartDependents(mode: 'landed' | 'review'): void {
+  writeFileSync(
+    join(repo, '.dispatch', 'config.yml'),
+    `orchestrator:\n  startDependents: ${mode}\n`
+  );
+}
+
 // Each child gets a distinct `writes` entry — an empty write-set conflicts
 // with everything, which would otherwise serialize these generic tests.
 function createMilestoneWithChildren(
@@ -455,14 +464,15 @@ describe('MilestoneEngine.start', () => {
   // initial "still todo after start()" assertion below is what actually
   // catches a regression back to computing readiness over `children` only.
   //
-  // No review/merge call happens in this test on purpose: MilestoneEngine now
-  // dispatches on dispatchableTasks (isSatisfiedForDispatch), so the outside
-  // blocker only needs to reach `in-review` to unblock the child, and the
+  // No review/merge call happens in this test on purpose: under
+  // `startDependents: review` the outside blocker only needs to reach
+  // `in-review` to unblock the child, and the
   // dispatch assertion below fires strictly before any merge could — that's
   // what makes it discriminate the in-review path rather than passing for a
   // reason unrelated to what the test name claims.
   it('dispatches a child blocked by an outside (non-sibling) task once that task reaches in-review, without a merge', async () => {
     const harness = makeHarness();
+    useStartDependents('review');
     const outside = harness.store.create({ title: 'Outside blocker' });
     const { milestoneId, childIds } = createMilestoneWithChildren(
       harness.store,
@@ -505,14 +515,12 @@ describe('MilestoneEngine.start', () => {
     expect(harness.store.get(outside.meta.id)?.meta.status).toBe('review');
   });
 
-  // The behavioral fix under test: a dependent must dispatch as soon as its
-  // blocker's run finishes and the blocker lands at `in-review` — it must
-  // NOT wait for a human to merge the blocker all the way to `done`. This
-  // exercises MilestoneEngine.fillQueue's switch from readyTasks (gates on
-  // isDone) to dispatchableTasks (gates on isSatisfiedForDispatch, which
-  // also accepts `in-review`).
-  it('dispatches a child whose blocker is only in-review, not yet done', async () => {
+  // The opt-in stacking mode: a dependent dispatches as soon as its blocker's
+  // run finishes and the blocker sits at `in-review`, without waiting for a
+  // human to merge it all the way to `done`.
+  it('under startDependents: review, dispatches a child whose blocker is only in-review', async () => {
     const h = makeHarness();
+    useStartDependents('review');
     const milestone = h.store.create({ title: 'Milestone', kind: 'milestone' });
     const blocker = h.store.create({ title: 'A', parent: milestone.meta.id });
     const dependent = h.store.create({
@@ -541,6 +549,40 @@ describe('MilestoneEngine.start', () => {
       h.orchestrator.list().some((r) => r.taskId === dependent.meta.id)
     );
     expect(h.store.get(blocker.meta.id)!.meta.status).toBe('review');
+  });
+
+  // 2026-10-16: a spec gating build tasks behind human approval gated
+  // nothing — each dependent started the moment its blocker reached review.
+  // By default a fan-out now holds the dependent until the blocker lands.
+  it('by default, holds a child whose blocker is in-review until it lands', async () => {
+    const h = makeHarness();
+    const milestone = h.store.create({ title: 'Milestone', kind: 'milestone' });
+    const blocker = h.store.create({ title: 'A', parent: milestone.meta.id });
+    const dependent = h.store.create({
+      title: 'B',
+      parent: milestone.meta.id,
+      blockedBy: [blocker.meta.id],
+    });
+    h.cache.rebuild(h.store);
+
+    await h.milestones.start(milestone.meta.id, {
+      concurrency: 2,
+      executor: 'fake',
+    });
+    await waitFor(() => h.orchestrator.list().length === 1);
+    const run = h.orchestrator.list()[0];
+    h.orchestrator.approve(run.id, 'go', true);
+    await waitFor(() => h.store.get(blocker.meta.id)!.meta.status === 'review');
+    await sleep(60); // give a wrong implementation time to dispatch the dependent
+    expect(
+      h.orchestrator.list().some((r) => r.taskId === dependent.meta.id)
+    ).toBe(false);
+
+    h.orchestrator.review(run.id, 'merge');
+    await waitFor(() =>
+      h.orchestrator.list().some((r) => r.taskId === dependent.meta.id)
+    );
+    expect(h.store.get(blocker.meta.id)!.meta.status).toBe('landed');
   });
 
   // Guard against over-loosening the fix above: a blocker that is merely
@@ -1204,6 +1246,8 @@ statusRoles:
   landing: null
   landed: Done
   dropped: Canceled
+orchestrator:
+  startDependents: review
 `;
 
   // Approves every run waiting at the fake executor's gate until `done`.

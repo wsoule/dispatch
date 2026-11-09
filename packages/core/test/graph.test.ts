@@ -242,41 +242,42 @@ describe('dispatchableTasks', () => {
 
 describe('a fan-out’s blocker rule', () => {
   const mine = { held: false, hasRunBranch: true };
-  it('releases on review or landing only with an own run branch to stack on', () => {
-    expect(releasesFanoutDependents('review', DEFAULT_STATUS_MODEL, mine)).toBe(
-      true
-    );
-    expect(
-      releasesFanoutDependents('landing', DEFAULT_STATUS_MODEL, mine)
-    ).toBe(true);
+  const M = DEFAULT_STATUS_MODEL;
+
+  it('waits for landed by default, even with an own run branch', () => {
+    expect(releasesFanoutDependents('review', M, mine)).toBe(false);
+    expect(releasesFanoutDependents('landing', M, mine)).toBe(false);
+    expect(releasesFanoutDependents('review', M, mine, 'landed')).toBe(false);
+    expect(releasesFanoutDependents('landed', M, mine)).toBe(true);
+  });
+
+  it('under review, releases on review or landing only with an own run branch to stack on', () => {
+    expect(releasesFanoutDependents('review', M, mine, 'review')).toBe(true);
+    expect(releasesFanoutDependents('landing', M, mine, 'review')).toBe(true);
     // A teammate's In Review, or one moved there by hand: no branch of it.
     for (const blocker of [
       { held: true, hasRunBranch: true },
       { held: false, hasRunBranch: false },
     ]) {
-      expect(
-        releasesFanoutDependents('review', DEFAULT_STATUS_MODEL, blocker)
-      ).toBe(false);
-      expect(
-        releasesFanoutDependents('landing', DEFAULT_STATUS_MODEL, blocker)
-      ).toBe(false);
+      expect(releasesFanoutDependents('review', M, blocker, 'review')).toBe(
+        false
+      );
+      expect(releasesFanoutDependents('landing', M, blocker, 'review')).toBe(
+        false
+      );
     }
   });
 
   it('releases on done whoever holds it, and never before review', () => {
     const teammate = { held: true, hasRunBranch: false };
-    expect(
-      releasesFanoutDependents('landed', DEFAULT_STATUS_MODEL, teammate)
-    ).toBe(true);
-    expect(
-      releasesFanoutDependents('dropped', DEFAULT_STATUS_MODEL, teammate)
-    ).toBe(true);
-    expect(
-      releasesFanoutDependents('working', DEFAULT_STATUS_MODEL, mine)
-    ).toBe(false);
-    expect(releasesFanoutDependents('ready', DEFAULT_STATUS_MODEL, mine)).toBe(
-      false
-    );
+    for (const start of ['landed', 'review'] as const) {
+      expect(releasesFanoutDependents('landed', M, teammate, start)).toBe(true);
+      expect(releasesFanoutDependents('dropped', M, teammate, start)).toBe(
+        true
+      );
+      expect(releasesFanoutDependents('working', M, mine, start)).toBe(false);
+      expect(releasesFanoutDependents('ready', M, mine, start)).toBe(false);
+    }
   });
 
   it('lists the blockers still holding a task, skipping dangling ids', () => {
@@ -291,16 +292,20 @@ describe('a fan-out’s blocker rule', () => {
       blockedBy: ['t-000001', 't-000002', 't-999999'],
     });
     const byId = new Map([own, samTask].map((t) => [t.meta.id, t]));
-    const waiting = fanoutWaitingOn(
-      dep,
-      (id) => byId.get(id),
-      DEFAULT_STATUS_MODEL,
-      (b) => ({
-        held: b.meta.assignee === 'human:sam',
-        hasRunBranch: b.meta.id === 't-000001',
-      })
-    );
-    expect(waiting).toEqual(['t-000002']);
+    const waitingOn = (start?: 'landed' | 'review') =>
+      fanoutWaitingOn(
+        dep,
+        (id) => byId.get(id),
+        M,
+        (b) => ({
+          held: b.meta.assignee === 'human:sam',
+          hasRunBranch: b.meta.id === 't-000001',
+        }),
+        start
+      );
+    expect(waitingOn('review')).toEqual(['t-000002']);
+    // The default holds the dependent on both until each has landed.
+    expect(waitingOn()).toEqual(['t-000001', 't-000002']);
   });
 });
 
@@ -373,25 +378,42 @@ describe('a board whose review status is its dispatched one', () => {
     const mine = { held: false, hasRunBranch: true };
     // An earlier finished run left a branch, but a re-dispatch is live.
     expect(
-      releasesFanoutDependents('In Progress', SHARED, {
-        ...mine,
-        finishedRun: false,
-      })
+      releasesFanoutDependents(
+        'In Progress',
+        SHARED,
+        {
+          ...mine,
+          finishedRun: false,
+        },
+        'review'
+      )
     ).toBe(false);
     expect(
-      releasesFanoutDependents('In Progress', SHARED, {
-        ...mine,
-        finishedRun: true,
-      })
+      releasesFanoutDependents(
+        'In Progress',
+        SHARED,
+        {
+          ...mine,
+          finishedRun: true,
+        },
+        'review'
+      )
     ).toBe(true);
     // Without the run fact, the run branch stands in for it.
-    expect(releasesFanoutDependents('In Progress', SHARED, mine)).toBe(true);
     expect(
-      releasesFanoutDependents('In Progress', SHARED, {
-        held: false,
-        hasRunBranch: false,
-        finishedRun: true,
-      })
+      releasesFanoutDependents('In Progress', SHARED, mine, 'review')
+    ).toBe(true);
+    expect(
+      releasesFanoutDependents(
+        'In Progress',
+        SHARED,
+        {
+          held: false,
+          hasRunBranch: false,
+          finishedRun: true,
+        },
+        'review'
+      )
     ).toBe(false);
   });
 });

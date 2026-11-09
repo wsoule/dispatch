@@ -1,4 +1,5 @@
 import {
+  getSection,
   isCanceledStatus,
   isCompletedStatus,
   isDoneStatus,
@@ -24,6 +25,7 @@ import { z } from 'zod';
 
 import type { TaskCache } from '../cache.js';
 import type { DocsService } from '../docs/service.js';
+import { floorCheckForToolInput } from '../floor.js';
 import type { LedgerStorePort } from '../ledger.js';
 import { classifyLedgerEntry } from '../memory/ledgerImport.js';
 import { statusModelFor } from '../statuses.js';
@@ -193,6 +195,23 @@ export interface ConfirmedBy {
 }
 
 /**
+ * How risky a mutating tool is, which decides whether the overseer runs it at
+ * once or asks first (see `overseerActionRoute` in overseer.ts). `low` is easy
+ * to undo and stays inside the board (filing or editing a task, messaging a
+ * live run); `medium` starts or steers real work (dispatching, answering a
+ * run's approval, the merge queue); `high` throws work away or speaks for the
+ * human (cancelling or discarding a run, send_as_you), and always asks.
+ */
+export type OverseerActionTier = 'low' | 'medium' | 'high';
+
+/** One field an action changes, as it reads before and after: a receipt's diff. */
+export interface OverseerFieldChange {
+  field: string;
+  before: string;
+  after: string;
+}
+
+/**
  * A tool whose call produces a *proposal*, not an effect.
  *
  * `describe` runs at call time: it validates that the target exists and
@@ -204,10 +223,16 @@ export interface OverseerMutatingTool<Input = unknown> {
   name: string;
   description: string;
   inputSchema: z.ZodType<Input>;
+  tier: OverseerActionTier;
+  /** A higher tier for an input riskier than the tool's usual call, read at
+   *  call time; never lower than `tier`. */
+  tierOf?(ctx: OverseerToolContext, input: Input): OverseerActionTier;
   /** Fills in at call time what the input leaves to the live state, so
    *  `apply` acts on exactly what `describe` showed the human. */
   pin?(ctx: OverseerToolContext, input: Input): Input;
   describe(ctx: OverseerToolContext, input: Input): string;
+  /** The fields the action changes, before → after, read at call time. */
+  changes?(ctx: OverseerToolContext, input: Input): OverseerFieldChange[];
   /** May name the tasks it created or changed, for the chat's result card. */
   apply(
     ctx: OverseerToolContext,
@@ -235,10 +260,20 @@ export interface OverseerAction {
   createdAt: string;
   /** `failed`: approved, but the effect threw; final, like the other two. */
   status: 'pending' | 'applied' | 'denied' | 'failed';
-  /** Once applied: the tasks it created or dispatched (AppliedEffect). */
+  tier: OverseerActionTier;
+  /** What the action changes, when its tool can say (update_task). */
+  changes?: OverseerFieldChange[];
+  /** Once applied: the tasks it created, dispatched or touched (AppliedEffect);
+   *  a receipt links to them. */
   taskIds?: string[];
   /** Once applied: the task (and milestone) ids the effect created or changed, in card order. */
   entities?: string[];
+  /** Set by the overseer on a queued action: the turn that queued it, so the
+   *  actions one turn queues are answered on one card. */
+  batch?: string;
+  /** Set by the overseer on a queued action its human may allow for the rest
+   *  of the conversation (a medium-tier tool under `balanced`). */
+  grantable?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -964,6 +999,7 @@ function confirmedOperator(
 
 const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
   name: 'dispatch_task',
+  tier: 'medium',
   description:
     'Start an agent run on a task, on its own branch and worktree. If the ' +
     "task's last run was left recoverable by a daemon restart and you name " +
@@ -1050,9 +1086,20 @@ const approveInput = z.object({
 
 const approveRun: OverseerMutatingTool<z.infer<typeof approveInput>> = {
   name: 'approve_run',
-  description: 'Allow a tool call a run is parked on, letting it continue.',
+  tier: 'medium',
+  description:
+    'Allow a tool call a run is parked on, letting it continue. Allowing an irreversible call, or the tool for the rest of the run, always asks the human first.',
   inputSchema: approveInput,
   pin: pinParkedCall,
+  // Allowing an irreversible call (the floor's), or a tool for the rest of a
+  // run, is never something to wave through: both always ask.
+  tierOf(ctx, input) {
+    const { pending } = requireApproval(ctx, input.runId, input.requestId);
+    return input.scope === 'session' ||
+      floorCheckForToolInput(pending.input) !== null
+      ? 'high'
+      : 'medium';
+  },
   describe(ctx, input) {
     const { meta, pending } = requireApproval(
       ctx,
@@ -1088,6 +1135,7 @@ const denyInput = z.object({
 
 const denyRun: OverseerMutatingTool<z.infer<typeof denyInput>> = {
   name: 'deny_run',
+  tier: 'medium',
   description:
     'Refuse a tool call a run is parked on. This ends the run as ' +
     'failed — the reason, if given, is what it reports as the failure.',
@@ -1120,6 +1168,7 @@ const cancelInput = z.object({
 
 const cancelRun: OverseerMutatingTool<z.infer<typeof cancelInput>> = {
   name: 'cancel_run',
+  tier: 'high',
   description:
     'Stop a live run. Its worktree and branch are left in place for review.',
   inputSchema: cancelInput,
@@ -1184,6 +1233,7 @@ function describeDiscard(
 
 const discardRun: OverseerMutatingTool<z.infer<typeof discardInput>> = {
   name: 'discard_run',
+  tier: 'high',
   description:
     'Discard finished, failed or interrupted runs nobody will land: removes each worktree and branch, the same as Discard in the app. Pass runIds to clear several on one card. Cancel a live run first.',
   inputSchema: discardInput,
@@ -1216,6 +1266,7 @@ const dequeueInput = z.object({
 
 const dequeueMerge: OverseerMutatingTool<z.infer<typeof dequeueInput>> = {
   name: 'dequeue_merge',
+  tier: 'medium',
   description:
     'Pull a run out of the merge queue. The entry being processed right now cannot be pulled.',
   inputSchema: dequeueInput,
@@ -1245,6 +1296,7 @@ const messageInput = z.object({
 
 const messageRun: OverseerMutatingTool<z.infer<typeof messageInput>> = {
   name: 'message_run',
+  tier: 'low',
   description:
     'Send a message to a live run, as the human. Only valid while the run is still going.',
   inputSchema: messageInput,
@@ -1262,12 +1314,14 @@ const messageRun: OverseerMutatingTool<z.infer<typeof messageInput>> = {
       meta.canDecide === true
     );
     if (refusal !== null) throw new OverseerToolError(refusal);
+    const run = requireRun(ctx, input.runId);
     await ctx.messaging.sendAsHuman(
       `run:${input.runId}`,
       input.text,
       meta.actor,
       ctx.overseer === undefined ? undefined : { draftedBy: ctx.overseer }
     );
+    return { taskIds: [run.taskId] };
   },
 };
 
@@ -1282,6 +1336,7 @@ const sendAsYouInput = z.strictObject({
 
 const sendAsYou: OverseerMutatingTool<z.infer<typeof sendAsYouInput>> = {
   name: 'send_as_you',
+  tier: 'high',
   description:
     'Send a message as the human, after they approve the exact text on a card. Readers see it was drafted by you. ' +
     'For a live run use message_run instead.',
@@ -1353,6 +1408,7 @@ const createTaskInput = z.strictObject({
 
 const createTask: OverseerMutatingTool<z.infer<typeof createTaskInput>> = {
   name: 'create_task',
+  tier: 'low',
   description:
     'Create one task. For several related tasks, or a new milestone, use create_plan so the human answers one card.',
   inputSchema: createTaskInput,
@@ -1430,9 +1486,14 @@ const createPlanInput = z.strictObject({
 
 const createPlan: OverseerMutatingTool<z.infer<typeof createPlanInput>> = {
   name: 'create_plan',
+  tier: 'low',
   description:
-    'Turn a plan into work on one card: optionally a new milestone, then its tasks in order, with dependencies between them (#n) or on existing tasks. Approving a plan with a new milestone also starts its agents, wave by wave; blocked tasks start as their blockers finish.',
+    'Turn a plan into work on one card: optionally a new milestone, then its tasks in order, with dependencies between them (#n) or on existing tasks. Approving a plan with a new milestone also starts its agents, wave by wave; blocked tasks start as their blockers finish. A plan that starts agents asks first, like dispatch_task.',
   inputSchema: createPlanInput,
+  // A plan that starts its milestone's agents is a dispatch, and asks like one.
+  tierOf(ctx, input) {
+    return sendsAgents(ctx, input) ? 'medium' : 'low';
+  },
   describe(ctx, input) {
     if (input.milestone !== undefined && input.parent !== undefined) {
       throw new OverseerToolError('pass a new milestone or a parent, not both');
@@ -1533,6 +1594,10 @@ const updateTaskInput = z
   .strictObject({
     taskId: z.string().describe('The task (t-…) to change.'),
     title: z.string().min(1).optional(),
+    description: z
+      .string()
+      .optional()
+      .describe('The new spec, replacing the Description section whole.'),
     status: z
       .string()
       .optional()
@@ -1540,6 +1605,11 @@ const updateTaskInput = z
         "One of the project's statuses, matched case-insensitively; a built-in word (landed, working, draft, …) maps through statusRoles."
       ),
     priority: PRIORITY.optional(),
+    parent: z
+      .string()
+      .nullable()
+      .optional()
+      .describe('The milestone or parent to file it under; null unfiles it.'),
     blockedBy: z
       .array(z.string())
       .optional()
@@ -1548,21 +1618,86 @@ const updateTaskInput = z
   .refine(
     (v) =>
       v.title !== undefined ||
+      v.description !== undefined ||
       v.status !== undefined ||
       v.priority !== undefined ||
+      v.parent !== undefined ||
       v.blockedBy !== undefined,
-    { message: 'change at least one of title, status, priority, blockedBy' }
+    {
+      message:
+        'change at least one of title, description, status, priority, parent, blockedBy',
+    }
   );
 
-const updateTask: OverseerMutatingTool<z.infer<typeof updateTaskInput>> = {
+type UpdateTaskInput = z.infer<typeof updateTaskInput>;
+
+// How long one side of a receipt's diff may run before it is cut.
+const MAX_CHANGE_CHARS = 400;
+
+// One side of a diff, flattened and capped: task text is agent-authored and
+// lands verbatim in the chat.
+function changeText(value: string): string {
+  const flat = untrustedInline(value);
+  return flat.length <= MAX_CHANGE_CHARS
+    ? flat
+    : `${flat.slice(0, MAX_CHANGE_CHARS)}…`;
+}
+
+// A blocker list as one line; "none" for an empty one.
+function blockerText(ids: readonly string[]): string {
+  return ids.length === 0 ? 'none' : ids.join(', ');
+}
+
+// Every field update_task would change, as it reads now and as it would read
+// after. A field set to the value it already has is left out.
+function updateTaskChanges(
+  doc: TaskDoc,
+  input: UpdateTaskInput
+): OverseerFieldChange[] {
+  const out: OverseerFieldChange[] = [];
+  const add = (field: string, before: string, after: string) => {
+    if (before !== after) {
+      out.push({ field, before: changeText(before), after: changeText(after) });
+    }
+  };
+  const { meta } = doc;
+  if (input.title !== undefined) add('title', meta.title, input.title);
+  if (input.description !== undefined) {
+    add(
+      'description',
+      getSection(doc.body, 'Description').trim(),
+      input.description.trim()
+    );
+  }
+  if (input.status !== undefined) add('status', meta.status, input.status);
+  if (input.priority !== undefined) {
+    add('priority', meta.priority, input.priority);
+  }
+  if (input.parent !== undefined) {
+    add('parent', meta.parent ?? 'none', input.parent ?? 'none');
+  }
+  if (input.blockedBy !== undefined) {
+    add('blockedBy', blockerText(meta.blockedBy), blockerText(input.blockedBy));
+  }
+  return out;
+}
+
+const updateTask: OverseerMutatingTool<UpdateTaskInput> = {
   name: 'update_task',
+  tier: 'low',
   description:
-    "Change a task's title, status, priority or blockers. A running task's status follows its run; dispatch or cancel instead.",
+    "Change a task's title, description, status, priority, parent or blockers. A running task's status follows its run; dispatch or cancel instead.",
   inputSchema: updateTaskInput,
   describe(ctx, input) {
     const doc = requireTask(ctx, input.taskId);
     const status =
       input.status === undefined ? undefined : requireStatus(ctx, input.status);
+    if (input.parent !== undefined && input.parent !== null) {
+      if (input.parent === doc.meta.id) {
+        throw new OverseerToolError('a task cannot be its own parent');
+      }
+      requireTask(ctx, input.parent);
+    }
     for (const id of input.blockedBy ?? []) {
       if (id === doc.meta.id) {
         throw new OverseerToolError('a task cannot wait on itself');
@@ -1571,26 +1706,35 @@ const updateTask: OverseerMutatingTool<z.infer<typeof updateTaskInput>> = {
     }
     const changes = [
       input.title === undefined ? null : `title → "${safeTitle(input.title)}"`,
+      input.description === undefined ? null : 'description rewritten',
       status === undefined ? null : `status ${doc.meta.status} → ${status}`,
       input.priority === undefined
         ? null
         : `priority ${doc.meta.priority} → ${input.priority}`,
+      input.parent === undefined ? null : `parent → ${input.parent ?? 'none'}`,
       input.blockedBy === undefined
         ? null
-        : `blockers → ${input.blockedBy.length === 0 ? 'none' : input.blockedBy.join(', ')}`,
+        : `blockers → ${blockerText(input.blockedBy)}`,
     ].filter((c) => c !== null);
     return `Update ${doc.meta.id} ("${safeTitle(doc.meta.title)}"): ${changes.join(', ')}`;
+  },
+  changes(ctx, input) {
+    return updateTaskChanges(requireTask(ctx, input.taskId), input);
   },
   apply(ctx, input) {
     requireTasks(ctx).update(input.taskId, {
       ...(input.title !== undefined ? { title: input.title } : {}),
+      ...(input.description !== undefined
+        ? { description: input.description }
+        : {}),
       ...(input.status !== undefined
         ? { status: requireStatus(ctx, input.status) }
         : {}),
       ...(input.priority !== undefined ? { priority: input.priority } : {}),
+      ...(input.parent !== undefined ? { parent: input.parent } : {}),
       ...(input.blockedBy !== undefined ? { blockedBy: input.blockedBy } : {}),
     });
-    return { entities: [input.taskId] };
+    return { taskIds: [input.taskId], entities: [input.taskId] };
   },
 };
 
@@ -1600,6 +1744,7 @@ const queueMergeInput = z.strictObject({
 
 const queueMerge: OverseerMutatingTool<z.infer<typeof queueMergeInput>> = {
   name: 'queue_merge',
+  tier: 'medium',
   description:
     'Put one finished, reviewed run in the merge queue to land. One card per run: never the whole project at once.',
   inputSchema: queueMergeInput,
@@ -1629,6 +1774,23 @@ export const OVERSEER_MUTATING_TOOLS: readonly OverseerMutatingTool[] = [
   updateTask,
   queueMerge,
 ] as OverseerMutatingTool[];
+
+const TIER_RANK: Record<OverseerActionTier, number> = {
+  low: 0,
+  medium: 1,
+  high: 2,
+};
+
+// The riskier of a tool's tier and what its input asks for: an input can
+// raise a call's tier, never lower it.
+function higherTier(
+  base: OverseerActionTier,
+  raised: OverseerActionTier | undefined
+): OverseerActionTier {
+  return raised !== undefined && TIER_RANK[raised] > TIER_RANK[base]
+    ? raised
+    : base;
+}
 
 // ---------------------------------------------------------------------------
 // Registry
@@ -1730,6 +1892,7 @@ export class OverseerToolRegistry {
     // act on, so the overseer finds out while it can still say something useful
     // — rather than the human confirming an action that was never going to work.
     const summary = tool.describe(this.ctx, input);
+    const changes = tool.changes?.(this.ctx, input);
     const action: OverseerAction = {
       id: this.mintId(),
       tool: tool.name,
@@ -1737,6 +1900,8 @@ export class OverseerToolRegistry {
       summary,
       createdAt: this.now(),
       status: 'pending',
+      tier: higherTier(tool.tier, tool.tierOf?.(this.ctx, input)),
+      ...(changes !== undefined && changes.length > 0 ? { changes } : {}),
     };
     this.actions.set(action.id, action);
     return action;
@@ -1782,6 +1947,34 @@ export class OverseerToolRegistry {
       throw err;
     }
     return action;
+  }
+
+  /**
+   * Writes the audit receipt for an action that ran without a human deciding
+   * it: a ledger decision attributed to the project's human, whose standing
+   * setting allowed it. `how` names that setting; the "auto-decided by"
+   * wording is what sends the entry to the audit lens (classifyLedgerEntry)
+   * rather than into memory.
+   */
+  recordAutoApproved(action: OverseerAction, how: string): void {
+    const taskId = action.taskIds?.[0];
+    const task =
+      taskId === undefined
+        ? null
+        : (this.ctx.cache.get(taskId) ?? this.ctx.store.get(taskId));
+    this.ctx.ledgerStore.add({
+      milestoneId: task?.meta.parent ?? null,
+      sourceTaskId: taskId ?? null,
+      kind: 'decision',
+      title: `Overseer: ${action.summary}`,
+      detail: `${action.summary} — auto-decided by ${how}`,
+      authoredBy: this.ctx.ownerRef,
+    });
+  }
+
+  /** Forgets an action nobody will decide: an auto-run one whose effect failed. */
+  dropAction(id: string): void {
+    this.actions.delete(id);
   }
 
   /** Records that the human refused this action. Nothing is executed. */

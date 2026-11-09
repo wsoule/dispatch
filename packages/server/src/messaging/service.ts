@@ -1,5 +1,9 @@
 import type { MessagingConfig, TaskStorePort } from '@dispatch-foo/core';
-import { DEFAULT_MESSAGING, loadConfig } from '@dispatch-foo/core';
+import {
+  DEFAULT_MESSAGING,
+  loadConfig,
+  OVERSEER_GRANT_ANSWER,
+} from '@dispatch-foo/core';
 import type {
   FederationHooks,
   Message,
@@ -85,7 +89,8 @@ interface OverseerGateTarget {
     actionId: string,
     approve: boolean,
     actor: string,
-    ownerCredential: boolean
+    ownerCredential: boolean,
+    scope?: 'once' | 'session'
   ): Promise<unknown>;
   decideApproval(
     conversationId: string,
@@ -528,7 +533,10 @@ export function openMessaging(deps: {
         gate.actionId,
         answer.choice === 'confirm',
         answer.from,
-        answeredWithOwnerCredential()
+        answeredWithOwnerCredential(),
+        // "Allow for this conversation" rides on the confirm's body, so the
+        // gate keeps the protocol's two choices.
+        answer.body.trim() === OVERSEER_GRANT_ANSWER ? 'session' : 'once'
       )
     );
   });

@@ -1,3 +1,4 @@
+import type { DependentStart } from './graph.js';
 import type { LabelDefinition } from './labels.js';
 import { DEFAULT_STATUS_MAP } from './linearMap.js';
 import type { Person } from './people.js';
@@ -39,6 +40,10 @@ export interface OrchestratorConfig {
   runCostEstimateUsd: number;
   /** The executor a dispatch runs on when the caller names none. */
   executor: string;
+  /** When a milestone fan-out may start a task whose blocker is not done yet —
+   *  see `DependentStart`. Defaults to `landed`: a blocker in review is still
+   *  waiting on a human, so nothing is built on top of it automatically. */
+  startDependents: DependentStart;
 }
 
 /** The largest `maxConcurrency` the loader accepts. Browser-safe so the
@@ -221,6 +226,29 @@ export const DEFAULT_SYNC: SyncConfig = {
   intervalSec: 30,
 };
 
+/**
+ * How much the overseer does without asking. Its mutating tools come in three
+ * risk tiers: low (filing and editing tasks, messaging a live run), medium
+ * (dispatching, answering a run's approval, the merge queue) and high
+ * (cancelling or discarding a run, sending as the human). `cautious` asks
+ * about every one; `balanced` runs the low tier at once and asks about a
+ * medium-tier tool once per conversation; `trusting` runs the medium tier at
+ * once too. The high tier asks every time, in every mode.
+ */
+export const OVERSEER_AUTONOMY_LEVELS = [
+  'cautious',
+  'balanced',
+  'trusting',
+] as const;
+export type OverseerAutonomy = (typeof OVERSEER_AUTONOMY_LEVELS)[number];
+
+/**
+ * The body a human's `confirm` answer to an `overseer-action` gate carries to
+ * also allow that tool for the rest of the conversation. Riding on the answer
+ * body keeps the gate's choices exactly the protocol's `confirm`/`cancel`.
+ */
+export const OVERSEER_GRANT_ANSWER = 'Allow for this conversation';
+
 /** One named gate in the verify pipeline. */
 export interface VerifyStep {
   name: string;
@@ -310,7 +338,8 @@ export interface DispatchConfig {
   preview?: PreviewConfig;
   /** How the Overseer chat shows a running turn. `loadConfig` always
    *  populates it; optional only so hand-built config literals predating the
-   *  block stay valid. Read it through `overseerSettings()`. */
+   *  block stay valid. Read it through `overseerSettings()` (or
+   *  `overseerAutonomy()`). */
   overseer?: OverseerConfig;
   /** How a task run's chat shows the agent at work. `loadConfig` always
    *  populates it; optional only so hand-built config literals predating the
@@ -414,18 +443,28 @@ export const OVERSEER_STREAM_MODES: readonly OverseerStreamMode[] = [
   'off',
 ];
 
-/** The `overseer:` block: settings of the project assistant's chat. */
+/** The `overseer:` block: how the project assistant's chat shows a running
+ *  turn (`stream`) and how freely it acts without asking (`autonomy`). */
 export interface OverseerConfig {
   stream: OverseerStreamMode;
+  autonomy: OverseerAutonomy;
 }
 
-export const DEFAULT_OVERSEER: OverseerConfig = { stream: 'live' };
+export const DEFAULT_OVERSEER: OverseerConfig = {
+  stream: 'live',
+  autonomy: 'balanced',
+};
 
 /** The Overseer settings a config implies. The single reader of the optional
  *  `overseer` block, so a hand-built config (test fixtures, mostly) gets the
  *  default. Returns a fresh object, as previewSettings does. */
 export function overseerSettings(config: DispatchConfig): OverseerConfig {
   return { ...DEFAULT_OVERSEER, ...(config.overseer ?? {}) };
+}
+
+/** The overseer's autonomy a config implies; the default when the block is absent. */
+export function overseerAutonomy(config: DispatchConfig): OverseerAutonomy {
+  return overseerSettings(config).autonomy;
 }
 
 /**
@@ -990,9 +1029,13 @@ export interface ConfigPatch {
   };
   /** A value sets the key, `null` removes it (its default applies again). */
   memory?: { [K in keyof MemoryConfig]?: MemoryConfig[K] | null };
-  /** How the Overseer chat shows a running turn; `null` removes the key,
-   *  so `live` applies again. */
-  overseer?: { stream?: OverseerStreamMode | null };
+  /** `stream`: how the Overseer chat shows a running turn. `autonomy`: how
+   *  freely it acts without asking. `null` removes the key, so the default
+   *  (`live` / `balanced`) applies again. */
+  overseer?: {
+    stream?: OverseerStreamMode | null;
+    autonomy?: OverseerAutonomy | null;
+  };
   /** How a task run's chat shows the agent's text; `null` removes the key,
    *  so `live` applies again. */
   runs?: { stream?: RunStreamMode | null };
