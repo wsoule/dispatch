@@ -9,7 +9,9 @@ import { HostedWorkspaces } from './hosting/workspaces.js';
 import type { Connection } from './hub.js';
 import { deviceOfRow, TeamHubs } from './hub.js';
 import { LinearError, linearOp, Sealer, TeamLinear } from './linear.js';
+import { machinesHandler } from './machines.js';
 import { mcpHandler } from './mcp.js';
+import { PAGE_CSP, signInPage } from './pages.js';
 import { LinearGrants } from './planner/grants.js';
 import { plannerHandler } from './planner/routes.js';
 import {
@@ -165,6 +167,29 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
         ws.close(1008, 'open the workspace again');
   }, 5 * 60_000);
 
+  // Your own machines from the web, over their hub links (machines.ts).
+  const machines = machinesHandler({
+    db,
+    hubs,
+    origin: config.origin,
+    distDir: config.desktopDistDir ?? null,
+    userOf: (req) => webUserOf(db, req),
+    signIn: (next) =>
+      new Response(
+        signInPage(
+          next,
+          config.devLogin,
+          (config.linearClientId ?? null) !== null
+        ),
+        {
+          headers: {
+            'content-type': 'text/html; charset=utf-8',
+            'content-security-policy': PAGE_CSP,
+          },
+        }
+      ),
+  });
+
   const server = Bun.serve<SocketData>({
     port: config.port,
     hostname: config.hostname,
@@ -275,6 +300,25 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
           ? undefined
           : Response.json({ error: 'upgrade to a WebSocket' }, { status: 426 });
       }
+      // A machine page's live-update socket: open, with no events yet (the
+      // hub link forwards requests, not the event stream).
+      const machineWatch = /^\/m\/([^/]+)\/([0-9a-f]{16})\/ws$/.exec(
+        url.pathname
+      );
+      if (
+        machineWatch !== null &&
+        machines.watches(
+          machineWatch[1] ?? '',
+          machineWatch[2] ?? '',
+          url.searchParams.get('token') ?? '',
+          req
+        )
+      )
+        return srv.upgrade(req, { data: { kind: 'planner' } })
+          ? undefined
+          : Response.json({ error: 'upgrade to a WebSocket' }, { status: 426 });
+      const fromMachines = await machines.fetch(req);
+      if (fromMachines !== null) return fromMachines;
       const fromPlanner = await planner.fetch(req);
       if (fromPlanner !== null) return fromPlanner;
       const fromMcp = await mcp(req);

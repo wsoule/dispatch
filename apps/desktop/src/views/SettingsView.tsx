@@ -11,6 +11,7 @@ import {
   FileDiff,
   FolderSearch,
   Gauge,
+  Globe,
   KeyRound,
   MonitorPlay,
   Network,
@@ -80,6 +81,7 @@ import {
 } from '../components/settings/SettingsLayout';
 import { TakeOverDaemon } from '../components/settings/TakeOverDaemon';
 import { TeamSection } from '../components/settings/TeamSection';
+import { WebAccessSection } from '../components/settings/WebAccessSection';
 import { AgentStep } from '../components/setup/AgentStep';
 import { CliCommandStep } from '../components/setup/CliCommandStep';
 import { GitStep } from '../components/setup/GitStep';
@@ -445,6 +447,15 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
             canOperate={ctx.canOperate}
           />
         )),
+      },
+      {
+        id: 'web',
+        label: SETTINGS_PAGE_LABELS.web,
+        icon: Globe,
+        intro:
+          'Open this machine’s projects from app.dispatch.foo, in any browser, signed in as you.',
+        savesConfig: false,
+        render: (ctx) => <WebAccessSection data={ctx.data} />,
       },
       {
         id: 'daemon',

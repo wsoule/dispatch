@@ -3899,6 +3899,11 @@ export interface ApiClient {
   syncBoardNow(): Promise<BoardSyncStatus>;
   /** The plan this project runs on, and how many seats are in use. */
   fetchLicense(): Promise<LicenseStatus>;
+  /** Whether app.dispatch.foo may reach this machine's projects (409 when
+   *  no Dispatch hub runs here). */
+  getWebAccess(): Promise<{ enabled: boolean }>;
+  /** Turns web access on or off for this whole machine (operator only). */
+  setWebAccess(enabled: boolean): Promise<{ enabled: boolean }>;
   /** Installs a license key. Rejects with the reason when it does not
    *  verify; the key already installed stays. */
   installLicense(key: string): Promise<LicenseStatus>;
@@ -4993,6 +4998,12 @@ export function createApiClient(
     syncBoardNow: () =>
       request(target, '/api/board-sync/now', { method: 'POST' }),
     fetchLicense: () => request(target, '/api/license'),
+    getWebAccess: () => request(target, '/api/machine/web-access'),
+    setWebAccess: (enabled) =>
+      request(target, '/api/machine/web-access', {
+        method: 'PUT',
+        body: JSON.stringify({ enabled }),
+      }),
     installLicense: (key) =>
       request(target, '/api/license', {
         method: 'PUT',

@@ -647,6 +647,35 @@ export class TeamDb {
       }));
   }
 
+  /** A person's own signed-in machines, across their teams, newest first. */
+  devicesOfUser(userId: string): (Device & { teamName: string })[] {
+    return this.db
+      .query<
+        {
+          id: string;
+          user_id: string;
+          team_id: string;
+          client: string;
+          last_seen: string | null;
+          team_name: string;
+        },
+        [string]
+      >(
+        `SELECT d.id, d.user_id, d.team_id, d.client, d.last_seen, t.name AS team_name
+         FROM devices d JOIN teams t ON t.id = d.team_id
+         WHERE d.user_id = ? AND d.revoked = 0 ORDER BY d.created_at DESC`
+      )
+      .all(userId)
+      .map((r) => ({
+        id: r.id,
+        userId: r.user_id,
+        teamId: r.team_id,
+        client: r.client,
+        lastSeen: r.last_seen,
+        teamName: r.team_name,
+      }));
+  }
+
   /** Records the replica id a device's machine hub links as, kept while it
    *  is offline; false when another device on the team already has it. */
   setDeviceReplica(deviceId: string, replica: string): boolean {

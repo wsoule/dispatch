@@ -74,7 +74,10 @@ function inDir(dir: string, pathname: string): string | null {
 
 // The connection the desktop reads at boot (lib/tauri.ts demoConfig), placed
 // before its scripts. `<` is escaped so a value cannot close the tag.
-function injected(html: string, config: Record<string, unknown>): string {
+export function injected(
+  html: string,
+  config: Record<string, unknown>
+): string {
   const script = `<script>window.__DISPATCH_DEMO__=${JSON.stringify(config).replace(/</g, '\\u003c')}</script>`;
   return html.includes('</head>')
     ? html.replace('</head>', `${script}</head>`)

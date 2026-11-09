@@ -1139,13 +1139,21 @@ async function bootServer(
       (opts.remoteAccess?.enabled ?? process.env.DISPATCH_REMOTE !== 'off'),
     log: (line) => console.log(line),
   });
+  // The hub link is made further down; its web credential (requests a person
+  // forwards from app.dispatch.foo through this machine's hub) speaks for the
+  // operator at the decide tier, as a paired phone does.
+  let webForwarding: DaemonHubLink | null = null;
   const tokens: DaemonTokens = {
     ...tokenPair,
     registry: new TokenRegistry(
       tokenPair,
       actorContext.member.handle,
       team.teammates,
-      remoteAccess
+      {
+        matches: (digest) =>
+          remoteAccess.matches(digest) ||
+          (webForwarding?.webMatches(digest) ?? false),
+      }
     ),
   };
 
@@ -1760,6 +1768,7 @@ async function bootServer(
           owner: actorContext.humanRef,
         })
       : null;
+  webForwarding = hubLink;
   const messagingFederation = hubLink?.hooks() ?? mailFederation?.hooks;
   const messaging = openMessaging({
     rootDir,

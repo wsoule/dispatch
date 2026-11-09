@@ -28,6 +28,7 @@ import type { HubLink } from './links.js';
 import { HubLinks, projectAddress } from './links.js';
 import type { RosterAgent, TeamFile } from './team.js';
 import { isTeamRow, TeamLink } from './team.js';
+import { HubWeb } from './web.js';
 
 // The machine hub: one per OS user, it homes every MCP session's address and
 // mail, whatever repo the session works in. Its routes are the subset of
@@ -117,6 +118,7 @@ export async function startHub(opts: HubOptions): Promise<HubHandle> {
   const owner = `human:${opts.handle}`;
   const host = new HubHost(store, owner);
   const links = new HubLinks(opts.dir, store);
+  const web = new HubWeb(opts.dir, links);
   host.federation = links.hooks();
   const engine = new DeliveryEngine({ store, host });
   links.attach(engine);
@@ -129,6 +131,7 @@ export async function startHub(opts: HubOptions): Promise<HubHandle> {
           store,
           me: links.replica,
           ownRoster: () => ownRoster() as unknown as RosterAgent[],
+          web,
         });
   links.setTeam(team);
   team?.start();
@@ -254,6 +257,19 @@ export async function startHub(opts: HubOptions): Promise<HubHandle> {
       return send(res, 200, { ok: true, hub: true, id: opts.id });
     if (route === 'GET config')
       return send(res, 200, { messaging: { agentBlockingTimeoutSec: 600 } });
+
+    // The machine-wide web switch (hub/web.ts), for this machine's daemons.
+    if (route === 'GET web-access' || route === 'PUT web-access') {
+      if (principalOf(req).kind !== 'hub')
+        throw new HttpError(403, 'use the hub token');
+      if (route === 'PUT web-access') {
+        const body = (await readJson(req)) as { enabled?: unknown };
+        if (typeof body.enabled !== 'boolean')
+          throw new HttpError(400, 'expected { enabled: boolean }');
+        web.setEnabled(body.enabled);
+      }
+      return send(res, 200, { enabled: web.enabled() });
+    }
 
     if (route === 'POST agents/register') {
       if (principalOf(req).kind !== 'hub')

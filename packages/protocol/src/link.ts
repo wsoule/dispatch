@@ -25,6 +25,37 @@ export interface LinkState {
   entries: (StateEntry | SettleEntry)[];
 }
 
+/**
+ * One HTTP request a person signed in to the team service sends to a project
+ * daemon on their own machine: the team service frames it over the machine
+ * hub's link, the hub hands it to that project's daemon, and the daemon
+ * replays it on its own API at the decide tier. `body` is base64.
+ */
+export interface LinkHttpRequest {
+  /** Which linked project: the hub's key for its root (`LinkProject.key`). */
+  project: string;
+  method: string;
+  /** Path and query, always under `/api/`. */
+  path: string;
+  headers: Record<string, string>;
+  body: string;
+}
+
+/** The daemon's answer to a LinkHttpRequest; `body` is base64. */
+export interface LinkHttpResponse {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
+/** A project daemon linked to a machine's hub, as the team service lists it. */
+export interface LinkProject {
+  /** A stable key for the project's root on this machine. */
+  key: string;
+  /** The root's last path segment, for people to recognise. */
+  name: string;
+}
+
 export type LinkSend = (
   kind: 'mail' | 'state',
   body: LinkMail | LinkState
