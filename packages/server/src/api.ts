@@ -4637,6 +4637,19 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'GET', segments: ['remote'], tier: 'operator' },
   { method: 'POST', segments: ['remote', 'pair'], tier: 'operator' },
   { method: 'DELETE', segments: ['remote', 'devices', '*'], tier: 'operator' },
+  // Stored subscription accounts are machine-wide secrets; switching failover
+  // decides which account's usage a run spends.
+  { method: 'POST', segments: ['setup', 'accounts'], tier: 'operator' },
+  {
+    method: 'POST',
+    segments: ['setup', 'accounts', 'failover'],
+    tier: 'operator',
+  },
+  {
+    method: 'DELETE',
+    segments: ['setup', 'accounts', '*', '*'],
+    tier: 'operator',
+  },
   // ---- decide: adjudication -------------------------------------------------
   // Starting a preview runs a command out of the run's own worktree — a
   // worktree the agent just wrote to, including its package.json. On the

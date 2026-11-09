@@ -172,6 +172,16 @@ export interface SubagentSummary {
   stopped: number;
 }
 
+/** GET /api/setup/accounts: each executor's accounts in failover order,
+ *  `default` (its own login) first, and which are out of usage until when. */
+export interface AccountsReport {
+  executors: {
+    executor: string;
+    failover: boolean;
+    accounts: { label: string; addedAt?: string; limitedUntil?: string }[];
+  }[];
+}
+
 export interface RunMeta {
   id: string;
   taskId: string;
@@ -191,6 +201,9 @@ export interface RunMeta {
   model?: string;
   /** The reasoning effort this run started at; absent is the model default. */
   effort?: EffortLevel;
+  /** The subscription account this run ran on ('default' is the executor's
+   *  own login); absent when no extra accounts are stored. */
+  account?: string;
   /** ActorRef of the human the run is for (who dispatched it, or started its
    *  fan-out) — see the server's RunMeta. */
   dispatchedBy?: string;
@@ -3789,6 +3802,18 @@ export interface ApiClient {
   fetchExecutors(): Promise<ExecutorsResponse>;
   fetchSetup(): Promise<SetupReport>;
   saveAgentKey(provider: string, apiKey: string | null): Promise<SetupReport>;
+  /** The subscription accounts usage-limit failover moves runs between. */
+  fetchAccounts(): Promise<AccountsReport>;
+  saveAccount(
+    executor: string,
+    label: string,
+    token: string
+  ): Promise<AccountsReport>;
+  removeAccount(executor: string, label: string): Promise<AccountsReport>;
+  setAccountFailover(
+    executor: string,
+    enabled: boolean
+  ): Promise<AccountsReport>;
   refreshSetup(): Promise<{ added: string[] }>;
   // Every in-memory conversation agent (planner chats, enrich agents, task
   // drafts, overseer chats), newest activity first — the non-run half of the
@@ -4874,6 +4899,23 @@ export function createApiClient(
       request(target, '/api/setup/agent-key', {
         method: 'POST',
         ...jsonBody({ provider, apiKey }),
+      }),
+    fetchAccounts: () => request(target, '/api/setup/accounts'),
+    saveAccount: (executor, label, token) =>
+      request(target, '/api/setup/accounts', {
+        method: 'POST',
+        ...jsonBody({ executor, label, token }),
+      }),
+    removeAccount: (executor, label) =>
+      request(
+        target,
+        `/api/setup/accounts/${encodeURIComponent(executor)}/${encodeURIComponent(label)}`,
+        { method: 'DELETE' }
+      ),
+    setAccountFailover: (executor, enabled) =>
+      request(target, '/api/setup/accounts/failover', {
+        method: 'POST',
+        ...jsonBody({ executor, enabled }),
       }),
     refreshSetup: () =>
       request(target, '/api/setup/refresh', {

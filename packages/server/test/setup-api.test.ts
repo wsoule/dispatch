@@ -229,5 +229,92 @@ describe('/api/setup', () => {
       ).status
     ).toBe(403);
     expect((await asAgent('/api/setup/refresh', {})).status).toBe(403);
+    expect(
+      (
+        await asAgent('/api/setup/accounts', {
+          executor: 'claude',
+          label: 'work',
+          token: 'oat-1',
+        })
+      ).status
+    ).toBe(403);
+    expect(
+      (
+        await asAgent('/api/setup/accounts/failover', {
+          executor: 'claude',
+          enabled: true,
+        })
+      ).status
+    ).toBe(403);
+  });
+});
+
+describe('/api/setup/accounts', () => {
+  interface AccountsBody {
+    executors: {
+      executor: string;
+      failover: boolean;
+      accounts: { label: string; addedAt?: string; limitedUntil?: string }[];
+    }[];
+  }
+  const claude = async (res: Response) =>
+    ((await res.json()) as AccountsBody).executors.find(
+      (e) => e.executor === 'claude'
+    )!;
+
+  it('stores accounts in order, switches failover, and never returns a token', async () => {
+    expect(await claude(await fetch(`${baseUrl}/api/setup/accounts`))).toEqual({
+      executor: 'claude',
+      failover: false,
+      accounts: [{ label: 'default' }],
+    });
+    await post('/api/setup/accounts', {
+      executor: 'claude',
+      label: 'work',
+      token: 'oat-secret',
+    });
+    const res = await post('/api/setup/accounts/failover', {
+      executor: 'claude',
+      enabled: true,
+    });
+    const text = await res.clone().text();
+    expect(text).not.toContain('oat-secret');
+    const entry = await claude(res);
+    expect(entry.failover).toBe(true);
+    expect(entry.accounts.map((a) => a.label)).toEqual(['default', 'work']);
+    expect(entry.accounts[1].addedAt).toBeString();
+
+    const removed = await fetch(`${baseUrl}/api/setup/accounts/claude/work`, {
+      method: 'DELETE',
+    });
+    expect((await claude(removed)).accounts).toEqual([{ label: 'default' }]);
+    expect(
+      (
+        await fetch(`${baseUrl}/api/setup/accounts/claude/work`, {
+          method: 'DELETE',
+        })
+      ).status
+    ).toBe(404);
+  });
+
+  it('rejects an unknown executor and a bad label', async () => {
+    expect(
+      (
+        await post('/api/setup/accounts', {
+          executor: 'codex',
+          label: 'work',
+          token: 't',
+        })
+      ).status
+    ).toBe(400);
+    expect(
+      (
+        await post('/api/setup/accounts', {
+          executor: 'claude',
+          label: 'default',
+          token: 't',
+        })
+      ).status
+    ).toBe(400);
   });
 });

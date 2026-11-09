@@ -1,4 +1,5 @@
 import {
+  DEFAULT_ACCOUNT,
   DISPATCH_DIR,
   executorModels,
   generateRunId,
@@ -59,6 +60,7 @@ import { LiveTextBuffer } from '../liveText.js';
 import type { LiveText } from '../liveText.js';
 import type { OperatorRouting } from '../messaging/operatorRouting.js';
 import { statusModelFor } from '../statuses.js';
+import { AccountFailover } from './accountFailover.js';
 import { dirSizeBytes } from './dirSize.js';
 import { truncateReason } from './mergeQueue.js';
 import {
@@ -114,6 +116,7 @@ import type {
   RunMeta,
   RunState,
   RunSurvey,
+  UsageLimitStop,
 } from './types.js';
 import {
   BOOT_FORCE_FAIL_ERROR,
@@ -201,6 +204,10 @@ export interface OrchestratorContext {
   // Whether a task came in over A2A; such a task's runs act for no one.
   // Absent means no task did.
   isA2ATask?: (taskId: string) => boolean;
+  // Which subscription account each run starts on, and where a usage-limited
+  // run continues (see accountFailover.ts). Defaults to one over the stored
+  // accounts in credentials.json; tests pass a fixed source.
+  accountFailover?: AccountFailover;
 }
 
 // The name api.ts's createRun falls back to when a caller omits `executor`
@@ -436,6 +443,8 @@ export class Orchestrator {
   private readonly prRefDeletes = new Map<string, Promise<void>>();
   private readonly runCommand: CommandRunner;
   private readonly worktrees: WorktreeManager;
+  // Public so the accounts API can report which accounts are limited.
+  readonly accounts: AccountFailover;
   private readonly findingStore: FindingStorePort;
   // The repo map injected into every run prompt (see taskBrief). Held on
   // the orchestrator rather than built per dispatch so its single-flight
@@ -546,6 +555,7 @@ export class Orchestrator {
 
   constructor(private readonly ctx: OrchestratorContext) {
     this.worktrees = new WorktreeManager(ctx.rootDir);
+    this.accounts = ctx.accountFailover ?? new AccountFailover();
     this.findingStore = ctx.findingStore ?? new FindingStore(ctx.rootDir);
     this.digestCache = ctx.digestCache ?? new RepoDigestCache(ctx.rootDir);
     this.claimsRefreshCooldownMs =
@@ -1247,6 +1257,7 @@ export class Orchestrator {
       updatedAt: now,
       model: opts.model,
       ...this.effortField(opts.effort),
+      ...this.accountField(executorName),
       // Only a human ref is recorded: 'none' with no `dispatchedBy` is how an
       // automatic caller says the run is nobody's, and crediting it to anyone
       // would be inventing an owner.
@@ -1365,6 +1376,7 @@ export class Orchestrator {
       updatedAt: now,
       model: opts.model,
       ...this.effortField(opts.effort),
+      ...this.accountField(executorName),
       kind: opts.kind,
       operator: this.a2a(opts.taskId) ? null : opts.operator,
       memoryLineage: runId,
@@ -4785,6 +4797,14 @@ export class Orchestrator {
   ): void {
     let executorRun;
     try {
+      const label = this.registry.get(runId)?.account;
+      if (label !== undefined) {
+        const executorName = this.registry.get(runId)!.executor;
+        opts = {
+          ...opts,
+          account: this.accounts.credential(executorName, label),
+        };
+      }
       if (this.mintRunToken !== null) {
         const token = this.mintRunToken(runId);
         opts = { ...opts, runTokenFile: this.writeRunToken(runId, token) };
@@ -5471,6 +5491,7 @@ export class Orchestrator {
       experiments?: string[];
       sessionId?: string;
       error?: string;
+      usageLimit?: UsageLimitStop;
     }
   ): void {
     const meta = this.registry.get(runId);
@@ -5561,7 +5582,49 @@ export class Orchestrator {
       this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
       this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     });
+    // Before the terminal hooks, so the epic engine sees the successor
+    // holding this run's slot instead of filling it with another task.
+    if (
+      effectiveFinish.state === 'failed' &&
+      effectiveFinish.usageLimit !== undefined
+    ) {
+      this.failOverAccount(runId, effectiveFinish.usageLimit);
+    }
     this.fireTerminalHooks(runId);
+  }
+
+  // A run its account's usage limit stopped: marks that account limited and,
+  // when failover is on and another account still has usage, resumes the
+  // run's session there right away. Otherwise the run stays failed as it
+  // always has. A refused resume (a held daemon, an open PR, no session)
+  // leaves the run failed too, never throws into the finish path.
+  private failOverAccount(runId: string, limit: UsageLimitStop): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return;
+    const from = meta.account ?? DEFAULT_ACCOUNT;
+    const next = this.accounts.afterLimit(meta.executor, from, limit.resetsAt);
+    if (next === null || meta.sessionId === undefined) return;
+    this.bestEffort(
+      `failing run ${runId} over to account '${next.label}'`,
+      () => {
+        this.resumeRun(runId, {
+          auto: true,
+          account: next.label,
+          failoverFrom: from,
+        });
+      }
+    );
+  }
+
+  // The `account` a new run's RunMeta records: the one it starts on, or
+  // nothing when the executor has no stored accounts. `preferred` is the
+  // account of the run it continues.
+  private accountField(
+    executorName: string,
+    preferred?: string
+  ): { account?: string } {
+    const account = this.accounts.accountFor(executorName, preferred);
+    return account === undefined ? {} : { account: account.label };
   }
 
   // Resolves which executor a request-changes redispatch should actually use
@@ -5638,6 +5701,8 @@ export class Orchestrator {
       // to a different model mid-conversation.
       model: oldMeta.model,
       effort: oldMeta.effort,
+      // The conversation stays on its account unless that one is out of usage.
+      ...this.accountField(executorName, oldMeta.account),
       // Carries forward whatever the prior run had already claimed — a
       // follow-up must not look like it has never touched anything.
       claims: oldMeta.claims,
@@ -5760,6 +5825,10 @@ export class Orchestrator {
       actor?: string;
       dispatchedBy?: string;
       operator?: string | null;
+      // The account the successor runs on, and the one a usage limit moved
+      // it off (failOverAccount); absent keeps the predecessor's.
+      account?: string;
+      failoverFrom?: string;
     } = {}
   ): RunMeta {
     this.refuseHeld();
@@ -5817,6 +5886,7 @@ export class Orchestrator {
       ...(continuing ? { sessionId: meta.sessionId } : {}),
       model: meta.model,
       effort: meta.effort,
+      ...this.accountField(executorName, opts.account ?? meta.account),
       // See requestChanges' matching comment — a resumed run keeps whatever
       // its predecessor had already claimed.
       claims: meta.claims,
@@ -5877,9 +5947,11 @@ export class Orchestrator {
       ? ` (executor '${meta.executor}' is no longer registered — substituted '${executorName}')`
       : '';
     const how =
-      opts.auto === true
-        ? `auto-resumed after ${meta.state} (daemon restart)`
-        : `resumed after ${meta.state}`;
+      opts.failoverFrom !== undefined
+        ? `usage limit on account '${opts.failoverFrom}' — continuing on account '${newMeta.account ?? DEFAULT_ACCOUNT}'`
+        : opts.auto === true
+          ? `auto-resumed after ${meta.state} (daemon restart)`
+          : `resumed after ${meta.state}`;
     const sessionNote = continuing
       ? ', continuing its session'
       : ` as a fresh session: run ${meta.id} never started a conversation`;

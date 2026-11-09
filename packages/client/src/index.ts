@@ -38,6 +38,7 @@ export type {
   A2APeerSummary,
   A2ARotation,
   A2ATaskSummary,
+  AccountsReport,
   AdjudicateFindingInput,
   AdjudicateFindingResult,
   AdvanceFixLoopInput,

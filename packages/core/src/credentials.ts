@@ -57,6 +57,20 @@ export interface ProjectCredentials {
   };
 }
 
+/** One stored subscription account: a long-lived OAuth token under a label. */
+export interface StoredAgentAccount {
+  label: string;
+  token: string;
+  addedAt: string;
+}
+
+/** One executor's stored accounts, in failover order, and whether a run that
+ *  hits a usage limit moves to the next one. */
+export interface StoredAgentAccounts {
+  failover?: boolean;
+  accounts?: StoredAgentAccount[];
+}
+
 /** User-level secrets. Never written to a project's `.dispatch/`. */
 export interface CredentialsFile {
   /** Machine-wide default, kept as a read-only fallback. Nothing writes it any more. */
@@ -65,6 +79,9 @@ export interface CredentialsFile {
   typesafe?: { apiKey: string };
   /** Agent API keys by env var (ANTHROPIC_API_KEY, …), machine-wide. Set from Setup. */
   agents?: Record<string, string>;
+  /** Extra subscription accounts per executor (`claude`), for usage-limit
+   *  failover. See setup/agentAccounts.ts. */
+  agentAccounts?: Record<string, StoredAgentAccounts>;
   /** Per-project secrets, keyed by `normalizeProjectPath` of the project root. */
   projects?: Record<string, ProjectCredentials>;
   /** This person's Linear sign-ins on this machine, by Linear organization

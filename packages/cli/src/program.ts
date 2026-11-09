@@ -15,6 +15,7 @@ import { join } from 'node:path';
 
 import packageJson from '../package.json';
 import { registerA2ACommands } from './commands/a2a.js';
+import { registerAccountsCommands } from './commands/accounts.js';
 import { registerApprovalsCommands } from './commands/approvals.js';
 import { registerBoardSyncCommands } from './commands/boardSync.js';
 import { registerBrowserCommands } from './commands/browser.js';
@@ -328,6 +329,7 @@ export function makeProgram(ctx: CliContext): Command {
 
   registerTaskCommands(program, ctx);
   registerDoctorCommand(program, ctx);
+  registerAccountsCommands(program, ctx);
   registerDaemonCommands(program, ctx);
   registerOrchestrateCommands(program, ctx);
   registerPlanCommands(program, ctx);
