@@ -162,6 +162,11 @@ export class HostedWorkspaces {
   }
 
   /** Where a member's live-update socket connects, with their token. */
+  /** Starts the workspace's daemon if it is not running. */
+  async warm(orgId: string): Promise<void> {
+    await this.host.ensure(orgId);
+  }
+
   /** Whether this person may use the workspace now: a recent Linear round
    *  trip confirmed them, and they are not a guest (guests see only some
    *  teams in Linear; the shared board would show them all). */

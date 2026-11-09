@@ -4987,7 +4987,7 @@ async function hostedRefusal(
       .clone()
       .json()
       .catch(() => null);
-    const problem = hostedConfigProblem(body);
+    const problem = hostedConfigProblem(body, ownerCredential);
     if (problem !== null) return errorResponse(403, problem);
   }
   return null;

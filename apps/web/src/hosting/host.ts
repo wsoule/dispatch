@@ -1,7 +1,7 @@
 import { TaskStore } from '@dispatch-foo/core';
 import type { LinearAccountRecord } from '@dispatch-foo/core';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // Runs one real dispatchd per hosted Linear workspace, so app.dispatch.foo's
@@ -92,6 +92,19 @@ export class WorkspaceHost {
       mode: 0o600,
     });
     await this.stop(orgId);
+  }
+
+  /**
+   * Replaces the workspace's project with what `seed` writes into a fresh
+   * root (the demo), stopping its daemon first; the next request boots on it.
+   */
+  async replace(orgId: string, seed: (root: string) => void): Promise<void> {
+    await this.stop(orgId);
+    const { root, home } = this.paths(orgId);
+    rmSync(join(root, '..'), { recursive: true, force: true });
+    mkdirSync(home, { recursive: true, mode: 0o700 });
+    mkdirSync(root, { recursive: true });
+    seed(root);
   }
 
   /** The workspace's daemon, started (or restarted) if it is not running. */

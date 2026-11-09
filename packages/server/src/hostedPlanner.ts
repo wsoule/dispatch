@@ -15,8 +15,8 @@ const ALLOWED: ReadonlyArray<readonly [method: string, path: string]> = [
   ['GET', 'people'],
   ['GET', 'setup'],
   ['GET', 'executors'],
-  // Settings: only planning, statuses, labels and the Linear teams, at any
-  // tier (hostedConfigProblem).
+  // Settings: only planning, statuses and labels at any tier; the linked
+  // Linear teams by the host alone (hostedConfigProblem).
   ['GET', 'config'],
   ['PATCH', 'config'],
   ['GET', 'labels'],
@@ -151,8 +151,16 @@ const LINEAR_KEYS = new Set([
   'archiveFinished',
 ]);
 
-/** Why a hosted planner refuses this `PATCH /api/config` body, or null. */
-export function hostedConfigProblem(body: unknown): string | null {
+// Which Linear teams the board links: the host picks them (public teams
+// only), since a private team's issues would show to every member.
+const HOST_LINEAR_KEYS = new Set(['teamId', 'teamIds']);
+
+/** Why a hosted planner refuses this `PATCH /api/config` body, or null.
+ *  `owner` is whether the host's own credential sent it. */
+export function hostedConfigProblem(
+  body: unknown,
+  owner = false
+): string | null {
   if (typeof body !== 'object' || body === null || Array.isArray(body))
     return null;
   for (const [key, value] of Object.entries(body)) {
@@ -160,7 +168,7 @@ export function hostedConfigProblem(body: unknown): string | null {
       return `\`${key}\` cannot be set on a hosted planner.`;
     if (key === 'linear' && typeof value === 'object' && value !== null)
       for (const sub of Object.keys(value))
-        if (!LINEAR_KEYS.has(sub))
+        if (!LINEAR_KEYS.has(sub) || (HOST_LINEAR_KEYS.has(sub) && !owner))
           return `\`linear.${sub}\` cannot be set on a hosted planner.`;
   }
   return null;

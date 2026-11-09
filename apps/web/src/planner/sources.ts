@@ -1,3 +1,4 @@
+import type { HostedDemo } from '../hosting/demo.js';
 import type {
   HostedWorkspaces,
   InstalledWorkspace,
@@ -13,12 +14,26 @@ import { toDispatch } from './toDispatch.js';
 // The workspaces the hosted planner can open: the public demo, and each
 // Linear workspace someone has granted read access to.
 
-/** The public demo workspace: Better Tracker's showcase, dated to today. */
-export function demoWorkspace(now: () => number = Date.now): WorkspaceSource {
+/** The public demo workspace: Better Tracker's showcase, dated to today,
+ * served by its own read-only daemon when this server hosts daemons. */
+export function demoWorkspace(
+  now: () => number = Date.now,
+  hosted: HostedDemo | null = null
+): WorkspaceSource {
   return {
     name: 'Northwind (demo)',
     shared: true,
     viewerFor: () => ({ linearUserId: null }),
+    ...(hosted === null
+      ? {}
+      : {
+          daemon: (
+            _userId: string | null,
+            pathAndQuery: string,
+            req: Request
+          ) => hosted.request(pathAndQuery, req),
+          warm: () => hosted.warm(),
+        }),
     load: () => {
       const iso = new Date(now()).toISOString();
       return Promise.resolve(
@@ -71,8 +86,12 @@ export function hostedWorkspace(
       userId === null || !hosted.admits(userId, org.orgId)
         ? null
         : grants.member(userId, org.orgId),
+    lapsed: (userId) => grants.member(userId, org.orgId) !== null,
+    warm: () => hosted.warm(org.orgId),
     load: () => Promise.reject(new Error('served by its daemon')),
     daemon: (userId, pathAndQuery, req) =>
-      hosted.request(userId, org.orgId, pathAndQuery, req),
+      userId === null
+        ? Promise.reject(new Error('signed out'))
+        : hosted.request(userId, org.orgId, pathAndQuery, req),
   };
 }
