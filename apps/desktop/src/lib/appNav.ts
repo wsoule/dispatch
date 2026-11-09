@@ -154,11 +154,8 @@ export type SettingsPage =
   | 'a2a'
   | 'license'
   | 'remotes'
-<<<<<<< HEAD
   | 'web'
-=======
   | 'devices'
->>>>>>> origin/main
   | 'daemon'
   | 'diffs'
   | 'setup';
@@ -187,11 +184,8 @@ export const SETTINGS_PAGE_LABELS: Readonly<Record<NavSettingsPage, string>> = {
   a2a: 'A2A',
   license: 'License',
   remotes: 'Remotes',
-<<<<<<< HEAD
   web: 'Web access',
-=======
   devices: 'Devices',
->>>>>>> origin/main
   daemon: 'Background',
   diffs: 'Diff display',
   setup: 'Setup',

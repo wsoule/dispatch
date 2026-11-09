@@ -451,7 +451,6 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
         )),
       },
       {
-<<<<<<< HEAD
         id: 'web',
         label: SETTINGS_PAGE_LABELS.web,
         icon: Globe,
@@ -459,7 +458,8 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
           'Open this machine’s projects from app.dispatch.foo, in any browser, signed in as you.',
         savesConfig: false,
         render: (ctx) => <WebAccessSection data={ctx.data} />,
-=======
+      },
+      {
         id: 'devices',
         label: SETTINGS_PAGE_LABELS.devices,
         icon: Smartphone,
@@ -467,7 +467,6 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
           'Your other devices on this daemon — the app on another machine, a phone — and the remote daemons this app connects to.',
         savesConfig: false,
         render: (ctx) => <DevicesSection data={ctx.data} />,
->>>>>>> origin/main
       },
       {
         id: 'daemon',
