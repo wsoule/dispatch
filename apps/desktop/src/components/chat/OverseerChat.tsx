@@ -742,7 +742,7 @@ function OverseerOutcomeRow({
         strokeWidth={1.8}
         aria-hidden
       />
-      <div className="flex min-w-0 flex-col gap-1">
+      <div className={styles.receiptBody}>
         <span>
           {text}
           <span className={styles.outcomeTime}>
@@ -751,12 +751,15 @@ function OverseerOutcomeRow({
           </span>
         </span>
         {changes !== undefined && changes.length > 0 && (
-          <ul data-testid="overseer-receipt-diff" className="flex flex-col">
+          <ul
+            data-testid="overseer-receipt-diff"
+            className={styles.receiptDiff}
+          >
             {changes.map((change) => (
               <li key={change.field}>
                 <span className={styles.outcomeTime}>{change.field}</span>{' '}
-                <span className="line-through opacity-70">{change.before}</span>{' '}
-                → {change.after}
+                <span className={styles.receiptBefore}>{change.before}</span> →{' '}
+                {change.after}
               </li>
             ))}
           </ul>
