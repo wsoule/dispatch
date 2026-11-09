@@ -15,6 +15,10 @@ import {
   vapidAuthorization,
 } from '../../src/mobile/webPush.js';
 
+// Test vectors as spaced hex bytes, turned into the base64url the code reads.
+const b64u = (bytes: string): string =>
+  Buffer.from(bytes.replaceAll(' ', ''), 'hex').toString('base64url');
+
 // RFC 8291 §5, "Push Message Encryption Example".
 const RFC = {
   plaintext: 'When I grow up, I want to be a watermelon',
@@ -22,10 +26,16 @@ const RFC = {
   uaPrivate: 'q1dXpw3UpT5VOmu_cf_v6ih07Aems3njxI-JWgLcM94',
   uaPublic:
     'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4',
-  authSecret: 'BTBZMqHH6r4Tts7J_aSIgg',
-  salt: 'DGv6ra1nlYgDCS1FRnbzlw',
-  message:
-    'DGv6ra1nlYgDCS1FRnbzlwAAEABBBP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A_yl95bQpu6cVPTpK4Mqgkf1CXztLVBSt2Ks3oZwbuwXPXLWyouBWLVWGNWQexSgSxsj_Qulcy4a-fN',
+  authSecret: b64u('05 30 59 32 a1 c7 ea be 13 b6 ce c9 fd a4 88 82'),
+  salt: b64u('0c 6b fa ad ad 67 95 88 03 09 2d 45 46 76 f3 97'),
+  message: b64u(
+    '0c 6b fa ad ad 67 95 88 03 09 2d 45 46 76 f3 97 00 00 10 00 41 04 fe 33 ' +
+      'f4 ab 0d ea 71 91 4d b5 58 23 f7 3b 54 94 8f 41 30 6d 92 07 32 db b9 a5 ' +
+      '9a 53 28 64 82 20 0e 59 7a 7b 7b c2 60 ba 1c 22 79 98 58 09 92 e9 39 73 ' +
+      '00 2f 30 12 a2 8a e8 f0 6b bb 78 e5 ec 0f f2 97 de 5b 42 9b ba 71 53 d3 ' +
+      'a4 ae 0c aa 09 1f d4 25 f3 b4 b5 41 4a dd 8a b3 7a 19 c1 bb b0 5c f5 cb ' +
+      '5b 2a 2e 05 62 d5 58 63 56 41 ec 52 81 2c 6c 8f f4 2e 95 cc b8 6b e7 cd'
+  ),
 };
 
 function hmac(key: Buffer, data: Buffer): Buffer {

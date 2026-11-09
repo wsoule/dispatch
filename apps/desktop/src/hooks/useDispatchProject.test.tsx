@@ -348,7 +348,8 @@ beforeEach(() => {
     init?: RequestInit
   ) => {
     const url = String(input instanceof Request ? input.url : input);
-    return url === `http://127.0.0.1:${PORT}/api/decisions?resolved=1`
+    return url ===
+      `http://127.0.0.1:${PORT}/api/decisions?resolved=1&dismissed=1`
       ? Promise.resolve(Response.json({ items: [] }))
       : guardedFetch(input, init);
   }) as typeof fetch);

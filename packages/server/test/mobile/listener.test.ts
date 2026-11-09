@@ -81,7 +81,12 @@ describe('the mobile app', () => {
   test('never serves the desktop entry or anything outside m/ and assets/', async () => {
     expect((await serveMobile(at('/index.html'), deps())).status).toBe(404);
     expect(
-      (await serveMobile(at('/assets/..%2findex.html'), deps())).status
+      (
+        await serveMobile(
+          at(`/assets/..${encodeURIComponent('/')}index.html`),
+          deps()
+        )
+      ).status
     ).toBe(404);
   });
 

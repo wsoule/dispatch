@@ -20,8 +20,10 @@
 }
 
 .pairHeading {
-  composes: heading;
+  color: var(--text);
   font-size: 20px;
+  font-weight: 600;
+  margin: 0;
   padding-top: 32px;
 }
 
@@ -52,7 +54,8 @@
 }
 
 .form {
-  composes: stack;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
 }
 

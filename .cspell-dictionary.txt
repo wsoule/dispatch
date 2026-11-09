@@ -279,6 +279,7 @@ keycaps
 keydowns
 keymap
 keyout
+keypair
 Khanna
 kiro
 Kunal

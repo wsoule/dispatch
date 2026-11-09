@@ -1269,14 +1269,11 @@ export class MilestoneEngine {
     this.fillHolds.set(milestoneId, new Map(holds));
   }
 
-  // One daemon-authored Activity line on a task.
+  // One daemon-authored Activity line on a task. It names no actor: the
+  // line says what happened, and an actor of `none` would print `— none`.
   private appendTaskActivity(taskId: string, text: string): void {
     const now = new Date().toISOString();
-    this.ctx.store.update(
-      taskId,
-      { appendActivity: `${now} ${text}`, activityActor: 'none' },
-      now
-    );
+    this.ctx.store.update(taskId, { appendActivity: `${now} ${text}` }, now);
     this.ctx.cache.refresh(this.ctx.store, [taskId]);
     this.ctx.events.broadcast({ type: 'task.changed', ids: [taskId] });
   }
