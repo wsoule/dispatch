@@ -54,7 +54,11 @@ export interface RosterAgent {
 
 /** A frame on a machine hub's socket: a request, or the reply to one. */
 type Frame =
-  | { id: number; kind: 'mail' | 'state' | 'agents'; body: unknown }
+  | {
+      id: number;
+      kind: 'mail' | 'state' | 'agents' | 'projects' | 'http';
+      body: unknown;
+    }
   | { re: number; ok: boolean; result?: unknown; error?: string };
 
 /** What the server needs to keep a socket: send a text frame, close it. */
@@ -106,6 +110,44 @@ class Connection {
         clearTimeout(timer);
         this.waiting.delete(id);
         resolve(false);
+      }
+    });
+  }
+
+  /**
+   * A request whose answer matters (the web's calls to this machine,
+   * hub/web.ts on the machine): resolves with the reply, or a failure when
+   * the machine does not answer within `timeoutMs`.
+   */
+  call(
+    kind: 'projects' | 'http',
+    body: unknown,
+    timeoutMs: number
+  ): Promise<{ ok: boolean; result?: unknown; error?: string }> {
+    const id = this.next++;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.waiting.delete(id);
+        resolve({ ok: false, error: 'the machine did not answer' });
+      }, timeoutMs);
+      this.waiting.set(id, (frame) => {
+        clearTimeout(timer);
+        resolve(
+          're' in frame
+            ? {
+                ok: frame.ok,
+                result: frame.result,
+                ...(frame.error === undefined ? {} : { error: frame.error }),
+              }
+            : { ok: false }
+        );
+      });
+      try {
+        this.socket.send(JSON.stringify({ id, kind, body }));
+      } catch {
+        clearTimeout(timer);
+        this.waiting.delete(id);
+        resolve({ ok: false, error: 'the machine went away' });
       }
     });
   }
@@ -564,6 +606,11 @@ export class TeamHub {
   /** For tests and the page: the connection a device holds, if any. */
   connected(deviceId: string): boolean {
     return this.connections.has(deviceId);
+  }
+
+  /** A connected device's link, to call it (the web's machine requests). */
+  connection(deviceId: string): Connection | null {
+    return this.connections.get(deviceId) ?? null;
   }
 }
 

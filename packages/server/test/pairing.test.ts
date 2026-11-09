@@ -227,11 +227,11 @@ describe('pairing over the API', () => {
     };
     const res = await call('POST', '/api/pair', null, {
       code: offered.code,
-      name: '\u001b[2Jphone\u0007',
+      name: '\u001b[2J phone\u0007',
     });
     expect(
       ((await res.json()) as { device: { name: string } }).device.name
-    ).toBe('[2Jphone');
+    ).toBe('[2J phone');
   });
 
   it('refuses a wrong code', async () => {

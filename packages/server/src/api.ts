@@ -4655,6 +4655,9 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'GET', segments: ['remote'], tier: 'operator' },
   { method: 'POST', segments: ['remote', 'pair'], tier: 'operator' },
   { method: 'DELETE', segments: ['remote', 'devices', '*'], tier: 'operator' },
+  // Whether app.dispatch.foo may reach this machine's projects: a
+  // machine-wide switch only the person at this machine turns.
+  { method: 'PUT', segments: ['machine', 'web-access'], tier: 'operator' },
   // Stored subscription accounts are machine-wide secrets; switching failover
   // decides which account's usage a run spends.
   { method: 'POST', segments: ['setup', 'accounts'], tier: 'operator' },
@@ -5461,6 +5464,10 @@ export async function handleApi(
     };
   }
   if (principal !== undefined) ctx = { ...ctx, principal };
+  if (caller?.viaWeb === true) {
+    const refused = webRefusal(method, segments);
+    if (refused !== null) return refused;
+  }
   if (daemonCtx.hostedPlanner === true) {
     const refused = await hostedRefusal(req, method, segments, ownerCredential);
     if (refused !== null) return refused;
@@ -5584,6 +5591,15 @@ export async function handleApi(
 
     const remoteRoute = handleRemoteRoute(ctx.remoteAccess, method, segments);
     if (remoteRoute !== null) return remoteRoute;
+    // GET/PUT /api/machine/web-access — the machine hub's web switch
+    // (messaging/hubLink.ts); 409 when no hub runs here.
+    if (
+      segments.length === 2 &&
+      segments[0] === 'machine' &&
+      segments[1] === 'web-access' &&
+      (method === 'GET' || method === 'PUT')
+    )
+      return await machineWebAccess(req, ctx, method);
 
     if (segments[0] === 'team' && isFederationRoute(segments)) {
       return await handleFederationRoute(req, ctx, segments, method);
@@ -7426,7 +7442,49 @@ export async function handleApi(
   }
 }
 
-// POST /api/hub-link/{mail,state,agents}: one call from the linked machine hub.
+// What a request forwarded from the web may not do, even at the decide tier:
+// hand out lasting access (pairing a device, a team token, a phone), change
+// the machine's own switches, or touch setup. Those outlive web access being
+// turned off, so they are for the person at the machine (or a paired
+// device) only.
+const WEB_REFUSED = new Set(['pair', 'devices', 'remote', 'machine', 'setup']);
+
+function webRefusal(
+  method: string,
+  segments: readonly string[]
+): Response | null {
+  const first = segments[0] ?? '';
+  const refused =
+    WEB_REFUSED.has(first) ||
+    (first === 'team' && method !== 'GET' && method !== 'HEAD');
+  return refused
+    ? errorResponse(403, 'Not from the web: do this on the machine itself.')
+    : null;
+}
+
+// The machine hub's web-access switch, through this project's hub link.
+async function machineWebAccess(
+  req: Request,
+  ctx: ApiContext,
+  method: string
+): Promise<Response> {
+  const link = ctx.hubLink ?? null;
+  let enabled: boolean | undefined;
+  if (method === 'PUT') {
+    const parsed = await readJsonBody(req);
+    if (!parsed.ok) return parsed.response;
+    const value = (parsed.value as { enabled?: unknown }).enabled;
+    if (typeof value !== 'boolean')
+      return errorResponse(400, 'expected { enabled: boolean }');
+    enabled = value;
+  }
+  const state = link === null ? null : await link.webAccess(enabled);
+  return state === null
+    ? errorResponse(409, 'No Dispatch hub runs on this machine.')
+    : jsonResponse({ enabled: state });
+}
+
+// POST /api/hub-link/{mail,state,agents,http}: one call from the linked machine hub.
 async function hubLinkRoute(
   req: Request,
   ctx: ApiContext,
@@ -7442,6 +7500,8 @@ async function hubLinkRoute(
     );
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
+  // A request a person sent from the web to this machine (phase 4).
+  if (kind === 'http') return jsonResponse(await link.forward(parsed.value));
   try {
     return jsonResponse(await link.receive(kind, parsed.value));
   } catch (err) {

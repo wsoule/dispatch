@@ -70,7 +70,7 @@ export class DecisionAckStore implements DecisionAckPort {
 
   private write(): void {
     // Tops up `.dispatch/.gitignore` (and creates the directory) first, so a
-    // project initialised before this file existed never commits it.
+    // project initialized before this file existed never commits it.
     ensureProjectGitignore(this.rootDir, 'files');
     writeFileSync(
       this.file,

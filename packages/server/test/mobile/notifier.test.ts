@@ -15,10 +15,14 @@ import {
 import type { PushOutcome } from '../../src/mobile/webPush.js';
 import { generateVapidKeys } from '../../src/mobile/webPush.js';
 
+// Test vectors as spaced hex bytes, turned into the base64url the code reads.
+const b64u = (bytes: string): string =>
+  Buffer.from(bytes.replaceAll(' ', ''), 'hex').toString('base64url');
+
 const KEYS = {
   p256dh:
     'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4',
-  auth: 'BTBZMqHH6r4Tts7J_aSIgg',
+  auth: b64u('05 30 59 32 a1 c7 ea be 13 b6 ce c9 fd a4 88 82'),
 };
 const vapid = generateVapidKeys();
 

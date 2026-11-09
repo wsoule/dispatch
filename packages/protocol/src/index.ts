@@ -103,4 +103,11 @@ export type {
 export { createUlidFactory } from './ulid.js';
 export { PROTOCOL_VERSION } from './version.js';
 export { applyLinkMail, applyLinkState, LoopbackLink } from './link.js';
-export type { LinkMail, LinkSend, LinkState } from './link.js';
+export type {
+  LinkHttpRequest,
+  LinkHttpResponse,
+  LinkMail,
+  LinkProject,
+  LinkSend,
+  LinkState,
+} from './link.js';

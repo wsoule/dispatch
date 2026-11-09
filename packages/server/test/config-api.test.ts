@@ -309,7 +309,9 @@ describe('PATCH /api/config — chat streaming', () => {
     });
     expect(res.status).toBe(200);
     const config = await json<Streams>(res);
-    expect(config.overseer).toEqual({ stream: 'narration' });
+    // The block holds other overseer settings too (autonomy); this test is
+    // about the stream switch alone.
+    expect(config.overseer.stream).toBe('narration');
     expect(config.runs).toEqual({ stream: 'off' });
     const again = await json<Streams>(await fetch(`${baseUrl}/api/config`));
     expect(again.overseer.stream).toBe('narration');

@@ -411,3 +411,25 @@
     color: CanvasText;
   }
 }
+
+/* An action receipt's text: what was done, and the fields it changed. */
+.receiptBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.receiptDiff {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A changed field's old value, struck through. */
+.receiptBefore {
+  text-decoration: line-through;
+  opacity: 0.7;
+}

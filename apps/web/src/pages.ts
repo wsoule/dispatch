@@ -74,7 +74,7 @@ function page(title: string, user: User | null, body: string): string {
 <div class="bar"><a href="/">Dispatch / Teams</a>${
     user === null
       ? '<a href="https://dispatch.foo">dispatch.foo</a>'
-      : `<form method="post" action="/auth/logout"><a class="who" href="/account">${esc(user.login)}</a><button class="small">Sign out</button></form>`
+      : `<form method="post" action="/auth/logout"><a class="who" href="/machines">Machines</a><a class="who" href="/account">${esc(user.login)}</a><button class="small">Sign out</button></form>`
   }</div>
 <main>${body}<p class="foot">Dispatch · agents that work together, whatever they run on</p></main></body></html>`;
 }
@@ -425,5 +425,46 @@ ${
     : `<p><select name="team">${teams.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}</select></p>`
 }
 <p style="display:flex;gap:8px"><button class="primary" name="decision" value="allow">Allow</button><button name="decision" value="deny">Deny</button></p></form>`
+  );
+}
+
+/** One of your signed-in machines, as the machines page lists it. */
+export interface MachineRow {
+  id: string;
+  client: string;
+  teamName: string;
+  lastSeen: string | null;
+  online: boolean;
+  /** The projects it lets the web reach; null when it could not say. */
+  projects: { key: string; name: string }[] | null;
+  /** Why it lists none, when it answered with a reason. */
+  note?: string;
+}
+
+/** Your own machines and their projects: open one in the browser. */
+export function machinesPage(user: User, machines: MachineRow[]): string {
+  const rows = machines
+    .map((m) => {
+      const head = `<div class="row"><span><strong>${esc(m.client)}</strong> <span class="meta">${esc(m.teamName)}</span></span><span class="meta${m.online ? ' ok' : ''}">${m.online ? 'online' : m.lastSeen === null ? 'never seen' : `last seen ${esc(m.lastSeen.slice(0, 16).replace('T', ' '))}`}</span></div>`;
+      if (!m.online) return head;
+      if (m.projects === null || m.projects.length === 0)
+        return `${head}<div class="row"><span class="meta">${esc(m.note ?? 'No project is open on this machine.')}</span></div>`;
+      return (
+        head +
+        m.projects
+          .map(
+            (p) =>
+              `<div class="row"><a href="/m/${esc(m.id)}/${esc(p.key)}/">${esc(p.name)}</a><span class="meta">Open</span></div>`
+          )
+          .join('')
+      );
+    })
+    .join('');
+  return page(
+    'Machines',
+    user,
+    `<h1>Your machines</h1>
+<p class="lede">The machines you signed in with <code>dispatch-mcp login</code>, and the projects open on them. Only you see them. A machine is reachable only after you turn on Web access in the desktop app's Settings, under This machine.</p>
+${machines.length === 0 ? '<div class="box pad">No machine is signed in yet. Run <code>dispatch-mcp login</code> on one.</div>' : `<div class="box">${rows}</div>`}`
   );
 }
