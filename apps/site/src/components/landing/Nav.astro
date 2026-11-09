@@ -1,4 +1,6 @@
 ---
+import { WEB_APP } from '../../lib/downloads';
+
 // The sticky site header. On phones the links fold into a Menu disclosure
 // (a plain <details>, so it works without script).
 const links: [string, string][] = [
@@ -30,11 +32,13 @@ const links: [string, string][] = [
           </a>
         ))
       }
+      <a class="link" href={WEB_APP}>Sign in</a>
       <a class="install" href="/#install">Install</a>
       <details class="menu">
         <summary aria-label="Menu"><span class="bars" aria-hidden="true"></span></summary>
         <div class="sheet">
           {links.map(([label, href]) => <a href={href}>{label}</a>)}
+          <a href={WEB_APP}>Sign in</a>
         </div>
       </details>
     </nav>

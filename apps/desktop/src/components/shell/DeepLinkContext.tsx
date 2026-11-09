@@ -1,8 +1,8 @@
-import { createContext, useCallback, useContext } from 'react';
+import { createContext, useCallback, useContext, useMemo } from 'react';
 
 import { describeError } from '../../lib/actionFeedback';
-import { formatTaskLink } from '../../lib/deepLink';
-import { isTauri } from '../../lib/tauri';
+import { formatIssueLink, formatTaskLink } from '../../lib/deepLink';
+import { isTauri, openUrl } from '../../lib/tauri';
 import { useToasts } from './Toasts';
 
 /** What a surface with a `Copy link` verb needs — the task page, the row
@@ -10,6 +10,13 @@ import { useToasts } from './Toasts';
 export interface DeepLinkActions {
   /** Copies the active project's link for `taskId` and toasts the outcome. */
   copyTaskLink(taskId: string): void;
+  /** The hosted planner only: opens the task linked to a Linear issue in the
+   * desktop app, through `dispatch://issue/<identifier>`. */
+  openIssueInDesktop?: (identifier: string) => void;
+  /** The desktop app only: opens or copies a hosted planner link
+   * (`formatWebIssueLink`) for a task linked to a Linear issue. */
+  openWebLink?: (url: string) => void;
+  copyWebLink?: (url: string) => void;
 }
 
 const DeepLinkContext = createContext<DeepLinkActions | null>(null);
@@ -61,4 +68,55 @@ export function useCopyTaskLink(
     },
     [projectRoot, surface, toasts]
   );
+}
+
+type WebLinkActions = Pick<
+  DeepLinkActions,
+  'openIssueInDesktop' | 'openWebLink' | 'copyWebLink'
+>;
+
+/**
+ * The verbs that cross between the hosted planner and the desktop app for a
+ * Linear-linked task. Each side only gets the ones pointing at the other: the
+ * hosted page opens the desktop app, the desktop app opens or copies the web
+ * link. Task ids differ between the two stores, so both carry the Linear
+ * identifier, the key they share.
+ */
+export function useWebLinkActions(hosted: boolean): WebLinkActions {
+  const toasts = useToasts();
+  return useMemo(() => {
+    if (hosted) {
+      return {
+        openIssueInDesktop: (identifier: string) =>
+          window.location.assign(formatIssueLink(identifier)),
+      };
+    }
+    return {
+      openWebLink: (url: string) => {
+        if (isTauri()) {
+          openUrl(url).catch((err: unknown) =>
+            toasts.push({
+              title: 'Could not open the link',
+              description: describeError(err),
+              tone: 'error',
+            })
+          );
+        } else window.open(url, '_blank', 'noopener');
+      },
+      copyWebLink: (url: string) => {
+        void navigator.clipboard
+          .writeText(url)
+          .then(() =>
+            toasts.push({ title: 'Copied web link', tone: 'success' })
+          )
+          .catch((err: unknown) =>
+            toasts.push({
+              title: 'Copy failed',
+              description: describeError(err),
+              tone: 'error',
+            })
+          );
+      },
+    };
+  }, [hosted, toasts]);
 }

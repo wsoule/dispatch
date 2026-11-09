@@ -99,6 +99,9 @@ const ACTIVITY_LIMIT = 8;
 type MenuAction =
   | 'copy-id'
   | 'copy-link'
+  | 'open-desktop'
+  | 'open-web'
+  | 'copy-web-link'
   | 'dispatch'
   | 'push-linear'
   | 'archive'
@@ -654,6 +657,15 @@ export function useTaskDetailProps(
       case 'copy-link':
         state.copyLink?.();
         return;
+      case 'open-desktop':
+        state.openInDesktop?.();
+        return;
+      case 'open-web':
+        state.openOnWeb?.();
+        return;
+      case 'copy-web-link':
+        state.copyWebLink?.();
+        return;
       case 'dispatch':
         run('Dispatch failed', dispatch());
         return;
@@ -674,6 +686,17 @@ export function useTaskDetailProps(
     ...(state.copyLink === undefined
       ? []
       : [{ value: 'copy-link', label: 'Copy link' }]),
+    // The Linear issue is the key the hosted planner and the desktop app
+    // share, so each side links to the other only for a linked task.
+    ...(state.openInDesktop === undefined
+      ? []
+      : [{ value: 'open-desktop', label: 'Open in desktop' }]),
+    ...(state.openOnWeb === undefined
+      ? []
+      : [{ value: 'open-web', label: 'Open on web' }]),
+    ...(state.copyWebLink === undefined
+      ? []
+      : [{ value: 'copy-web-link', label: 'Copy web link' }]),
     ...(canEdit && !container
       ? [
           {
