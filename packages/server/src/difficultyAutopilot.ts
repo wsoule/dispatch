@@ -208,7 +208,7 @@ export class DifficultyAutopilot {
     }
   }
 
-  // Ready, unheld, never-run tasks clear of live claims, highest readiness
+  // Ready, not-held, never-run tasks clear of live claims, highest readiness
   // first (dispatchableTasks' own order).
   private candidates(runs: RunMeta[]): TaskDoc[] {
     const statuses = statusModelFor(this.ctx.rootDir);

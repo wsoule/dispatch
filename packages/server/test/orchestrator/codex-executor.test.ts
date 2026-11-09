@@ -12,6 +12,7 @@ import {
   type CodexAppServerProcess,
 } from '../../src/orchestrator/codexAppServer.js';
 import {
+  DISPATCH_MCP_TOOL_TIMEOUT_MS,
   dispatchMcpSpec,
   type StdioServerSpec,
 } from '../../src/orchestrator/dispatchMcp.js';
@@ -884,7 +885,7 @@ describe('CodexExecutor', () => {
                 DISPATCH_RUN_TOKEN_FILE: 'C:\\runs\\r-codex.token',
               }),
               required: true,
-              tool_timeout_sec: 1860,
+              tool_timeout_sec: Math.ceil(DISPATCH_MCP_TOOL_TIMEOUT_MS / 1000),
               tools: APPROVE_EVERY_DISPATCH_TOOL,
             },
           },
@@ -946,7 +947,7 @@ describe('CodexExecutor', () => {
             DISPATCH_RUN_TOKEN_FILE: 'C:\\runs\\r-codex.token',
           }),
           required: true,
-          tool_timeout_sec: 1860,
+          tool_timeout_sec: Math.ceil(DISPATCH_MCP_TOOL_TIMEOUT_MS / 1000),
           tools: APPROVE_EVERY_DISPATCH_TOOL,
         },
       },
