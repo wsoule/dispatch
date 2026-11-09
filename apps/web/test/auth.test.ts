@@ -316,6 +316,20 @@ describe('opening a Linear workspace', () => {
     expect(home).toContain('href="/w/demo/"');
     expect(home).toContain('href="/auth/linear/workspace"');
   });
+
+  it('lands someone in one team on home, not that team’s page', async () => {
+    const session = cookieOf(
+      await complete(await call('/auth/linear/workspace'), 'linear')
+    );
+    const user = db.webSessionUser(session.slice('dt_session='.length))!;
+    const team = db.createTeam('Core', user.id);
+    const res = await call('/', { headers: { cookie: session } });
+    expect(res.status).toBe(200);
+    const home = await res.text();
+    expect(home).toContain('href="/w/acme/"');
+    expect(home).toContain('href="/machines"');
+    expect(home).toContain(`href="/teams/${team.id}"`);
+  });
 });
 
 describe('installing Dispatch on a workspace', () => {
