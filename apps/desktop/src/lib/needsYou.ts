@@ -85,6 +85,9 @@ export interface NeedsYou {
   taskIds: ReadonlySet<string>;
   /** Restored lessons shown as one row (its first item) that counts as one. */
   restored: DecisionItem[];
+  /** Asks of mine a human dismissed: hidden and never counted, listed only so
+   *  the dismissal can be undone. Oldest first. */
+  dismissed: DecisionItem[];
 }
 
 export interface NeedsYouOptions {
@@ -155,10 +158,15 @@ export function needsYou(
   const seen = new Set<string>();
   const byGroup = new Map<AskGroup, DecisionItem[]>();
   const teammates: DecisionItem[] = [];
+  const dismissed: DecisionItem[] = [];
   for (const item of [...decisions, ...fromMail]) {
     if (item.state !== 'open' || item.disposition !== 'blocking') continue;
     const group = askGroup(item);
     if (group === null) continue;
+    if (item.dismissedAt !== undefined) {
+      if (isMine(item, me)) dismissed.push(item);
+      continue;
+    }
     const key = item.messageId ?? item.id;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -203,5 +211,6 @@ export function needsYou(
     byTask,
     taskIds: new Set(byTask.keys()),
     restored,
+    dismissed: dismissed.sort((a, b) => a.since.localeCompare(b.since)),
   };
 }

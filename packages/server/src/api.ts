@@ -4733,6 +4733,10 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // Seals the team's content end to end, for good: an admin's roster op.
   { method: 'POST', segments: ['team', 'content-e2e'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'problems', 'ack'], tier: 'decide' },
+  // Hiding an item from the human's queue is an adjudication: an agent holding
+  // the on-disk token must not wave off its own stalled run.
+  { method: 'POST', segments: ['decisions', '*', 'dismiss'], tier: 'decide' },
+  { method: 'DELETE', segments: ['decisions', '*', 'dismiss'], tier: 'decide' },
   // An admin's pick between two machines that each claim a run first.
   {
     method: 'POST',
@@ -6667,7 +6671,8 @@ export async function handleApi(
     // it. `?disposition=blocking|recorded` is the policy engine's filter (see
     // decisionFeed.ts); `?resolved=1` also returns the items the feed has just
     // watched resolve, so a surface can show a row settling instead of
-    // vanishing.
+    // vanishing; `?dismissed=1` also returns items a human dismissed, for a
+    // surface that offers the undo.
     if (segments[0] === 'decisions' && segments.length === 1) {
       if (method === 'GET') {
         const raw = url.searchParams.get('disposition');
@@ -6684,9 +6689,36 @@ export async function handleApi(
                 | DecisionDisposition
                 | undefined,
               includeResolved: url.searchParams.get('resolved') === '1',
+              includeDismissed: url.searchParams.get('dismissed') === '1',
             })
             .filter(decisionVisibleTo(ctx)),
         });
+      }
+    }
+
+    // POST /api/decisions/:id/dismiss hides a derived item (a stalled run,
+    // say) until the condition behind it changes; DELETE undoes that. Gates
+    // and floor holds are refused: those leave the feed only by an answer.
+    if (
+      segments[0] === 'decisions' &&
+      segments.length === 3 &&
+      segments[2] === 'dismiss'
+    ) {
+      const id = decodeURIComponent(segments[1]);
+      if (method === 'POST') {
+        const result = ctx.decisionFeed.dismiss(id);
+        if (result.ok) return jsonResponse({ item: result.item });
+        return result.error === 'not-found'
+          ? errorResponse(404, `no open decision ${id}`)
+          : errorResponse(
+              409,
+              `${id} is human-gated: answer it rather than dismissing it`
+            );
+      }
+      if (method === 'DELETE') {
+        return ctx.decisionFeed.restore(id)
+          ? jsonResponse({ ok: true })
+          : errorResponse(404, `${id} is not dismissed`);
       }
     }
 

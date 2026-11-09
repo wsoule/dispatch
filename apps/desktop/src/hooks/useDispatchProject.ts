@@ -99,7 +99,11 @@ import {
   resolveDaemonAuth,
 } from '../lib/daemonAuth';
 import type { DecisionItem } from '../lib/decisionFeed';
-import { fetchDecisions, isDecisionsChanged } from '../lib/decisionFeed';
+import {
+  fetchDecisions,
+  isDecisionsChanged,
+  setDecisionDismissed,
+} from '../lib/decisionFeed';
 import { isFakeExecutorDevToolEnabled } from '../lib/devTools';
 import { fixLoopCappedNotice } from '../lib/fixLoopStatus';
 import type { RunQuestion, RunScopeRequest } from '../lib/gates';
@@ -532,6 +536,9 @@ export interface DispatchProjectData {
   /** Splits `text` server-side into one item per non-empty line. */
   handleCaptureInbox: (text: string) => Promise<void>;
   handleDismissInbox: (ids: string[]) => Promise<void>;
+  /** Hides a derived Needs-you item until its condition changes, or with
+   *  `undo` brings it back. Gates and floor holds are refused by the daemon. */
+  handleDismissDecision: (id: string, undo?: boolean) => Promise<void>;
   /**
    * Starts an AI draft that adds the context an under-specified task is missing. Its own slot,
    * not the note one: the detail dialog reviews `enrichPlanRecord` and patches the drafted
@@ -2858,6 +2865,15 @@ export function useDispatchProject(
     [client, invalidateInbox]
   );
 
+  const handleDismissDecision = useCallback(
+    async (id: string, undo = false): Promise<void> => {
+      if (client === null) return;
+      await setDecisionDismissed(client.baseUrl, auth.token, id, undo);
+      void queryClient.invalidateQueries({ queryKey: decisionsQueryKey });
+    },
+    [client, auth.token, queryClient, decisionsQueryKey]
+  );
+
   const handleConvertInbox = useCallback(
     async (ids: string[]) => {
       if (client === null) return { results: [], converted: 0, failed: 0 };
@@ -3341,6 +3357,7 @@ export function useDispatchProject(
       inbox: inbox ?? [],
       handleCaptureInbox,
       handleDismissInbox,
+      handleDismissDecision,
       handleConvertInbox,
       handleEnrichTask,
       enrichTaskId: enrichPlan?.taskId ?? null,
@@ -3481,6 +3498,7 @@ export function useDispatchProject(
       inbox,
       handleCaptureInbox,
       handleDismissInbox,
+      handleDismissDecision,
       handleConvertInbox,
       handleEnrichTask,
       enrichPlan,

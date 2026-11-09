@@ -855,6 +855,8 @@ function App() {
       (item) =>
         item.state === 'resolved' &&
         item.resolvedAt !== undefined &&
+        // A dismissed item that later cleared was waved off, not decided.
+        item.dismissedAt === undefined &&
         Date.parse(item.resolvedAt) >= since &&
         (item.owner === undefined || item.owner === data.me)
     );

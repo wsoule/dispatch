@@ -2,6 +2,7 @@ import { DEFAULT_STATUS_ROLES } from '@dispatch-foo/core';
 import type { JsonValue, Message } from '@dispatch-foo/protocol';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
+import type { DecisionAck } from '../src/decisionAcks.js';
 import type { DecisionItem, DecisionPolicy } from '../src/decisionFeed.js';
 import { DecisionFeed } from '../src/decisionFeed.js';
 import { EventBus } from '../src/events.js';
@@ -98,9 +99,13 @@ interface Harness {
   gates: Message[];
   pending: Map<string, { requestId: string; input: unknown }>;
   runs: RunMeta[];
+  /** What `unpublishedMerges()` returns: merged runs not yet on origin. */
+  unpublished: RunMeta[];
   loops: FixLoopState[];
   titles: Map<string, string>;
   statuses: Map<string, string>;
+  /** The in-memory ack store dismissals land in. */
+  acks: Map<string, DecisionAck>;
   setNow(ms: number): void;
 }
 
@@ -109,13 +114,16 @@ function harness(policy?: DecisionPolicy): Harness {
   const gates: Message[] = [];
   const pending: Harness['pending'] = new Map();
   const runs: RunMeta[] = [];
+  const unpublished: RunMeta[] = [];
   const loops: FixLoopState[] = [];
   const titles = new Map<string, string>();
   const statuses = new Map<string, string>();
+  const acks = new Map<string, DecisionAck>();
   let now = T0;
   const feed = new DecisionFeed({
     orchestrator: {
       list: () => runs,
+      unpublishedMerges: () => unpublished,
       pendingApprovalFor: (runId, requestId) => {
         const parked = pending.get(runId);
         return parked?.requestId === requestId ? parked : undefined;
@@ -133,6 +141,11 @@ function harness(policy?: DecisionPolicy): Harness {
     },
     events,
     policy,
+    acks: {
+      get: (id) => acks.get(id),
+      set: (id, ack) => void acks.set(id, ack),
+      delete: (id) => acks.delete(id),
+    },
     now: () => now,
   });
   return {
@@ -141,9 +154,11 @@ function harness(policy?: DecisionPolicy): Harness {
     gates,
     pending,
     runs,
+    unpublished,
     loops,
     titles,
     statuses,
+    acks,
     setNow: (ms) => {
       now = ms;
     },
@@ -1144,5 +1159,108 @@ describe('DecisionFeed landed tasks', () => {
       now: () => T0,
     });
     expect(byKind(feed.list(), 'fix-loop-capped')).toEqual([]);
+  });
+});
+
+describe('DecisionFeed dismissals', () => {
+  it('keeps a dismissed stalled run hidden across recomputes', () => {
+    h.runs.push(runMeta('r-dirty', { state: 'interrupted-dirty' }));
+    const result = h.feed.dismiss('run-stalled:r-dirty');
+    expect(result.ok).toBe(true);
+    expect(h.feed.list()).toEqual([]);
+    expect(h.feed.list()).toEqual([]);
+    // Not reported as resolved either: the condition still holds.
+    expect(h.feed.list({ includeResolved: true })).toEqual([]);
+    const shown = h.feed.list({ includeDismissed: true });
+    expect(shown.map((item) => [item.id, item.dismissedAt])).toEqual([
+      ['run-stalled:r-dirty', new Date(T0).toISOString()],
+    ]);
+  });
+
+  it('brings a dismissed item back once its condition changes', () => {
+    const run = runMeta('r-1', { state: 'failed' });
+    h.runs.push(run);
+    expect(h.feed.dismiss('run-stalled:r-1').ok).toBe(true);
+    expect(h.feed.list()).toEqual([]);
+    // The orphaned agent kept committing: same id, new condition.
+    run.survey = {
+      runId: 'r-1',
+      branch: 'dispatch/r-1',
+      staged: [],
+      unstaged: [],
+      untracked: [],
+      lastCommit: null,
+      cleanTree: true,
+      postFailCommits: [
+        { sha: 'bbb', subject: 'late', date: '2026-08-22T11:00:00Z' },
+      ],
+    };
+    expect(h.feed.list().map((item) => item.reason)).toEqual([
+      'orphan-commits',
+    ]);
+    // The stale ack is gone, so the earlier condition cannot hide a recurrence.
+    expect(h.acks.has('run-stalled:r-1')).toBe(false);
+  });
+
+  it('brings an unpushed merge back when its merge commit moves', () => {
+    const run = runMeta('r-m', { state: 'finished', mergeCommit: 'aaa' });
+    h.unpublished.push(run);
+    expect(h.feed.dismiss('run-stalled:r-m').ok).toBe(true);
+    expect(h.feed.list()).toEqual([]);
+    run.mergeCommit = 'bbb';
+    expect(h.feed.list().map((item) => item.id)).toEqual(['run-stalled:r-m']);
+  });
+
+  it('shows the item again on undo', () => {
+    h.runs.push(runMeta('r-dirty', { state: 'interrupted-dirty' }));
+    h.feed.dismiss('run-stalled:r-dirty');
+    expect(h.feed.restore('run-stalled:r-dirty')).toBe(true);
+    expect(h.feed.list().map((item) => item.id)).toEqual([
+      'run-stalled:r-dirty',
+    ]);
+    expect(h.feed.restore('run-stalled:r-dirty')).toBe(false);
+  });
+
+  it('refuses to dismiss gates and floor holds', () => {
+    h.gates.push(
+      runQuestion('m-q', 'r-live', 'which way?'),
+      approvalGate('m-a', 'r-live', 'req-1', { command: 'pnpm install' })
+    );
+    h.runs.push(
+      runMeta('r-live'),
+      runMeta('r-cap', { state: 'failed', error: 'run hit its cost budget' })
+    );
+    h.loops.push(cappedLoop('t-loop'));
+    const ids = h.feed.list().map((item) => item.id);
+    expect(ids).toHaveLength(4);
+    for (const id of ids) {
+      expect(h.feed.dismiss(id)).toEqual({
+        ok: false,
+        error: 'not-dismissible',
+      });
+    }
+    expect(h.feed.list()).toHaveLength(4);
+    expect(h.acks.size).toBe(0);
+  });
+
+  it('reports an id with no open item as not found', () => {
+    expect(h.feed.dismiss('run-stalled:r-none')).toEqual({
+      ok: false,
+      error: 'not-found',
+    });
+  });
+
+  it('broadcasts decisions.changed on dismiss and on undo', () => {
+    h.runs.push(runMeta('r-dirty', { state: 'interrupted-dirty' }));
+    const seen: ServerEvent[] = [];
+    h.events.subscribe((event) => {
+      if (event.type === 'decisions.changed') seen.push(event);
+    });
+    const stop = h.feed.start();
+    h.feed.dismiss('run-stalled:r-dirty');
+    expect(seen).toHaveLength(1);
+    h.feed.restore('run-stalled:r-dirty');
+    expect(seen).toHaveLength(2);
+    stop();
   });
 });

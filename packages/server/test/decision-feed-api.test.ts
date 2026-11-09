@@ -1,10 +1,17 @@
 import { TaskStore } from '@dispatch-foo/core';
 import type { Message } from '@dispatch-foo/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { DecisionAckStore } from '../src/decisionAcks.js';
 import type { DecisionItem } from '../src/decisionFeed.js';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
@@ -460,5 +467,48 @@ describe('decisions.changed over /ws', () => {
     await reply(gate.id, 'deny');
     await waitFor(() => changes() > opened);
     ws.close();
+  });
+});
+
+describe('POST /api/decisions/:id/dismiss', () => {
+  function dismiss(id: string, method = 'POST'): Promise<Response> {
+    return fetch(`${baseUrl}/api/decisions/${encodeURIComponent(id)}/dismiss`, {
+      method,
+    });
+  }
+
+  it('hides a stalled run, persists the dismissal, and DELETE brings it back', async () => {
+    const taskId = await createTask('This one dies');
+    const runId = await dispatchRun(taskId, 'failing');
+    await waitFor(async () => (await decisions()).length > 0);
+    const id = `run-stalled:${runId}`;
+
+    const res = await dismiss(id);
+    expect(res.status).toBe(200);
+    expect(await decisions()).toEqual([]);
+    const shown = await decisions('?dismissed=1');
+    expect(shown.map((item) => item.id)).toEqual([id]);
+    expect(shown[0].dismissedAt).toBeString();
+    // Written to this machine's ack file, which git never sees.
+    const dispatchDir = join(root, '.dispatch');
+    expect(new DecisionAckStore(root).get(id)?.fingerprint).toBe(
+      shown[0].fingerprint
+    );
+    expect(readFileSync(join(dispatchDir, '.gitignore'), 'utf8')).toContain(
+      'decision-acks.json'
+    );
+
+    expect((await dismiss(id, 'DELETE')).status).toBe(200);
+    expect((await decisions()).map((item) => item.id)).toEqual([id]);
+    expect((await dismiss(id, 'DELETE')).status).toBe(404);
+  });
+
+  it('refuses to dismiss a gate, which stays human-gated', async () => {
+    await liveRun('Ask something');
+    const messageId = await askAsRun('Which database?');
+    const res = await dismiss(`question:${messageId}`);
+    expect(res.status).toBe(409);
+    expect(await decisions()).toHaveLength(1);
+    expect((await dismiss('run-stalled:r-nope')).status).toBe(404);
   });
 });

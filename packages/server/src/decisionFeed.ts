@@ -10,6 +10,7 @@ import {
 import type { GateData, Message } from '@dispatch-foo/protocol';
 import { gateOf, SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 
+import type { DecisionAckPort } from './decisionAcks.js';
 import type { EventBus, ServerEvent } from './events.js';
 import { floorCheckForToolInput, isBudgetCapFailure } from './floor.js';
 import type { FixLoopState } from './orchestrator/fixLoop.js';
@@ -103,6 +104,16 @@ export interface DecisionItem {
   /** The address that asked, on a gate item: lets a surface tell a question
    *  from an outside A2A agent from one a teammate asked. */
   from?: string;
+  /**
+   * Present only on an item a human may dismiss: a fingerprint of the
+   * condition behind it (run, reason, state, merge commit). A dismissal is
+   * keyed on it, so the item stays hidden until the fingerprint changes.
+   * Gates and floor holds never carry one: they stay human-gated and are
+   * answered, never waved off.
+   */
+  fingerprint?: string;
+  /** Set while a dismissal hides this item (see DecisionFeed.dismiss). */
+  dismissedAt?: string;
   disposition: DecisionDisposition;
 }
 
@@ -166,6 +177,9 @@ export interface DecisionFeedContext {
   statusModel?: () => StatusModel;
   /** Defaults to "everything here blocks" — see DecisionDisposition. */
   policy?: DecisionPolicy;
+  /** Where dismissals persist (decisionAcks.ts). Without one, nothing can be
+   *  dismissed. */
+  acks?: DecisionAckPort;
   /** Test seam. Defaults to `Date.now`. */
   now?: () => number;
 }
@@ -174,7 +188,14 @@ export interface DecisionFeedListOptions {
   disposition?: DecisionDisposition;
   /** Resolved items are dropped unless this is true. */
   includeResolved?: boolean;
+  /** Dismissed items (those carrying `dismissedAt`) are dropped unless this
+   *  is true. Only a surface offering an undo asks for them. */
+  includeDismissed?: boolean;
 }
+
+/** Why a dismissal was refused: no open item has that id, or the item is a
+ *  gate or floor hold, which only an answer may clear. */
+export type DismissError = 'not-found' | 'not-dismissible';
 
 /**
  * How long a resolved item stays visible after the feed notices it is gone.
@@ -345,7 +366,9 @@ const STALLED_SUMMARY: Record<StalledRunReason, string> = {
  * live registries, so an item resolves the moment its gate is answered or the
  * run moves on, with no invalidation to get wrong. The only state kept here is
  * the set of items last seen open, which is what lets a resolution be reported
- * once (`state: 'resolved'`) instead of a row silently disappearing.
+ * once (`state: 'resolved'`) instead of a row silently disappearing. A human's
+ * dismissals sit beside the feed in `ctx.acks` and are laid over each
+ * recompute, rather than stored on the items they hide.
  */
 export class DecisionFeed {
   private readonly policy: DecisionPolicy;
@@ -404,7 +427,11 @@ export class DecisionFeed {
    */
   list(opts: DecisionFeedListOptions = {}): DecisionItem[] {
     const { open, resolved } = this.recompute();
-    const items = opts.includeResolved === true ? [...open, ...resolved] : open;
+    const all = opts.includeResolved === true ? [...open, ...resolved] : open;
+    const items =
+      opts.includeDismissed === true
+        ? all
+        : all.filter((item) => item.dismissedAt === undefined);
     // The floor is checked ahead of the classifier, not inside it: an item the
     // irreversibility floor holds is blocking no matter what any DecisionPolicy
     // — including the policy engine's — would have said.
@@ -415,6 +442,63 @@ export class DecisionFeed {
     }));
     if (opts.disposition === undefined) return classified;
     return classified.filter((item) => item.disposition === opts.disposition);
+  }
+
+  /**
+   * Hides an open item until the condition behind it changes.
+   *
+   * Only an item carrying a fingerprint may be dismissed — a stalled run, say,
+   * whose state a human has looked at and chosen to leave. A gate or a floor
+   * hold never carries one, so it can only leave the feed by being answered.
+   */
+  dismiss(
+    id: string
+  ): { ok: true; item: DecisionItem } | { ok: false; error: DismissError } {
+    const item = this.recompute().open.find((candidate) => candidate.id === id);
+    if (item === undefined) return { ok: false, error: 'not-found' };
+    const { acks } = this.ctx;
+    if (item.fingerprint === undefined || acks === undefined) {
+      return { ok: false, error: 'not-dismissible' };
+    }
+    const dismissedAt = new Date(this.now()).toISOString();
+    acks.set(id, { fingerprint: item.fingerprint, dismissedAt });
+    this.announce();
+    return {
+      ok: true,
+      item: { ...item, dismissedAt, disposition: this.policy(item) },
+    };
+  }
+
+  /** Undoes a dismissal, so the item shows again if it is still open.
+   *  False when nothing was dismissed under that id. */
+  restore(id: string): boolean {
+    if (this.ctx.acks?.delete(id) !== true) return false;
+    this.announce();
+    return true;
+  }
+
+  // Broadcasts `decisions.changed` for a change made here rather than by a
+  // source event — a dismissal or its undo — so every surface hears of it.
+  private announce(): void {
+    this.recompute();
+    if (this.signature === this.broadcastSignature) return;
+    this.broadcastSignature = this.signature;
+    this.ctx.events.broadcast({ type: 'decisions.changed' });
+  }
+
+  // Marks an item hidden when a dismissal's fingerprint still matches it, and
+  // drops a dismissal whose condition has since changed: the item is back in
+  // front of the human, and an old ack must not hide a later recurrence.
+  private applyAck(item: UnclassifiedDecisionItem): UnclassifiedDecisionItem {
+    const acks = this.ctx.acks;
+    if (acks === undefined || item.fingerprint === undefined) return item;
+    const ack = acks.get(item.id);
+    if (ack === undefined) return item;
+    if (ack.fingerprint !== item.fingerprint) {
+      acks.delete(item.id);
+      return item;
+    }
+    return { ...item, dismissedAt: ack.dismissedAt };
   }
 
   // Rebuilds the open set, moves anything that disappeared into `resolved`,
@@ -439,7 +523,7 @@ export class DecisionFeed {
       ...this.fixLoopItems(nowMs, landed),
       ...this.stalledRunItems(nowMs, runs, landed),
     ]
-      .map((item) => withOwner(item, runs))
+      .map((item) => this.applyAck(withOwner(item, runs)))
       .sort((a, b) => a.since.localeCompare(b.since));
 
     const openById = new Map(open.map((item) => [item.id, item]));
@@ -472,11 +556,12 @@ export class DecisionFeed {
     // escalates a stalled run from 'failed' to 'orphan-commits' in place, which
     // is what run.survey is a trigger event for. `since` and `ageMs` are kept
     // out: age moves on every recompute, so folding it in would broadcast on
-    // a loop.
+    // a loop. Whether it is dismissed is in it, so a dismissal or its undo
+    // reaches every surface.
     this.signature = [...open, ...resolved]
       .map(
         (item) =>
-          `${item.id}:${item.state}:${item.reason ?? ''}:${item.summary}`
+          `${item.id}:${item.state}:${item.dismissedAt === undefined ? '' : 'x'}:${item.reason ?? ''}:${item.summary}`
       )
       .join('|');
     return { open, resolved };
@@ -668,12 +753,18 @@ export class DecisionFeed {
         reason === 'failed' && isBudgetCapFailure(run.error)
           ? ('budget-cap' as const)
           : undefined;
+      // Another commit from an orphaned agent is new news, so the latest
+      // stray commit is part of what a dismissal acknowledged.
+      const lastStray = run.survey?.postFailCommits?.at(-1)?.sha ?? '';
       items.push({
         id: `run-stalled:${run.id}`,
         kind: 'run-stalled',
         summary: `${run.taskTitle}: ${STALLED_SUMMARY[reason]}`,
         reason,
         floor,
+        ...(floor === undefined
+          ? { fingerprint: `${run.id}:${reason}:${run.state}:${lastStray}` }
+          : {}),
         runId: run.id,
         taskId: run.taskId,
         taskTitle: run.taskTitle,
@@ -692,6 +783,9 @@ export class DecisionFeed {
         kind: 'run-stalled',
         summary: `${run.taskTitle}: ${STALLED_SUMMARY['not-on-origin']}`,
         reason: 'not-on-origin',
+        // A new squash (a re-merge, a rebased publish) is a different thing
+        // to have looked at, so it brings a dismissed row back.
+        fingerprint: `${run.id}:not-on-origin:${run.mergeCommit ?? ''}`,
         runId: run.id,
         taskId: run.taskId,
         taskTitle: run.taskTitle,

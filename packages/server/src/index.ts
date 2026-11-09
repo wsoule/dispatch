@@ -69,6 +69,7 @@ import {
   waitForRootReleased,
   writeDaemonFile,
 } from './daemonfile.js';
+import { DecisionAckStore } from './decisionAcks.js';
 import { DecisionFeed } from './decisionFeed.js';
 import { DecisionReminders } from './decisionReminders.js';
 import {
@@ -2538,6 +2539,9 @@ async function bootServer(
       riskOf: (taskId) => store.get(taskId)?.meta.risk,
       approvalFloor,
     }),
+    // A human's dismissals of derived items, kept per machine so one stays
+    // hidden across recomputes and restarts until its condition changes.
+    acks: new DecisionAckStore(rootDir),
   });
   const stopDecisionFeed = decisionFeed.start();
 

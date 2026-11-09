@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -17,8 +18,15 @@ import { NeedsYouBlock } from './NeedsYouBlock';
 
 const ME = 'human:wyat';
 
+// Every dismiss or undo a test clicked, as `[id, undo]`.
+const dismissCalls: [string, boolean][] = [];
+
 // No client: the gate query stays off, so rows fall back to their Open button.
 const data = {
+  handleDismissDecision: (id: string, undo = false) => {
+    dismissCalls.push([id, undo]);
+    return Promise.resolve();
+  },
   client: null,
   port: undefined,
   me: ME,
@@ -121,6 +129,42 @@ describe('NeedsYouBlock', () => {
     expect(screen.getByTestId('needs-you-row').hasAttribute('title')).toBe(
       false
     );
+  });
+
+  test('only a derived ask offers Dismiss, and a dismissed one offers Undo', async () => {
+    dismissCalls.length = 0;
+    mount([
+      item({
+        id: 'run-stalled:r-1',
+        kind: 'run-stalled',
+        reason: 'not-on-origin',
+        fingerprint: 'r-1:not-on-origin:abc',
+      }),
+      // A capped loop is a floor hold: no fingerprint, so no Dismiss.
+      item({ id: 'loop', kind: 'fix-loop-capped', floor: 'finding-ruling' }),
+      item({
+        id: 'run-stalled:r-2',
+        kind: 'run-stalled',
+        reason: 'interrupted-dirty',
+        fingerprint: 'r-2:interrupted-dirty',
+        dismissedAt: '2026-10-06T10:00:00.000Z',
+        summary: 'Old dirty run',
+      }),
+    ]);
+    expect(screen.getByTestId('needs-you-count').textContent).toBe(
+      'Needs you · 2'
+    );
+    expect(screen.getAllByTestId('needs-you-dismiss')).toHaveLength(1);
+    // Settles the row's busy state inside act.
+    await act(() =>
+      Promise.resolve(fireEvent.click(screen.getByTestId('needs-you-dismiss')))
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Dismissed · 1/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(dismissCalls).toEqual([
+      ['run-stalled:r-1', false],
+      ['run-stalled:r-2', true],
+    ]);
   });
 
   test('a teammate’s ask is shown muted and never counted', () => {
