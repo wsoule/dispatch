@@ -184,33 +184,36 @@ describe('HostedWorkspaces', () => {
     ]);
   });
 
-  it('gives guests a request-tier token', async () => {
+  it('turns guests away, and anyone Linear has not vouched for this week', async () => {
     grants.save('u-gus', ORG, 'lin-gus', TOKENS, {
       ...ADA,
       email: 'gus@x.test',
       guest: true,
     });
-    const fake = fakeHost((call) =>
-      call.path === '/api/team/tokens'
-        ? Response.json({ token: 'tm-gus', handle: 'gus' }, { status: 201 })
-        : new Response(null, { status: 204 })
+    const fake = fakeHost(() => Response.json({}));
+    let clock = Date.now();
+    const old = new LinearGrants(
+      db.db,
+      sealer,
+      'lin-client',
+      fetch,
+      () => clock
     );
     const hosted = new HostedWorkspaces(
       db.db,
       sealer,
       fake.host,
-      grants,
+      old,
       'lin-client'
     );
-    await hosted.request(
-      'u-gus',
-      'org-1',
-      '/api/whoami',
-      new Request('https://x/')
-    );
-    expect(JSON.parse(fake.calls[0]?.body ?? '{}')).toMatchObject({
-      tier: 'request',
-    });
+    expect(hosted.admits('u-gus', 'org-1')).toBe(false);
+    expect(hosted.admits('u-ada', 'org-1')).toBe(true);
+    await expect(
+      hosted.request('u-gus', 'org-1', '/api/whoami', new Request('https://x/'))
+    ).rejects.toThrow();
+    clock += 8 * 86_400_000;
+    expect(hosted.admits('u-ada', 'org-1')).toBe(false);
+    expect(fake.calls).toEqual([]);
   });
 
   it('keeps a grant the daemon refuses, and re-mints a token the daemon forgot', async () => {
@@ -259,7 +262,7 @@ describe('HostedWorkspaces', () => {
     );
     await expect(
       hosted.request('u-old', 'org-1', '/api/tasks', new Request('https://x/'))
-    ).rejects.toThrow(/again/);
+    ).rejects.toThrow(/member/);
     expect(fake.calls).toEqual([]);
   });
 });
@@ -288,7 +291,7 @@ describe('HostedWorkspaces on a real daemon', () => {
       name: 'Gus',
       displayName: 'gus',
       email: 'gus@acme.test',
-      guest: true,
+      guest: false,
     });
     const who = async (userId: string) =>
       (await (
@@ -300,7 +303,7 @@ describe('HostedWorkspaces on a real daemon', () => {
         )
       ).json()) as { ref: string; tier: string };
     expect(await who('u-ada')).toMatchObject({ tier: 'decide' });
-    expect(await who('u-gus')).toMatchObject({ tier: 'request' });
+    expect(await who('u-gus')).toMatchObject({ tier: 'decide' });
     expect((await who('u-ada')).ref).not.toBe((await who('u-gus')).ref);
     const closed = await hosted.request(
       'u-ada',

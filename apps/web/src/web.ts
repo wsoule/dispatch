@@ -311,9 +311,12 @@ export function webHandler(
   async function linearAuthorize(
     code: string,
     verifier: string,
-    keep: boolean
+    keep: boolean,
+    install = false
   ): Promise<{
     viewer: { id: string; displayName: string; name: string | null };
+    /** The grant acts as an app (an `actor=app` install), not a person. */
+    isApp: boolean;
     profile: LinearProfile;
     organization: { id: string; name: string; urlKey: string } | null;
     tokens: GrantTokens;
@@ -348,7 +351,9 @@ export function webHandler(
         headers: { ...auth, 'content-type': 'application/json' },
         body: JSON.stringify({
           query:
-            '{ viewer { id name displayName email guest admin } organization { id name urlKey } }',
+            // `app` is asked only on an install, so a sign-in never
+            // depends on it.
+            `{ viewer { id name displayName email guest admin${install ? ' app' : ''} } organization { id name urlKey } }`,
         }),
       });
       const { data } = (await res.json()) as {
@@ -360,6 +365,7 @@ export function webHandler(
             email?: string | null;
             guest?: boolean;
             admin?: boolean;
+            app?: boolean;
           };
           organization?: { id?: string; name?: string; urlKey?: string };
         };
@@ -375,9 +381,10 @@ export function webHandler(
         /^[a-z0-9-]{1,64}$/.test(o.urlKey)
           ? { id: o.id, name: o.name, urlKey: o.urlKey }
           : null;
-      kept = keep && organization !== null;
+      kept = keep && organization !== null && (!install || v.app === true);
       return {
         viewer: { id: v.id, displayName: v.displayName, name: v.name ?? null },
+        isApp: v.app === true,
         profile: {
           name: v.name ?? v.displayName,
           displayName: v.displayName,
@@ -465,6 +472,13 @@ export function webHandler(
       return failed('Sign in first, then install from your home page.', 401);
     if (organization === null || deps.install === undefined)
       return failed('Linear did not name a workspace. Try again.', 502);
+    // The authorize URL passed through the browser, so `actor=app` may have
+    // been stripped: only Linear's word that this grant is the app's counts.
+    if (!authorized.isApp)
+      return failed(
+        'Linear did not install Dispatch as an app. Only a workspace admin can install it.',
+        403
+      );
     if (tokens.refreshToken === null)
       return failed(
         'Linear gave no refresh token, so the install would stop working within a day. Try again.',
@@ -667,7 +681,8 @@ export function webHandler(
         authorized = await linearAuthorize(
           code,
           verifier,
-          mode === 'workspace' || mode === 'install'
+          mode === 'workspace' || mode === 'install',
+          mode === 'install'
         );
       } catch {
         return html(

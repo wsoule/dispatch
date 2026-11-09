@@ -63,6 +63,10 @@ async function readBoot(
 export class WorkspaceHost {
   private readonly running = new Map<string, Running>();
   private readonly booting = new Map<string, Promise<Running>>();
+  // Daemons asked to stop that have not exited: a new one on the same root
+  // waits for them, so two never share a store.
+  private readonly stopping = new Map<string, Promise<void>>();
+  private closing = false;
   private readonly sweeper: ReturnType<typeof setInterval>;
   private readonly now: () => number;
 
@@ -92,6 +96,7 @@ export class WorkspaceHost {
 
   /** The workspace's daemon, started (or restarted) if it is not running. */
   async ensure(orgId: string): Promise<HostedDaemon> {
+    if (this.closing) throw new Error('the workspace host is shutting down');
     const live = this.running.get(orgId);
     if (live !== undefined && live.proc.exitCode === null) {
       live.lastUsed = this.now();
@@ -100,7 +105,9 @@ export class WorkspaceHost {
     this.running.delete(orgId);
     let boot = this.booting.get(orgId);
     if (boot === undefined) {
-      boot = this.boot(orgId).finally(() => this.booting.delete(orgId));
+      boot = (this.stopping.get(orgId) ?? Promise.resolve())
+        .then(() => this.boot(orgId))
+        .finally(() => this.booting.delete(orgId));
       this.booting.set(orgId, boot);
     }
     return boot;
@@ -127,19 +134,30 @@ export class WorkspaceHost {
     });
   }
 
+  /** Stops the workspace's daemon, including one still booting. */
   async stop(orgId: string): Promise<void> {
+    const booting = this.booting.get(orgId);
+    if (booting !== undefined) await booting.catch(() => undefined);
     const live = this.running.get(orgId);
     this.running.delete(orgId);
-    if (live === undefined || live.proc.exitCode !== null) return;
+    if (live === undefined || live.proc.exitCode !== null)
+      return this.stopping.get(orgId);
     live.proc.kill('SIGTERM');
     const killer = setTimeout(() => live.proc.kill('SIGKILL'), 5_000);
-    await live.proc.exited;
-    clearTimeout(killer);
+    const exited = live.proc.exited.then(() => {
+      clearTimeout(killer);
+      this.stopping.delete(orgId);
+    });
+    this.stopping.set(orgId, exited);
+    await exited;
   }
 
+  /** Stops every daemon; nothing new boots after this starts. */
   async close(): Promise<void> {
+    this.closing = true;
     clearInterval(this.sweeper);
-    await Promise.all([...this.running.keys()].map((id) => this.stop(id)));
+    const ids = new Set([...this.running.keys(), ...this.booting.keys()]);
+    await Promise.all([...ids].map((id) => this.stop(id)));
   }
 
   // A workspace's project on first use: a git repo (the daemon reads its

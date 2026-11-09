@@ -20,9 +20,16 @@ CREATE TABLE IF NOT EXISTS workspace_installs (
 CREATE INDEX IF NOT EXISTS workspace_installs_url_key ON workspace_installs (url_key);
 CREATE TABLE IF NOT EXISTS workspace_members (
   user_id TEXT NOT NULL, org_id TEXT NOT NULL, handle TEXT NOT NULL,
-  token_sealed TEXT NOT NULL, PRIMARY KEY (user_id, org_id)
+  token_sealed TEXT NOT NULL, tier TEXT NOT NULL DEFAULT 'decide',
+  PRIMARY KEY (user_id, org_id)
 );
 `;
+
+/** How long a Linear round trip vouches for someone's membership. */
+const MEMBERSHIP_MS = 7 * 86_400_000;
+
+/** The person may not use this workspace (yet): open it through Linear. */
+class NotAMember extends Error {}
 
 /** The request headers a member's request keeps on its way to the daemon. */
 const FORWARDED = ['content-type', 'accept', 'x-dispatch-request-id'];
@@ -96,7 +103,13 @@ export class HostedWorkspaces {
     })();
     const teams = await this.host.request(org.id, '/api/linear/teams');
     if (!teams.ok) throw new Error(`Linear teams (${String(teams.status)})`);
-    const teamIds = ((await teams.json()) as { id: string }[]).map((t) => t.id);
+    // Public teams only: the board is shared by every member, and a private
+    // team's issues are for its own members.
+    const teamIds = (
+      (await teams.json()) as { id: string; private?: boolean }[]
+    )
+      .filter((t) => t.private !== true)
+      .map((t) => t.id);
     const linked = await this.host.request(org.id, '/api/config', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
@@ -136,9 +149,10 @@ export class HostedWorkspaces {
         },
         token
       );
-    let res = await send(await this.memberToken(userId, orgId));
+    const token = await this.memberToken(userId, orgId);
+    let res = await send(token);
     if (res.status === 401) {
-      this.forget(userId, orgId);
+      this.forget(userId, orgId, token);
       res = await send(await this.memberToken(userId, orgId));
     }
     return new Response(res.body, {
@@ -148,6 +162,15 @@ export class HostedWorkspaces {
   }
 
   /** Where a member's live-update socket connects, with their token. */
+  /** Whether this person may use the workspace now: a recent Linear round
+   *  trip confirmed them, and they are not a guest (guests see only some
+   *  teams in Linear; the shared board would show them all). */
+  admits(userId: string, orgId: string): boolean {
+    if (this.grants.freshMember(userId, orgId, MEMBERSHIP_MS) === null)
+      return false;
+    return this.grants.profile(userId, orgId)?.guest === false;
+  }
+
   async socket(
     userId: string,
     orgId: string
@@ -160,12 +183,16 @@ export class HostedWorkspaces {
   // The member's teammate token, minted on first use. Every call also hands
   // the daemon a newer Linear grant if the person granted one since.
   private async memberToken(userId: string, orgId: string): Promise<string> {
+    if (!this.admits(userId, orgId)) throw new NotAMember('not a member');
     const row = this.db
-      .query<{ handle: string; token_sealed: string }, [string, string]>(
-        'SELECT handle, token_sealed FROM workspace_members WHERE user_id = ? AND org_id = ?'
+      .query<
+        { handle: string; token_sealed: string; tier: string },
+        [string, string]
+      >(
+        'SELECT handle, token_sealed, tier FROM workspace_members WHERE user_id = ? AND org_id = ?'
       )
       .get(userId, orgId);
-    if (row !== null) {
+    if (row !== null && row.tier === 'decide') {
       await this.handOff(userId, orgId, row.handle);
       return this.sealer.open(row.token_sealed);
     }
@@ -182,16 +209,15 @@ export class HostedWorkspaces {
 
   private async mint(userId: string, orgId: string): Promise<string> {
     const profile = this.grants.profile(userId, orgId);
-    if (profile === null)
-      throw new Error('open the workspace from app.dispatch.foo again');
-    // Guests ask; members decide (any non-guest member controls settings).
+    if (profile === null) throw new NotAMember('no profile');
+    // Any non-guest member controls settings (guests never get this far).
     const res = await this.host.request(orgId, '/api/team/tokens', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         email: profile.email,
         displayName: profile.displayName,
-        tier: profile.guest ? 'request' : 'decide',
+        tier: 'decide',
       }),
     });
     if (res.status !== 201)
@@ -202,8 +228,9 @@ export class HostedWorkspaces {
     };
     this.db
       .query(
-        `INSERT INTO workspace_members (user_id, org_id, handle, token_sealed) VALUES (?, ?, ?, ?)
-         ON CONFLICT (user_id, org_id) DO UPDATE SET handle = excluded.handle, token_sealed = excluded.token_sealed`
+        `INSERT INTO workspace_members (user_id, org_id, handle, token_sealed, tier) VALUES (?, ?, ?, ?, 'decide')
+         ON CONFLICT (user_id, org_id) DO UPDATE SET handle = excluded.handle,
+           token_sealed = excluded.token_sealed, tier = excluded.tier`
       )
       .run(userId, orgId, handle, this.sealer.seal(token));
     await this.handOff(userId, orgId, handle);
@@ -247,9 +274,17 @@ export class HostedWorkspaces {
     if (res.status === 204) this.grants.release(userId, orgId);
   }
 
-  private forget(userId: string, orgId: string): void {
-    this.db
-      .query('DELETE FROM workspace_members WHERE user_id = ? AND org_id = ?')
-      .run(userId, orgId);
+  // Forgets the token that failed, and only that one: a parallel request may
+  // already have minted its replacement, which must survive.
+  private forget(userId: string, orgId: string, failed: string): void {
+    const row = this.db
+      .query<{ token_sealed: string }, [string, string]>(
+        'SELECT token_sealed FROM workspace_members WHERE user_id = ? AND org_id = ?'
+      )
+      .get(userId, orgId);
+    if (row !== null && this.sealer.open(row.token_sealed) === failed)
+      this.db
+        .query('DELETE FROM workspace_members WHERE user_id = ? AND org_id = ?')
+        .run(userId, orgId);
   }
 }

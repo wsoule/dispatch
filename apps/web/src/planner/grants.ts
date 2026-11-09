@@ -92,7 +92,8 @@ export class LinearGrants {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (user_id, org_id) DO UPDATE SET linear_user_id = excluded.linear_user_id,
              access_sealed = excluded.access_sealed, refresh_sealed = excluded.refresh_sealed,
-             expires_at = excluded.expires_at, profile = coalesce(excluded.profile, profile)`
+             expires_at = excluded.expires_at, profile = coalesce(excluded.profile, profile),
+             created_at = excluded.created_at`
         )
         .run(
           userId,
@@ -124,6 +125,25 @@ export class LinearGrants {
       )
       .get(urlKey);
     return row === null ? null : { orgId: row.org_id, name: row.org_name };
+  }
+
+  /** A person's standing in a workspace, only if Linear confirmed it (a
+   *  fresh OAuth round trip) within `maxAgeMs`: a grant handed to a daemon is
+   *  never refreshed here, so this is how someone removed from the workspace
+   *  stops getting in. */
+  freshMember(
+    userId: string,
+    orgId: string,
+    maxAgeMs: number
+  ): { linearUserId: string } | null {
+    const row = this.db
+      .query<{ linear_user_id: string; created_at: number }, [string, string]>(
+        'SELECT linear_user_id, created_at FROM linear_grants WHERE user_id = ? AND org_id = ?'
+      )
+      .get(userId, orgId);
+    return row === null || this.now() - row.created_at > maxAgeMs
+      ? null
+      : { linearUserId: row.linear_user_id };
   }
 
   /** A person's standing in a workspace: who they are in Linear, or null. */

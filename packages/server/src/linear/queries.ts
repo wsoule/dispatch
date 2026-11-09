@@ -123,7 +123,7 @@ export const IDENTITY_QUERY = `query Identity {
 
 export const TEAMS_QUERY = `query Teams($after: String) {
   teams(first: 50, after: $after) {
-    nodes { id key name }
+    nodes { id key name private }
     ${PAGE_INFO}
   }
 }`;

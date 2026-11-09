@@ -68,7 +68,9 @@ export function hostedWorkspace(
   return {
     name: org.name,
     viewerFor: (userId) =>
-      userId === null ? null : grants.member(userId, org.orgId),
+      userId === null || !hosted.admits(userId, org.orgId)
+        ? null
+        : grants.member(userId, org.orgId),
     load: () => Promise.reject(new Error('served by its daemon')),
     daemon: (userId, pathAndQuery, req) =>
       hosted.request(userId, org.orgId, pathAndQuery, req),

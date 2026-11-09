@@ -110,6 +110,8 @@ export interface LinearTeam {
   id: string;
   key: string;
   name: string;
+  /** Linear's private teams: only their members see their issues. */
+  private?: boolean;
 }
 
 /** A chip's display fields plus the remote version, without paying for a whole issue. */

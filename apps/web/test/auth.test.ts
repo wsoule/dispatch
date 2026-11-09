@@ -336,7 +336,12 @@ describe('installing Dispatch on a workspace', () => {
     const target = new URL(start.headers.get('location') ?? '');
     expect(target.searchParams.get('actor')).toBe('app');
     expect(target.searchParams.get('scope')).toBe('read,write');
-    viewer = { id: 'lin-app', name: 'Dispatch', displayName: 'dispatch' };
+    viewer = {
+      id: 'lin-app',
+      name: 'Dispatch',
+      displayName: 'dispatch',
+      app: true,
+    } as typeof viewer;
     const done = await complete(start, 'linear', session);
     expect(done.headers.get('location')).toBe('/auth/linear/workspace');
     const ada = db.webSessionUser(session.slice('dt_session='.length))!;
@@ -354,6 +359,22 @@ describe('installing Dispatch on a workspace', () => {
     expect(
       seen.some((x) => x.url === 'https://api.linear.app/oauth/revoke')
     ).toBe(false);
+  });
+
+  it('refuses a grant Linear does not call an app (actor=app stripped)', async () => {
+    const session = cookieOf(
+      await complete(await call('/auth/github'), 'github')
+    );
+    const start = await call('/auth/linear/install', {
+      headers: { cookie: session },
+    });
+    const done = await complete(start, 'linear', session);
+    expect(done.status).toBe(403);
+    expect(installs).toHaveLength(0);
+    // The person's own token is not kept either.
+    expect(
+      seen.some((x) => x.url === 'https://api.linear.app/oauth/revoke')
+    ).toBe(true);
   });
 
   it('records who a member is, so their teammate token names them', async () => {
