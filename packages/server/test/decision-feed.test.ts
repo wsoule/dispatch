@@ -1,3 +1,4 @@
+import { DEFAULT_STATUS_ROLES } from '@dispatch-foo/core';
 import type { JsonValue, Message } from '@dispatch-foo/protocol';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
@@ -99,6 +100,7 @@ interface Harness {
   runs: RunMeta[];
   loops: FixLoopState[];
   titles: Map<string, string>;
+  statuses: Map<string, string>;
   setNow(ms: number): void;
 }
 
@@ -109,6 +111,7 @@ function harness(policy?: DecisionPolicy): Harness {
   const runs: RunMeta[] = [];
   const loops: FixLoopState[] = [];
   const titles = new Map<string, string>();
+  const statuses = new Map<string, string>();
   let now = T0;
   const feed = new DecisionFeed({
     orchestrator: {
@@ -123,7 +126,9 @@ function harness(policy?: DecisionPolicy): Harness {
     cache: {
       get: (id) => {
         const title = titles.get(id);
-        return title === undefined ? null : { meta: { title } };
+        const status = statuses.get(id);
+        if (title === undefined && status === undefined) return null;
+        return { meta: { title: title ?? id, status } };
       },
     },
     events,
@@ -138,6 +143,7 @@ function harness(policy?: DecisionPolicy): Harness {
     runs,
     loops,
     titles,
+    statuses,
     setNow: (ms) => {
       now = ms;
     },
@@ -1043,5 +1049,100 @@ describe('DecisionFeed gate context', () => {
   it('names no gate message on an item that has none', () => {
     h.loops.push(cappedLoop('t-1'));
     expect(h.feed.list()[0]?.messageId).toBeUndefined();
+  });
+});
+
+describe('DecisionFeed landed tasks', () => {
+  // The run that carried a task's work onto the base, merged at `mergedAt`.
+  function mergedRun(id: string, taskId: string, mergedAt: string): RunMeta {
+    return runMeta(id, {
+      taskId,
+      state: 'finished',
+      reviewedAt: mergedAt,
+      reviewAction: 'merge',
+      mergeCommit: 'deadbeef',
+    });
+  }
+
+  it('drops a capped fix loop once the task status is landed', () => {
+    h.loops.push(cappedLoop('t-f6ab79'));
+    expect(byKind(h.feed.list(), 'fix-loop-capped')).toHaveLength(1);
+
+    h.statuses.set('t-f6ab79', 'landed');
+    expect(byKind(h.feed.list(), 'fix-loop-capped')).toEqual([]);
+    // It resolves rather than silently vanishing.
+    const resolved = h.feed
+      .list({ includeResolved: true })
+      .find((item) => item.id === 'fix-loop-capped:t-f6ab79');
+    expect(resolved?.state).toBe('resolved');
+  });
+
+  it('drops a capped fix loop when a run merged after it capped', () => {
+    h.loops.push(cappedLoop('t-f6ab79', { updatedAt: ago(30_000) }));
+    h.runs.push(mergedRun('r-merged', 't-f6ab79', ago(10_000)));
+    expect(byKind(h.feed.list(), 'fix-loop-capped')).toEqual([]);
+  });
+
+  it('keeps a loop that capped after the last merge (task reopened)', () => {
+    h.runs.push(mergedRun('r-merged', 't-reopen', ago(60_000)));
+    h.loops.push(cappedLoop('t-reopen', { updatedAt: ago(5_000) }));
+    expect(byKind(h.feed.list(), 'fix-loop-capped')).toHaveLength(1);
+  });
+
+  it('drops stalled runs of a task whose work landed through another run', () => {
+    h.runs.push(
+      runMeta('r-gone', {
+        taskId: 't-4b72c5',
+        state: 'cancelled',
+        baseDiscarded: true,
+        createdAt: ago(120_000),
+      }),
+      runMeta('r-failed', {
+        taskId: 't-4b72c5',
+        state: 'failed',
+        baseDiscarded: true,
+        createdAt: ago(90_000),
+      }),
+      mergedRun('r-merged', 't-4b72c5', ago(10_000))
+    );
+    expect(byKind(h.feed.list(), 'run-stalled')).toEqual([]);
+  });
+
+  it('drops stalled runs once the task status is landed', () => {
+    h.runs.push(runMeta('r-failed', { taskId: 't-done', state: 'failed' }));
+    expect(byKind(h.feed.list(), 'run-stalled')).toHaveLength(1);
+    h.statuses.set('t-done', 'landed');
+    expect(byKind(h.feed.list(), 'run-stalled')).toEqual([]);
+  });
+
+  it('still surfaces a run that failed after the task last merged', () => {
+    h.runs.push(
+      mergedRun('r-merged', 't-reopen', ago(60_000)),
+      runMeta('r-new', {
+        taskId: 't-reopen',
+        state: 'failed',
+        createdAt: ago(30_000),
+      })
+    );
+    expect(
+      byKind(h.feed.list(), 'run-stalled').map((item) => item.runId)
+    ).toEqual(['r-new']);
+  });
+
+  it('honours a custom completed status from the project model', () => {
+    const events = new EventBus();
+    const feed = new DecisionFeed({
+      orchestrator: { list: () => [], pendingApprovalFor: () => undefined },
+      openGates: () => [],
+      fixLoopStore: { list: () => [cappedLoop('t-x')] },
+      cache: { get: () => ({ meta: { title: 'X', status: 'shipped' } }) },
+      events,
+      statusModel: () => ({
+        definitions: [{ name: 'shipped', type: 'completed', color: null }],
+        roles: DEFAULT_STATUS_ROLES,
+      }),
+      now: () => T0,
+    });
+    expect(byKind(feed.list(), 'fix-loop-capped')).toEqual([]);
   });
 });

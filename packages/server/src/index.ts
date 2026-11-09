@@ -229,6 +229,7 @@ import { ReviewCommentStore } from './reviewComments.js';
 import { sessionOrigins, sessionToken } from './session.js';
 import type { SharedPageConfig } from './shared.js';
 import { bindModeFor, isLoopbackAddress, ownOrigins } from './shared.js';
+import { statusModelFor } from './statuses.js';
 import { readProjectBackend, writeProjectBackend } from './storage.js';
 import { BoardSyncScheduler } from './sync/scheduler.js';
 import {
@@ -2520,6 +2521,7 @@ async function bootServer(
     fixLoopStore,
     cache,
     events,
+    statusModel: () => statusModelFor(rootDir),
     conversationApprovalInput: (conversation, requestId) =>
       overseerManager
         .list()

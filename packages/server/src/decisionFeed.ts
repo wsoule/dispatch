@@ -1,5 +1,12 @@
-import type { FloorCheck, NotificationKind } from '@dispatch-foo/core';
-import { notificationKindForMessage } from '@dispatch-foo/core';
+import type {
+  FloorCheck,
+  NotificationKind,
+  StatusModel,
+} from '@dispatch-foo/core';
+import {
+  isCompletedStatus,
+  notificationKindForMessage,
+} from '@dispatch-foo/core';
 import type { GateData, Message } from '@dispatch-foo/protocol';
 import { gateOf, SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 
@@ -131,9 +138,10 @@ interface DecisionFeedRuns {
   ): { input: unknown } | undefined;
 }
 
-/** The slice of TaskCache this feed reads: a task id to its title. */
+/** The slice of TaskCache this feed reads: a task id to its title, and its
+ *  status so a landed task's leftovers can be dropped. */
 interface DecisionFeedTitles {
-  get(id: string): { meta: { title: string } } | null;
+  get(id: string): { meta: { title: string; status?: string } } | null;
 }
 
 /** The slice of FixLoopStore this feed reads. */
@@ -153,6 +161,9 @@ export interface DecisionFeedContext {
     conversation: string,
     requestId: string
   ) => unknown;
+  /** The project's status model, so a custom completed status counts as
+   *  landed. Defaults to the built-in model. */
+  statusModel?: () => StatusModel;
   /** Defaults to "everything here blocks" — see DecisionDisposition. */
   policy?: DecisionPolicy;
   /** Test seam. Defaults to `Date.now`. */
@@ -273,6 +284,24 @@ function supersededRunIds(runs: Iterable<RunMeta>): ReadonlySet<string> {
     if (run.resumedFrom !== undefined) ids.add(run.resumedFrom);
   }
   return ids;
+}
+
+// When each task's work last merged: the newest reviewedAt among its runs whose
+// review actually landed a commit (a local squash merge, or a PR merged on
+// GitHub). Built once per recompute, like supersededRunIds.
+function mergedAtByTask(runs: Iterable<RunMeta>): ReadonlyMap<string, string> {
+  const merged = new Map<string, string>();
+  for (const run of runs) {
+    const landed =
+      (run.reviewAction === 'merge' && run.mergeCommit !== undefined) ||
+      run.reviewAction === 'pr';
+    if (!landed || run.reviewedAt === undefined) continue;
+    const previous = merged.get(run.taskId);
+    if (previous === undefined || run.reviewedAt > previous) {
+      merged.set(run.taskId, run.reviewedAt);
+    }
+  }
+  return merged;
 }
 
 // Why this run needs a human, or null when it does not. Order matters: a
@@ -404,10 +433,11 @@ export class DecisionFeed {
     const runs = new Map(
       this.ctx.orchestrator.list().map((run) => [run.id, run])
     );
+    const landed = this.landedCheck(runs);
     const open = [
       ...this.gateItems(nowMs, runs),
-      ...this.fixLoopItems(nowMs),
-      ...this.stalledRunItems(nowMs, runs),
+      ...this.fixLoopItems(nowMs, landed),
+      ...this.stalledRunItems(nowMs, runs, landed),
     ]
       .map((item) => withOwner(item, runs))
       .sort((a, b) => a.since.localeCompare(b.since));
@@ -466,6 +496,28 @@ export class DecisionFeed {
       if (this.resolved.size <= MAX_RESOLVED) break;
       this.resolved.delete(id);
     }
+  }
+
+  // Whether a task's work has landed since `since`, which is what makes a
+  // capped fix loop or a stalled run on it leftover history rather than
+  // something a human must rule on. A completed task status settles it
+  // outright. Otherwise a merged run counts only if it merged at or after
+  // `since`, so a task reopened after landing still surfaces the failures of
+  // its new runs. The status model is read at most once per recompute, and
+  // only when some task is actually asked about.
+  private landedCheck(
+    runs: Map<string, RunMeta>
+  ): (taskId: string, since: string) => boolean {
+    const mergedAt = mergedAtByTask(runs.values());
+    let model: StatusModel | undefined;
+    return (taskId, since) => {
+      const merged = mergedAt.get(taskId);
+      if (merged !== undefined && merged >= since) return true;
+      const status = this.ctx.cache.get(taskId)?.meta.status;
+      if (status === undefined) return false;
+      model ??= this.ctx.statusModel?.();
+      return isCompletedStatus(status, model);
+    };
   }
 
   private taskTitle(taskId: string): string | undefined {
@@ -566,10 +618,16 @@ export class DecisionFeed {
     );
   }
 
-  private fixLoopItems(nowMs: number): UnclassifiedDecisionItem[] {
+  private fixLoopItems(
+    nowMs: number,
+    landed: (taskId: string, since: string) => boolean
+  ): UnclassifiedDecisionItem[] {
     return this.ctx.fixLoopStore
       .list()
-      .filter((state) => state.state === 'capped')
+      .filter(
+        (state) =>
+          state.state === 'capped' && !landed(state.taskId, state.updatedAt)
+      )
       .map((state) => {
         const title = this.taskTitle(state.taskId);
         return {
@@ -592,13 +650,17 @@ export class DecisionFeed {
 
   private stalledRunItems(
     nowMs: number,
-    runs: Map<string, RunMeta>
+    runs: Map<string, RunMeta>,
+    landed: (taskId: string, since: string) => boolean
   ): UnclassifiedDecisionItem[] {
     const items: UnclassifiedDecisionItem[] = [];
     const superseded = supersededRunIds(runs.values());
     for (const run of runs.values()) {
       const reason = stalledReason(run, superseded);
       if (reason === null) continue;
+      // The task landed through another run after this one started, so a
+      // failure or a gone base here no longer blocks anything.
+      if (landed(run.taskId, run.createdAt)) continue;
       // A run that died on its cost cap is a floor item: deciding to spend
       // past the cap is a human ruling at every rung, so no classifier may
       // file this under "merely recorded".
