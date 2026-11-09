@@ -3282,6 +3282,20 @@ export class Orchestrator {
    *
    * A content conflict is a 409 naming the files, matching the local path.
    */
+  // Refuses to land a run whose worktree has a git operation open: the merge
+  // queue rebases runs in place, and mid-rebase HEAD sits at the new base, so
+  // the run's diff reads as empty and a landing would record "nothing to add",
+  // then delete the worktree and branch with the work still on them.
+  private requireSettledWorktree(meta: RunMeta): void {
+    if (!existsSync(meta.worktreePath)) return;
+    const open = this.worktrees.operationInProgress(meta.worktreePath);
+    if (open !== undefined) {
+      throw new OrchestratorConflictError(
+        `run ${meta.id} has ${open} in progress in its worktree (the merge queue may be landing it) — wait for it to finish, or finish it by hand, then retry`
+      );
+    }
+  }
+
   prepareOriginLanding(
     runId: string,
     ontoCommit: string
@@ -3292,6 +3306,7 @@ export class Orchestrator {
         `worktree is gone: ${meta.worktreePath} — re-dispatch the task or discard this run`
       );
     }
+    this.requireSettledWorktree(meta);
     // Committed-only, for the reason mergeRun gives: the squash carries only
     // what is reachable from the branch.
     const diff = this.worktrees.diffCommittedOnly(
@@ -3758,6 +3773,7 @@ export class Orchestrator {
     now: string,
     actor: string | undefined
   ): string | undefined {
+    this.requireSettledWorktree(meta);
     // A run based on a milestone integration branch lands THERE, not on whatever
     // the main checkout has checked out — via a checkout-free squash merge
     // that never touches the user's working tree, so none of the checkout
@@ -3902,6 +3918,7 @@ export class Orchestrator {
     now: string,
     actor: string | undefined
   ): string | undefined {
+    this.requireSettledWorktree(meta);
     // The branch can vanish between dispatch and review — a human deleting it
     // by hand is the only way, and the honest response is the same refusal a
     // moved-away base gets, with the reason spelled out.

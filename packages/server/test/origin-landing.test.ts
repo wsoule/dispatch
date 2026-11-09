@@ -9,13 +9,14 @@ import {
 } from 'bun:test';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 
 import { TaskCache } from '../src/cache.js';
 import { DecisionFeed } from '../src/decisionFeed.js';
@@ -465,6 +466,32 @@ describe('local fallback', () => {
 // direct merge: with a remote there is exactly one way in, and it ends on
 // origin. Without one, the local merge is still the landing and says so.
 describe('direct merges', () => {
+  // The merge queue rebases a run in its own worktree. Mid-rebase HEAD sits
+  // detached at the new base, so the run's diff read as empty: a Merge click
+  // at that moment recorded "merged" with no commit and deleted the branch.
+  it('refuses to land a run whose worktree is mid-rebase, and keeps its branch', async () => {
+    const harness = makeHarness();
+    const runId = await finishedRunWithFile(harness, 'mid-rebase.txt');
+    const { worktreePath, branch } = harness.orchestrator.getRun(runId)!.meta;
+    runGitSync(worktreePath, ['checkout', '-q', '--detach', originTip()]);
+    const marker = runGitSync(worktreePath, [
+      'rev-parse',
+      '--git-path',
+      'rebase-merge',
+    ]).trim();
+    mkdirSync(isAbsolute(marker) ? marker : join(worktreePath, marker), {
+      recursive: true,
+    });
+    const queue = makeQueue(harness, defaultCommandRunner);
+
+    await expect(queue.mergeNow(runId)).rejects.toThrow(/a rebase in progress/);
+
+    const meta = harness.orchestrator.getRun(runId)!.meta;
+    expect(meta.reviewAction).toBeUndefined();
+    expect(runGitSync(repo, ['branch', '--list', branch]).trim()).not.toBe('');
+    expect(originHasFile('mid-rebase.txt')).toBe(false);
+  });
+
   it('lands the Merge button on origin when the project has a remote', async () => {
     const harness = makeHarness();
     const runId = await finishedRunWithFile(harness, 'button.txt');

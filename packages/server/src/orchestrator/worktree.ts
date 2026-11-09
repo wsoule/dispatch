@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 
 import { spawnGitSync } from '../blockingGit.js';
 import type { CommandResult } from './pr.js';
@@ -1449,6 +1449,35 @@ export class WorktreeManager {
   // what the squash-merge itself actually sees — see mergeRun()'s own
   // comment on why the live, working-tree-inclusive `diff()` would be wrong
   // there.
+  /**
+   * The git operation left open in a worktree (a rebase, merge, cherry-pick
+   * or revert), or undefined when there is none. Mid-rebase a worktree's HEAD
+   * sits detached at the new base, so any diff of HEAD reads as empty; callers
+   * that would treat an empty diff as "nothing to land" must refuse instead.
+   */
+  operationInProgress(worktreePath: string): string | undefined {
+    const markers: [string, string][] = [
+      ['rebase-merge', 'a rebase'],
+      ['rebase-apply', 'a rebase'],
+      ['MERGE_HEAD', 'a merge'],
+      ['CHERRY_PICK_HEAD', 'a cherry-pick'],
+      ['REVERT_HEAD', 'a revert'],
+    ];
+    for (const [name, label] of markers) {
+      const path = runGit(worktreePath, ['rev-parse', '--git-path', name]);
+      if (!path.ok) continue;
+      const resolved = path.stdout.trim();
+      if (
+        existsSync(
+          isAbsolute(resolved) ? resolved : join(worktreePath, resolved)
+        )
+      ) {
+        return label;
+      }
+    }
+    return undefined;
+  }
+
   diffCommittedOnly(worktreePath: string, baseBranch: string): DiffResult {
     const mergeBase = this.mergeBaseWith(worktreePath, baseBranch);
     const range = `${mergeBase}...HEAD`;

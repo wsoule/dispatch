@@ -1321,7 +1321,7 @@ export class MergeQueue {
       if (record !== undefined) record.status = 'failed';
       // Naming the step is the whole point of configuring them: "verify failed" tells you to go
       // read a log, "typecheck failed" tells you what broke.
-      if (/timed out/i.test(result.stderr)) {
+      if (result.timedOut === true) {
         throw new Error(
           `${step.name} timed out after ${timeoutSec}s — raise orchestrator.verifyTimeoutSec or narrow the step`
         );

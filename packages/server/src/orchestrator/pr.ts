@@ -42,6 +42,10 @@ export interface CommandResult {
   ok: boolean;
   stdout: string;
   stderr: string;
+  // Set only when the runner killed the command at `opts.timeoutMs`. The
+  // command's own output can say "timed out" (a test runner's per-test limit)
+  // without the command having run out of time.
+  timedOut?: true;
 }
 
 // The command-runner seam (mirrors worktree.ts's private `runGit`, but
@@ -178,6 +182,7 @@ export async function defaultCommandRunner(
           ok: false,
           stdout: '',
           stderr: `timed out after ${timeoutMs}ms`,
+          timedOut: true,
         };
       }
       const [stdout, stderr, exitCode] = outcome;

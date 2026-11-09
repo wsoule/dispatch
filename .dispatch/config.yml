@@ -76,8 +76,11 @@ verifySteps:
     command: moon run root:check-worker-entries
   - name: audit
     command: moon run root:audit
+  # bun's 5s per-test default is sized for CI's idle runners; this machine
+  # verifies under load 30-50, where git-heavy tests overrun it and the
+  # queue failed good runs. CI keeps the default.
   - name: test
-    command: moon run :test
+    command: moon run :test -- --timeout 30000
   # The published runner against the published reference adapter under
   # Node; ci.yml runs the same target, and scripts/check-ci-targets.ts
   # (REQUIRED_PROJECT_TARGETS) fails when either list drops it.

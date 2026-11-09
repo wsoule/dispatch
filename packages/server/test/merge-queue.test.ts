@@ -311,7 +311,13 @@ describe('MergeQueue verify timeout', () => {
             hangUntilReleased,
             new Promise<CommandResult>((resolve) =>
               setTimeout(
-                () => resolve({ ok: false, stdout: '', stderr: 'timed out' }),
+                () =>
+                  resolve({
+                    ok: false,
+                    stdout: '',
+                    stderr: 'timed out',
+                    timedOut: true,
+                  }),
                 opts.timeoutMs
               )
             ),
@@ -337,6 +343,37 @@ describe('MergeQueue verify timeout', () => {
     expect(ok?.state).toBe('merged');
     releaseHang?.();
   }, 30_000);
+
+  // A test runner's own per-test limit ("this test timed out after 5000ms")
+  // is a failing test, not the step running out of time. Reading it as the
+  // step timeout told people to raise verifyTimeoutSec, which never helps.
+  it("reports a step whose output says 'timed out' as failed, not as a step timeout", async () => {
+    const harness = makeHarness();
+    writeFileSync(
+      join(harness.rootDir, DISPATCH_DIR, 'config.yml'),
+      'verifyCommand: "bun test"\n'
+    );
+    const { runId } = await dispatchAndFinish(harness, 'Slow test');
+    const stub = new StubRunner();
+    const runner = async (cwd: string, cmd: string[]): Promise<CommandResult> =>
+      cmd[0] === 'bash'
+        ? {
+            ok: false,
+            stdout: '',
+            stderr:
+              '(fail) slow case [5002ms]\n  ^ this test timed out after 5000ms.',
+          }
+        : await stub.run(cwd, cmd);
+    const queue = makeQueue(harness, runner);
+
+    queue.enqueue(runId);
+    await waitFor(() => queue.snapshot().history.length === 1, 20_000);
+
+    const entry = queue.snapshot().history[0];
+    expect(entry?.state).toBe('failed');
+    expect(entry?.reason).toMatch(/^verify failed: /);
+    expect(entry?.reason).not.toMatch(/verifyTimeoutSec/);
+  });
 });
 
 // Elapsed time is what makes "slow" and "wedged" distinguishable without
