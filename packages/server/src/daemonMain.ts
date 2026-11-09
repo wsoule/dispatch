@@ -29,6 +29,7 @@ import {
   startServer,
 } from './index.js';
 import { fakeOAuthEndpoints } from './linear/oauth.js';
+import { parseMobileSettings } from './mobile/host.js';
 import {
   registerCodexOverseer,
   registerCodexPlanner,
@@ -616,6 +617,29 @@ if (!a2aFlags.ok) {
 }
 const a2aOverrides = a2aFlags.overrides;
 
+// One-boot overrides of the mobile listener's saved settings (mobile/host.ts):
+// `--mobile-port` opens it on a loopback port, `--mobile-url` names the https
+// URL a phone reaches it at through a tunnel.
+const mobileFlags = parseMobileSettings({
+  port:
+    readFlag(args, '--mobile-port') === undefined
+      ? null
+      : Number(readFlag(args, '--mobile-port')),
+  publicUrl: readFlag(args, '--mobile-url') ?? null,
+});
+if (!mobileFlags.ok) {
+  console.error(`dispatchd: --mobile-*: ${mobileFlags.error}`);
+  process.exit(2);
+}
+const mobileOverrides = {
+  ...(mobileFlags.settings.port === null
+    ? {}
+    : { port: mobileFlags.settings.port }),
+  ...(mobileFlags.settings.publicUrl === null
+    ? {}
+    : { publicUrl: mobileFlags.settings.publicUrl }),
+};
+
 // `--started-by <label>`: who spawned this background daemon, for the daemon
 // file (the CLI's ensureDaemon passes it alongside --idle-timeout).
 const startedBy = readFlag(args, '--started-by');
@@ -650,6 +674,9 @@ const serverOpts: Parameters<typeof startServer>[0] = {
       }),
   ...(Object.keys(a2aOverrides).length === 0 ? {} : { a2a: a2aOverrides }),
   ...(Object.keys(linearOAuth).length === 0 ? {} : { linearOAuth }),
+  ...(Object.keys(mobileOverrides).length === 0
+    ? {}
+    : { mobile: mobileOverrides }),
   // `--init` is the desktop's add-project spawn, which stops whatever daemon
   // predates the project's tracker; `--replace` is the explicit override.
   // Either way this boot waits for the old pid to exit, never runs beside it.

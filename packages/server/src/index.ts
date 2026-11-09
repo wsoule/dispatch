@@ -142,6 +142,8 @@ import {
 import type { Messaging } from './messaging/service.js';
 import { openMessaging } from './messaging/service.js';
 import { migrateEpicNames } from './migrateEpicNames.js';
+import type { MobileSettings } from './mobile/host.js';
+import { decisionTitle, MobileHost } from './mobile/host.js';
 import { NoteStore } from './notes.js';
 import {
   codexInstalled,
@@ -169,6 +171,7 @@ import { OverseerToolRegistry } from './orchestrator/overseerTools.js';
 import {
   allocationRunsPath,
   boardSyncDir,
+  mobileDir,
   pairedDevicesPath,
   planningAuditPath,
   planningWarningsPath,
@@ -302,6 +305,9 @@ export interface ServerHandle {
   prWorktrees: PrWorktreeManager;
   // Exposed for tests, as mergeQueue is: they reach the memory store directly.
   memory: MemoryService;
+  // Push and the mobile listener; exposed so a test can read the listener's
+  // port and drive the notifier.
+  mobile: MobileHost;
   // Closes WS clients, stops the watcher, and removes the daemon file (if one
   // was written) — the reverse of everything startServer sets up.
   stop(): Promise<void>;
@@ -486,6 +492,13 @@ export interface StartServerOptions {
   onSharingRestart?: (rollback: () => void) => Promise<void>;
   // One-boot A2A listener overrides from dispatchd's `--a2a-*` flags.
   a2a?: ListenerOverrides;
+  // One-boot mobile listener overrides from dispatchd's `--mobile-*` flags.
+  mobile?: Partial<MobileSettings>;
+  // The built desktop bundle whose `m/` the mobile listener serves. Left
+  // undefined, the desktop app's own dist; null serves no app (tests).
+  mobileDistDir?: string | null;
+  // Replaces real Web Push sends (tests).
+  mobilePush?: ConstructorParameters<typeof MobileHost>[0]['notifier'];
   // Standalone hosts' watch-stream limits; tests shorten the keepalive.
   a2aWatchLimits?: Partial<WatchLimits>;
   // How long a signature peer must answer unverifiably before it is
@@ -1152,6 +1165,19 @@ async function bootServer(
     }),
     codes: new PairingCodes(),
   };
+  // Push and the phone's listener (mobile/host.ts). The snapshot reads the
+  // orchestrator and messaging built further down, and is first called from
+  // mobile.start() once they exist.
+  const mobile = new MobileHost({
+    dir: mobileDir(rootDir),
+    distDir:
+      opts.mobileDistDir !== undefined ? opts.mobileDistDir : DESKTOP_DIST_DIR,
+    snapshot: () => mobileSnapshot(),
+    deviceOf: (token) => tokens.registry.resolve(token)?.device ?? null,
+    deviceExists: (id) => pairing.devices.list().some((d) => d.id === id),
+    ...(opts.mobile === undefined ? {} : { overrides: opts.mobile }),
+    ...(opts.mobilePush === undefined ? {} : { notifier: opts.mobilePush }),
+  });
   const tokens: DaemonTokens = {
     ...tokenPair,
     registry: new TokenRegistry(
@@ -2803,6 +2829,40 @@ async function bootServer(
     return { busy: workIn(parked), parked: parked.size };
   };
   apiCtx.liveWork = workReport;
+  apiCtx.mobile = mobile;
+  // What the phone hears about: decisions addressed to the operator (not a
+  // teammate's, in a shared daemon) and every run's state.
+  const mobileSnapshot = () => {
+    const runs = orchestrator.list();
+    const titles = new Map(runs.map((r) => [r.id, r.taskTitle]));
+    return {
+      decisions: openHumanDecisions(messaging.engine)
+        .filter((m) =>
+          messaging.engine
+            .deliveriesOf(m.id)
+            .some((d) => d.recipient === actorContext.humanRef)
+        )
+        .map((m) => ({
+          id: m.id,
+          title: decisionTitle(m, (id) => titles.get(id)),
+        })),
+      runs: runs.map((r) => ({
+        id: r.id,
+        title: r.taskTitle,
+        state: r.state,
+        reviewed: r.reviewedAt !== undefined,
+      })),
+    };
+  };
+  const unsubscribeMobile = events.subscribe((event) => {
+    if (
+      event.type === 'message.new' ||
+      event.type === 'delivery.changed' ||
+      event.type === 'run.changed' ||
+      event.type === 'decisions.changed'
+    )
+      mobile.changed();
+  });
   // This server's own restart mark (never shared with another server).
   const sharing = new SharingState();
   apiCtx.sharing = sharing;
@@ -3083,6 +3143,11 @@ async function bootServer(
   const tlsPort = tlsServer === null ? undefined : (tlsServer.port ?? 0);
   // A hosted planner opens no A2A listener: no outbound agent calls.
   if (opts.hostedPlanner !== true) await a2a.start();
+  mobile.start((req) =>
+    idle === null
+      ? handleApi(req, apiCtx)
+      : idle.track(() => handleApi(req, apiCtx))
+  );
   if (shared) {
     for (const origin of tlsPort === undefined
       ? ownOrigins(port, networkInterfaces(), opts.publicOrigins)
@@ -3123,6 +3188,7 @@ async function bootServer(
     prManager,
     prWorktrees,
     memory,
+    mobile,
     async stop() {
       hubLink?.stop();
       remoteAccess.stop();
@@ -3178,6 +3244,8 @@ async function bootServer(
       await server.stop(true);
       await tlsServer?.stop(true);
       await a2a.close();
+      unsubscribeMobile();
+      await mobile.close();
       // The boot's PR probe is not awaited at boot; its `gh` and `git` must
       // not outlive the daemon, or a restart loop accumulates their pipes.
       await prCapability;

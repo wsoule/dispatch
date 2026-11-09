@@ -655,6 +655,8 @@ export interface ServeOptions {
   a2aPublicUrl?: string;
   a2aTlsCert?: string;
   a2aTlsKey?: string;
+  mobilePort?: string;
+  mobileUrl?: string;
   replace?: boolean;
   printToken?: boolean;
   appTokenFile?: string;
@@ -690,6 +692,8 @@ export function serveArgs(root: string, o: ServeOptions): string[] {
     ['--a2a-public-url', o.a2aPublicUrl],
     ['--a2a-tls-cert', o.a2aTlsCert],
     ['--a2a-tls-key', o.a2aTlsKey],
+    ['--mobile-port', o.mobilePort],
+    ['--mobile-url', o.mobileUrl],
   ];
   const args = ['--root', root];
   for (const [flag, value] of flags) {
@@ -1012,6 +1016,14 @@ export function registerDaemonCommands(
     .option(
       '--print-token',
       'print the full app token instead of a masked one; your terminal scrollback keeps it'
+    )
+    .option(
+      '--mobile-port <n>',
+      'open the phone app on this loopback port, for a tunnel such as `tailscale serve` to front (this boot only)'
+    )
+    .option(
+      '--mobile-url <url>',
+      'the https URL the phone reaches --mobile-port at, through that tunnel (this boot only)'
     )
     .option(
       '--replace',

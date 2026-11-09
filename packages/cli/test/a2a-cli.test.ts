@@ -519,6 +519,23 @@ describe('dispatch serve', () => {
     ]);
   });
 
+  it('passes the --mobile-* flags through to dispatchd', () => {
+    expect(
+      serveArgs('/r', {
+        mobilePort: '4800',
+        mobileUrl: 'https://laptop.tailnet.ts.net',
+      })
+    ).toEqual([
+      '--root',
+      '/r',
+      '--mobile-port',
+      '4800',
+      '--mobile-url',
+      'https://laptop.tailnet.ts.net',
+      '--mask-app-token',
+    ]);
+  });
+
   it('keeps the existing flags before the --a2a-* ones', () => {
     expect(
       serveArgs('/r', { port: '9000', tlsCert: 'a.pem', tlsKey: 'b.pem' })

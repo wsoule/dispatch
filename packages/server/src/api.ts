@@ -138,6 +138,7 @@ import {
 } from './api/legacyMilestone.js';
 import { isLinearWebhook, linearWebhook } from './api/linearWebhook.js';
 import { migrateMilestones } from './api/migrations.js';
+import { handleMobile } from './api/mobile.js';
 import type { DevicePairing } from './api/pairing.js';
 import { pairingRoutes } from './api/pairing.js';
 import { listPeople, rosterMembers } from './api/people.js';
@@ -263,6 +264,7 @@ import {
   waitForAnswer,
 } from './messaging/routes.js';
 import type { Messaging } from './messaging/service.js';
+import type { MobileHost } from './mobile/host.js';
 import type { Note, NoteKind } from './notes.js';
 import { NOTE_KINDS, type NoteStore } from './notes.js';
 import { buildAgentSessions } from './orchestrator/agentSessions.js';
@@ -551,6 +553,9 @@ export interface ApiContext {
   ) => Promise<SharingAnswer>;
   /** This server's restart mark while it restarts to turn on sync. */
   sharing?: SharingState;
+  /** Paired phones, their push subscriptions and the mobile listener
+   *  (mobile/host.ts); absent in harnesses that build no daemon. */
+  mobile?: MobileHost;
   /** Exits for another daemon to take over, or names the live work that
    *  stops it. Set by startServer when its process can exit. */
   shutdownForHandover?: (
@@ -4662,6 +4667,10 @@ const ELEVATED_ROUTES: ReadonlyArray<{
     segments: ['setup', 'accounts', '*', '*'],
     tier: 'operator',
   },
+  // The mobile listener's settings decide what this machine exposes to a
+  // tunnel; they belong to the person at the keyboard.
+  { method: 'GET', segments: ['mobile', 'settings'], tier: 'operator' },
+  { method: 'PUT', segments: ['mobile', 'settings'], tier: 'operator' },
   // ---- decide: adjudication -------------------------------------------------
   // Starting a preview runs a command out of the run's own worktree — a
   // worktree the agent just wrote to, including its package.json. On the
@@ -6244,6 +6253,8 @@ export async function handleApi(
     if (segments[0] === 'plans' && segments.length === 1 && method === 'GET') {
       return jsonResponse(ctx.planManager.list());
     }
+
+    if (segments[0] === 'mobile') return await handleMobile(req, ctx, segments);
 
     if (segments[0] === 'runs') {
       if (segments.length === 1 && method === 'GET') {

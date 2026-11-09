@@ -34,6 +34,13 @@
         "test/fixtures/a2aFixturePeer.ts"
       ]
     },
+    "apps/desktop": {
+      // The phone app is a second Vite page (m/index.html → src/mobile/main.tsx)
+      // that the plugin does not read, and its service worker is a plain file
+      // under public/ that the browser loads by URL (/m/sw.js), never imported.
+      "entry": ["src/mobile/main.tsx"],
+      "ignore": ["public/m/sw.js"]
+    },
     "packages/protocol-spec": {
       // Scripts run from moon tasks; fixture adapters are spawned by the
       // runner tests, never imported.

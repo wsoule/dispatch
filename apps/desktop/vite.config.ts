@@ -66,6 +66,13 @@ export default defineConfig({
     // stays blank rather than failing visibly.
     target: WEBKIT_TARGET,
     rolldownOptions: {
+      // Two pages: the desktop app, and the phone app dispatchd's mobile
+      // listener serves at /m/ (src/mobile). Separate entries, so the phone
+      // never downloads the desktop app.
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        mobile: fileURLToPath(new URL('./m/index.html', import.meta.url)),
+      },
       output: {
         // Entry chunks only: lazily-loaded chunks are reached from an entry
         // that has already installed the shims, so repeating them 300+ times
