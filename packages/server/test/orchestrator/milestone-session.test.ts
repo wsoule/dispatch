@@ -163,8 +163,10 @@ function pausedEvents(h: Harness) {
 describe('MilestoneEngine auto-fill attribution', () => {
   it('names the epic and the blocker that released a task, never `— none`', async () => {
     const h = makeHarness();
-    const { milestoneId, childIds } = createMilestoneWithChildren(h.store, 2, (i, ids) =>
-      i === 1 ? [ids[0]] : []
+    const { milestoneId, childIds } = createMilestoneWithChildren(
+      h.store,
+      2,
+      (i, ids) => (i === 1 ? [ids[0]] : [])
     );
     h.cache.rebuild(h.store);
     const [first, second] = childIds;
