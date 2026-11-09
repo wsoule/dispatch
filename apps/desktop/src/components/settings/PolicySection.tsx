@@ -1,4 +1,6 @@
 import type {
+  DifficultyPolicy,
+  DifficultyThreshold,
   DispatchConfig,
   LedgerEntry,
   PolicyConfig,
@@ -7,6 +9,7 @@ import type {
 } from '@dispatch-foo/core/browser';
 import {
   consultPolicy,
+  difficultyPolicy,
   POLICY_GATES,
   projectPolicy,
 } from '@dispatch-foo/core/browser';
@@ -19,6 +22,7 @@ import { useEffect, useState } from 'react';
 import { relativeTime } from '../../lib/landingView';
 import { policyReceipts } from '../../lib/policyReceipts';
 import { AutonomySlider } from './AutonomySlider';
+import { ChoiceSetting, NumberSetting, SwitchSetting } from './fields';
 import styles from './PolicySection.module.css';
 import { SettingsSearchable } from './search';
 import kit from './settings.module.css';
@@ -30,8 +34,14 @@ interface PolicyPatch {
   policy?: {
     rung?: number;
     gates?: Partial<Record<PolicyGate, PolicyGateMode | null>>;
+    difficulty?: Partial<DifficultyPolicy>;
   };
 }
+
+const THRESHOLD_CHOICES: { value: DifficultyThreshold; label: string }[] = [
+  { value: 'trivial', label: 'Trivial only' },
+  { value: 'small', label: 'Trivial or small' },
+];
 
 // One line per gate: what actually happens when it auto-decides, so the table
 // reads as behavior, not as config keys.
@@ -149,6 +159,70 @@ function GateTable({ policy, onPinGate }: GateTableProps) {
   );
 }
 
+interface EasyTasksProps {
+  difficulty: DifficultyPolicy;
+  onSave: (patch: Partial<DifficultyPolicy>) => void;
+}
+
+/** The difficulty lift's settings (policy.difficulty in config.yml): the two
+ *  switches, the hardest rating that still counts as easy, and the size
+ *  ceilings a change must fit under to merge on its own. */
+function EasyTasks({ difficulty, onSave }: EasyTasksProps) {
+  return (
+    <>
+      <SwitchSetting
+        id="difficulty-auto-land"
+        title="Review and merge easy tasks on their own"
+        subtitle="Once an easy task's run finishes, its review starts and it merges after its checks pass, if the change is small enough."
+        checked={difficulty.autoLand}
+        onSave={(autoLand) => onSave({ autoLand })}
+      />
+      <SwitchSetting
+        id="difficulty-auto-dispatch"
+        title="Start easy tasks on their own"
+        subtitle="Ready tasks rated easy start without you pressing dispatch."
+        checked={difficulty.autoDispatch}
+        onSave={(autoDispatch) => onSave({ autoDispatch })}
+      />
+      <ChoiceSetting
+        id="difficulty-threshold"
+        title="Counts as easy"
+        subtitle="The hardest rating that still runs without you."
+        value={difficulty.threshold}
+        choices={THRESHOLD_CHOICES}
+        onSave={(threshold) => onSave({ threshold })}
+      />
+      <NumberSetting
+        id="difficulty-max-files"
+        title="Most files changed"
+        subtitle="A bigger change waits for you, however easy the task looked."
+        value={difficulty.maxFiles}
+        suffix="files"
+        onSave={(maxFiles) => {
+          if (maxFiles !== null) onSave({ maxFiles });
+        }}
+      />
+      <NumberSetting
+        id="difficulty-max-lines"
+        title="Most lines changed"
+        value={difficulty.maxLines}
+        suffix="lines"
+        onSave={(maxLines) => {
+          if (maxLines !== null) onSave({ maxLines });
+        }}
+      />
+      <NumberSetting
+        id="difficulty-max-concurrent"
+        title="Easy tasks running at once"
+        value={difficulty.maxConcurrent}
+        onSave={(maxConcurrent) => {
+          if (maxConcurrent !== null) onSave({ maxConcurrent });
+        }}
+      />
+    </>
+  );
+}
+
 /** The hard stops: never configurable, shown so the promise is visible. */
 function HardStops() {
   return (
@@ -242,6 +316,17 @@ export function PolicySection({
           onPinGate={(gate, pin) =>
             void onSave({ policy: { gates: { [gate]: pin } } })
           }
+        />
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="Easy tasks"
+        hint="Tasks rated easy can run, get reviewed and merge without you, at any level. Elevated and critical tasks always wait. Label a task no-auto-land to keep it manual."
+        keywords="difficulty auto-land autopilot easy low"
+      >
+        <EasyTasks
+          difficulty={difficultyPolicy(policy)}
+          onSave={(difficulty) => void onSave({ policy: { difficulty } })}
         />
       </SettingsGroup>
 

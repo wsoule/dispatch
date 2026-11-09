@@ -76,6 +76,7 @@ import {
   depMapSourceDirs,
   isSkippedPath,
 } from './depmap.js';
+import { DifficultyAutopilot } from './difficultyAutopilot.js';
 import { docGateHandler, docGatePort } from './docs/gate.js';
 import { DaemonDocsHost, docsMemoryPort } from './docs/host.js';
 import { LinearDocsAdapter } from './docs/linear.js';
@@ -94,6 +95,7 @@ import { IdleShutdown } from './idleShutdown.js';
 import { InboxStore } from './inbox.js';
 import { createJudgmentClient } from './judgments/client.js';
 import type { JudgmentClient } from './judgments/client.js';
+import { DifficultyEvaluator } from './judgments/difficulty.js';
 import {
   InboxTriageScheduler,
   InboxTriageSnapshotStore,
@@ -2546,6 +2548,10 @@ async function bootServer(
   // The gate hooks themselves — verify-retry and merge consult the project's
   // policy off the daemon's own signals; the scope gate consults it in
   // messaging/scopePolicy.ts. See policyEngine.ts.
+  // The difficulty evaluator (judgments/difficulty.ts), shared by the policy
+  // engine's difficulty lift and the autopilot below so one task is judged
+  // once, not once per consumer.
+  const difficultyEvaluator = new DifficultyEvaluator(judgments);
   const policyEngine = new PolicyEngine({
     rootDir,
     store,
@@ -2557,13 +2563,32 @@ async function bootServer(
     ledgerStore,
     actorContext,
     approvalFloor,
+    judgeDifficulty: (taskId) => {
+      const task = store.get(taskId);
+      return task === null
+        ? Promise.resolve(null)
+        : difficultyEvaluator.judge(task);
+    },
     // The Activity half of each receipt; the ledger half is the engine's own.
-    appendActivity: policyActivityAppender({ store, cache, events }),
+    appendActivity: appendPolicyActivity,
     answerGate: async (messageId, answer) => {
       await messaging.engine.reply(messageId, answer, SYSTEM_SENDER);
     },
   });
   const stopPolicyEngine = policyEngine.start();
+  // `policy.difficulty.autoDispatch`: ready low-difficulty tasks dispatch
+  // themselves, and the lift above carries them to the merge queue.
+  const stopDifficultyAutopilot = new DifficultyAutopilot({
+    rootDir,
+    tasks: () => cache.query({ includeArchived: true }),
+    orchestrator,
+    events,
+    judge: (task) => difficultyEvaluator.judge(task),
+    humanRef: actorContext.humanRef,
+    ledgerStore,
+    appendActivity: appendPolicyActivity,
+    milestoneScope: () => milestoneEngine.liveScopeIds(),
+  }).start();
 
   // Who is connected right now — read off open event sockets, see presence.ts.
   const presenceTracker = new PresenceTracker();
@@ -3104,6 +3129,7 @@ async function bootServer(
       stopWebhookDelivery();
       stopDecisionFeed();
       stopPolicyEngine();
+      stopDifficultyAutopilot();
       // Kills every child and flushes scrollback; the sessions stay in the
       // index so the next daemon hydrates them as `orphaned`.
       terminals.shutdown();

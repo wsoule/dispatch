@@ -387,6 +387,18 @@ export class MilestoneEngine {
     return false;
   }
 
+  // Every task a live (active or paused) session claims, so another
+  // dispatcher — the difficulty autopilot — leaves a session's scope to it,
+  // paused ones included: a paused epic is a human saying "not yet".
+  liveScopeIds(): Set<string> {
+    const out = new Set<string>();
+    for (const [epicId, session] of this.sessions) {
+      if (!isLive(session)) continue;
+      for (const task of this.scopeOf(epicId)) out.add(task.meta.id);
+    }
+    return out;
+  }
+
   // FixLoop is constructed after this engine (its terminal hook must run
   // after the review runner's), so the phase reads bind to it late. Until
   // bound, no child ever reads as fixing/reviewing-by-loop/capped.

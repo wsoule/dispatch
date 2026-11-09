@@ -215,3 +215,61 @@ test('the hard stops heading is sentence case and receipts name their task', asy
   const id = screen.getByText('t-aaaaaa');
   expect(id.hasAttribute('data-task-id')).toBe(true);
 });
+
+test('the easy-tasks switches start off and save a policy.difficulty patch', () => {
+  const saves: unknown[] = [];
+  render(
+    <PolicySection
+      config={configAt(1)}
+      onSave={(patch) => Promise.resolve(void saves.push(patch))}
+      client={null}
+    />
+  );
+  const land = screen.getByRole('switch', {
+    name: 'Review and merge easy tasks on their own',
+  });
+  const dispatch = screen.getByRole('switch', {
+    name: 'Start easy tasks on their own',
+  });
+  expect(land.getAttribute('aria-checked')).toBe('false');
+  expect(dispatch.getAttribute('aria-checked')).toBe('false');
+  fireEvent.click(land);
+  expect(saves).toEqual([{ policy: { difficulty: { autoLand: true } } }]);
+});
+
+test('the easy-tasks group reflects a configured lift and saves a new threshold', async () => {
+  const saves: unknown[] = [];
+  const config: DispatchConfig = {
+    ...testConfig,
+    policy: {
+      rung: 1,
+      gates: {},
+      difficulty: {
+        autoLand: true,
+        autoDispatch: false,
+        threshold: 'small',
+        maxFiles: 4,
+        maxLines: 80,
+        maxConcurrent: 1,
+      },
+    },
+  };
+  render(
+    <PolicySection
+      config={config}
+      onSave={(patch) => Promise.resolve(void saves.push(patch))}
+      client={null}
+    />
+  );
+  expect(
+    screen
+      .getByRole('switch', { name: 'Review and merge easy tasks on their own' })
+      .getAttribute('aria-checked')
+  ).toBe('true');
+  expect(
+    screen.getByLabelText<HTMLInputElement>('Most files changed').value
+  ).toBe('4');
+  fireEvent.click(selectTrigger('Counts as easy'));
+  await chooseOption('Trivial only');
+  expect(saves).toEqual([{ policy: { difficulty: { threshold: 'trivial' } } }]);
+});

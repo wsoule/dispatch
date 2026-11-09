@@ -104,15 +104,161 @@ export type PolicyGateMode = 'block' | 'auto';
 
 export const POLICY_GATE_MODES: readonly PolicyGateMode[] = ['block', 'auto'];
 
+/**
+ * How much work a task is, as the judged model tier reads it (server
+ * judgments/modelTier.ts): the difficulty evaluator's rubric. Ordered easiest
+ * first, so a threshold admits its own level and everything before it.
+ */
+export type DifficultyLevel = 'trivial' | 'small' | 'substantial';
+
+export const DIFFICULTY_LEVELS: readonly DifficultyLevel[] = [
+  'trivial',
+  'small',
+  'substantial',
+];
+
+/** The levels a project may set as its auto-land threshold: substantial work
+ *  always stops for a human. */
+export type DifficultyThreshold = Exclude<DifficultyLevel, 'substantial'>;
+
+export const DIFFICULTY_THRESHOLDS: readonly DifficultyThreshold[] = [
+  'trivial',
+  'small',
+];
+
+/** The task label that opts one task out of every difficulty automation:
+ *  no auto-dispatch, no lifted review, no lifted merge. */
+export const NO_AUTO_LAND_LABEL = 'no-auto-land';
+
+/**
+ * The difficulty lift: tasks judged at or below `threshold` are pushed
+ * through to landing without the rung's human stops. Both switches default
+ * off — a project opts in, and a single label opts a task back out.
+ */
+export interface DifficultyPolicy {
+  /** Lift the verify-retry and merge gates for low-difficulty tasks. */
+  autoLand: boolean;
+  /** Dispatch low-difficulty ready tasks without a human pressing dispatch. */
+  autoDispatch: boolean;
+  /** The hardest level the lift still applies to. */
+  threshold: DifficultyThreshold;
+  /** The safety gate's diff ceiling: more files than this stops for a human. */
+  maxFiles: number;
+  /** ...and more changed (added + removed) lines than this. */
+  maxLines: number;
+  /** Auto-dispatched runs allowed live at once. */
+  maxConcurrent: number;
+}
+
+export const DEFAULT_DIFFICULTY_POLICY: DifficultyPolicy = {
+  autoLand: false,
+  autoDispatch: false,
+  threshold: 'small',
+  maxFiles: 10,
+  maxLines: 200,
+  maxConcurrent: 1,
+};
+
 export interface PolicyConfig {
   /** The project's ladder stop. Defaults to 1: nothing auto-decides until a
    *  human raises the rung. */
   rung: number;
   /** Per-gate pins that win over the rung, in either direction. */
   gates: Partial<Record<PolicyGate, PolicyGateMode>>;
+  /** The difficulty lift; absent reads as DEFAULT_DIFFICULTY_POLICY (off). */
+  difficulty?: DifficultyPolicy;
 }
 
 export const DEFAULT_POLICY: PolicyConfig = { rung: 1, gates: {} };
+
+/** The gates the difficulty lift may demote for one task: the review→fix
+ *  loop (with its verify retry) and the merge hand-off. Everything else —
+ *  scope, approvals, memory, docs — stays on the rung. */
+export const DIFFICULTY_LIFT_GATES: readonly PolicyGate[] = [
+  'verify-retry',
+  'merge',
+];
+
+/** A task's difficulty as the evaluator judged it. */
+export interface DifficultyJudgment {
+  level: DifficultyLevel;
+  /** The Choice's confidence in `level`, 0..1. */
+  confidence: number;
+}
+
+/** Below this confidence a judgment never lifts anything. */
+export const DIFFICULTY_CONFIDENCE_FLOOR = 0.7;
+
+/** Whether `level` is at or below `threshold` on the easiest-first scale. */
+export function difficultyWithin(
+  level: DifficultyLevel,
+  threshold: DifficultyThreshold
+): boolean {
+  return (
+    DIFFICULTY_LEVELS.indexOf(level) <= DIFFICULTY_LEVELS.indexOf(threshold)
+  );
+}
+
+/**
+ * Why the difficulty lift does or does not apply to one task — the whole
+ * rule in one place, so the merge gate, the review gate and the autopilot
+ * agree. `stage` picks the switch: `dispatch` reads autoDispatch, the gates
+ * read autoLand. Only routine work qualifies (elevated and critical tasks
+ * keep their risk caps), and a `no-auto-land` label always wins.
+ */
+export type DifficultyEligibility =
+  | {
+      eligible: true;
+      judgment: DifficultyJudgment;
+      threshold: DifficultyThreshold;
+    }
+  | { eligible: false; reason: string };
+
+export function difficultyEligibility(
+  difficulty: DifficultyPolicy,
+  stage: 'dispatch' | 'land',
+  task: { risk?: TaskRisk; labels?: readonly string[] },
+  judgment: DifficultyJudgment | null
+): DifficultyEligibility {
+  const enabled =
+    stage === 'dispatch' ? difficulty.autoDispatch : difficulty.autoLand;
+  if (!enabled) {
+    return {
+      eligible: false,
+      reason: `policy.difficulty.${stage === 'dispatch' ? 'autoDispatch' : 'autoLand'} is off`,
+    };
+  }
+  if (task.labels?.includes(NO_AUTO_LAND_LABEL) === true) {
+    return {
+      eligible: false,
+      reason: `the task is labelled ${NO_AUTO_LAND_LABEL}`,
+    };
+  }
+  if ((task.risk ?? 'routine') !== 'routine') {
+    return { eligible: false, reason: `the task is ${task.risk} risk` };
+  }
+  if (judgment === null) {
+    return { eligible: false, reason: 'no difficulty judgment is available' };
+  }
+  if (judgment.confidence < DIFFICULTY_CONFIDENCE_FLOOR) {
+    return {
+      eligible: false,
+      reason: `judged ${describeJudgment(judgment)}, below the ${DIFFICULTY_CONFIDENCE_FLOOR} confidence floor`,
+    };
+  }
+  if (!difficultyWithin(judgment.level, difficulty.threshold)) {
+    return {
+      eligible: false,
+      reason: `judged ${describeJudgment(judgment)}, above the ${difficulty.threshold} threshold`,
+    };
+  }
+  return { eligible: true, judgment, threshold: difficulty.threshold };
+}
+
+/** `trivial (0.91)` — how every receipt phrases a judgment. */
+export function describeJudgment(judgment: DifficultyJudgment): string {
+  return `${judgment.level} (${judgment.confidence.toFixed(2)})`;
+}
 
 /**
  * What a gate call site should do, and — when it may auto-decide — the
@@ -129,6 +275,24 @@ export type PolicyRuling =
       /** Whether the rung itself or a per-gate pin authorized the demotion. */
       authorizedBy: 'rung' | 'override';
     };
+
+/**
+ * A demotion the difficulty lift authorized for one task, where the rung
+ * alone would block. Its own type rather than a third `authorizedBy` on
+ * PolicyRuling: consultPolicy never returns it, so the memory and doc gates
+ * — which only ever consult the rung — keep their narrower shape.
+ */
+export interface DifficultyRuling {
+  mode: 'auto';
+  gate: PolicyGate;
+  rung: number;
+  authorizedBy: 'difficulty';
+  judgment: DifficultyJudgment;
+  threshold: DifficultyThreshold;
+}
+
+/** Any ruling a gate call site may act on: the rung's, or the lift's. */
+export type GateRuling = PolicyRuling | DifficultyRuling;
 
 /** The rung a task actually runs at: the project rung, capped by the task's
  *  risk. Absent risk reads as routine, the cap that changes nothing. */
@@ -272,8 +436,11 @@ export function describeFloorHold(check: FloorCheck): string {
  * exact rung and the gate it decided.
  */
 export function describePolicyAuthorization(
-  ruling: Extract<PolicyRuling, { mode: 'auto' }>
+  ruling: Extract<GateRuling, { mode: 'auto' }>
 ): string {
+  if (ruling.authorizedBy === 'difficulty') {
+    return `auto-decided by the difficulty lift (${ruling.gate} gate): judged ${describeJudgment(ruling.judgment)}, within the ${ruling.threshold} threshold`;
+  }
   const source =
     ruling.authorizedBy === 'override'
       ? `a per-gate override (effective rung ${ruling.rung})`

@@ -76,9 +76,17 @@ import { labelDefinitionError, labelRef } from './labels.js';
 import type { LabelDefinition } from './labels.js';
 import { personError } from './people.js';
 import type { Person } from './people.js';
-import type { PolicyConfig, PolicyGate, PolicyGateMode } from './policy.js';
+import type {
+  DifficultyPolicy,
+  DifficultyThreshold,
+  PolicyConfig,
+  PolicyGate,
+  PolicyGateMode,
+} from './policy.js';
 import {
+  DEFAULT_DIFFICULTY_POLICY,
   DEFAULT_POLICY,
+  DIFFICULTY_THRESHOLDS,
   isFloorCheck,
   MAX_POLICY_RUNG,
   MIN_POLICY_RUNG,
@@ -1280,7 +1288,80 @@ function parsePolicyConfig(raw: unknown): PolicyConfig {
     }
   }
 
-  return { rung: rung ?? DEFAULT_POLICY.rung, gates: parsedGates };
+  const difficulty =
+    obj.difficulty === undefined
+      ? undefined
+      : parseDifficultyPolicy(obj.difficulty, DEFAULT_DIFFICULTY_POLICY);
+  return {
+    rung: rung ?? DEFAULT_POLICY.rung,
+    gates: parsedGates,
+    ...(difficulty === undefined ? {} : { difficulty }),
+  };
+}
+
+const DIFFICULTY_FIELDS: readonly (keyof DifficultyPolicy)[] = [
+  'autoLand',
+  'autoDispatch',
+  'threshold',
+  'maxFiles',
+  'maxLines',
+  'maxConcurrent',
+];
+
+/**
+ * Validates a `policy.difficulty` block (or a patch to one) field by field
+ * over `base`, so a partial block keeps the defaults for what it omits. An
+ * unknown field is a ConfigError: a typo like `autoland: true` must not
+ * leave the lift silently off — or, worse, a misspelled ceiling unenforced.
+ */
+function parseDifficultyPolicy(
+  raw: unknown,
+  base: DifficultyPolicy,
+  where = '.dispatch/config.yml policy.difficulty'
+): DifficultyPolicy {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(`invalid ${where}: must be an object`);
+  }
+  const out: DifficultyPolicy = { ...base };
+  for (const [field, value] of Object.entries(raw)) {
+    if (value === undefined) continue;
+    switch (field) {
+      case 'autoLand':
+      case 'autoDispatch':
+        if (typeof value !== 'boolean') {
+          throw new ConfigError(`invalid ${where}.${field}: must be a boolean`);
+        }
+        out[field] = value;
+        break;
+      case 'threshold':
+        if (!DIFFICULTY_THRESHOLDS.includes(value as DifficultyThreshold)) {
+          throw new ConfigError(
+            `invalid ${where}.threshold: must be one of ${DIFFICULTY_THRESHOLDS.join('|')}`
+          );
+        }
+        out.threshold = value as DifficultyThreshold;
+        break;
+      case 'maxFiles':
+      case 'maxLines':
+      case 'maxConcurrent':
+        if (
+          typeof value !== 'number' ||
+          !Number.isInteger(value) ||
+          value < 1
+        ) {
+          throw new ConfigError(
+            `invalid ${where}.${field}: must be a positive integer`
+          );
+        }
+        out[field] = value;
+        break;
+      default:
+        throw new ConfigError(
+          `invalid ${where}: unknown field ${field} (expected ${DIFFICULTY_FIELDS.join('|')})`
+        );
+    }
+  }
+  return out;
 }
 
 // Validates the optional `models:` block, same contract as parseOrchestratorConfig.
@@ -2706,6 +2787,20 @@ export function updateConfig(
           );
         }
         setIn(doc, ['policy', 'gates', gate], mode);
+      }
+    }
+    if (patch.policy.difficulty !== undefined) {
+      // Validated against the defaults before any field is written, so a bad
+      // value never reaches disk; then written key-by-key so the fields the
+      // patch omits keep whatever the file already says.
+      parseDifficultyPolicy(
+        patch.policy.difficulty,
+        DEFAULT_DIFFICULTY_POLICY,
+        'policy.difficulty'
+      );
+      for (const [field, value] of Object.entries(patch.policy.difficulty)) {
+        if (value === undefined) continue;
+        doc.setIn(['policy', 'difficulty', field], value);
       }
     }
   }

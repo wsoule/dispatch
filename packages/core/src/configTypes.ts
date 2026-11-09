@@ -1,8 +1,13 @@
 import type { LabelDefinition } from './labels.js';
 import { DEFAULT_STATUS_MAP } from './linearMap.js';
 import type { Person } from './people.js';
-import type { PolicyConfig, PolicyGate, PolicyGateMode } from './policy.js';
-import { DEFAULT_POLICY } from './policy.js';
+import type {
+  DifficultyPolicy,
+  PolicyConfig,
+  PolicyGate,
+  PolicyGateMode,
+} from './policy.js';
+import { DEFAULT_DIFFICULTY_POLICY, DEFAULT_POLICY } from './policy.js';
 import type { QueueWeights } from './scoring.js';
 import { DEFAULT_QUEUE_WEIGHTS } from './scoring.js';
 import type { StatusDefinition, StatusRoles } from './status.js';
@@ -314,7 +319,19 @@ export interface DispatchConfig {
  *  caller's mutation change every later gate consult process-wide. */
 export function projectPolicy(config: DispatchConfig): PolicyConfig {
   const policy = config.policy ?? DEFAULT_POLICY;
-  return { rung: policy.rung, gates: { ...policy.gates } };
+  return {
+    rung: policy.rung,
+    gates: { ...policy.gates },
+    ...(policy.difficulty === undefined
+      ? {}
+      : { difficulty: { ...policy.difficulty } }),
+  };
+}
+
+/** The difficulty lift a policy implies: the configured block, or the
+ *  all-off default. The single reader of the optional `difficulty` field. */
+export function difficultyPolicy(policy: PolicyConfig): DifficultyPolicy {
+  return { ...(policy.difficulty ?? DEFAULT_DIFFICULTY_POLICY) };
 }
 
 /** Settings for the planning queue's ranking. Nested under `queue:` rather
@@ -910,6 +927,8 @@ export interface ConfigPatch {
   policy?: {
     rung?: number;
     gates?: Partial<Record<PolicyGate, PolicyGateMode | null>>;
+    /** Written field by field; a field the patch omits keeps its value. */
+    difficulty?: Partial<DifficultyPolicy>;
   };
   // The blocks below follow one rule, field by field: a value sets it, `null`
   // removes it (its default applies again), absent leaves it alone. The

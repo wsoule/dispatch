@@ -1,4 +1,9 @@
-import type { AddLedgerInput, LedgerEntry, TaskRisk } from '@dispatch-foo/core';
+import type {
+  AddLedgerInput,
+  DifficultyJudgment,
+  LedgerEntry,
+  TaskRisk,
+} from '@dispatch-foo/core';
 import type { JsonValue, Message } from '@dispatch-foo/protocol';
 import { MessagingError } from '@dispatch-foo/protocol';
 import { afterEach, describe, expect, it, spyOn } from 'bun:test';
@@ -78,6 +83,10 @@ interface Harness {
   enqueued: string[];
   /** Per-run diff the engine's delete-outside-writes hold reads. */
   diffs: Map<string, { path: string; status: string }[]>;
+  /** Per-run patch text the difficulty safety gate counts lines in. */
+  patches: Map<string, string>;
+  /** Task ids the difficulty evaluator was asked about. */
+  judged: string[];
   ledger: AddLedgerInput[];
   activity: { taskId: string; text: string }[];
   answered: {
@@ -112,6 +121,10 @@ function harness(
     answerGateThrows?: Error;
     diffThrows?: Error;
     writes?: string[];
+    labels?: string[];
+    /** Wires the difficulty evaluator, answering this for every task;
+     *  absent leaves it unwired. */
+    judgment?: DifficultyJudgment | null;
   } = {}
 ): Harness {
   const root = mkdtempSync(join(tmpdir(), 'dispatch-policy-engine-'));
@@ -127,6 +140,9 @@ function harness(
   const verifyStarts: { taskId: string; head: string }[] = [];
   const enqueued: string[] = [];
   const diffs = new Map<string, { path: string; status: string }[]>();
+  const patches = new Map<string, string>();
+  const judged: string[] = [];
+  const judgment = opts.judgment;
   const ledger: AddLedgerInput[] = [];
   const activity: { taskId: string; text: string }[] = [];
   const answered: Harness['answered'] = [];
@@ -139,6 +155,7 @@ function harness(
           parent: 'e-000001',
           risk: opts.risk ?? 'routine',
           writes: opts.writes ?? [],
+          labels: opts.labels ?? [],
         },
       }),
     },
@@ -155,7 +172,10 @@ function harness(
         ),
       diff: (runId) => {
         if (opts.diffThrows !== undefined) throw opts.diffThrows;
-        return { files: diffs.get(runId) ?? [] };
+        return {
+          files: diffs.get(runId) ?? [],
+          patch: patches.get(runId) ?? '',
+        };
       },
     },
     fixLoop: {
@@ -193,6 +213,14 @@ function harness(
     },
     actorContext: { humanRef: 'human:test' },
     approvalFloor: opts.approvalFloor,
+    ...(judgment === undefined
+      ? {}
+      : {
+          judgeDifficulty: (taskId: string) => {
+            judged.push(taskId);
+            return Promise.resolve(judgment);
+          },
+        }),
     appendActivity: (taskId, text) => {
       activity.push({ taskId, text });
     },
@@ -216,6 +244,8 @@ function harness(
     verifyStarts,
     enqueued,
     diffs,
+    patches,
+    judged,
     ledger,
     activity,
     answered,
@@ -864,6 +894,217 @@ describe('the irreversibility floor at the maximum rung', () => {
       'blocking'
     );
     expect(classify(scope(['../other-repo/src/index.ts']))).toBe('blocking');
+    h.stop();
+  });
+});
+
+describe('the difficulty lift', () => {
+  const easy: DifficultyJudgment = { level: 'trivial', confidence: 0.92 };
+  const LIFT_ON =
+    'verifyCommand: bun test\npolicy:\n  difficulty:\n    autoLand: true\n';
+
+  // A green fix loop over a finished implementer with a one-file, 3-line diff.
+  function greenLoop(h: Harness, runId = 'r-impl1'): void {
+    h.runs.push(runMeta(runId));
+    h.diffs.set(runId, [{ path: 'src/a.ts', status: 'M' }]);
+    h.patches.set(
+      runId,
+      'diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1,2 @@\n-old\n+new\n+more\n'
+    );
+    h.loops.set('t-000001', completeLoop('t-000001'));
+    h.events.broadcast({ type: 'fixloop.changed', taskId: 't-000001' });
+  }
+
+  it('enqueues an easy task at rung 1 and names the judgment and safety gate in both receipts', async () => {
+    const h = harness({ judgment: easy });
+    h.setPolicy(LIFT_ON);
+    greenLoop(h);
+    await settle();
+    expect(h.enqueued).toEqual(['r-impl1']);
+    expect(h.ledger).toHaveLength(1);
+    expect(h.ledger[0].detail).toContain(
+      'difficulty lift (merge gate): judged trivial (0.92), within the small threshold'
+    );
+    expect(h.ledger[0].detail).toContain('1 files / 3 lines within 10/200');
+    expect(h.activity[0].text).toContain('[policy] Run r-impl1 auto-enqueued');
+    expect(h.activity[0].text).toContain('difficulty lift');
+    h.stop();
+  });
+
+  it('ignites the review loop for an easy task when its implementer finishes at rung 1', async () => {
+    const h = harness({ judgment: easy });
+    h.setPolicy(LIFT_ON);
+    h.fireTerminal(runMeta('r-impl1'));
+    await settle();
+    expect(h.ignited).toEqual(['t-000001']);
+    expect(h.ledger[0].detail).toContain('difficulty lift (verify-retry gate)');
+    h.stop();
+  });
+
+  it('is off by default and never asks the evaluator', async () => {
+    const h = harness({ judgment: easy });
+    h.setPolicy('verifyCommand: bun test\n');
+    greenLoop(h);
+    h.fireTerminal(runMeta('r-impl2'));
+    await settle();
+    expect(h.enqueued).toEqual([]);
+    expect(h.ignited).toEqual([]);
+    expect(h.judged).toEqual([]);
+    h.stop();
+  });
+
+  it('stops substantial, low-confidence, above-threshold and unjudged work for a human', async () => {
+    const cases: [DifficultyJudgment | null, string][] = [
+      [{ level: 'substantial', confidence: 0.95 }, LIFT_ON],
+      [{ level: 'trivial', confidence: 0.5 }, LIFT_ON],
+      [
+        { level: 'small', confidence: 0.9 },
+        `${LIFT_ON}    threshold: trivial\n`,
+      ],
+      [null, LIFT_ON],
+    ];
+    for (const [judgment, yaml] of cases) {
+      const h = harness({ judgment });
+      h.setPolicy(yaml);
+      greenLoop(h);
+      await settle();
+      expect(h.enqueued).toEqual([]);
+      expect(h.ledger).toEqual([]);
+      h.stop();
+    }
+  });
+
+  it('honours the no-auto-land label, a block pin on the gate, and the risk cap', async () => {
+    const labelled = harness({ judgment: easy, labels: ['no-auto-land'] });
+    labelled.setPolicy(LIFT_ON);
+    greenLoop(labelled);
+    const pinned = harness({ judgment: easy });
+    pinned.setPolicy(`${LIFT_ON}  gates:\n    merge: block\n`);
+    greenLoop(pinned);
+    const elevated = harness({ judgment: easy, risk: 'elevated' });
+    elevated.setPolicy(LIFT_ON);
+    greenLoop(elevated);
+    await settle();
+    for (const h of [labelled, pinned, elevated]) {
+      expect(h.enqueued).toEqual([]);
+      h.stop();
+    }
+  });
+
+  it('holds a diff over the file or line ceiling, with one receipt naming the check', async () => {
+    const h = harness({ judgment: easy });
+    h.setPolicy(`${LIFT_ON}    maxLines: 2\n`);
+    greenLoop(h);
+    await settle();
+    expect(h.enqueued).toEqual([]);
+    expect(h.ledger).toHaveLength(1);
+    expect(h.ledger[0].title).toBe(
+      'Run r-impl1 held from difficulty auto-land'
+    );
+    expect(h.ledger[0].detail).toContain(
+      'changes 3 lines, over the 2-line ceiling'
+    );
+    expect(h.activity[0].text).toContain('over the 2-line ceiling');
+    // A re-broadcast of the same held run records nothing more.
+    h.events.broadcast({ type: 'fixloop.changed', taskId: 't-000001' });
+    await settle();
+    expect(h.ledger).toHaveLength(1);
+
+    const wide = harness({ judgment: easy });
+    wide.setPolicy(`${LIFT_ON}    maxFiles: 1\n`);
+    wide.runs.push(runMeta('r-impl1'));
+    wide.diffs.set('r-impl1', [
+      { path: 'a.ts', status: 'M' },
+      { path: 'b.ts', status: 'M' },
+    ]);
+    wide.loops.set('t-000001', completeLoop('t-000001'));
+    wide.events.broadcast({ type: 'fixloop.changed', taskId: 't-000001' });
+    await settle();
+    expect(wide.enqueued).toEqual([]);
+    expect(wide.ledger[0].detail).toContain(
+      'touches 2 files, over the 1-file ceiling'
+    );
+    wide.stop();
+    h.stop();
+  });
+
+  it('holds when nothing proves the change green', async () => {
+    const red = harness({ judgment: easy });
+    red.setPolicy(LIFT_ON);
+    red.verifyResults.set('t-000001', verifyResult(false));
+    // A red result re-verifies first (the lift also covers verify-retry); the
+    // merge decision still sees red and holds.
+    greenLoop(red);
+    await settle();
+    expect(red.enqueued).toEqual([]);
+    expect(
+      red.ledger.some((e) =>
+        e.detail.includes('latest verification (r-verify1) is red')
+      )
+    ).toBe(true);
+
+    const unverified = harness({ judgment: easy });
+    unverified.setPolicy('policy:\n  difficulty:\n    autoLand: true\n');
+    greenLoop(unverified);
+    await settle();
+    expect(unverified.enqueued).toEqual([]);
+    expect(unverified.ledger[0].detail).toContain('nothing proves it green');
+
+    // A passing verification is green enough without a merge-time check.
+    const verified = harness({ judgment: easy });
+    verified.setPolicy('policy:\n  difficulty:\n    autoLand: true\n');
+    verified.verifyResults.set('t-000001', verifyResult(true));
+    greenLoop(verified);
+    await settle();
+    expect(verified.enqueued).toEqual(['r-impl1']);
+    expect(verified.ledger[0].detail).toContain('verification r-verify1 green');
+    for (const h of [red, unverified, verified]) h.stop();
+  });
+
+  it('does not count a verification older than the latest commit as green', async () => {
+    const h = harness({ judgment: easy });
+    h.setPolicy('policy:\n  difficulty:\n    autoLand: true\n');
+    // Verified at 12:05, but a fix round committed to the branch at 12:30.
+    h.verifyResults.set('t-000001', verifyResult(true));
+    h.runs.push(runMeta('r-fix', { updatedAt: '2026-09-03T12:30:00.000Z' }));
+    greenLoop(h);
+    await settle();
+    expect(h.enqueued).toEqual([]);
+    expect(h.ledger[0].detail).toContain('nothing proves it green');
+    h.stop();
+  });
+
+  it('decides the merge again once a held run verifies green', async () => {
+    const h = harness({ judgment: easy });
+    h.setPolicy('policy:\n  difficulty:\n    autoLand: true\n');
+    h.verifyResults.set('t-000001', verifyResult(false));
+    greenLoop(h);
+    await settle();
+    expect(h.enqueued).toEqual([]);
+    h.verifyResults.set(
+      't-000001',
+      verifyResult(true, {
+        runId: 'r-verify2',
+        createdAt: '2026-09-03T12:40:00.000Z',
+      })
+    );
+    h.events.broadcast({ type: 'verification.changed', taskId: 't-000001' });
+    await settle();
+    expect(h.enqueued).toEqual(['r-impl1']);
+    expect(h.ledger.at(-1)?.detail).toContain('verification r-verify2 green');
+    h.stop();
+  });
+
+  it('leaves a rung that already auto-decides alone, without asking the evaluator', async () => {
+    const h = harness({ judgment: easy });
+    h.setPolicy(
+      'policy:\n  rung: 4\n  difficulty:\n    autoLand: true\n    maxFiles: 1\n'
+    );
+    greenLoop(h);
+    await settle();
+    expect(h.enqueued).toEqual(['r-impl1']);
+    expect(h.judged).toEqual([]);
+    expect(h.ledger[0].detail).toContain('policy rung 4');
     h.stop();
   });
 });
