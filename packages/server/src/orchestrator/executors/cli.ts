@@ -3,6 +3,7 @@ import { agentEnv } from '@dispatch-foo/core';
 
 import { ignoreClosedPipe } from '../../closedPipe.js';
 import { FLOOR_COMMAND_ACTIONS } from '../../floor.js';
+import { withProtoPath } from '../protoShims.js';
 import type {
   Executor,
   ExecutorEvents,
@@ -195,7 +196,7 @@ export class CliExecutor implements Executor {
       child = this.spawn({
         command: argv,
         cwd: opts.cwd,
-        env: agentEnv(this.options.command.env),
+        env: withProtoPath(opts.cwd, agentEnv(this.options.command.env)),
         stdinPrompt,
       });
     } catch (err) {

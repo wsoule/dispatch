@@ -69,7 +69,7 @@ describe('childEnv', () => {
   it('keeps tokens out of a Claude run, with or without experiments', () => {
     Object.assign(process.env, SECRETS);
     for (const experiments of [[], ['cache-1h']] as const) {
-      const env = experimentOptions([...experiments]).env ?? {};
+      const env = experimentOptions([...experiments], tmpdir()).env ?? {};
       expect(Object.keys(env).length).toBeGreaterThan(0);
       for (const key of Object.keys(SECRETS)) expect(env[key]).toBeUndefined();
     }
