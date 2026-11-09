@@ -341,8 +341,13 @@ export function webHandler(
       refresh_token?: string;
       expires_in?: number;
       scope?: string | string[];
+      error?: string;
+      error_description?: string;
     };
-    if (token.access_token === undefined) throw new Error('no access token');
+    if (token.access_token === undefined)
+      throw new Error(
+        `no access token (${String(tokenRes.status)} ${token.error ?? ''} ${token.error_description ?? ''})`
+      );
     const auth = { authorization: `Bearer ${token.access_token}` };
     let kept = false;
     try {
@@ -356,7 +361,8 @@ export function webHandler(
             `{ viewer { id name displayName email guest admin${install ? ' app' : ''} } organization { id name urlKey } }`,
         }),
       });
-      const { data } = (await res.json()) as {
+      const { data, errors } = (await res.json()) as {
+        errors?: { message?: string }[];
         data?: {
           viewer?: {
             id?: string;
@@ -372,7 +378,9 @@ export function webHandler(
       };
       const v = data?.viewer;
       if (typeof v?.id !== 'string' || typeof v.displayName !== 'string')
-        throw new Error('no Linear user');
+        throw new Error(
+          `no Linear user (${errors?.map((e) => e.message ?? '').join('; ') ?? ''})`
+        );
       const o = data?.organization;
       const organization =
         typeof o?.id === 'string' &&
@@ -684,7 +692,16 @@ export function webHandler(
           mode === 'workspace' || mode === 'install',
           mode === 'install'
         );
-      } catch {
+      } catch (err) {
+        // The reason only, never a token: Linear's error codes and messages.
+        console.error(
+          JSON.stringify({
+            level: 'warn',
+            event: 'linear.oauth.failed',
+            mode,
+            reason: (err as Error).message,
+          })
+        );
         return html(
           messagePage(
             null,
