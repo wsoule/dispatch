@@ -79,6 +79,11 @@ function sdkMessageOf(e: RecordedEvent): Record<string, unknown> {
   if (e.type === 'result') {
     return { ...base, result: e.result, is_error: e.is_error };
   }
+  // The recording kept only this event's type; the CLI sends its limit
+  // status with it, which the executor reads (a refused one ends the run).
+  if (e.type === 'rate_limit_event') {
+    return { ...base, rate_limit_info: { status: 'allowed' } };
+  }
   return base;
 }
 
