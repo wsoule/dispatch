@@ -214,10 +214,12 @@ export interface OverseerRecord {
   pendingApprovals: OverseerApproval[];
   /**
    * Decisions the human has made since the last turn, not yet shown to the
-   * model. Drained into the next `sendMessage`'s prompt so the assistant never
-   * claims it cancelled a run the human refused (or keeps offering to do
-   * something that already happened) — the model's own tool result only ever
-   * said "queued", so this is the only way the outcome reaches it.
+   * model. Drained into the next turn's prompt so the assistant never claims
+   * it cancelled a run the human refused (or keeps offering to do something
+   * that already happened) — the model's own tool result only ever said
+   * "queued", so this is the only way the outcome reaches it. A decision does
+   * not wait for the human's next line: an idle conversation takes a turn for
+   * it at once, and a running one as soon as that turn ends (`wakeForDecisions`).
    */
   undeliveredDecisions: string[];
   /** The backend's resume handle from the most recent turn. */
@@ -975,6 +977,7 @@ export class OverseerManager {
     const texts = lines.map((l) => l.text);
     // A slash command goes to the session verbatim: no decisions prefix, and
     // never a rollover, since commands like /compact act on that session.
+    // No lines at all is a turn that only delivers decisions.
     const slash = texts.length === 1 && isSlashCommand(texts[0]);
     const rollover = !slash && (record.contextTokens ?? 0) >= ROLLOVER_TOKENS;
     if (rollover) this.grants.clear(conversationId);
@@ -1030,14 +1033,16 @@ export class OverseerManager {
     const rootDir = this.ctx.rootDir;
     const said = slash
       ? texts[0].trim()
-      : withDecisions(
-          lines
-            .map((l) =>
-              withAttachmentNote(l.text, l.attachments ?? [], rootDir)
-            )
-            .join('\n\n'),
-          drained
-        );
+      : lines.length === 0
+        ? decisionsOnly(drained)
+        : withDecisions(
+            lines
+              .map((l) =>
+                withAttachmentNote(l.text, l.attachments ?? [], rootDir)
+              )
+              .join('\n\n'),
+            drained
+          );
     const outgoing = rollover ? `${recapOf(record.messages)}\n${said}` : said;
     const sessionId = rollover ? undefined : record.sessionId;
     const turnId = this.live.begin(conversationId);
@@ -1103,6 +1108,9 @@ export class OverseerManager {
   ): Promise<void> {
     const abort = new AbortController();
     this.turns.set(conversationId, abort);
+    // Only a turn that landed its reply wakes for decisions made during it: a
+    // failed one put its own back, and retrying those at once would loop.
+    let landed = false;
     try {
       // Stop ends the turn here even when a backend ignores the signal.
       const turn = await Promise.race([
@@ -1149,6 +1157,7 @@ export class OverseerManager {
         ],
       });
       this.postEntry(conversationId, earlier.length, from.speaker, from.line);
+      landed = true;
     } catch (err) {
       if (this.shuttingDown) return;
       // What the turn had said stays, ahead of the notice or the failure.
@@ -1195,6 +1204,7 @@ export class OverseerManager {
       if (!this.shuttingDown) {
         this.sweepApprovals(conversationId);
         if (!abort.signal.aborted) this.sendQueued(conversationId);
+        if (landed) this.wakeForDecisions(conversationId);
       }
     }
   }
@@ -1212,6 +1222,30 @@ export class OverseerManager {
       this.beginTurn(record, batch, speaker, rest);
     } catch (err) {
       console.error(`overseer: could not send ${conversationId}'s queue`, err);
+    }
+  }
+
+  // Delivers the decisions the model has not heard about, now, when nothing
+  // else will: the conversation is idle and has no queued lines to carry them
+  // (a queue drain does, through beginTurn). The turn has no human line, so
+  // nothing of it goes on the bus; the transcript's action rows say why it ran.
+  private wakeForDecisions(conversationId: string): void {
+    const record = this.conversations.get(conversationId);
+    if (record === undefined || this.shuttingDown) return;
+    if (record.state === 'running' || record.undeliveredDecisions.length === 0)
+      return;
+    if ((record.queued ?? []).length > 0) {
+      this.sendQueued(conversationId);
+      return;
+    }
+    if (this.ctx.bus?.revoked() === true) return;
+    try {
+      this.beginTurn(record, [], null);
+    } catch (err) {
+      console.error(
+        `overseer: could not tell ${conversationId} what the human decided`,
+        err
+      );
     }
   }
 
@@ -1277,6 +1311,10 @@ export class OverseerManager {
    * Deliberately allowed while a turn is `running`: the action was queued by
    * an earlier turn, and making a human wait for the assistant to stop talking
    * before they can approve a cancel would be exactly backwards.
+   *
+   * Either way the model hears the outcome without waiting for the human's
+   * next line: an idle conversation starts a turn for it before this returns,
+   * a running one takes it as soon as the turn ends.
    */
   async confirmAction(
     conversationId: string,
@@ -1724,12 +1762,14 @@ export class OverseerManager {
     });
   }
 
+  // Records a decision for the model and delivers it at once when idle.
   private noteDecision(conversationId: string, note: string): void {
     const record = this.conversations.get(conversationId);
     if (record === undefined) return;
     this.updateRecord(conversationId, {
       undeliveredDecisions: [...record.undeliveredDecisions, note],
     });
+    this.wakeForDecisions(conversationId);
   }
 
   // Posts entry `index` to the thread: `speaker`'s line, or the reply to their
@@ -1896,6 +1936,18 @@ function turnAttachments(
     absolutePath: join(rootDir, a.path),
     mimeType: a.mimeType,
   }));
+}
+
+// The whole prompt of a turn taken only to deliver decisions: the human said
+// nothing, so the model is asked to report the outcome rather than to act.
+function decisionsOnly(decisions: string[]): string {
+  return [
+    'The human just decided on the actions you queued:',
+    ...decisions.map((d) => `- ${d}`),
+    '',
+    'They have not said anything else. Briefly tell them what the outcome ' +
+      'means. Do not queue a refused action again unless they ask for it.',
+  ].join('\n');
 }
 
 // Prefixes a follow-up with whatever the human decided since the last turn.

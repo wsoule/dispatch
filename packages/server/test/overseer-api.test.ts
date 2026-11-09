@@ -570,18 +570,26 @@ function gateType(message: Message): string | undefined {
 
 describe('overseer action gates', () => {
   // Creates the task before the daemon boots (it reads task files at startup)
-  // and scripts a single turn that queues dispatching it.
+  // and scripts a turn that queues dispatching it, then the turn answering the
+  // gate wakes.
   async function startWithQueuedDispatch(): Promise<{
     ready: OverseerRecord;
     gate: Message;
+    backend: FakeOverseer;
   }> {
     const doc = store.create({ title: 'Widget task' });
     const script: FakeOverseerScript = {
       ok: true,
-      calls: [{ tool: 'dispatch_task', input: { taskId: doc.meta.id } }],
-      reply: 'I queued a dispatch for your confirmation.',
+      turns: [
+        {
+          calls: [{ tool: 'dispatch_task', input: { taskId: doc.meta.id } }],
+          reply: 'I queued a dispatch for your confirmation.',
+        },
+        { reply: 'Noted.' },
+      ],
     };
-    await startWithOverseer(new FakeOverseer(script));
+    const backend = new FakeOverseer(script);
+    await startWithOverseer(backend);
     const { record } = await startConversation(`dispatch ${doc.meta.id}`);
     const ready = await settled(record.id);
     expect(ready.pendingActions).toHaveLength(1);
@@ -593,7 +601,14 @@ describe('overseer action gates', () => {
       conversation: ready.id,
       actionId: ready.pendingActions[0].id,
     });
-    return { ready, gate };
+    return { ready, gate, backend };
+  }
+
+  // The transcript row recording how the human decided `actionId`.
+  function decidedRow(record: OverseerRecord, actionId: string) {
+    return record.messages.findLast(
+      (m) => m.role === 'action' && m.actionId === actionId
+    );
   }
 
   async function listRuns(): Promise<
@@ -606,19 +621,22 @@ describe('overseer action gates', () => {
   }
 
   it('confirm applies the action and dispatches the run', async () => {
-    const { ready, gate } = await startWithQueuedDispatch();
+    const { ready, gate, backend } = await startWithQueuedDispatch();
 
     expect((await answerGate(gate.id, 'confirm')).status).toBe(201);
 
-    const confirmed = await getRecord(ready.id);
+    const confirmed = await settled(ready.id);
     expect(confirmed.pendingActions).toHaveLength(0);
-    expect(confirmed.messages.at(-1)).toEqual(
-      expect.objectContaining({
-        role: 'action',
-        actionId: ready.pendingActions[0].id,
-        outcome: 'applied',
-      })
+    expect(decidedRow(confirmed, ready.pendingActions[0].id)).toEqual(
+      expect.objectContaining({ outcome: 'applied' })
     );
+    // The overseer heard the outcome without the human saying anything.
+    expect(backend.prompts).toHaveLength(2);
+    expect(backend.prompts[1]).toContain('approved this');
+    expect(confirmed.messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      text: 'Noted.',
+    });
     const runs = await listRuns();
     expect(runs).toHaveLength(1);
     // Confirmed with the app token, the run acts for the owner.
@@ -648,14 +666,10 @@ describe('overseer action gates', () => {
 
     expect((await answerGate(gate.id, 'cancel')).status).toBe(201);
 
-    const denied = await getRecord(ready.id);
+    const denied = await settled(ready.id);
     expect(denied.pendingActions).toHaveLength(0);
-    expect(denied.messages.at(-1)).toEqual(
-      expect.objectContaining({
-        role: 'action',
-        actionId: ready.pendingActions[0].id,
-        outcome: 'denied',
-      })
+    expect(decidedRow(denied, ready.pendingActions[0].id)).toEqual(
+      expect.objectContaining({ outcome: 'denied' })
     );
     expect(await listRuns()).toHaveLength(0);
   });

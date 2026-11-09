@@ -576,14 +576,17 @@ describe('OverseerManager queued actions', () => {
     // A run that stays live long enough to queue a cancel against it...
     const taskId = makeTask(h, 'Long one');
     const meta = await h.orchestrator.dispatch(taskId, 'slow');
-    h.manager.registerBackend(
-      'fake',
-      new FakeOverseer({
-        ok: true,
-        calls: [{ tool: 'cancel_run', input: { runId: meta.id } }],
-        reply: 'queued a cancel',
-      })
-    );
+    const backend = new FakeOverseer({
+      ok: true,
+      turns: [
+        {
+          calls: [{ tool: 'cancel_run', input: { runId: meta.id } }],
+          reply: 'queued a cancel',
+        },
+        { reply: 'that did not work' },
+      ],
+    });
+    h.manager.registerBackend('fake', backend);
     const opened = await startAndSettle(h, 'cancel it');
     const actionId = opened.pendingActions[0].id;
     // ...and is then cancelled out from under the queued action, so applying
@@ -594,60 +597,127 @@ describe('OverseerManager queued actions', () => {
       h.manager.confirmAction(opened.id, actionId, true)
     ).rejects.toThrow();
 
+    // The model is told it failed, at once.
+    await waitFor(() => h.manager.get(opened.id).state === 'ready');
+    expect(backend.prompts[1]).toContain('but it failed');
     const record = h.manager.get(opened.id);
     expect(record.pendingActions).toEqual([]);
-    expect(record.messages.at(-1)).toMatchObject({
+    expect(record.messages.at(-2)).toMatchObject({
       role: 'action',
       actionId,
       outcome: 'failed',
     });
+    expect(record.messages.at(-1)?.text).toBe('that did not work');
     expect(h.registry.getAction(actionId)?.status).toBe('failed');
   });
 
-  it('tells the model on the next turn what the human decided', async () => {
+  it('tells the model what the human decided as soon as they decide', async () => {
     const { h, record: opened, actionId } = await queueDispatch();
-    await h.manager.confirmAction(opened.id, actionId, false);
+    const rows = opened.messages.length;
 
-    h.manager.sendMessage(opened.id, 'so did it go?');
+    const record = await h.manager.confirmAction(opened.id, actionId, false);
+
+    // The turn starts before the confirm returns, with no line from the human.
+    expect(record.state).toBe('running');
     await waitFor(() => h.manager.get(opened.id).state === 'ready');
-
-    // The model's own tool result only ever said "queued", so this preamble is
+    // The model's own tool result only ever said "queued", so this turn is
     // the only way it learns the human refused.
-    const followUp = h.backend.prompts[1];
-    expect(followUp).toContain('REFUSED');
-    expect(followUp).toContain('Dispatch');
-    expect(followUp).toEndWith('so did it go?');
+    const told = h.backend.prompts[1];
+    expect(told).toContain('REFUSED');
+    expect(told).toContain('Dispatch');
     // Delivered once, not on every later turn.
-    expect(h.manager.get(opened.id).undeliveredDecisions).toEqual([]);
-    // The transcript keeps what the human actually typed.
-    expect(h.manager.get(opened.id).messages.at(-2)).toMatchObject({
-      role: 'user',
-      text: 'so did it go?',
+    const settled = h.manager.get(opened.id);
+    expect(settled.undeliveredDecisions).toEqual([]);
+    // The transcript gains the decision and the reply, never a made-up human line.
+    expect(settled.messages.slice(rows).map((m) => m.role)).toEqual([
+      'action',
+      'assistant',
+    ]);
+    expect(settled.messages.at(-1)?.text).toBe('anything else?');
+  });
+
+  it('tells the model right after the turn it was decided during', async () => {
+    const base = makeHarness();
+    const taskId = makeTask(base, 'Ship the thing');
+    const backend = new HeldFakeOverseer({
+      ok: true,
+      turns: [
+        {
+          calls: [{ tool: 'dispatch_task', input: { taskId } }],
+          reply: 'queued it for you',
+        },
+        { reply: 'still thinking' },
+        { reply: 'noted' },
+      ],
     });
+    const manager = new OverseerManager({
+      rootDir: repo,
+      registry: base.registry,
+      events: base.events,
+    });
+    manager.registerBackend('fake', backend);
+    const h: ManagerHarness = { ...base, manager, backend };
+    const opened = await startAndSettle(h, 'dispatch it');
+    const actionId = opened.pendingActions[0].id;
+
+    let release = (): void => {};
+    backend.hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    h.manager.sendMessage(opened.id, 'what else is there?');
+    await h.manager.confirmAction(opened.id, actionId, true);
+    // The running turn was asked before the decision, so it cannot carry it.
+    expect(h.manager.get(opened.id).undeliveredDecisions).toHaveLength(1);
+
+    release();
+    await waitFor(() => backend.prompts.length === 3);
+    await waitFor(() => h.manager.get(opened.id).state === 'ready');
+    expect(backend.prompts[1]).toEndWith('what else is there?');
+    expect(backend.prompts[2]).toContain('approved this');
+    expect(h.manager.get(opened.id).undeliveredDecisions).toEqual([]);
+    expect(h.manager.get(opened.id).messages.at(-1)?.text).toBe('noted');
   });
 
   it('keeps the decision for the next attempt when the turn carrying it fails', async () => {
     const { h, record: opened, actionId } = await queueDispatch();
-    await h.manager.confirmAction(opened.id, actionId, true);
 
     // The turn that would have delivered the news dies before reaching a model.
     h.manager.registerBackend(
       'fake',
       new FakeOverseer({ ok: false, error: 'model unreachable' })
     );
-    h.manager.sendMessage(opened.id, 'did it go?');
+    await h.manager.confirmAction(opened.id, actionId, true);
     await waitFor(() => h.manager.get(opened.id).state === 'failed');
     expect(h.manager.get(opened.id).undeliveredDecisions).toHaveLength(1);
+    // A failed delivery is not retried on its own, which would loop.
+    await tick();
+    expect(h.manager.get(opened.id).state).toBe('failed');
 
-    // So the retry still carries it.
+    // So the human's next line still carries it.
     const retry = new FakeOverseer({ ok: true, reply: 'yes, it is running' });
     h.manager.registerBackend('fake', retry);
     h.manager.sendMessage(opened.id, 'did it go?');
     await waitFor(() => h.manager.get(opened.id).state === 'ready');
     expect(retry.prompts[0]).toContain('approved');
+    expect(retry.prompts[0]).toEndWith('did it go?');
     expect(h.manager.get(opened.id).undeliveredDecisions).toEqual([]);
   });
 });
+
+// A FakeOverseer whose next follow-up waits on `hold`, so a test can decide
+// an action while that turn is still running.
+class HeldFakeOverseer extends FakeOverseer {
+  hold: Promise<void> | null = null;
+
+  override async sendMessage(
+    ...args: Parameters<FakeOverseer['sendMessage']>
+  ): Promise<OverseerTurn> {
+    const hold = this.hold;
+    this.hold = null;
+    if (hold !== null) await hold;
+    return super.sendMessage(...args);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Built-in tool gate

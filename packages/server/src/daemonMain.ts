@@ -373,11 +373,18 @@ const FAKE_OVERSEER_MUTATING_TURN: FakeOverseerTurn = {
   },
 };
 
+// The turn deciding a queued action wakes the overseer for: it reports the
+// outcome and queues nothing. Same wording rule as the mutating turn's reply.
+const FAKE_OVERSEER_DECIDED_TURN: FakeOverseerTurn = {
+  reply: 'Noted — I have your decision.',
+};
+
 // The one default script every DISPATCH_ENABLE_FAKES daemon's 'fake' overseer
 // backend plays: a status turn that answers from a real list_runs read, then
-// two identical mutating turns (queue-deny-requeue-approve is the flow the
-// desktop e2e drives, so the second ask must queue again). Fixed like the
-// executor/planner defaults above — a test/e2e hook, not a scripting facility.
+// two identical mutating turns, each followed by the turn its decision wakes
+// (queue-deny-requeue-approve is the flow the desktop e2e drives, so the second
+// ask must queue again). Fixed like the executor/planner defaults above — a
+// test/e2e hook, not a scripting facility.
 //
 // The status turn narrates before its read and streams its text a few
 // characters at a time, slowly enough (about a second and a half in all) for
@@ -405,7 +412,9 @@ function buildDefaultFakeOverseerScript(): FakeOverseerScript {
         },
       },
       FAKE_OVERSEER_MUTATING_TURN,
+      FAKE_OVERSEER_DECIDED_TURN,
       FAKE_OVERSEER_MUTATING_TURN,
+      FAKE_OVERSEER_DECIDED_TURN,
     ],
   };
 }
