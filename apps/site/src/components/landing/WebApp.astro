@@ -1,0 +1,340 @@
+---
+// Dispatch on the web (app.dispatch.foo), as one loop: open a Linear
+// workspace's board in the browser, edit it with your own name on every
+// change, and reach the projects on your own machines. The three steps play
+// in order once the section is on screen, as Memory's do.
+import { WEB_APP } from '../../lib/downloads';
+import FeatureList from './FeatureList.astro';
+
+const features: [string, string][] = [
+  ['Any Linear workspace', 'Sign in with Linear and open your workspace: Timeline, Graph, My week, Issues and Needs you.'],
+  ['Install for your team', 'A workspace admin installs Dispatch once, and the board syncs both ways with Linear.'],
+  ['Edits as you', 'Changes reach Linear under your own name, never a shared bot account.'],
+  ['Your machines, only yours', 'Open a project on a machine you signed in, from any browser. Off until you turn it on.'],
+  ['One link everywhere', 'Open in desktop and Open on web follow the Linear issue, like DIS-66, between the two.'],
+  ['Free planner', 'The hosted planner has no seat count. Seats apply only to agents and team features.'],
+];
+const lanes = [
+  { name: 'Platform reliability', ms: 'EU data residency', at: 6, len: 34, tone: 'risk' },
+  { name: 'Billing migration', ms: 'Dual-write', at: 22, len: 30, tone: 'track' },
+  { name: 'Harbor API v3', ms: 'Public beta', at: 44, len: 38, tone: 'late' },
+];
+---
+
+<section class="feature" id="web" aria-labelledby="web-title">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="web-title">Dispatch on the web. <em>The same board, no install.</em></h2>
+      <p>
+        Open any Linear workspace at app.dispatch.foo and plan it with the desktop app’s own
+        Timeline and Graph. Edits go back to Linear as you. Signed your machine in? Reach its
+        projects from any browser, and only you can.
+      </p>
+      <p class="ctas">
+        <a class="btn btn-primary" href={`${WEB_APP}/w/demo/`}>Try the demo workspace</a>
+        <a class="btn" href={WEB_APP}>Open the web app</a>
+      </p>
+    </div>
+
+    <ol class="loop" data-seq-root>
+      <li class="step" data-seq style="--i:0">
+        <p class="label"><span class="n">1</span>Open your Linear</p>
+        <div class="pane">
+          <p class="url"><span class="lock" aria-hidden="true"></span>app.dispatch.foo/w/<b>northwind</b></p>
+          <p class="crumbs">Northwind <span>/</span> Timeline</p>
+          <ul class="lanes">
+            {
+              lanes.map((l) => (
+                <li>
+                  <span class="lane">{l.name}</span>
+                  <span class="track">
+                    <span class:list={['bar', l.tone]} style={`--at:${l.at}%;--len:${l.len}%`}>
+                      {l.ms}
+                    </span>
+                  </span>
+                </li>
+              ))
+            }
+          </ul>
+          <p class="warn"><span class="tag">No lead</span>1 active project has no lead</p>
+        </div>
+      </li>
+
+      <li class="step" data-seq style="--i:1.3">
+        <p class="label"><span class="n">2</span>Edit as yourself</p>
+        <div class="pane">
+          <p class="issue"><code>DIS-66</code> Settings: forget a project</p>
+          <p class="field">Priority <span class="pick"><span class="old">Low</span> → <b>Medium</b></span></p>
+          <p class="line dim">› synced to Linear</p>
+          <div class="activity">
+            <p class="who"><span class="avatar">W</span><b>wyat</b> raised priority from Low to Medium</p>
+            <p class="meta">in Linear · just now</p>
+          </div>
+          <p class="line good">✓ Your name, not a bot’s</p>
+        </div>
+      </li>
+
+      <li class="step" data-seq style="--i:2.6">
+        <p class="label"><span class="n">3</span>Reach your machine</p>
+        <div class="pane">
+          <p class="who"><span class="dot"></span><b>MacBook Pro</b><span class="online">online</span></p>
+          <ul class="projects">
+            <li><span>dispatch</span><span class="open">Open</span></li>
+            <li><span>storefront</span><span class="open">Open</span></li>
+          </ul>
+          <p class="line dim">› review, decide, edit tasks</p>
+          <p class="line bad">✗ no shell, no file writes, no pairing</p>
+          <p class="note">Only you see this machine. Web access is off until you turn it on in Settings.</p>
+        </div>
+      </li>
+    </ol>
+
+    <FeatureList items={features} />
+  </div>
+</section>
+
+<style>
+  .ctas {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin-top: 1.4rem;
+  }
+  .loop {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+    margin: clamp(3rem, 6vw, 4.5rem) 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .step {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .label {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    margin-bottom: 0.7rem;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .n {
+    display: grid;
+    place-items: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 0.72rem;
+  }
+  .pane {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    gap: 0.55rem;
+    min-height: 17rem;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    font-size: 0.82rem;
+    font-weight: 400;
+  }
+  .url {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.55rem;
+    border: 1px solid var(--line-2);
+    color: var(--ink-3);
+    font-family: var(--mono);
+    font-size: 0.7rem;
+  }
+  .url b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .lock {
+    width: 0.45rem;
+    height: 0.45rem;
+    background: var(--review);
+  }
+  .crumbs {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .crumbs span {
+    color: var(--ink-3);
+    font-weight: 400;
+  }
+  .lanes {
+    display: grid;
+    gap: 0.45rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .lanes li {
+    display: grid;
+    gap: 0.25rem;
+  }
+  .lane {
+    color: var(--ink-2);
+    font-size: 0.74rem;
+  }
+  .track {
+    position: relative;
+    height: 1.35rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .bar {
+    position: absolute;
+    left: var(--at);
+    width: var(--len);
+    min-width: 6.5rem;
+    overflow: hidden;
+    padding: 0.12rem 0.4rem;
+    font-size: 0.66rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bar.risk {
+    border: 1px solid var(--working);
+    background: rgb(242 199 68 / 12%);
+    color: var(--working);
+  }
+  .bar.track {
+    border: 1px solid var(--review);
+    background: rgb(63 207 142 / 12%);
+    color: var(--review);
+  }
+  .bar.late {
+    border: 1px solid var(--failed);
+    background: rgb(240 96 93 / 12%);
+    color: var(--failed);
+  }
+  .warn {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin-top: auto;
+    color: var(--ink-2);
+    font-size: 0.74rem;
+  }
+  .tag {
+    padding: 0 0.4rem;
+    background: rgb(242 199 68 / 14%);
+    color: var(--working);
+    font-family: var(--mono);
+    font-size: 0.64rem;
+  }
+  .issue {
+    font-weight: 550;
+  }
+  .issue code {
+    margin-right: 0.35rem;
+    color: var(--ink-3);
+    font-size: 0.7rem;
+  }
+  .field {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--accent);
+    background: rgb(139 143 248 / 8%);
+    color: var(--ink-2);
+  }
+  .pick b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .old {
+    color: var(--ink-3);
+    text-decoration: line-through;
+  }
+  .activity {
+    padding: 0.6rem 0.7rem;
+    border: 1px solid var(--line-2);
+  }
+  .who {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--ink-2);
+  }
+  .who b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .avatar {
+    display: grid;
+    place-items: center;
+    width: 1.2rem;
+    height: 1.2rem;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 0.62rem;
+    font-weight: 700;
+  }
+  .meta {
+    margin-top: 0.2rem;
+    color: var(--ink-3);
+    font-size: 0.7rem;
+  }
+  .line {
+    font-family: var(--mono);
+    font-size: 0.74rem;
+  }
+  .dim {
+    color: var(--ink-3);
+  }
+  .good {
+    color: var(--review);
+  }
+  .bad {
+    color: var(--failed);
+  }
+  .dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    background: var(--review);
+  }
+  .online {
+    margin-left: auto;
+    color: var(--review);
+    font-family: var(--mono);
+    font-size: 0.68rem;
+  }
+  .projects {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .projects li {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.4rem 0;
+    border-top: 1px solid var(--line);
+    color: var(--ink);
+  }
+  .open {
+    color: var(--accent);
+    font-size: 0.74rem;
+  }
+  .note {
+    margin-top: auto;
+    color: var(--ink-3);
+    font-size: 0.72rem;
+  }
+  @media (max-width: 860px) {
+    .loop {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

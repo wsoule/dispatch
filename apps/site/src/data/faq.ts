@@ -20,7 +20,15 @@ export const homeFaq: [string, string][] = [
   ],
   [
     'Does my code leave my machine?',
-    'No. Runs use your machine, your checkout and your own agent and API key. Tasks live in your repo as markdown or SQLite with a git receipt log.',
+    'No. Runs use your machine, your checkout and your own agent and API key. Tasks live in your repo as markdown or SQLite with a git receipt log. If you turn on web access for a machine, the pages you open at app.dispatch.foo pass through it on their way to your browser; nothing is stored there.',
+  ],
+  [
+    'Is there a web version?',
+    'Yes. At app.dispatch.foo, sign in with Linear or GitHub and open any Linear workspace with the same Timeline, Graph, My week and Issues views as the desktop app. Edits reach Linear under your own name, and a workspace admin can install Dispatch so the board syncs both ways. The hosted planner is free with no seat count, and there is a demo workspace to try without signing in.',
+  ],
+  [
+    'Can I reach my own machine from the browser?',
+    'Yes, if you turn it on. Sign the machine in with dispatch-mcp login and switch on Web access in Settings, under This machine. Then app.dispatch.foo lists its projects to you alone, and you can review, decide and edit tasks from any browser. The web can never open a shell, write files or pair a new device.',
   ],
   [
     'How much does Dispatch cost?',

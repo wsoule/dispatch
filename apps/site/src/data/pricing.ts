@@ -14,6 +14,10 @@ export const faq: [string, string][] = [
     'Reading, building, modifying, self-hosting and redistributing the code for any purpose except shipping a competing product or service.',
   ],
   [
+    'Does the web planner count seats?',
+    'No. Planning a Linear workspace at app.dispatch.foo is free for everyone in it, with no seat count. Seats cover agents and team features.',
+  ],
+  [
     'What happens past three people?',
     'A fourth invite is refused and says why. On a synced board, anyone past the seats keeps working locally and catches up when seats are added. Nothing is deleted, and an expired key falls back to the free plan instead of locking anyone out.',
   ],
