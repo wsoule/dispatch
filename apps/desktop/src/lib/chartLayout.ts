@@ -16,6 +16,8 @@ interface ChartNodeSpec {
 interface ChartGroupSpec {
   id: string;
   label: string;
+  /** The group box this one sits in, if any (a milestone inside its project). */
+  parent?: string | null;
 }
 
 interface ChartEdgeSpec {
@@ -46,6 +48,8 @@ export interface PlacedBox {
 
 interface PlacedGroup extends PlacedBox {
   label: string;
+  /** Nesting depth: 0 for a group at the root. */
+  depth: number;
 }
 
 interface PlacedEdge {
@@ -96,7 +100,12 @@ const ROOT_OPTIONS: LayoutOptions = {
   'elk.edgeRouting': 'ORTHOGONAL',
   'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
   'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
-  'elk.separateConnectedComponents': 'false',
+  // Pieces that share no edge (unlinked boxes, separate chains) are laid
+  // out apart and packed into rows near the stage's shape, rather than
+  // stacked in one tall column.
+  'elk.separateConnectedComponents': 'true',
+  'elk.aspectRatio': '1.6',
+  'elk.spacing.componentComponent': '36',
   'elk.padding': '[top=30,left=30,bottom=30,right=30]',
   'org.eclipse.elk.json.shapeCoords': 'ROOT',
   'org.eclipse.elk.json.edgeCoords': 'ROOT',
@@ -128,20 +137,38 @@ const SNAP = 1;
 interface CleanSpec {
   nodes: { id: string; width: number; height: number; group: string | null }[];
   edges: ChartEdgeSpec[];
-  groups: ChartGroupSpec[];
+  /** Parents before the groups inside them. */
+  groups: { id: string; label: string; parent: string | null }[];
 }
 
 /**
  * Drops what ELK would reject or draw wrong: repeated node ids (first wins), self-loops,
  * edges naming a missing node, and repeated (from, to) pairs (first id wins). A node naming
- * an unknown group sits at the root, and a group no node lands in is left out, so no empty
- * labelled box is drawn.
+ * an unknown group sits at the root, a group naming an unknown parent (or one that would
+ * close a loop) sits at the root, and a group no node lands in, directly or through the
+ * groups inside it, is left out, so no empty labelled box is drawn.
  */
 function cleanSpec(spec: ChartSpec): CleanSpec {
   const labels = new Map<string, string>();
+  const parents = new Map<string, string | null>();
   for (const group of spec.groups ?? []) {
-    if (!labels.has(group.id)) labels.set(group.id, group.label);
+    if (labels.has(group.id)) continue;
+    labels.set(group.id, group.label);
+    parents.set(group.id, group.parent ?? null);
   }
+  // The parent each group really sits in: a known one that leads back to the root.
+  const parentOf = (id: string): string | null => {
+    const parent = parents.get(id) ?? null;
+    if (parent === null || !labels.has(parent)) return null;
+    const seen = new Set([id]);
+    for (let at: string | null = parent; at !== null; ) {
+      if (seen.has(at)) return null;
+      seen.add(at);
+      const up: string | null = parents.get(at) ?? null;
+      at = up !== null && labels.has(up) ? up : null;
+    }
+    return parent;
+  };
 
   const nodes: CleanSpec['nodes'] = [];
   const nodeIds = new Set<string>();
@@ -151,14 +178,27 @@ function cleanSpec(spec: ChartSpec): CleanSpec {
     nodeIds.add(node.id);
     const wanted = node.group ?? null;
     const group = wanted !== null && labels.has(wanted) ? wanted : null;
-    if (group !== null) usedGroups.add(group);
+    for (
+      let at = group;
+      at !== null && !usedGroups.has(at);
+      at = parentOf(at)
+    ) {
+      usedGroups.add(at);
+    }
     nodes.push({ id: node.id, width: node.width, height: node.height, group });
   }
 
-  const groups: ChartGroupSpec[] = [];
-  for (const [id, label] of labels) {
-    if (usedGroups.has(id)) groups.push({ id, label });
-  }
+  // Parents first, keeping the caller's order among siblings.
+  const groups: CleanSpec['groups'] = [];
+  const placed = new Set<string>();
+  const place = (id: string): void => {
+    if (placed.has(id)) return;
+    const parent = parentOf(id);
+    if (parent !== null) place(parent);
+    placed.add(id);
+    groups.push({ id, label: labels.get(id) ?? id, parent });
+  };
+  for (const id of labels.keys()) if (usedGroups.has(id)) place(id);
 
   const edges: ChartEdgeSpec[] = [];
   const pairs = new Set<string>();
@@ -178,21 +218,38 @@ function cacheKey(spec: CleanSpec): string {
   return JSON.stringify([
     spec.nodes.map((n) => [n.id, n.width, n.height, n.group]),
     spec.edges.map((e) => [e.id, e.from, e.to]),
-    spec.groups.map((g) => [g.id, g.label]),
+    spec.groups.map((g) => [g.id, g.label, g.parent]),
   ]);
 }
 
 /**
  * The ELK graph for a cleaned spec. ELK ids are positional (`n3`, `g1`, `e7`) rather than
  * the caller's, so a node and a group sharing an id, or a node called `root`, cannot collide
- * inside ELK; `readLayout` maps them back by the same positions. A group joins the root's
- * children where its first node appears, keeping the model order the caller gave.
+ * inside ELK; `readLayout` maps them back by the same positions. A group joins its parent's
+ * (or the root's) children where its first node appears, keeping the model order the
+ * caller gave.
  */
 function toElkGraph(spec: CleanSpec): ElkNode {
   const groupIndex = new Map(spec.groups.map((g, i) => [g.id, i]));
-  const members: ElkNode[][] = spec.groups.map(() => []);
+  const members: (ElkNode[] | null)[] = spec.groups.map(() => null);
   const nodeIndex = new Map<string, number>();
   const children: ElkNode[] = [];
+
+  // The child list of group `g`, creating its box inside its parent on first use.
+  const membersOf = (g: number): ElkNode[] => {
+    const existing = members[g];
+    if (existing !== null) return existing;
+    const list: ElkNode[] = [];
+    members[g] = list;
+    const parent = spec.groups[g].parent;
+    const p = parent === null ? undefined : groupIndex.get(parent);
+    (p === undefined ? children : membersOf(p)).push({
+      id: `g${g}`,
+      layoutOptions: GROUP_OPTIONS,
+      children: list,
+    });
+    return list;
+  };
 
   spec.nodes.forEach((node, i) => {
     nodeIndex.set(node.id, i);
@@ -202,18 +259,7 @@ function toElkGraph(spec: CleanSpec): ElkNode {
       height: node.height,
     };
     const g = node.group === null ? undefined : groupIndex.get(node.group);
-    if (g === undefined) {
-      children.push(box);
-      return;
-    }
-    if (members[g].length === 0) {
-      children.push({
-        id: `g${g}`,
-        layoutOptions: GROUP_OPTIONS,
-        children: members[g],
-      });
-    }
-    members[g].push(box);
+    (g === undefined ? children : membersOf(g)).push(box);
   });
 
   const edges: ElkExtendedEdge[] = spec.edges.map((edge, i) => ({
@@ -371,10 +417,12 @@ function readLayout(spec: CleanSpec, root: ElkNode): ChartLayout {
     nodes.set(node.id, boxOf(`n${i}`, node.id));
   });
 
-  const groups: PlacedGroup[] = spec.groups.map((group, i) => ({
-    ...boxOf(`g${i}`, group.id),
-    label: group.label,
-  }));
+  const depth = new Map<string, number>();
+  const groups: PlacedGroup[] = spec.groups.map((group, i) => {
+    const d = group.parent === null ? 0 : (depth.get(group.parent) ?? -1) + 1;
+    depth.set(group.id, d);
+    return { ...boxOf(`g${i}`, group.id), label: group.label, depth: d };
+  });
 
   const edges: PlacedEdge[] = [];
   spec.edges.forEach((edge, i) => {
