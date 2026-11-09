@@ -146,7 +146,7 @@ describe('LandingView', () => {
       true,
       false,
     ]);
-    fireEvent.click(pulls[1] as HTMLElement);
+    fireEvent.click(pulls[1]);
     expect(calls).toContain('dequeue:r-dep');
   });
 
@@ -175,9 +175,7 @@ describe('LandingView', () => {
   test('the log action opens the reason, conflicted files and verify output', async () => {
     setup();
     const row = screen.getByTestId('landing-row-r-bad');
-    fireEvent.click(
-      row.querySelector('[data-testid="landing-log-open"]') as HTMLElement
-    );
+    fireEvent.click(row.querySelector('[data-testid="landing-log-open"]'));
     const log = await screen.findByTestId('landing-log');
     expect(log.textContent).toContain('src/a.ts');
     expect(log.textContent).toContain('some verify output');

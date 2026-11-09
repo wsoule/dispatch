@@ -397,7 +397,7 @@ function sameKey(a: Uint8Array, b: Uint8Array): boolean {
 
 /** A phone names itself; keep that to one plain, short line. */
 function cleanName(name: string): string {
-  const flat = [...name]
+  const flat = Array.from(name)
     .map((ch) => {
       const code = ch.charCodeAt(0);
       return code < 0x20 || code === 0x7f ? ' ' : ch;
