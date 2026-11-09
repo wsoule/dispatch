@@ -133,6 +133,35 @@ test('conversation agents render alongside runs with their kind labels', () => {
   expect(screen.getByText('overseer')).toBeDefined();
 });
 
+// A merged run's raw state is still `finished` and a superseded predecessor's is still
+// `failed`; the row must say which work landed (and as what) instead.
+test('runs read merged with their commit, and superseded instead of failed', () => {
+  mount({
+    runs: [
+      run({
+        id: 'r-new',
+        taskTitle: 'Landed run',
+        state: 'finished',
+        reviewedAt: '2026-08-04T01:00:00.000Z',
+        reviewAction: 'merge',
+        mergeCommit: '4cdd0c9a1b2c3d4e',
+      }),
+      run({
+        id: 'r-old',
+        taskTitle: 'Resumed run',
+        state: 'failed',
+        reviewedAt: '2026-08-04T01:00:00.000Z',
+        reviewAction: 'merge',
+        mergeCommit: '4cdd0c9a1b2c3d4e',
+        supersededBy: 'r-new',
+      }),
+    ],
+  });
+  expect(screen.getByText(/merged 4cdd0c9/)).toBeDefined();
+  expect(screen.getByText(/superseded by r-new/)).toBeDefined();
+  expect(screen.queryByText(/failed/)).toBeNull();
+});
+
 test('the state filter applies to conversation agents too', () => {
   mount({
     runs: [],

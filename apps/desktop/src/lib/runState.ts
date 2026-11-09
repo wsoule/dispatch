@@ -111,8 +111,9 @@ export type RunDisposition =
  */
 export function runDispositionLabel(
   disposition: RunDisposition,
-  reviewAction?: RunMeta['reviewAction']
+  run: Pick<RunMeta, 'reviewAction' | 'supersededBy'> = {}
 ): string | null {
+  const { reviewAction } = run;
   switch (disposition) {
     case 'live':
     case 'dead':
@@ -124,6 +125,10 @@ export function runDispositionLabel(
     case 'in-review-elsewhere':
       return 'PR open';
     case 'closed':
+      // A run another run resumed from closed because its work moved on, not
+      // because it failed or merged on its own — even once the successor's
+      // merge marks it merged too, "Superseded" is what tells the two apart.
+      if (run.supersededBy !== undefined) return 'Superseded';
       // A reviewed run with no recorded action still needs a word, and "Closed"
       // is the honest one — reading it as "Merged" would assert that work landed
       // when nothing recorded that it did.
@@ -140,6 +145,9 @@ export function deriveRunDisposition(meta: RunMeta): RunDisposition {
   // terminal state, since discarding a failed run is a perfectly normal way to
   // close one out.
   if (meta.reviewedAt !== undefined) return 'closed';
+  // A run another run resumed from is finished business too: the server
+  // refuses to resume it a second time, and its work is the successor's now.
+  if (meta.supersededBy !== undefined) return 'closed';
   if (meta.prUrl !== undefined) return 'in-review-elsewhere';
   if (meta.state === 'finished') return 'needs-review';
   // Failed or cancelled. A session id is exactly what the server's resume gate

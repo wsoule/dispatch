@@ -58,6 +58,9 @@ export interface RunMeta {
   prUrl?: string;
   archivedAt?: string;
   resumedFrom?: string;
+  // The run that resumed from this one, when it has ended — computed per
+  // request server-side (decorateRunsWithPushed), never persisted.
+  supersededBy?: string;
   stackParents?: string[];
   stackBaseCommit?: string;
   baseDiscarded?: boolean;

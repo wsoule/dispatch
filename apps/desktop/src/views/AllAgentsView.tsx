@@ -146,6 +146,16 @@ const REVIEW_ACTION_LABEL: Record<
  * whose-move label the run glyphs use everywhere else. Raw enum strings like
  * 'awaiting-approval' or 'interrupted-dirty' never reach the row. */
 function outcomeLabel(run: RunMeta): string {
+  // Review outcomes outrank the raw terminal state: a predecessor closed out by
+  // its successor's merge stays `failed` underneath, and a merged run should
+  // name the commit its work landed as.
+  if (run.supersededBy !== undefined)
+    return `superseded by ${run.supersededBy}`;
+  if (run.reviewedAt !== undefined && run.reviewAction === 'merge') {
+    return run.mergeCommit !== undefined
+      ? `merged ${run.mergeCommit.slice(0, 7)}`
+      : 'merged';
+  }
   if (run.state === 'cancelled') return 'killed';
   if (run.state === 'failed') return 'failed';
   if (run.state === 'interrupted-dirty') return 'interrupted';

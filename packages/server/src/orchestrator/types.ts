@@ -741,6 +741,11 @@ export type DecoratedRunMeta = RunMeta & {
   /** Merged runs on origin, when the repo has a `v*` tag: the newest one and
    *  whether it contains this merge. */
   release?: { tag: string; included: boolean };
+  /** Ended runs another run resumed from: the newest such run's id. Its work
+   *  continued there, so the run reads "superseded" rather than its own
+   *  terminal state; when the successor merges, this run carries the same
+   *  reviewAction and mergeCommit (closeSupersededPredecessors). */
+  supersededBy?: string;
 };
 
 // A run's kind, defaulted for the transcripts and registry entries written

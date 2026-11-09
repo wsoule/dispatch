@@ -274,6 +274,10 @@ export interface RunMeta {
   // Present on merged runs that reached origin, when the repo has `v*` tags:
   // the newest tag and whether it contains this run's merge commit.
   release?: { tag: string; included: boolean };
+  // Present on ended runs another run resumed from: that successor's id (see
+  // decorateRunsWithPushed server-side). The run's work moved on, so surfaces
+  // show it as superseded rather than by its own failed/finished state.
+  supersededBy?: string;
   // The git survey of this run's worktree, set on `failed`/`interrupted-dirty`.
   survey?: RunSurvey;
   // Absent on runs recorded before review runs existed; treat that as

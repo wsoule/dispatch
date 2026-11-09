@@ -132,6 +132,16 @@ describe('deriveRunDisposition', () => {
       )
     ).toBe('closed');
   });
+
+  // A failed run another run resumed from must not offer Continue: the server
+  // refuses a second resume, and the work carries on in the successor.
+  test('a superseded run is closed, not stopped short', () => {
+    expect(
+      deriveRunDisposition(
+        run({ state: 'failed', sessionId: 'sess-1', supersededBy: 'r-next' })
+      )
+    ).toBe('closed');
+  });
 });
 
 describe('closedOutMark', () => {
@@ -210,7 +220,9 @@ describe('runDispositionLabel', () => {
   ] as ['merge' | 'discard' | 'pr', string][])(
     'closed via %s reads %s',
     (action, expected) => {
-      expect(runDispositionLabel('closed', action)).toBe(expected);
+      expect(runDispositionLabel('closed', { reviewAction: action })).toBe(
+        expected
+      );
     }
   );
 
@@ -220,6 +232,17 @@ describe('runDispositionLabel', () => {
   // whole badge exists to remove.
   test('closed with no reviewAction falls back to Closed', () => {
     expect(runDispositionLabel('closed')).toBe('Closed');
+  });
+
+  // A predecessor closed by its successor's merge carries reviewAction
+  // 'merge' too; "Superseded" is what keeps it from reading as its own landing.
+  test('a superseded run reads Superseded, even once merged', () => {
+    expect(
+      runDispositionLabel('closed', {
+        reviewAction: 'merge',
+        supersededBy: 'r-next',
+      })
+    ).toBe('Superseded');
   });
 });
 

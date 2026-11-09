@@ -970,7 +970,36 @@ export class Orchestrator {
   //   merges into the local base only (no remote, or a milestone branch).
   // - `release` on merged runs that reached origin: the newest release tag and
   //   whether it contains the merge, so "did it ship?" has an answer.
+  // - `supersededBy` on every ended run another run resumed from, so lists
+  //   can say its work moved on instead of showing it as plain "failed".
   decorateRunsWithPushed(runs: RunMeta[]): DecoratedRunMeta[] {
+    const successors = this.successorsByPredecessor();
+    return this.decorateLanding(runs).map((run) => {
+      const supersededBy = TERMINAL_RUN_STATES.has(run.state)
+        ? successors.get(run.id)
+        : undefined;
+      return supersededBy === undefined ? run : { ...run, supersededBy };
+    });
+  }
+
+  // Maps each run id to the newest run that resumed from it, read from the
+  // whole registry so a single-run read (run detail) gets the same answer
+  // the list does.
+  private successorsByPredecessor(): Map<string, string> {
+    const successors = new Map<string, { id: string; createdAt: string }>();
+    for (const run of this.registry.list()) {
+      if (run.resumedFrom === undefined) continue;
+      const seen = successors.get(run.resumedFrom);
+      if (seen === undefined || seen.createdAt < run.createdAt) {
+        successors.set(run.resumedFrom, run);
+      }
+    }
+    return new Map([...successors].map(([from, run]) => [from, run.id]));
+  }
+
+  // The landing half of decorateRunsWithPushed: pushedToOrigin, landsOn and
+  // release, as described above.
+  private decorateLanding(runs: RunMeta[]): DecoratedRunMeta[] {
     const merged = runs.flatMap((run) =>
       run.reviewAction === 'merge' && run.mergeCommit !== undefined
         ? [{ commit: run.mergeCommit, base: run.baseBranch, runId: run.id }]

@@ -152,6 +152,23 @@ export function formatApprovalRequest(
   ].join('\n');
 }
 
+// What `dispatch runs` prints in its STATE column. A reviewed run's raw state
+// stays whatever terminal value it had (a merged run still reads `finished`),
+// so the outcome comes first: the run another run resumed reads "superseded by
+// <id>" rather than "failed", and a merged one names its commit so the list
+// says which work landed and where.
+function runStateText(run: RunMeta): string {
+  if (run.supersededBy !== undefined)
+    return `superseded by ${run.supersededBy}`;
+  if (run.reviewedAt === undefined) return run.state;
+  if (run.reviewAction === 'discard') return 'discarded';
+  if (run.reviewAction === 'pr') return 'merged (PR)';
+  if (run.mergeCommit !== undefined) {
+    return `merged ${run.mergeCommit.slice(0, 7)}`;
+  }
+  return run.reviewAction === 'merge' ? 'merged' : run.state;
+}
+
 // `dispatch runs`'s table: run id, task, state, branch, cost — column-aligned through
 // `output.ts`'s shared `formatTable`, so a script can grep or sort it.
 export function formatRunsTable(runs: RunMeta[]): string {
@@ -160,7 +177,7 @@ export function formatRunsTable(runs: RunMeta[]): string {
   const rows = runs.map((r) => [
     r.id,
     r.taskId,
-    r.state,
+    runStateText(r),
     r.branch,
     `$${(r.costUsd ?? 0).toFixed(2)}`,
   ]);

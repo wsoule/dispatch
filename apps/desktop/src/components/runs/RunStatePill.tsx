@@ -76,7 +76,7 @@ export function RunStatePill({
   const state = meta.state;
   const label = runStateLabel(state);
   const disposition = deriveRunDisposition(meta);
-  const badge = runDispositionLabel(disposition, meta.reviewAction);
+  const badge = runDispositionLabel(disposition, meta);
   const mark = runMark(meta, disposition);
 
   if (compact) {
