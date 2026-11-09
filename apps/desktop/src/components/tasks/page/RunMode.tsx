@@ -135,6 +135,9 @@ export function RunMode({ page }: { page: TaskPageModel }) {
               project.fetchApprovalInput(run.id, requestId)
             }
             onSendMessage={(text) => project.handleSendMessage(run.id, text)}
+            onUploadAttachments={(files) =>
+              project.handleUploadRunAttachments(run.id, files)
+            }
             openQuestions={questions}
             onAnswerQuestion={(questionId, answer) =>
               project.handleAnswerQuestion(

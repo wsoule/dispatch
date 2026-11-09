@@ -1733,6 +1733,32 @@ export interface OverseerAttachment {
   mimeType: string;
 }
 
+// Mirrors RunAttachment in packages/server/src/api/attachments.ts — a file
+// dropped, pasted or picked in a run's follow-up composer, uploaded with
+// uploadRunAttachments. Run messages are plain text on the bus, so the
+// follow-up names each `path` in its body (withRunAttachmentNote).
+export interface RunAttachment {
+  name: string;
+  /** Absolute path of the blob on the daemon's machine. */
+  path: string;
+  size: number;
+  mimeType: string;
+}
+
+/** A run follow-up's body with its attached files listed after the text, in
+ *  the overseer's wording, so the agent knows where to read them. */
+export function withRunAttachmentNote(
+  text: string,
+  attachments: readonly RunAttachment[]
+): string {
+  if (attachments.length === 0) return text;
+  const lines = [
+    'Attached files (saved on this machine; read them when they matter):',
+    ...attachments.map((a) => `- ${a.name} (${a.mimeType}): ${a.path}`),
+  ];
+  return text === '' ? lines.join('\n') : [text, '', ...lines].join('\n');
+}
+
 /** One slash command an Overseer session accepts: `/name`, with what it does. */
 export interface OverseerCommand {
   name: string;
@@ -4209,6 +4235,8 @@ export interface ApiClient {
   uploadOverseerAttachments(files: File[]): Promise<OverseerAttachment[]>;
   /** An overseer attachment's bytes, for a thumbnail or a download. */
   fetchOverseerAttachment(attachment: OverseerAttachment): Promise<Blob>;
+  /** Uploads files for a run's next follow-up message to name. */
+  uploadRunAttachments(runId: string, files: File[]): Promise<RunAttachment[]>;
   /** Stops the running turn; anything queued waits for the next send. */
   stopOverseer(conversationId: string): Promise<OverseerRecordView>;
   /** Jev's read on whether `text` starts a new subject; fail-open reads "no". */
@@ -5274,6 +5302,16 @@ export function createApiClient(
       const body = await request<{ attachments: OverseerAttachment[] }>(
         target,
         '/api/overseer/attachments',
+        { method: 'POST', body: form }
+      );
+      return body.attachments;
+    },
+    uploadRunAttachments: async (runId, files) => {
+      const form = new FormData();
+      for (const file of files) form.append('files', file, file.name);
+      const body = await request<{ attachments: RunAttachment[] }>(
+        target,
+        `/api/runs/${encodeURIComponent(runId)}/attachments`,
         { method: 'POST', body: form }
       );
       return body.attachments;

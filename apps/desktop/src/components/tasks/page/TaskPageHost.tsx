@@ -41,6 +41,7 @@ export type TaskPageProject = Pick<
   | 'handleApprove'
   | 'fetchApprovalInput'
   | 'handleSendMessage'
+  | 'handleUploadRunAttachments'
   | 'handleAnswerQuestion'
   | 'handleDecideScopeRequest'
   | 'handleRestartDaemon'

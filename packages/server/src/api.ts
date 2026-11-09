@@ -68,6 +68,7 @@ import {
   readOverseerAttachments,
   removeTaskAttachment,
   uploadOverseerAttachments,
+  uploadRunAttachments,
   uploadTaskAttachments,
 } from './api/attachments.js';
 import {
@@ -6250,6 +6251,26 @@ export async function handleApi(
       }
       if (segments.length === 3 && segments[2] === 'preview') {
         return await handleRunPreview(req, ctx, segments[1], method);
+      }
+      // POST /api/runs/:id/attachments — files a human dropped, pasted or picked
+      // in the run's follow-up composer, uploaded ahead of the message that
+      // names them. A human's, like the overseer's: an agent token is refused,
+      // so a run cannot fill the disk through the daemon.
+      if (segments.length === 3 && segments[2] === 'attachments') {
+        if (method !== 'POST') return errorResponse(405, 'method not allowed');
+        if (ctx.viaAgentToken === true) {
+          return jsonResponse(
+            {
+              error: 'an agent cannot attach files to a run; a human does',
+              code: 'auth_agent_token',
+            },
+            403
+          );
+        }
+        if (ctx.orchestrator.getRun(segments[1]) === null) {
+          return errorResponse(404, `run not found: ${segments[1]}`);
+        }
+        return await uploadRunAttachments(req, ctx.rootDir, segments[1]);
       }
       // POST /api/runs/:id/stop — the graceful counterpart to cancel: the agent
       // finishes what it is doing and then stops, so its work is committed.

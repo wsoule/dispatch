@@ -1108,3 +1108,122 @@ test('the asks region is a Tab stop only while it hides text to scroll to', () =
     globalThis.ResizeObserver = Original;
   }
 });
+
+// Files dropped on a run's composer upload at once; the next message lists
+// where they landed, since a run message is plain text on the bus.
+function renderAttaching(
+  runMeta: RunMeta,
+  sent: { message: string[]; changes: string[] }
+) {
+  const upload = mock((files: File[]) =>
+    Promise.resolve(
+      files.map((file) => ({
+        name: file.name,
+        path: `/repo/.dispatch/attachments/runs/r-abc123/u1/${file.name}`,
+        size: file.size,
+        mimeType: file.type,
+      }))
+    )
+  );
+  render(
+    <RunLogView
+      meta={runMeta}
+      entries={[]}
+      pendingApprovals={[]}
+      onApprove={noop}
+      onSendMessage={(text) => {
+        sent.message.push(text);
+        return Promise.resolve();
+      }}
+      onUploadAttachments={upload}
+      openQuestions={[]}
+      onAnswerQuestion={noop}
+      pendingScopeRequest={null}
+      onDecideScopeRequest={noop}
+      scopeDecide={CAN_DECIDE}
+      onRestartDaemon={noop}
+      onRequestChanges={(text) => {
+        sent.changes.push(text);
+        return Promise.resolve();
+      }}
+      onOpenMessage={null}
+      me={null}
+      readsAllThreads
+    />
+  );
+  return upload;
+}
+
+// happy-dom's DragEvent carries no DataTransfer, so the drop is a plain event
+// with the fields the handler reads.
+function dropFiles(target: HTMLElement, files: File[]): void {
+  for (const type of ['dragover', 'drop']) {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', {
+      value: {
+        types: ['Files'],
+        items: files.map((file) => ({ kind: 'file', getAsFile: () => file })),
+        files,
+        dropEffect: 'none',
+      },
+    });
+    fireEvent(target, event);
+  }
+}
+
+test('a file dropped on a live run’s composer is named in the follow-up', async () => {
+  const sent = { message: [] as string[], changes: [] as string[] };
+  const upload = renderAttaching(meta({ state: 'running' }), sent);
+  const log = new File(['boom'], 'build.log', { type: 'text/plain' });
+  await act(async () => {
+    dropFiles(screen.getByLabelText('Prompt'), [log]);
+    await Promise.resolve();
+  });
+  expect(upload).toHaveBeenCalledTimes(1);
+  expect(screen.getByText('build.log')).not.toBeNull();
+
+  fireEvent.change(screen.getByLabelText('Prompt'), {
+    target: { value: 'why did this fail?' },
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await Promise.resolve();
+  });
+  expect(sent.message).toEqual([
+    [
+      'why did this fail?',
+      '',
+      'Attached files (saved on this machine; read them when they matter):',
+      '- build.log (text/plain): /repo/.dispatch/attachments/runs/r-abc123/u1/build.log',
+    ].join('\n'),
+  ]);
+  // Sent files leave the composer.
+  expect(screen.queryByText('build.log')).toBeNull();
+});
+
+test('a finished run’s composer takes a drop too, and a file alone requests changes', async () => {
+  const sent = { message: [] as string[], changes: [] as string[] };
+  renderAttaching(meta({ state: 'finished' }), sent);
+  const box = screen.getByPlaceholderText('Describe what should change…');
+  const shot = new File(['png'], 'shot.png', { type: 'image/png' });
+  await act(async () => {
+    dropFiles(box, [shot]);
+    await Promise.resolve();
+  });
+  expect(screen.getByRole('img', { name: 'shot.png' })).not.toBeNull();
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: /Request changes/ }));
+    await Promise.resolve();
+  });
+  expect(sent.changes).toEqual([
+    [
+      'Attached files (saved on this machine; read them when they matter):',
+      '- shot.png (image/png): /repo/.dispatch/attachments/runs/r-abc123/u1/shot.png',
+    ].join('\n'),
+  ]);
+});
+
+test('without an upload handler the composer offers no paperclip', () => {
+  renderLog(meta({ state: 'finished' }));
+  expect(screen.queryByRole('button', { name: 'Attach files' })).toBeNull();
+});

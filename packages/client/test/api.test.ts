@@ -6,6 +6,7 @@ import {
   httpToWs,
   taskDraftToCreateInput,
   taskQueryString,
+  withRunAttachmentNote,
 } from '../src/api';
 
 // Captures the (url, init) a stubbed `fetch` was called with, so a test can
@@ -299,6 +300,55 @@ describe('attachments', () => {
     } finally {
       globalThis.fetch = original;
     }
+  });
+});
+
+describe('run attachments', () => {
+  it('uploads under the run as FormData and answers the entries', async () => {
+    const entry = {
+      name: 'shot.png',
+      path: '/repo/.dispatch/attachments/runs/r-1/abc/shot.png',
+      size: 1,
+      mimeType: 'image/png',
+    };
+    const stub = stubFetch({ attachments: [entry] });
+    try {
+      const uploaded = await createApiClient(
+        'http://example.test'
+      ).uploadRunAttachments('r 1', [new File(['x'], 'shot.png')]);
+      expect(uploaded).toEqual([entry]);
+      expect(stub.calls[0].url).toBe(
+        'http://example.test/api/runs/r%201/attachments'
+      );
+      expect(stub.calls[0].init?.method).toBe('POST');
+      expect(stub.calls[0].init?.body instanceof FormData).toBe(true);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('lists attached files after the text, or alone when there is none', () => {
+    const shot = {
+      name: 'shot.png',
+      path: '/repo/shot.png',
+      size: 1,
+      mimeType: 'image/png',
+    };
+    expect(withRunAttachmentNote('fix this', [])).toBe('fix this');
+    expect(withRunAttachmentNote('fix this', [shot])).toBe(
+      [
+        'fix this',
+        '',
+        'Attached files (saved on this machine; read them when they matter):',
+        '- shot.png (image/png): /repo/shot.png',
+      ].join('\n')
+    );
+    expect(withRunAttachmentNote('', [shot])).toBe(
+      [
+        'Attached files (saved on this machine; read them when they matter):',
+        '- shot.png (image/png): /repo/shot.png',
+      ].join('\n')
+    );
   });
 });
 

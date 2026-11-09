@@ -280,6 +280,42 @@
   color: var(--text-2);
 }
 
+/* A finished run's composer: pending attachment chips over the feedback row; a
+   file drag over it shows a ring. */
+.terminalBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  border-radius: var(--r);
+}
+
+.terminalBox[data-dragging='true'] {
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.thumb {
+  display: block;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-xs);
+  object-fit: cover;
+}
+
+.file {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
 /* A finished run: the feedback box and its two actions on one line. */
 .terminal {
   display: flex;

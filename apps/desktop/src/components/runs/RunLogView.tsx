@@ -1,17 +1,34 @@
 import { foldSubagents, providerById } from '@dispatch-foo/core/browser';
-import type { LiveSegment, NormalizedEntry, RunMeta } from '@dispatch/client';
+import { withRunAttachmentNote } from '@dispatch/client';
+import type {
+  LiveSegment,
+  NormalizedEntry,
+  RunAttachment,
+  RunMeta,
+} from '@dispatch/client';
 import { Button, Chip, cx, Notice, Spinner } from '@dispatch/ui';
 import {
+  FileText,
   Info,
   Mail,
   Megaphone,
   MessageSquare,
   MessageSquarePlus,
+  Paperclip,
   Play,
 } from 'lucide-react';
-import { memo, useEffect, useMemo, useState } from 'react';
+import {
+  type ClipboardEvent,
+  type DragEvent,
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { useElapsed } from '../../hooks/useElapsed';
+import { useRunAttachments } from '../../hooks/useRunAttachments';
 import { useStickToBottom } from '../../hooks/useStickToBottom';
 import { isFromA2A } from '../../lib/a2a';
 import { changedFilesFromLog } from '../../lib/changedFiles';
@@ -233,6 +250,10 @@ interface RunLogViewProps {
   /** Reads a parked call's full input, for a card whose gate carries only a preview. */
   onLoadApprovalInput?: (requestId: string) => Promise<unknown>;
   onSendMessage: (text: string) => Promise<void>;
+  /** Uploads files dropped, pasted or picked in the composer, which then lists
+   * their paths in the next message (live or "Request changes"). Omitted, the
+   * composer takes no files. */
+  onUploadAttachments?: (files: File[]) => Promise<RunAttachment[]>;
   /** Blocking questions this run's agent sent a human, oldest first. Usually one, but an
    * agent can send several in a single turn. */
   openQuestions: RunQuestion[];
@@ -310,6 +331,7 @@ export function RunLogView({
   onApprove,
   onLoadApprovalInput,
   onSendMessage,
+  onUploadAttachments,
   openQuestions,
   onAnswerQuestion,
   pendingScopeRequest,
@@ -324,6 +346,17 @@ export function RunLogView({
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const files = useRunAttachments(onUploadAttachments, setError);
+  const canAttach = onUploadAttachments !== undefined && !sending;
+  // The finished run's composer is a plain text box, not PromptBar, so it
+  // takes drops, pastes and picks itself; the live one gets them from PromptBar.
+  const [dragging, setDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const pendingFiles = files.pending.map((p) => ({
+    id: p.attachment.path,
+    name: p.attachment.name,
+    previewUrl: p.previewUrl,
+  }));
   // Keyed on the run id because this view is reused (not remounted) when the user picks a
   // different run on the left, and each run should open at its latest output.
   const { scrollRef, contentRef, scrollToBottom } = useStickToBottom(meta.id);
@@ -379,13 +412,21 @@ export function RunLogView({
   const scopeOpen =
     pendingScopeRequest !== null && pendingScopeRequest.granted === null;
 
+  // Sends `text` with the pending files listed after it, so the agent knows
+  // where on disk to read them; they clear only once the message is out.
   async function send(text: string, resume: boolean) {
+    if (files.attaching) return;
     setSending(true);
     setError(null);
     try {
-      if (resume) await onRequestChanges(text);
-      else await onSendMessage(text);
+      const body = withRunAttachmentNote(
+        text,
+        files.pending.map((p) => p.attachment)
+      );
+      if (resume) await onRequestChanges(body);
+      else await onSendMessage(body);
       setDraft('');
+      files.clear();
       // Sending is an explicit "I'm caught up" signal, so re-pin even if the user had
       // scrolled back through history to write the message.
       scrollToBottom();
@@ -396,9 +437,53 @@ export function RunLogView({
     }
   }
 
+  // A dropped screenshot with no words is a whole message, as in the overseer.
   async function submit() {
-    if (draft.trim() === '') return;
+    if (draft.trim() === '' && files.pending.length === 0) return;
     await send(draft.trim(), terminal);
+  }
+
+  // Drag, drop and paste handlers for the terminal composer. Only a drag that
+  // carries files lights it up, so dragging selected text still drops text.
+  function filesFrom(dt: DataTransfer | null): File[] {
+    if (dt === null) return [];
+    const picked: File[] = [];
+    for (const item of Array.from(dt.items ?? [])) {
+      const file = item.kind === 'file' ? item.getAsFile() : null;
+      if (file !== null) picked.push(file);
+    }
+    return picked.length > 0 ? picked : Array.from(dt.files ?? []);
+  }
+
+  function handleDragOver(event: DragEvent<HTMLDivElement>) {
+    if (!canAttach || !event.dataTransfer.types.includes('Files')) return;
+    event.preventDefault();
+    setDragging(true);
+  }
+
+  // dragleave fires on every move into a child, so only clear once the
+  // pointer has left the composer itself.
+  function handleDragLeave(event: DragEvent<HTMLDivElement>) {
+    const next = event.relatedTarget;
+    if (next instanceof Node && event.currentTarget.contains(next)) return;
+    setDragging(false);
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    setDragging(false);
+    if (!canAttach) return;
+    const dropped = filesFrom(event.dataTransfer);
+    if (dropped.length === 0) return;
+    event.preventDefault();
+    void files.attach(dropped);
+  }
+
+  function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    if (!canAttach) return;
+    const pasted = filesFrom(event.clipboardData);
+    if (pasted.length === 0) return;
+    event.preventDefault();
+    void files.attach(pasted);
   }
 
   // Deliberately not gated on a non-empty draft, unlike submit(): a run that was
@@ -653,42 +738,108 @@ export function RunLogView({
             // PromptBar primitive's single fixed "Send" action can't express, so this branch
             // keeps its own buttons rather than forcing a primitive built for one action onto a
             // composer that genuinely has two.
-            <div className={styles.terminal}>
-              <textarea
-                className={cx('textarea', styles.draft)}
-                rows={2}
-                aria-label="Describe what should change"
-                placeholder="Describe what should change…"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    void submit();
-                  }
-                }}
-                disabled={sending}
-              />
-              {canContinue && (
-                <Button
-                  variant="secondary"
-                  disabled={sending}
-                  onClick={() => void continueRun()}
-                  className={styles.action}
-                  icon={<Play {...ICON} />}
-                >
-                  Continue
-                </Button>
+            <div
+              className={styles.terminalBox}
+              data-dragging={dragging ? 'true' : undefined}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              {pendingFiles.length > 0 && (
+                <ul aria-label="Attachments" className={styles.chips}>
+                  {pendingFiles.map((file) => (
+                    <li key={file.id}>
+                      <Chip
+                        title={file.name}
+                        removeLabel={`Remove ${file.name}`}
+                        onRemove={() => files.remove(file.id)}
+                      >
+                        {file.previewUrl !== undefined ? (
+                          <img
+                            src={file.previewUrl}
+                            alt={file.name}
+                            className={styles.thumb}
+                          />
+                        ) : (
+                          <span className={styles.file}>
+                            <FileText {...ICON} size={12} />
+                            {file.name}
+                          </span>
+                        )}
+                      </Chip>
+                    </li>
+                  ))}
+                </ul>
               )}
-              <Button
-                variant="primary"
-                disabled={sending}
-                onClick={() => void submit()}
-                className={styles.action}
-                icon={<MessageSquarePlus {...ICON} />}
-              >
-                Request changes
-              </Button>
+              <div className={styles.terminal}>
+                <textarea
+                  className={cx('textarea', styles.draft)}
+                  rows={2}
+                  aria-label="Describe what should change"
+                  placeholder="Describe what should change…"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onPaste={handlePaste}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      void submit();
+                    }
+                  }}
+                  disabled={sending}
+                />
+                {onUploadAttachments !== undefined && (
+                  <>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      hidden
+                      onChange={(event) => {
+                        const picked = Array.from(event.target.files ?? []);
+                        // Cleared so picking the same file again still fires.
+                        event.target.value = '';
+                        if (picked.length > 0) void files.attach(picked);
+                      }}
+                    />
+                    <Button
+                      variant="quiet"
+                      aria-label="Attach files"
+                      busy={files.attaching}
+                      disabled={!canAttach}
+                      className={styles.action}
+                      icon={
+                        files.attaching ? (
+                          <Spinner size="sm" label="" />
+                        ) : (
+                          <Paperclip {...ICON} />
+                        )
+                      }
+                      onClick={() => fileInputRef.current?.click()}
+                    />
+                  </>
+                )}
+                {canContinue && (
+                  <Button
+                    variant="secondary"
+                    disabled={sending || files.attaching}
+                    onClick={() => void continueRun()}
+                    className={styles.action}
+                    icon={<Play {...ICON} />}
+                  >
+                    Continue
+                  </Button>
+                )}
+                <Button
+                  variant="primary"
+                  disabled={sending || files.attaching}
+                  onClick={() => void submit()}
+                  className={styles.action}
+                  icon={<MessageSquarePlus {...ICON} />}
+                >
+                  Request changes
+                </Button>
+              </div>
             </div>
           ) : (
             // The live case is a genuine single-action send — this is the composer PromptBar
@@ -700,6 +851,15 @@ export function RunLogView({
               onSubmit={() => void submit()}
               disabled={sending}
               placeholder="Send a follow-up message…"
+              {...(onUploadAttachments !== undefined
+                ? {
+                    onAttachFiles: (picked: File[]) =>
+                      void files.attach(picked),
+                    attachments: pendingFiles,
+                    onRemoveAttachment: files.remove,
+                    attaching: files.attaching,
+                  }
+                : {})}
             />
           )}
         </div>

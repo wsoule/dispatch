@@ -12,6 +12,7 @@ export {
   PLAN_ROLES,
   taskDraftToCreateInput,
   taskQueryString,
+  withRunAttachmentNote,
   wsUrl,
 } from './api';
 export type {
@@ -265,6 +266,7 @@ export type {
   OverseerAction,
   OverseerApproval,
   OverseerAttachment,
+  RunAttachment,
   OverseerCommand,
   OverseerGrant,
   OverseerMessage,

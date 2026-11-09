@@ -49,6 +49,7 @@ import type {
   ReadinessReading,
   RepoPr,
   ReviewComment,
+  RunAttachment,
   RunDetail,
   RunMeta,
   RunState,
@@ -769,6 +770,12 @@ export interface DispatchProjectData {
     requestId: string
   ) => Promise<unknown>;
   handleSendMessage: (runId: string, text: string) => Promise<void>;
+  /** Uploads files dropped, pasted or picked in a run's follow-up composer;
+   * the composer names the answered paths in the message it sends next. */
+  handleUploadRunAttachments: (
+    runId: string,
+    files: File[]
+  ) => Promise<RunAttachment[]>;
   handleCancelRun: (runId: string) => Promise<void>;
   /** Asks a live run to wind down: it finishes its current operation, then stops,
    * keeping its work. `handleCancelRun` is the hard form that kills it outright. */
@@ -2558,6 +2565,15 @@ export function useDispatchProject(
     [client, queryClient, port, auth]
   );
 
+  const handleUploadRunAttachments = useCallback(
+    async (runId: string, files: File[]): Promise<RunAttachment[]> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      assertCanMessage(auth);
+      return client.uploadRunAttachments(runId, files);
+    },
+    [client, auth]
+  );
+
   const handleCancelRun = useCallback(
     async (runId: string): Promise<void> => {
       if (client === null) return;
@@ -3273,6 +3289,7 @@ export function useDispatchProject(
       fetchApprovalInput,
       fetchOverseerApprovalInput,
       handleSendMessage,
+      handleUploadRunAttachments,
       handleCancelRun,
       handleStopRun,
       handleArchiveRun,
@@ -3414,6 +3431,7 @@ export function useDispatchProject(
       fetchApprovalInput,
       fetchOverseerApprovalInput,
       handleSendMessage,
+      handleUploadRunAttachments,
       handleCancelRun,
       handleStopRun,
       handleArchiveRun,
