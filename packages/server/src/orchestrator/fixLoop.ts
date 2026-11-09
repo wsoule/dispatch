@@ -1,4 +1,8 @@
-import { executorModels, loadConfig } from '@dispatch-foo/core';
+import {
+  executorModels,
+  fixLoopAutoEnabled,
+  loadConfig,
+} from '@dispatch-foo/core';
 import type {
   ActorContext,
   EscalationStep,
@@ -457,12 +461,13 @@ export class FixLoop {
   }
 
   // Whether a finished run should ignite a loop on its own: only a finished
-  // implementer, only with the config gate on, only for a task that has not
+  // implementer, only with the config gate on (`fixLoop.auto`, or PR landing,
+  // which reviews every run), only for a task that has not
   // opted out. Checked synchronously in the terminal hook, before any state
   // exists for this task.
   private shouldAutoStart(meta: RunMeta): boolean {
     if (runKind(meta) !== 'execute' || meta.state !== 'finished') return false;
-    if (!loadConfig(this.ctx.rootDir).fixLoop.auto) return false;
+    if (!fixLoopAutoEnabled(loadConfig(this.ctx.rootDir))) return false;
     const task = this.ctx.store.get(meta.taskId);
     return task !== null && task.meta.fixLoop !== false;
   }

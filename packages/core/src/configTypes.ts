@@ -251,6 +251,10 @@ export interface DispatchConfig {
   /** Machines reachable over ssh — see RemoteConfig. Absent means none. */
   remotes?: Record<string, RemoteConfig>;
   linear: LinearConfig;
+  /** How a reviewed run reaches the default branch — see LandingMode.
+   *  `loadConfig` always sets it; optional so hand-built fixtures stay valid,
+   *  and an absent value reads as `'queue'`. */
+  landing?: LandingMode;
   fixLoop: FixLoopConfig;
   /** How to run this project for a `verify` run to exercise it. Absent means
    *  the verify stage has nothing to dispatch, so a task simply skips it. */
@@ -463,6 +467,23 @@ export interface FixLoopConfig {
 // check against an unvalidated `unknown` never needs an `as` cast.
 export const FIX_STRATEGIES: readonly string[] = ['resume', 'fresh'];
 export const FIX_MODEL_TIERS: readonly string[] = ['standard', 'high'];
+
+/** How a finished run lands. `queue` squash-merges it locally through the
+ *  merge queue (the default); `pr` opens a GitHub PR for it instead, and
+ *  reviews every run first. */
+export type LandingMode = 'pr' | 'queue';
+
+export const LANDING_MODES: readonly string[] = ['pr', 'queue'];
+
+export const DEFAULT_LANDING: LandingMode = 'queue';
+
+// Whether a finished implementer run opens its fix loop on its own. PR mode
+// reviews every run, because only a clean review may open a PR, so it turns
+// ignition on regardless of `fixLoop.auto` (which keeps shipping off for
+// queue-mode projects).
+export function fixLoopAutoEnabled(cfg: DispatchConfig): boolean {
+  return cfg.landing === 'pr' || cfg.fixLoop.auto;
+}
 
 // Rounds 1-3 resume the same agent; 4 and 5 hand the work to a fresh one at
 // the top tier, because an agent three rounds deep stops seeing its own shape.
@@ -896,6 +917,7 @@ export interface ConfigPatch {
     } | null
   >;
   linear?: Partial<LinearConfig>;
+  landing?: LandingMode;
   fixLoop?: Partial<FixLoopConfig>;
   verify?: Partial<VerifyConfig>;
   /** `webhook: null` clears the URL. `kinds` merges over what is on disk. */

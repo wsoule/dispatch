@@ -74,6 +74,7 @@ describe('loadConfig', () => {
       // No machines reachable over ssh until a remotes: block adds some.
       remotes: {},
       linear: DEFAULT_LINEAR,
+      landing: 'queue',
       fixLoop: DEFAULT_FIX_LOOP,
       carto: DEFAULT_CARTO,
       repoDigest: DEFAULT_REPO_DIGEST,

@@ -1,5 +1,9 @@
 statuses: [ draft, ready, working, review, landing, landed, dropped ]
 autoCommit: true
+# Land runs as GitHub PRs instead of through the local merge queue. PR mode
+# also reviews every finished run (the fix loop ignites on its own), since only
+# a clean review may open a PR.
+landing: pr
 # Run by the merge queue in each run's own worktree after a clean rebase and
 # before the squash-merge, so a branch that breaks the build never lands. A
 # worktree is a fresh checkout with no node_modules or dist/, and @dispatch/*

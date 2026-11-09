@@ -15,6 +15,7 @@ import type {
   ExecutorConfig,
   ExecutorPricing,
   FixLoopConfig,
+  LandingMode,
   LinearConfig,
   MemoryConfig,
   MessagingConfig,
@@ -44,6 +45,7 @@ import {
   DEFAULT_CARTO,
   DEFAULT_EXECUTOR_NAME,
   DEFAULT_FIX_LOOP,
+  DEFAULT_LANDING,
   DEFAULT_LINEAR,
   DEFAULT_MEMORY,
   DEFAULT_MESSAGING,
@@ -61,6 +63,7 @@ import {
   FIX_MODEL_TIERS,
   FIX_STRATEGIES,
   isEffortLevel,
+  LANDING_MODES,
   LINEAR_DIRECTIONS,
   MAX_CONCURRENCY_HARD_CAP,
   MODEL_ROLES,
@@ -161,6 +164,7 @@ const DEFAULTS: DispatchConfig = {
   executors: {},
   remotes: {},
   linear: { ...DEFAULT_LINEAR, statusMap: { ...DEFAULT_LINEAR.statusMap } },
+  landing: DEFAULT_LANDING,
   fixLoop: cloneFixLoop(DEFAULT_FIX_LOOP),
   carto: { ...DEFAULT_CARTO },
   repoDigest: { ...DEFAULT_REPO_DIGEST },
@@ -1571,6 +1575,19 @@ function parseEscalationStep(raw: unknown, label: string): EscalationStep {
   };
 }
 
+// Validates the optional top-level `landing:` key. Absent means the local
+// merge queue; anything but the two modes is refused rather than defaulted,
+// so a typo never silently lands a project's runs the other way.
+function parseLanding(raw: unknown): LandingMode {
+  if (raw === undefined) return DEFAULT_LANDING;
+  if (typeof raw !== 'string' || !LANDING_MODES.includes(raw)) {
+    throw new ConfigError(
+      `invalid .dispatch/config.yml: landing must be one of ${LANDING_MODES.join('|')}`
+    );
+  }
+  return raw as LandingMode;
+}
+
 // Validates the optional `fixLoop:` block, same contract as the blocks above.
 // An escalation table on disk replaces the default outright rather than merging.
 function parseFixLoopConfig(raw: unknown): FixLoopConfig {
@@ -1963,6 +1980,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
         ...DEFAULTS.linear,
         statusMap: { ...DEFAULTS.linear.statusMap },
       },
+      landing: DEFAULT_LANDING,
       fixLoop: cloneFixLoop(DEFAULTS.fixLoop),
       carto: { ...DEFAULTS.carto },
       repoDigest: { ...DEFAULTS.repoDigest },
@@ -2063,6 +2081,7 @@ function parseConfig(parsed: unknown): DispatchConfig {
     executors: parseExecutorsConfig(raw.executors),
     remotes: parseRemotesConfig(raw.remotes),
     linear: parseLinearConfig(raw.linear),
+    landing: parseLanding(raw.landing),
     fixLoop: parseFixLoopConfig(raw.fixLoop),
     verify: parseVerifyConfig(raw.verify),
     carto: parseCarto(raw.carto),
@@ -2636,6 +2655,8 @@ export function updateConfig(
     }
   }
   if (patch.linear !== undefined) applyLinearPatch(doc, patch.linear);
+  // Validated with the rest of the patched document by parseConfig below.
+  if (patch.landing !== undefined) doc.set('landing', patch.landing);
   if (patch.fixLoop !== undefined) applyFixLoopPatch(doc, patch.fixLoop);
   if (patch.notifications !== undefined) {
     applyNotificationsPatch(doc, patch.notifications);

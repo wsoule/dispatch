@@ -1395,6 +1395,19 @@ describe('auto-starting the fix loop', () => {
     expect((await json<FixLoopState>(res)).state).toBe('complete');
   }, 30000);
 
+  it('ignites a finished implementer run when landing is pr', async () => {
+    // PR mode reviews every run: `landing: pr` turns ignition on even though
+    // `fixLoop.auto` stays at its shipped `false`.
+    new TaskStore(root).update(taskId, { fixLoop: true });
+    updateConfig(root, { landing: 'pr', fixLoop: { auto: false } });
+    await restartWith(new ConvergingAgent());
+    await seedImplementerRun();
+
+    const settled = await settle();
+    expect(settled.state).toBe('complete');
+    expect((await reviewRuns()).length).toBeGreaterThan(0);
+  }, 30000);
+
   it('does not ignite for a task that opted out', async () => {
     // The beforeEach task carries fix-loop: false already.
     await seedImplementerRun();
