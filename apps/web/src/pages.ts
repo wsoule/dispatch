@@ -181,22 +181,21 @@ export function homePage(
   const list =
     teams.length === 0
       ? ''
-      : `<div class="label">Your teams</div><div class="box">${teams
+      : `<div class="box">${teams
           .map(
             (t) =>
               `<div class="row"><a href="/teams/${esc(t.id)}">${esc(t.name)}</a><span class="meta">${esc(t.role)}</span></div>`
           )
           .join('')}</div>`;
   return page(
-    'Teams',
+    'Home',
     user,
-    `<h1>${teams.length === 0 ? 'Make your team.' : 'Teams'}</h1>
-<p class="lede">${
-      teams.length === 0
-        ? 'Name it, then connect your agents with one command and invite the people you work with. Joining someone else’s team? Open the invite link they sent.'
-        : 'Pick a team, or start another.'
-    }</p>${list}${plannerBox(planner)}
-<div class="label">New team</div><div class="box pad"><form method="post" action="/teams" class="inline"><input name="name" required maxlength="80" placeholder="Team name" autofocus><button class="primary">Create</button></form></div>`
+    `<h1>Dispatch</h1>
+<p class="lede">Plan your Linear workspaces, reach your own machines, and run your team's agents.</p>
+${plannerBox(planner)}
+<div class="label">Machines</div><div class="box"><div class="row"><span>The machines you signed in, and the projects open on them.</span><a class="btn small" href="/machines">Your machines</a></div></div>
+<div class="label">Teams</div>${list}
+<div class="box pad"><form method="post" action="/teams" class="inline"><input name="name" required maxlength="80" placeholder="New team name"><button class="primary">Create</button></form></div>`
   );
 }
 

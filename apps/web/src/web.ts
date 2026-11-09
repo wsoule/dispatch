@@ -780,10 +780,9 @@ export function webHandler(
         })
       );
     if (path === '/' && method === 'GET') {
+      // Home: the planner, your machines and your teams, in that order, so
+      // signing in lands on what you came to use rather than one team's page.
       const teams = db.teamsOf(user.id);
-      // One team: that is where you are going.
-      if (teams.length === 1 && url.searchParams.get('all') === null)
-        return redirect(`/teams/${teams[0]?.id ?? ''}`);
       return html(
         homePage(user, teams, {
           workspaces: deps.grants?.workspacesOf(user.id) ?? [],
