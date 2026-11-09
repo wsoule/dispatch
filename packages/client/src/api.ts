@@ -1166,6 +1166,20 @@ export interface DocListParams {
   offset?: number;
 }
 
+/** Where a dispatch-opened PR stands on its way to landing. Mirrors
+ * packages/server/src/orchestrator/prLifecycle.ts exactly. */
+export type PrPhase =
+  | 'checks-running'
+  | 'ready'
+  | 'changes-requested'
+  | 'checks-failed'
+  | 'rebasing'
+  | 'resolving'
+  | 'rereviewing'
+  | 'needs-you'
+  | 'merged'
+  | 'closed';
+
 export type ServerEvent =
   // `ids`, when set, names every task the change touched; absent means
   // "anything may have changed" — refetch the list.
@@ -1317,6 +1331,15 @@ export type ServerEvent =
   // truth, same "go refetch" contract as task.changed. Mirrors
   // packages/server/src/events.ts exactly.
   | { type: 'landing.changed' }
+  // A dispatch-opened PR's lifecycle record changed (phase, reason, head,
+  // base, or auto-merge armed). Mirrors packages/server/src/events.ts exactly.
+  | {
+      type: 'pr.changed';
+      runId: string;
+      taskId: string;
+      phase: PrPhase;
+      reason: string | null;
+    }
   // Someone arrived or left; refetch GET /api/presence.
   | { type: 'presence.changed' }
   // A message was stored. Carries it inline: every client renders it at once.

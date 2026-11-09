@@ -3,6 +3,7 @@ import type { Message } from '@dispatch-foo/protocol';
 import type { LinearProgress, LinearSyncSummary } from './linear/sync.js';
 import type { FixLoopStop } from './orchestrator/fixLoop.js';
 import type { MilestonePauseReason } from './orchestrator/milestone.js';
+import type { PrPhase } from './orchestrator/prLifecycle.js';
 import type { NormalizedEntry, RunSurvey } from './orchestrator/types.js';
 import type { ReceiptsResult } from './receipts/exporter.js';
 import type { SyncResult } from './sync/boardSyncer.js';
@@ -189,6 +190,17 @@ export type ServerEvent =
   // refetch GET /api/landing. No payload: the cache itself is the source of
   // truth, same "go refetch" contract as task.changed.
   | { type: 'landing.changed' }
+  // A dispatch-opened PR's lifecycle record changed: its phase, its reason
+  // (a failed `gh` poll included), its head, its base, or whether auto-merge
+  // is armed. Carries the phase and reason so a client can show them without
+  // a fetch.
+  | {
+      type: 'pr.changed';
+      runId: string;
+      taskId: string;
+      phase: PrPhase;
+      reason: string | null;
+    }
   // Someone arrived or left — their first client connected or their last one
   // closed. Same "go refetch" contract as the rest; GET /api/presence says who.
   | { type: 'presence.changed' }

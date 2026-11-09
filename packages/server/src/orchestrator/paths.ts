@@ -148,6 +148,13 @@ export function milestonePrsPath(rootDir: string): string {
   return join(runsDir(rootDir), 'milestone-prs.json');
 }
 
+// Where PrLifecycleStore keeps every tracked PR's lifecycle record (runId ->
+// PrLifecycleState), beside the milestone-PR ledger, so a daemon restart picks a
+// PR up in whatever phase it was left in.
+export function prLifecyclePath(rootDir: string): string {
+  return join(runsDir(rootDir), 'pr-lifecycle.json');
+}
+
 // A review run's own directory: the diff package handed to it and the findings
 // JSON it writes back, beside the transcript so both outlive its worktree.
 export function reviewDir(rootDir: string, runId: string): string {

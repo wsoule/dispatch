@@ -28,6 +28,7 @@ import type { ReviewTarget } from '../reviewTarget.js';
 import { isMilestoneBranch } from './milestoneBranch.js';
 import type { Orchestrator } from './orchestrator.js';
 import { milestonePrsPath, runsDir } from './paths.js';
+import { parsePrView, PrLifecycle, PrLifecycleStore } from './prLifecycle.js';
 import type { PrWorktreeManager } from './prWorktree.js';
 import type { RunMeta } from './types.js';
 import {
@@ -233,7 +234,16 @@ export interface PrManagerContext {
   // all, so every existing test's PrManagerContext (which never wires one
   // in) is unaffected.
   prWorktrees?: PrWorktreeManager;
+  // The per-PR lifecycle state machine pollOnce feeds. Absent ⇒ PrManager
+  // builds its own over the project's PrLifecycleStore, so every caller that
+  // does not share one with other daemon parts still tracks PRs.
+  prLifecycle?: PrLifecycle;
 }
+
+// The fields pollOnce reads per tracked PR: enough to tell merged from
+// closed, see a head or base move, and derive the PR's lifecycle phase.
+export const PR_LIFECYCLE_FIELDS =
+  'state,headRefOid,baseRefName,mergeable,reviewDecision,statusCheckRollup,autoMergeRequest';
 
 interface PrCheckRun {
   name: string;
@@ -554,6 +564,10 @@ export class PrManager {
 
   // `capability` may still be probing (detectPrCapability runs after the
   // daemon starts listening, so boot does not wait on `gh --version`).
+
+  // Every tracked PR's phase, recorded by pollOnce (see PrLifecycle).
+  readonly lifecycle: PrLifecycle;
+
   constructor(
     private readonly ctx: PrManagerContext,
     capability: boolean | Promise<boolean>,
@@ -569,6 +583,13 @@ export class PrManager {
         () => false
       );
     }
+    this.lifecycle =
+      ctx.prLifecycle ??
+      new PrLifecycle(
+        new PrLifecycleStore(ctx.rootDir),
+        ctx.events,
+        (runId) => ctx.orchestrator.getRun(runId)?.meta ?? null
+      );
   }
 
   /** Whether this project can open PRs, as far as the boot probe has told. */
@@ -1071,35 +1092,46 @@ export class PrManager {
     this.pollTimer = undefined;
   }
 
-  // One poll pass: checks every run with an open (un-reviewed) PR via
-  // `gh pr view --json state`, and flips it to reviewed+done the moment
-  // GitHub reports it merged. A single run's check failing (bad JSON, `gh`
-  // erroring for that one call) is skipped rather than aborting the whole
-  // pass — one flaky call must never block every other run's poll. Runs
-  // are checked sequentially (not Promise.all) — polling is already on a
-  // long interval, and sequential checks keep at most one `gh` subprocess
-  // in flight at a time.
+  // One poll pass: reads every run with an open (un-reviewed) PR via
+  // `gh pr view --json PR_LIFECYCLE_FIELDS`, folds the result into that PR's
+  // lifecycle record (emitting `pr.changed` on any change), and flips the run
+  // to reviewed+done the moment GitHub reports it merged. A single run's read
+  // failing (`gh` erroring or logged out, bad JSON) is recorded on its PR as
+  // the reason it is not moving, with its phase kept, and the pass carries
+  // on: one flaky call must never block every other run's poll. Runs are
+  // checked sequentially (not Promise.all) — polling is already on a long
+  // interval, and sequential checks keep at most one `gh` subprocess in
+  // flight at a time.
   async pollOnce(): Promise<void> {
     await this.refreshCache();
     await this.syncPrWorktrees();
     for (const meta of this.ctx.orchestrator.list()) {
       if (meta.prUrl === undefined || meta.reviewedAt !== undefined) continue;
-      const view = await this.run(meta.worktreePath, [
+      const result = await this.run(meta.worktreePath, [
         'gh',
         'pr',
         'view',
         meta.prUrl,
         '--json',
-        'state',
+        PR_LIFECYCLE_FIELDS,
       ]);
-      if (!view.ok) continue;
-      let state: string | undefined;
-      try {
-        state = (JSON.parse(view.stdout) as { state?: string }).state;
-      } catch {
+      if (!result.ok) {
+        this.lifecycle.reportFailure(
+          meta.id,
+          `gh pr view failed: ${commandErrorText(result)}`
+        );
         continue;
       }
-      if (state === 'MERGED') {
+      const view = parsePrView(result.stdout);
+      if (view === null) {
+        this.lifecycle.reportFailure(
+          meta.id,
+          'gh pr view returned invalid JSON'
+        );
+        continue;
+      }
+      this.lifecycle.observe(meta.id, view);
+      if (view.state === 'MERGED') {
         this.ctx.orchestrator.markRunMergedViaPr(meta.id);
       }
     }

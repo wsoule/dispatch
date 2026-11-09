@@ -239,6 +239,21 @@ export function makeFakeGhRunner(): CommandRunner {
       if (fields === 'state') {
         return ok(JSON.stringify({ state: pr?.state ?? 'OPEN' }));
       }
+      // The poller's lifecycle read (PR_LIFECYCLE_FIELDS), told apart by
+      // `autoMergeRequest` — a field only that one requests.
+      if (fields.includes('autoMergeRequest')) {
+        return ok(
+          JSON.stringify({
+            state: pr?.state ?? 'OPEN',
+            headRefOid: `fakesha${pr?.number ?? 0}`,
+            baseRefName: 'main',
+            mergeable: pr?.mergeable ?? 'MERGEABLE',
+            reviewDecision: reviewDecision(pr),
+            statusCheckRollup: pr?.statusCheckRollup ?? [],
+            autoMergeRequest: null,
+          })
+        );
+      }
       // The RepoPr field set (findRepoPr's fallback) rather than the detail
       // one — same shape `pr list` reports, so a closed PR resolves here
       // exactly as an open one does from the list.

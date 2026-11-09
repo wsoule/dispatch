@@ -9,7 +9,7 @@ import { EventBus } from '../src/events.js';
 import { FakeExecutor } from '../src/orchestrator/executors/fake.js';
 import { Orchestrator } from '../src/orchestrator/orchestrator.js';
 import type { CommandResult } from '../src/orchestrator/pr.js';
-import { PrManager } from '../src/orchestrator/pr.js';
+import { PR_LIFECYCLE_FIELDS, PrManager } from '../src/orchestrator/pr.js';
 import { ReviewCommentStore } from '../src/reviewComments.js';
 import { initGitRepo } from './orchestrator/helpers.js';
 
@@ -73,7 +73,7 @@ function prListItem(
 }
 
 // Records every command argv it's asked to run and answers `gh pr list` /
-// `gh pr view --json state` from scriptable fields — a fake CommandRunner
+// `gh pr view --json PR_LIFECYCLE_FIELDS` from scriptable fields — a fake CommandRunner
 // keyed on argv, same idiom as pr.test.ts's StubRunner but scoped to just
 // the calls pollOnce (plus openPr, for the merged-flip test) makes.
 class FakeRunner {
@@ -113,7 +113,7 @@ class FakeRunner {
     }
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'view') {
       const jsonArg = cmd[cmd.indexOf('--json') + 1] ?? '';
-      if (jsonArg === 'state') return this.viewStateResult;
+      if (jsonArg === PR_LIFECYCLE_FIELDS) return this.viewStateResult;
     }
     return { ok: false, stdout: '', stderr: 'unhandled stub command' };
   }
@@ -270,7 +270,7 @@ describe('PrManager poll cache', () => {
         c[0] === 'gh' &&
         c[1] === 'pr' &&
         c[2] === 'view' &&
-        c[c.indexOf('--json') + 1] === 'state'
+        c[c.indexOf('--json') + 1] === PR_LIFECYCLE_FIELDS
     );
     expect(listCalls).toHaveLength(1);
     expect(viewCalls).toHaveLength(1);

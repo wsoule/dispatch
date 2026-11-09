@@ -12,6 +12,7 @@ import type { CommandResult } from '../../src/orchestrator/pr.js';
 import {
   defaultCommandRunner,
   detectPrCapability,
+  PR_LIFECYCLE_FIELDS,
   PrManager,
 } from '../../src/orchestrator/pr.js';
 import {
@@ -368,11 +369,11 @@ class StubRunner {
       return this.apiResult;
     }
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'view') {
-      // The poller reads only `--json state`; getPrDetail reads the full
+      // The poller reads PR_LIFECYCLE_FIELDS; getPrDetail reads the full
       // set; findRepoPr's fallback asks for the RepoPr set, told apart by
       // `isCrossRepository` — a field only that one requests.
       const jsonArg = cmd[cmd.indexOf('--json') + 1] ?? '';
-      if (jsonArg === 'state') return this.viewResult;
+      if (jsonArg === PR_LIFECYCLE_FIELDS) return this.viewResult;
       if (jsonArg === 'body') return this.viewBodyResult;
       if (jsonArg.includes('isCrossRepository')) {
         // Real `gh` errors on a PR the repo does not have. The scripted
