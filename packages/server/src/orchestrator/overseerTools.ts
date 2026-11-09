@@ -208,6 +208,7 @@ export interface OverseerMutatingTool<Input = unknown> {
    *  `apply` acts on exactly what `describe` showed the human. */
   pin?(ctx: OverseerToolContext, input: Input): Input;
   describe(ctx: OverseerToolContext, input: Input): string;
+  /** May name the tasks it created or changed, for the chat's result card. */
   apply(
     ctx: OverseerToolContext,
     input: Input,
@@ -219,6 +220,8 @@ export interface OverseerMutatingTool<Input = unknown> {
 /** What an applied action reports back: the tasks it created or dispatched. */
 interface AppliedEffect {
   taskIds?: string[];
+  /** Tasks and the milestone, in the order a result card lists them. */
+  entities?: string[];
 }
 
 export interface OverseerAction {
@@ -234,6 +237,8 @@ export interface OverseerAction {
   status: 'pending' | 'applied' | 'denied' | 'failed';
   /** Once applied: the tasks it created or dispatched (AppliedEffect). */
   taskIds?: string[];
+  /** Once applied: the task (and milestone) ids the effect created or changed, in card order. */
+  entities?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -990,7 +995,7 @@ const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
       operator: confirmedOperator(ctx, meta),
       defaults: { executor: executorFor(ctx) },
     });
-    return { taskIds: [input.taskId] };
+    return { taskIds: [input.taskId], entities: [input.taskId] };
   },
 };
 
@@ -1378,7 +1383,7 @@ const createTask: OverseerMutatingTool<z.infer<typeof createTaskInput>> = {
       ...(input.priority !== undefined ? { priority: input.priority } : {}),
       ...(input.blockedBy !== undefined ? { blockedBy: input.blockedBy } : {}),
     });
-    return { taskIds: [doc.meta.id] };
+    return { taskIds: [doc.meta.id], entities: [doc.meta.id] };
   },
 };
 
@@ -1504,7 +1509,10 @@ const createPlan: OverseerMutatingTool<z.infer<typeof createPlanInput>> = {
         startedBy: ctx.ownerRef,
       });
     }
-    return { taskIds: created };
+    return {
+      taskIds: created,
+      entities: milestone === null ? created : [milestone.meta.id, ...created],
+    };
   },
 };
 
@@ -1582,6 +1590,7 @@ const updateTask: OverseerMutatingTool<z.infer<typeof updateTaskInput>> = {
       ...(input.priority !== undefined ? { priority: input.priority } : {}),
       ...(input.blockedBy !== undefined ? { blockedBy: input.blockedBy } : {}),
     });
+    return { entities: [input.taskId] };
   },
 };
 
@@ -1765,6 +1774,7 @@ export class OverseerToolRegistry {
     try {
       const effect = await tool.apply(this.ctx, action.input, meta);
       if (effect?.taskIds !== undefined) action.taskIds = effect.taskIds;
+      if (effect?.entities !== undefined) action.entities = effect.entities;
     } catch (err) {
       // Final, not back to `pending`: a re-queued card that fails the same
       // way on every approval is noise. The overseer can propose it again.

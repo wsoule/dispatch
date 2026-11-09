@@ -59,6 +59,12 @@ export interface DecisionItem {
   conversation?: string;
   /** The address that asked, on a gate or mailbox ask. */
   from?: string;
+  /** Present only on an item a human may dismiss (never a gate or a floor
+   * hold): the fingerprint of the condition behind it. */
+  fingerprint?: string;
+  /** Set while a dismissal hides this item; it returns once the condition
+   * behind it changes, or on undo. */
+  dismissedAt?: string;
   /** The policy engine's split: `blocking` items demand an answer, `recorded`
    * ones land quietly. Everything is `blocking` until milestone e-ad1978 ships. */
   disposition: 'blocking' | 'recorded';
@@ -67,7 +73,8 @@ export interface DecisionItem {
 /**
  * Fetches the feed, resolved tail included — the panel renders a just-decided
  * item settling (dimmed, for the daemon's five-minute retention window) rather
- * than letting rows vanish out from under whoever is reading them.
+ * than letting rows vanish out from under whoever is reading them. Dismissed
+ * items come too, marked with `dismissedAt`, so the panel can offer the undo.
  * `fetchFn` is a test seam; production callers pass nothing.
  */
 export async function fetchDecisions(
@@ -77,10 +84,33 @@ export async function fetchDecisions(
 ): Promise<DecisionItem[]> {
   const headers: Record<string, string> =
     token !== undefined ? { authorization: `Bearer ${token}` } : {};
-  const res = await fetchFn(`${baseUrl}/api/decisions?resolved=1`, { headers });
+  const res = await fetchFn(`${baseUrl}/api/decisions?resolved=1&dismissed=1`, {
+    headers,
+  });
   if (!res.ok) throw new Error(`decision feed request failed: ${res.status}`);
   const body = (await res.json()) as { items: DecisionItem[] };
   return body.items;
+}
+
+/**
+ * Dismisses a derived item until its condition changes (`undo: false`), or
+ * takes the dismissal back (`undo: true`). The daemon refuses gates and floor
+ * holds, which only an answer clears. `fetchFn` is a test seam.
+ */
+export async function setDecisionDismissed(
+  baseUrl: string,
+  token: string | undefined,
+  id: string,
+  undo: boolean,
+  fetchFn: typeof fetch = fetch
+): Promise<void> {
+  const headers: Record<string, string> =
+    token !== undefined ? { authorization: `Bearer ${token}` } : {};
+  const res = await fetchFn(
+    `${baseUrl}/api/decisions/${encodeURIComponent(id)}/dismiss`,
+    { method: undo ? 'DELETE' : 'POST', headers }
+  );
+  if (!res.ok) throw new Error(`dismiss request failed: ${res.status}`);
 }
 
 /**
@@ -98,7 +128,10 @@ export function isDecisionsChanged(event: { type: string }): boolean {
  * the badge without this file changing. */
 export function pendingDecisionCount(items: DecisionItem[]): number {
   return items.filter(
-    (item) => item.state === 'open' && item.disposition === 'blocking'
+    (item) =>
+      item.state === 'open' &&
+      item.disposition === 'blocking' &&
+      item.dismissedAt === undefined
   ).length;
 }
 

@@ -21,6 +21,7 @@ import {
   Server,
   Settings2,
   ShieldCheck,
+  Smartphone,
   Users,
   Wrench,
 } from 'lucide-react';
@@ -50,6 +51,7 @@ import {
   DaemonConfigGroups,
 } from '../components/settings/DaemonConfigGroups';
 import { DaemonSection } from '../components/settings/DaemonSection';
+import { DevicesSection } from '../components/settings/DevicesSection';
 import { DiffsSection } from '../components/settings/DiffsSection';
 import { DigestsGroup } from '../components/settings/DigestsGroup';
 import { GeneralSection } from '../components/settings/GeneralSection';
@@ -449,6 +451,7 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
         )),
       },
       {
+<<<<<<< HEAD
         id: 'web',
         label: SETTINGS_PAGE_LABELS.web,
         icon: Globe,
@@ -456,6 +459,15 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
           'Open this machine’s projects from app.dispatch.foo, in any browser, signed in as you.',
         savesConfig: false,
         render: (ctx) => <WebAccessSection data={ctx.data} />,
+=======
+        id: 'devices',
+        label: SETTINGS_PAGE_LABELS.devices,
+        icon: Smartphone,
+        intro:
+          'Your other devices on this daemon — the app on another machine, a phone — and the remote daemons this app connects to.',
+        savesConfig: false,
+        render: (ctx) => <DevicesSection data={ctx.data} />,
+>>>>>>> origin/main
       },
       {
         id: 'daemon',

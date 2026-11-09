@@ -140,6 +140,11 @@ export interface OverseerMessage {
   notice?: 'stopped' | 'rollover' | 'restarted';
   /** `user` entries: the files the human attached to the line. */
   attachments?: OverseerAttachment[];
+  /** `action` entries at `pending`: the action's validated input, so a decided
+   *  action's card can still show what was proposed. */
+  input?: unknown;
+  /** `action` entries at `applied`: the task ids the effect created or changed. */
+  entities?: string[];
 }
 
 /**
@@ -1686,6 +1691,7 @@ export class OverseerManager {
       actionId: action.id,
       outcome: 'pending',
       text: action.summary,
+      input: action.input,
     });
     void this.raiseActionGate(conversationId, action);
   }
@@ -1745,6 +1751,7 @@ export class OverseerManager {
       ...(outcome === 'applied' && action.taskIds !== undefined
         ? { taskIds: action.taskIds }
         : {}),
+      ...(action.entities !== undefined ? { entities: action.entities } : {}),
     });
     this.noteDecision(
       conversationId,

@@ -809,6 +809,13 @@ export interface ApiClient {
   listTeamTokens(): Promise<TeamTokenHolder[]>;
   /** Revokes whatever token the handle holds; one per person. */
   revokeTeamToken(handle: string): Promise<void>;
+  /** A one-time code another of the operator's devices trades for its own
+   *  token. Mirrors packages/server/src/api/pairing.ts. */
+  offerPairing(input: { tier?: TeamTier }): Promise<PairingOffer>;
+  /** The operator's paired devices, never their tokens. */
+  listDevices(): Promise<PairedDevice[]>;
+  /** Unpairs a device and every device it paired. */
+  revokeDevice(id: string): Promise<void>;
   /** Board sync's state — `{ enabled: false, reason }` when it is off. */
   getSyncStatus(): Promise<SyncStatus>;
   /** Runs a sync pass and answers with the state after it. */
@@ -1180,6 +1187,26 @@ export interface LicenseStatus {
 /** Mirrors AuthTier in packages/server/src/tiers.ts. */
 export type TeamTier = 'request' | 'decide' | 'operator';
 
+/** A one-time pairing code. Mirrors offer in packages/server/src/api/pairing.ts. */
+export interface PairingOffer {
+  code: string;
+  tier: TeamTier;
+  expiresAt: string;
+  /** Whether the daemon listens beyond loopback. */
+  shared: boolean;
+  /** Where it is reachable beyond loopback; empty when loopback-only. */
+  origins: string[];
+}
+
+/** One paired device. Mirrors PairedDevice in packages/server/src/devices.ts. */
+interface PairedDevice {
+  id: string;
+  name: string;
+  tier: TeamTier;
+  pairedAt: string;
+  lastUsedAt: string | null;
+}
+
 /** A freshly issued teammate credential — the only response that ever carries
  *  one. Mirrors issueTeamToken in packages/server/src/team/routes.ts. */
 interface IssuedTeamToken {
@@ -1436,6 +1463,16 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
     getContentE2e: () => request(target, '/api/team/content-e2e'),
     enableContentE2e: () =>
       request(target, '/api/team/content-e2e', jsonBody({})),
+    offerPairing: (input) =>
+      request(target, '/api/pair/offer', jsonBody(input)),
+    listDevices: async () =>
+      (await request<{ devices: PairedDevice[] }>(target, '/api/devices'))
+        .devices,
+    revokeDevice: async (id) => {
+      await request(target, `/api/devices/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+    },
     revokeTeamToken: async (handle) => {
       await request(target, `/api/team/tokens/${encodeURIComponent(handle)}`, {
         method: 'DELETE',

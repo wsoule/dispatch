@@ -163,7 +163,13 @@ export function NeedsYouBlock({
   folded: foldedProp,
   onFoldedChange,
 }: NeedsYouBlockProps) {
-  const { client, port, me, messageAccess: access } = data;
+  const {
+    client,
+    port,
+    me,
+    messageAccess: access,
+    handleDismissDecision,
+  } = data;
   const gates = useOpenGates(client, port, access);
   const pane = useThreadPaneProps(data, onOpenRef);
   const actions = useThreadActions(client, port, me, access, data);
@@ -347,9 +353,16 @@ export function NeedsYouBlock({
                 onApproveAll={approveAll}
                 canDecide={access.canDecide}
                 onOpenDecision={onOpenDecision}
+                onDismiss={(id) => handleDismissDecision(id)}
                 onOpenTask={(taskId) => onOpenRef({ kind: 'task', taskId })}
               />
             ))}
+            {needs.dismissed.length > 0 && (
+              <DismissedFooter
+                items={needs.dismissed}
+                onUndo={(id) => handleDismissDecision(id, true)}
+              />
+            )}
             {needs.teammates.length > 0 && (
               <TeammatesFooter items={needs.teammates} />
             )}
@@ -370,6 +383,7 @@ function AskGroupSection({
   onApproveAll,
   canDecide,
   onOpenDecision,
+  onDismiss,
   onOpenTask,
 }: {
   group: AskGroup;
@@ -381,6 +395,7 @@ function AskGroupSection({
   onApproveAll: (lessons: readonly DecisionItem[]) => Promise<void>;
   canDecide: boolean;
   onOpenDecision: (item: DecisionItem) => void;
+  onDismiss: (id: string) => Promise<void>;
   onOpenTask: (taskId: string) => void;
 }) {
   const [all, setAll] = useState(false);
@@ -423,6 +438,7 @@ function AskGroupSection({
               }
               card={card}
               onOpenDecision={onOpenDecision}
+              onDismiss={onDismiss}
               onOpenTask={onOpenTask}
             />
           )
@@ -466,15 +482,18 @@ function AskRow({
   gate,
   card,
   onOpenDecision,
+  onDismiss,
   onOpenTask,
 }: {
   item: DecisionItem;
   gate: Message | undefined;
   card: (item: DecisionItem, gate: Message) => ReactNode;
   onOpenDecision: (item: DecisionItem) => void;
+  onDismiss: (id: string) => Promise<void>;
   onOpenTask: (taskId: string) => void;
 }) {
   const { taskId } = item;
+  const [dismissing, setDismissing] = useState(false);
   return (
     // A new ask arrives from the left, where everything coming in flows
     // from (the module's slide-in, only when motion is welcome).
@@ -505,16 +524,67 @@ function AskRow({
         {gate !== undefined ? (
           card(item, gate)
         ) : (
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => onOpenDecision(item)}
-          >
-            Open
-          </Button>
+          <span className={styles.actions}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => onOpenDecision(item)}
+            >
+              Open
+            </Button>
+            {/* Only derived items carry a fingerprint; gates and floor holds
+                are answered, never dismissed. */}
+            {item.fingerprint !== undefined && (
+              <Button
+                size="sm"
+                variant="quiet"
+                data-testid="needs-you-dismiss"
+                title="Hide until this changes"
+                disabled={dismissing}
+                onClick={() => {
+                  setDismissing(true);
+                  void onDismiss(item.id).finally(() => setDismissing(false));
+                }}
+              >
+                Dismiss
+              </Button>
+            )}
+          </span>
         )}
       </RegisterCell>
     </RegisterRow>
+  );
+}
+
+// Asks I dismissed: hidden until their condition changes, listed here so each can be undone.
+function DismissedFooter({
+  items,
+  onUndo,
+}: {
+  items: readonly DecisionItem[];
+  onUndo: (id: string) => Promise<void>;
+}) {
+  return (
+    <div className={styles.teammates} data-testid="needs-you-dismissed">
+      <Disclosure
+        summary={<>Dismissed · {items.length} · hidden until they change</>}
+      >
+        <ul className={styles.teammateList}>
+          {items.map((item) => (
+            <li key={item.id}>
+              {item.summary}{' '}
+              <Button
+                variant="quiet"
+                size="sm"
+                onClick={() => void onUndo(item.id)}
+              >
+                Undo
+              </Button>
+            </li>
+          ))}
+        </ul>
+      </Disclosure>
+    </div>
   );
 }
 

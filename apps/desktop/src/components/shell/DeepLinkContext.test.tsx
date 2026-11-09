@@ -6,6 +6,7 @@ import {
   DeepLinkProvider,
   useCopyTaskLink,
   useDeepLinkActions,
+  useWebLinkActions,
 } from './DeepLinkContext';
 import { ToastProvider } from './Toasts';
 
@@ -119,5 +120,28 @@ describe('useCopyTaskLink (browser harness)', () => {
     expect(written).toEqual([]);
     expect(await screen.findByText('Copy failed')).toBeTruthy();
     expect(await screen.findByText('No project is open')).toBeTruthy();
+  });
+});
+
+describe('useWebLinkActions', () => {
+  test('the hosted planner only opens the desktop app', () => {
+    const { result } = renderHook(() => useWebLinkActions(true), { wrapper });
+    expect(result.current.openIssueInDesktop).toBeDefined();
+    expect(result.current.openWebLink).toBeUndefined();
+    expect(result.current.copyWebLink).toBeUndefined();
+  });
+
+  test('the desktop copies the web link and toasts Copied web link', async () => {
+    const written: string[] = [];
+    stubClipboard(written);
+    const { result } = renderHook(() => useWebLinkActions(false), { wrapper });
+    expect(result.current.openIssueInDesktop).toBeUndefined();
+    act(() => {
+      result.current.copyWebLink?.(
+        'https://app.dispatch.foo/w/acme/?issue=DIS-66'
+      );
+    });
+    expect(written).toEqual(['https://app.dispatch.foo/w/acme/?issue=DIS-66']);
+    expect(await screen.findByText('Copied web link')).toBeTruthy();
   });
 });

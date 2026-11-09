@@ -467,4 +467,10 @@ describe('ensureProjectGitignore', () => {
     const ignored = readFileSync(join(root, '.dispatch', '.gitignore'), 'utf8');
     expect(ignored).toContain('attachments/');
   });
+
+  it("keeps the machine's decision dismissals out of git on every backend", () => {
+    ensureProjectGitignore(root, 'files');
+    const ignored = readFileSync(join(root, '.dispatch', '.gitignore'), 'utf8');
+    expect(ignored).toContain('decision-acks.json');
+  });
 });

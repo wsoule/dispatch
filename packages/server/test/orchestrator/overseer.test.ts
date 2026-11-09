@@ -474,6 +474,8 @@ describe('OverseerManager queued actions', () => {
       tool: 'dispatch_task',
       actionId: action.id,
       outcome: 'pending',
+      // Kept on the queued row so a decided action's card can still show it.
+      input: { taskId },
     });
     // The model is told, in as many words, that nothing happened.
     const told = JSON.stringify(h.backend.observations[0].result.content);
@@ -498,6 +500,8 @@ describe('OverseerManager queued actions', () => {
       outcome: 'applied',
       // The task it sent out, so the chat can list it and open it.
       taskIds: [taskId],
+      // The result card's link to what the action touched.
+      entities: [taskId],
     });
     expect(record.messages.at(-1)?.text).toStartWith('Applied: Dispatch');
     expect(h.registry.getAction(actionId)?.status).toBe('applied');

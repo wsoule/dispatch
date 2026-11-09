@@ -24,6 +24,10 @@ export interface DaemonConnection {
    *  cookie this code cannot see, so both token fields are null and this says
    *  what the cookie is good for. */
   session?: { tier: AuthTier };
+  /** Set only for a daemon on another machine this app paired with (see
+   *  remoteConnections.ts): the device token it holds there, and its tier.
+   *  Both token fields above are then null. */
+  remote?: { token: string; tier: AuthTier };
 }
 
 /** The HTTP base for this daemon: the web demo's injected proxy URL, or the
@@ -106,6 +110,14 @@ export function resolveDaemonAuth(
       canMessage: true,
     };
   }
+  // A paired device speaks for the operator, a human, at its paired tier.
+  if (connection.remote !== undefined) {
+    return {
+      token: connection.remote.token,
+      canDecide: connection.remote.tier !== 'request',
+      canMessage: true,
+    };
+  }
   if (connection.appToken !== null && connection.appToken !== '') {
     return { token: connection.appToken, canDecide: true, canMessage: true };
   }
@@ -130,6 +142,7 @@ export function credentialTier(
 ): AuthTier | null {
   if (connection === undefined) return null;
   if (connection.session !== undefined) return connection.session.tier;
+  if (connection.remote !== undefined) return connection.remote.tier;
   if (connection.appToken !== null && connection.appToken !== '') {
     return 'operator';
   }

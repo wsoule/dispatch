@@ -55,6 +55,7 @@ import {
 } from './api.js';
 import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
 import { goneFileBodyResponse } from './api/files.js';
+import type { DevicePairing } from './api/pairing.js';
 import { rosterMembers } from './api/people.js';
 import { closeAsksOfRevoked, speaksForRevoked } from './api/revoke.js';
 import { storageErrorResponse } from './api/storageErrors.js';
@@ -69,6 +70,7 @@ import {
   waitForRootReleased,
   writeDaemonFile,
 } from './daemonfile.js';
+import { DecisionAckStore } from './decisionAcks.js';
 import { DecisionFeed } from './decisionFeed.js';
 import { DecisionReminders } from './decisionReminders.js';
 import {
@@ -77,6 +79,7 @@ import {
   depMapSourceDirs,
   isSkippedPath,
 } from './depmap.js';
+import { fileDeviceStore, PairedDevices, PairingCodes } from './devices.js';
 import { DifficultyAutopilot } from './difficultyAutopilot.js';
 import { docGateHandler, docGatePort } from './docs/gate.js';
 import { DaemonDocsHost, docsMemoryPort } from './docs/host.js';
@@ -166,6 +169,7 @@ import { OverseerToolRegistry } from './orchestrator/overseerTools.js';
 import {
   allocationRunsPath,
   boardSyncDir,
+  pairedDevicesPath,
   planningAuditPath,
   planningWarningsPath,
   remoteAccessPath,
@@ -1143,6 +1147,15 @@ async function bootServer(
   // forwards from app.dispatch.foo through this machine's hub) speaks for the
   // operator at the decide tier, as a paired phone does.
   let webForwarding: DaemonHubLink | null = null;
+  // The operator's own other devices (devices.ts): the desktop app on another
+  // machine, a phone. Each pairs with a one-time code and speaks as the
+  // operator at the tier it was paired with.
+  const pairing: DevicePairing = {
+    devices: new PairedDevices(actorContext.member.handle, {
+      store: fileDeviceStore(pairedDevicesPath(rootDir)),
+    }),
+    codes: new PairingCodes(),
+  };
   const tokens: DaemonTokens = {
     ...tokenPair,
     registry: new TokenRegistry(
@@ -1153,7 +1166,8 @@ async function bootServer(
         matches: (digest) =>
           remoteAccess.matches(digest) ||
           (webForwarding?.webMatches(digest) ?? false),
-      }
+      },
+      pairing.devices
     ),
   };
 
@@ -2547,6 +2561,9 @@ async function bootServer(
       riskOf: (taskId) => store.get(taskId)?.meta.risk,
       approvalFloor,
     }),
+    // A human's dismissals of derived items, kept per machine so one stays
+    // hidden across recomputes and restarts until its condition changes.
+    acks: new DecisionAckStore(rootDir),
   });
   const stopDecisionFeed = decisionFeed.start();
 
@@ -2709,6 +2726,7 @@ async function bootServer(
     ownOrigins: ownOriginSet,
     sessionOrigins: sessionOriginSet,
     shared,
+    pairing,
   };
 
   // What a restart would interrupt or lose, in words: a live agent, a queued

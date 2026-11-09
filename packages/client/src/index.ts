@@ -3,14 +3,20 @@ export {
   canPostReviewToPr,
   connectEvents,
   createApiClient,
+  formatPairingLink,
   httpToWs,
   IMPACT_SUBJECT_KINDS,
   injectedDaemonToken,
   isInsufficientTier,
   LINEAR_USAGE_LIMIT_MESSAGE,
+  normalizeDaemonUrl,
+  parsePairingLink,
   PATCHABLE_FINDING_VERDICTS,
   PLAN_ROLES,
   taskDraftToCreateInput,
+  reconnectDelay,
+  redeemPairingCode,
+  remoteUrlProblem,
   taskQueryString,
   withRunAttachmentNote,
   wsUrl,
@@ -27,6 +33,11 @@ export type {
   AllocationRunMode,
   AllocationRunProject,
   AllocationRunSummary,
+  EventStreamState,
+  EventStreamStatus,
+  PairedCredential,
+  PairedDevice,
+  PairingOffer,
   A2AClientSummary,
   A2AListenerSettings,
   A2AListenerStatus,
@@ -276,6 +287,21 @@ export type {
   LiveSegment,
   LiveText,
 } from './api';
+export {
+  isOverseerCardTool,
+  OVERSEER_CARD_TOOLS,
+  overseerActionInputs,
+  overseerCard,
+  overseerCardIds,
+  overseerCardWaves,
+} from './overseerCards';
+export type {
+  OverseerCard,
+  OverseerCardChange,
+  OverseerCardRow,
+  OverseerCardState,
+  OverseerCardTool,
+} from './overseerCards';
 export { reduceProposal } from './proposalReducer';
 export type { ProposalAction } from './proposalReducer';
 export { useTasks } from './useTasks';

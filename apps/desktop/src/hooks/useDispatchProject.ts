@@ -26,6 +26,7 @@ import type {
   ApiClient,
   AuthTier,
   DraftRecord,
+  EventStreamStatus,
   ExecutorsResponse,
   FixLoopState,
   HealthPayload,
@@ -99,7 +100,11 @@ import {
   resolveDaemonAuth,
 } from '../lib/daemonAuth';
 import type { DecisionItem } from '../lib/decisionFeed';
-import { fetchDecisions, isDecisionsChanged } from '../lib/decisionFeed';
+import {
+  fetchDecisions,
+  isDecisionsChanged,
+  setDecisionDismissed,
+} from '../lib/decisionFeed';
 import { isFakeExecutorDevToolEnabled } from '../lib/devTools';
 import { fixLoopCappedNotice } from '../lib/fixLoopStatus';
 import type { RunQuestion, RunScopeRequest } from '../lib/gates';
@@ -448,6 +453,12 @@ export interface DispatchProjectData {
   portError: boolean;
   portErrorDetail: unknown;
   retryEnsureDispatchd: () => void;
+  /** Where the live event stream to the daemon stands — connecting, open, or
+   *  reconnecting after a drop — or null with no daemon client yet. */
+  eventStream: EventStreamStatus | null;
+  /** The daemon's origin when it runs on another machine this app paired
+   *  with; null for a daemon on this machine. */
+  remoteOrigin: string | null;
 
   tasks: TaskListItem[];
   tasksLoading: boolean;
@@ -532,6 +543,9 @@ export interface DispatchProjectData {
   /** Splits `text` server-side into one item per non-empty line. */
   handleCaptureInbox: (text: string) => Promise<void>;
   handleDismissInbox: (ids: string[]) => Promise<void>;
+  /** Hides a derived Needs-you item until its condition changes, or with
+   *  `undo` brings it back. Gates and floor holds are refused by the daemon. */
+  handleDismissDecision: (id: string, undo?: boolean) => Promise<void>;
   /**
    * Starts an AI draft that adds the context an under-specified task is missing. Its own slot,
    * not the note one: the detail dialog reviews `enrichPlanRecord` and patches the drafted
@@ -603,6 +617,7 @@ export interface DispatchProjectData {
     statusRoles?: StatusRoles | null;
     maxTurns?: number | null;
     maxBudgetUsd?: number | null;
+    unlimitedSpend?: boolean;
     fixLoop?: { cap?: number; escalation?: EscalationStep[] };
     verify?: { command?: string; url?: string; notes?: string };
     notifications?: {
@@ -962,6 +977,13 @@ export function useDispatchProject(
   });
 
   const port = connection?.port;
+  const remoteOrigin =
+    connection?.remote !== undefined && connection.baseUrl != null
+      ? connection.baseUrl
+      : null;
+  const [eventStream, setEventStream] = useState<EventStreamStatus | null>(
+    null
+  );
   // The credential every call below presents. `canDecide` is false whenever the
   // app attached to a daemon it did not spawn, because the app token only ever
   // arrives on a spawned daemon's stdout.
@@ -1728,6 +1750,7 @@ export function useDispatchProject(
     // The first hello is the initial connect; any later one is a reconnect.
     let connectedBefore = false;
     const disconnect = client.connectEvents(refreshTeamKeys, {
+      onStatus: setEventStream,
       onEvent: (event) => {
         applyThreadEvent(queryClient, port, event);
         applyDocsEvent(queryClient, port, event);
@@ -2208,6 +2231,7 @@ export function useDispatchProject(
       if (listTimer !== null) clearTimeout(listTimer);
       if (milestoneTimer !== null) clearTimeout(milestoneTimer);
       disconnect();
+      setEventStream(null);
     };
   }, [
     client,
@@ -2857,6 +2881,15 @@ export function useDispatchProject(
     [client, invalidateInbox]
   );
 
+  const handleDismissDecision = useCallback(
+    async (id: string, undo = false): Promise<void> => {
+      if (client === null) return;
+      await setDecisionDismissed(client.baseUrl, auth.token, id, undo);
+      void queryClient.invalidateQueries({ queryKey: decisionsQueryKey });
+    },
+    [client, auth.token, queryClient, decisionsQueryKey]
+  );
+
   const handleConvertInbox = useCallback(
     async (ids: string[]) => {
       if (client === null) return { results: [], converted: 0, failed: 0 };
@@ -3023,6 +3056,7 @@ export function useDispatchProject(
       statusRoles?: StatusRoles | null;
       maxTurns?: number | null;
       maxBudgetUsd?: number | null;
+      unlimitedSpend?: boolean;
       fixLoop?: { cap?: number; escalation?: EscalationStep[] };
       verify?: { command?: string; url?: string; notes?: string };
       notifications?: {
@@ -3251,6 +3285,8 @@ export function useDispatchProject(
       portError,
       portErrorDetail,
       retryEnsureDispatchd: () => void retryEnsureDispatchd(),
+      eventStream,
+      remoteOrigin,
 
       tasks: tasks ?? [],
       tasksLoading,
@@ -3339,6 +3375,7 @@ export function useDispatchProject(
       inbox: inbox ?? [],
       handleCaptureInbox,
       handleDismissInbox,
+      handleDismissDecision,
       handleConvertInbox,
       handleEnrichTask,
       enrichTaskId: enrichPlan?.taskId ?? null,
@@ -3396,6 +3433,8 @@ export function useDispatchProject(
       portError,
       portErrorDetail,
       retryEnsureDispatchd,
+      eventStream,
+      remoteOrigin,
       tasks,
       tasksLoading,
       allTasksFetched,
@@ -3479,6 +3518,7 @@ export function useDispatchProject(
       inbox,
       handleCaptureInbox,
       handleDismissInbox,
+      handleDismissDecision,
       handleConvertInbox,
       handleEnrichTask,
       enrichPlan,

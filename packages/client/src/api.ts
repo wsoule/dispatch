@@ -1726,6 +1726,11 @@ export interface OverseerMessage {
   notice?: 'stopped' | 'rollover' | 'restarted';
   /** `user` entries: the files the human attached to the line. */
   attachments?: OverseerAttachment[];
+  /** `action` entries at `pending`: the action's validated input, so a decided
+   *  action's card can still show what was proposed. */
+  input?: unknown;
+  /** `action` entries at `applied`: the task ids the effect created or changed. */
+  entities?: string[];
 }
 
 // Mirrors OverseerAttachment in packages/server/src/orchestrator/overseer.ts —
@@ -1814,6 +1819,8 @@ export interface OverseerAction {
   status: 'pending' | 'applied' | 'denied' | 'failed';
   /** Once applied: the tasks it created or dispatched. */
   taskIds?: string[];
+  /** Once applied: the task (and milestone) ids the effect created or changed, in card order. */
+  entities?: string[];
 }
 
 // Mirrors OverseerRecord in packages/server/src/orchestrator/overseer.ts — the
@@ -2520,6 +2527,36 @@ export interface IssuedTeamToken {
   tier: AuthTier;
   token: string;
   expiresAt: string | null;
+}
+
+/** One of the operator's paired devices — mirrors PairedDevice in
+ *  packages/server/src/devices.ts. Never carries the token. */
+export interface PairedDevice {
+  id: string;
+  name: string;
+  tier: AuthTier;
+  pairedAt: string;
+  lastUsedAt: string | null;
+}
+
+/** A one-time pairing code, from POST /api/pair/offer. `origins` are where
+ *  this daemon is reachable beyond loopback; empty when it is loopback-only
+ *  (reach it over an SSH forward). */
+export interface PairingOffer {
+  code: string;
+  tier: AuthTier;
+  expiresAt: string;
+  shared: boolean;
+  origins: string[];
+}
+
+/** A device's new credential, from POST /api/pair: the only response that
+ *  carries one. */
+export interface PairedCredential {
+  token: string;
+  device: PairedDevice;
+  handle: string;
+  tier: AuthTier;
 }
 
 /** Why board sync isn't running — mirrors BoardSyncOffReason in
@@ -3492,6 +3529,79 @@ export function canPostReviewToPr(prUrl: string | undefined): boolean {
   return /github\.com\/[^/]+\/[^/]+\/pull\/\d+/.test(prUrl);
 }
 
+/**
+ * Trades a pairing code for this device's own token on the daemon at
+ * `baseUrl`. Needs no credential — the code is the credential — so it sits
+ * outside createApiClient. Rejects with an ApiError whose `code` is
+ * `pair_code_invalid` or `pair_code_expired` for a bad code.
+ */
+export async function redeemPairingCode(
+  baseUrl: string,
+  code: string,
+  name: string
+): Promise<PairedCredential> {
+  return (
+    await send({ baseUrl }, '/api/pair', {
+      method: 'POST',
+      ...jsonBody({ code, name }),
+    })
+  ).json() as Promise<PairedCredential>;
+}
+
+/** The `dispatch://pair?url=<daemon>&code=<code>` link `dispatch pair`
+ *  prints, as its parts; null for anything else. */
+export function parsePairingLink(
+  link: string
+): { baseUrl: string; code: string } | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(link.trim());
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'dispatch:' || parsed.hostname !== 'pair')
+    return null;
+  const baseUrl = parsed.searchParams.get('url');
+  const code = parsed.searchParams.get('code');
+  if (baseUrl === null || code === null || code === '') return null;
+  return { baseUrl, code };
+}
+
+/** Formats the link `parsePairingLink` reads. */
+export function formatPairingLink(baseUrl: string, code: string): string {
+  return `dispatch://pair?url=${encodeURIComponent(baseUrl)}&code=${encodeURIComponent(code)}`;
+}
+
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
+
+/**
+ * Why a remote daemon URL is not safe to send a token to, or null when it
+ * is. A token (and every task, diff and transcript after it) must not cross
+ * a network in the clear, so anything off this machine has to be https.
+ * Plain http is allowed to loopback only — that is where an SSH forward
+ * (`dispatch remote forward`) lands, and SSH is the encryption.
+ */
+export function remoteUrlProblem(raw: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return 'not a URL: expected something like https://devbox.example.com:4771';
+  }
+  if (url.protocol === 'https:') return null;
+  if (url.protocol === 'http:') {
+    return LOOPBACK_HOSTS.has(url.hostname)
+      ? null
+      : `${url.host} is not this machine, so the connection must be https (run the daemon with --tls-cert/--tls-key, or reach it over an SSH forward on 127.0.0.1)`;
+  }
+  return `unsupported scheme ${url.protocol}: use https://`;
+}
+
+/** The URL with only its origin kept — what a daemon base URL should be. */
+export function normalizeDaemonUrl(raw: string): string {
+  return new URL(raw.trim()).origin;
+}
+
 // Pure helper (no DOM involved): swaps an http(s) origin for its ws(s)
 // equivalent and appends `/ws`.
 export function httpToWs(origin: string): string {
@@ -3522,37 +3632,79 @@ export interface SocketLike {
   close(): void;
 }
 
+/** Where an event stream stands. `connecting` is the first attempt; `open`
+ *  means the daemon has answered on the current socket; `reconnecting` means
+ *  the socket dropped (or never answered) and another attempt is scheduled. */
+export type EventStreamState = 'connecting' | 'open' | 'reconnecting';
+
+export interface EventStreamStatus {
+  state: EventStreamState;
+  /** Attempts that have failed in a row since the stream was last open. */
+  failures: number;
+  /** When the next attempt runs (epoch ms), while `reconnecting`. */
+  retryAt: number | null;
+}
+
 export interface ConnectEventsOptions {
   // Defaults to `(url) => new WebSocket(url)`. Overridden in tests to inject
   // a fake socket instead of opening a real network connection.
   createSocket?: (url: string) => SocketLike;
-  // Defaults to 1000ms. Overridden in tests so reconnect assertions don't
-  // have to wait a full second.
+  // The first retry's delay; each further failure doubles it up to
+  // `maxReconnectDelayMs`. Defaults to 500ms. Overridden in tests so
+  // reconnect assertions don't have to wait.
   reconnectDelayMs?: number;
+  // The longest wait between attempts. Defaults to 15s: long enough that a
+  // laptop whose remote daemon is gone is not hammering it, short enough
+  // that the app notices it came back without a manual retry.
+  maxReconnectDelayMs?: number;
+  // Jitter source, [0, 1). Defaults to Math.random; injectable for tests.
+  random?: () => number;
   // Called for every parsed ServerEvent, where `onChange` hears only
   // `task.changed`; a malformed frame never reaches it (see JSON.parse below).
   onEvent?: (event: ServerEvent) => void;
+  // Hears every change in the stream's state, for a connection indicator.
+  onStatus?: (status: EventStreamStatus) => void;
   // Daemon token for the upgrade, since the guard covers `/ws` too. Defaults
   // to whatever the daemon injected into the page it served.
   token?: string;
 }
 
+/** How long to wait before retry number `failures` (1-based): doubling from
+ *  `base` up to `max`, then spread over the upper half of that window so a
+ *  fleet of clients that lost the same daemon does not return in lockstep. */
+export function reconnectDelay(
+  failures: number,
+  base: number,
+  max: number,
+  random: () => number = Math.random
+): number {
+  const ceiling = Math.min(max, base * 2 ** Math.max(failures - 1, 0));
+  return Math.round(ceiling / 2 + (random() * ceiling) / 2);
+}
+
 // Opens a WS connection to dispatchd and calls `onChange` for every
-// `task.changed` event. Reconnects on close/error with a fixed backoff — the
-// protocol is "go refetch," not a diff, so a connection dropping briefly just
-// means the UI is briefly less live, never wrong. Returns a disposer that
-// stops reconnecting and closes the current socket.
+// `task.changed` event. Reconnects on close/error with exponential backoff
+// and jitter — the protocol is "go refetch," not a diff, so a connection
+// dropping briefly just means the UI is briefly less live, never wrong. The
+// backoff resets once a socket proves open by delivering a frame (the daemon
+// always sends `hello` first), and a browser coming back `online` retries at
+// once. Returns a disposer that stops reconnecting and closes the socket.
 export function connectEvents(
   baseUrl: string,
   onChange: () => void,
   options: ConnectEventsOptions = {}
 ): () => void {
   const createSocket = options.createSocket ?? ((url) => new WebSocket(url));
-  const reconnectDelayMs = options.reconnectDelayMs ?? 1000;
+  const baseDelay = options.reconnectDelayMs ?? 500;
+  const maxDelay = options.maxReconnectDelayMs ?? 15_000;
+  const random = options.random ?? Math.random;
   const token = options.token ?? injectedDaemonToken();
 
   let closed = false;
   let socket: SocketLike | null = null;
+  let failures = 0;
+  let isOpen = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
   // A failed browser WebSocket fires 'error' then 'close' on the same
   // socket, and both listeners below call scheduleReconnect — without this
   // guard that queues two reconnect timers per failure, each of which can
@@ -3561,17 +3713,32 @@ export function connectEvents(
   // the next one.
   let scheduled = false;
 
+  function report(state: EventStreamState, retryAt: number | null = null) {
+    options.onStatus?.({ state, failures, retryAt });
+  }
+
   function scheduleReconnect() {
     if (closed || scheduled) return;
     scheduled = true;
-    setTimeout(connect, reconnectDelayMs);
+    isOpen = false;
+    failures += 1;
+    const delay = reconnectDelay(failures, baseDelay, maxDelay, random);
+    report('reconnecting', Date.now() + delay);
+    timer = setTimeout(connect, delay);
   }
 
   function connect() {
     if (closed) return;
     scheduled = false;
-    socket = createSocket(wsUrl(baseUrl, token));
-    socket.addEventListener('message', (event) => {
+    timer = null;
+    const current: SocketLike = createSocket(wsUrl(baseUrl, token));
+    socket = current;
+    current.addEventListener('message', (event) => {
+      if (socket === current && !isOpen) {
+        isOpen = true;
+        failures = 0;
+        report('open');
+      }
       // A malformed frame (bad JSON, or JSON that isn't a ServerEvent) should
       // never take down the UI's reconnect loop — ignore it and wait for the
       // next message rather than letting JSON.parse throw out of this
@@ -3585,13 +3752,31 @@ export function connectEvents(
       if (data.type === 'task.changed') onChange();
       options.onEvent?.(data);
     });
-    socket.addEventListener('close', scheduleReconnect);
-    socket.addEventListener('error', scheduleReconnect);
+    // Only the live socket's failure counts: a replaced one (after an
+    // `online` retry) finishing its teardown late must not queue another.
+    const failed = () => {
+      if (socket === current) scheduleReconnect();
+    };
+    current.addEventListener('close', failed);
+    current.addEventListener('error', failed);
   }
 
+  // The network came back: waiting out a 15s backoff would only make the
+  // app look broken for longer than it is.
+  const onOnline = () => {
+    if (closed || timer === null) return;
+    clearTimeout(timer);
+    connect();
+  };
+  const win = typeof window === 'undefined' ? null : window;
+  win?.addEventListener('online', onOnline);
+
+  report('connecting');
   connect();
   return () => {
     closed = true;
+    if (timer !== null) clearTimeout(timer);
+    win?.removeEventListener('online', onOnline);
     socket?.close();
   };
 }
@@ -3891,6 +4076,14 @@ export interface ApiClient {
   revokeTeamToken(handle: string): Promise<void>;
   /** Decide-tier: where teammates reach this daemon. */
   fetchTeamAddress(): Promise<TeamAddress>;
+  /** The operator only: a one-time code another of their devices trades
+   *  for its own token. `tier` defaults to operator and is capped at the
+   *  caller's own. */
+  offerPairing(input?: { tier?: AuthTier }): Promise<PairingOffer>;
+  /** The operator only: every paired device, without tokens. */
+  fetchDevices(): Promise<PairedDevice[]>;
+  /** The operator only: unpairs a device; its token stops at once. */
+  revokeDevice(id: string): Promise<void>;
   /** Board sync between replicas' databases (boardSync/ on the server);
    *  `{ enabled: false }` when it is off. Not `fetchSyncStatus`, which is the
    *  file backend's board syncer. */
@@ -4994,6 +5187,19 @@ export function createApiClient(
       });
     },
     fetchTeamAddress: () => request(target, '/api/team/address'),
+    offerPairing: (input) =>
+      request(target, '/api/pair/offer', {
+        method: 'POST',
+        ...jsonBody(input ?? {}),
+      }),
+    fetchDevices: async () =>
+      (await request<{ devices: PairedDevice[] }>(target, '/api/devices'))
+        .devices,
+    revokeDevice: async (id) => {
+      await request(target, `/api/devices/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+    },
     fetchBoardSyncStatus: () => request(target, '/api/board-sync'),
     syncBoardNow: () =>
       request(target, '/api/board-sync/now', { method: 'POST' }),

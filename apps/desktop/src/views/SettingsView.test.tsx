@@ -136,7 +136,11 @@ test('the rail groups every page, and the page title is the H1', () => {
     'Connected agents',
     'A2A',
     'Remotes',
+<<<<<<< HEAD
     'Web access',
+=======
+    'Devices',
+>>>>>>> origin/main
     'Background',
     'Diff display',
   ]);

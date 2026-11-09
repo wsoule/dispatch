@@ -17,6 +17,13 @@ function setLink(root: string, task: string) {
   );
 }
 
+// The hosted planner's form: `?issue=` alone, its root injected, not on the URL.
+function setIssueLink(identifier: string) {
+  (
+    window as unknown as { happyDOM: { setURL(url: string): void } }
+  ).happyDOM.setURL(`http://localhost:5173/?issue=${identifier}`);
+}
+
 afterEach(() => {
   (
     window as unknown as { happyDOM: { setURL(url: string): void } }
@@ -34,13 +41,17 @@ interface Harness {
 }
 
 function harness(
-  overrides: Partial<DeepLinkRouterDeps> & { tasks?: string[] } = {}
+  overrides: Partial<DeepLinkRouterDeps> & {
+    tasks?: string[];
+    issues?: Record<string, string>;
+  } = {}
 ): Harness {
   const opened: string[] = [];
   const toasts: Toast[] = [];
   const switched: string[] = [];
   const checked: string[] = [];
   const tasks = overrides.tasks ?? ['t-1a2b3c'];
+  const issues = overrides.issues ?? { 'DIS-66': 't-1a2b3c' };
   const deps: DeepLinkRouterDeps = {
     activeProjectPath: '/repo/a',
     tasksReady: true,
@@ -51,6 +62,8 @@ function harness(
     },
     switchProject: (path) => switched.push(path),
     openTask: (id) => opened.push(id),
+    findIssueTask: (identifier) => Promise.resolve(issues[identifier] ?? null),
+    openRun: () => Promise.resolve(false),
     notify: (toast) => toasts.push(toast),
     ...overrides,
   };
@@ -176,5 +189,63 @@ describe('useDeepLinkRouter', () => {
       },
     ]);
     expect(h.checked).toEqual([]);
+  });
+
+  test('an issue link opens its task in the open project once tasks load', async () => {
+    setIssueLink('DIS-66');
+    const h = harness({ tasksReady: false });
+    const { rerender } = renderHook(
+      (deps: DeepLinkRouterDeps) => useDeepLinkRouter(deps),
+      { initialProps: h.deps }
+    );
+    await act(async () => {});
+    expect(h.opened).toEqual([]);
+    rerender({ ...h.deps, tasksReady: true });
+    await waitFor(() => expect(h.opened).toEqual(['t-1a2b3c']));
+    expect(h.checked).toEqual([]);
+    expect(h.switched).toEqual([]);
+    expect(h.toasts).toEqual([]);
+  });
+
+  test('an issue no task links to toasts which identifier missed', async () => {
+    setIssueLink('DIS-99');
+    const h = harness();
+    renderHook((deps: DeepLinkRouterDeps) => useDeepLinkRouter(deps), {
+      initialProps: h.deps,
+    });
+    await waitFor(() => expect(h.toasts).toHaveLength(1));
+    expect(h.toasts[0]).toEqual({
+      title: 'No task for DIS-99',
+      description: 'No task in this project is linked to DIS-99.',
+      tone: 'error',
+    });
+    expect(h.opened).toEqual([]);
+  });
+
+  test('an issue link with no project open says so', async () => {
+    setIssueLink('DIS-66');
+    const h = harness({ activeProjectPath: null });
+    renderHook((deps: DeepLinkRouterDeps) => useDeepLinkRouter(deps), {
+      initialProps: h.deps,
+    });
+    await waitFor(() => expect(h.toasts).toHaveLength(1));
+    expect(h.toasts[0]?.title).toBe('No project is open');
+    expect(h.opened).toEqual([]);
+  });
+
+  test('a malformed issue identifier is a Bad link', async () => {
+    setIssueLink('dis-66');
+    const h = harness();
+    renderHook((deps: DeepLinkRouterDeps) => useDeepLinkRouter(deps), {
+      initialProps: h.deps,
+    });
+    await act(async () => {});
+    expect(h.toasts).toEqual([
+      {
+        title: 'Bad link',
+        description: 'dispatch://issue/dis-66',
+        tone: 'error',
+      },
+    ]);
   });
 });

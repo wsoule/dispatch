@@ -52,11 +52,13 @@ import {
 import { useTaskComments } from '../../../hooks/useTaskComments';
 import { useTaskDoc } from '../../../hooks/useTaskDoc';
 import type { TaskTab } from '../../../lib/appNav';
+import { formatWebIssueLink } from '../../../lib/deepLink';
 import { liveClaimsFrom } from '../../../lib/dispatchPreview';
 import {
   type DispatchReadiness,
   dispatchReadiness,
 } from '../../../lib/dispatchReadiness';
+import { resolveLinearLink } from '../../../lib/linearSettings';
 import { isTerminalRunState } from '../../../lib/runState';
 import { taskHref } from '../../../lib/shellRoutes';
 import { useStatusModelOf } from '../../../lib/statusModel';
@@ -163,6 +165,14 @@ export interface TaskDetailState {
   copyId: () => void;
   /** Absent outside App's deep-link provider (no link to copy). */
   copyLink: (() => void) | undefined;
+  /** Opens this task's Linear issue in the desktop app. Only on the hosted
+   * planner, and only for a task linked to an issue. */
+  openInDesktop: (() => void) | undefined;
+  /** Open or copy the hosted planner's link to this task's Linear issue.
+   * Only in the desktop app, for a task linked to an issue whose Linear URL
+   * names its workspace. */
+  openOnWeb: (() => void) | undefined;
+  copyWebLink: (() => void) | undefined;
   /** The full page, on a mode when given. */
   openPage: (mode?: TaskTab, runId?: string) => void;
   /** Quick-looks another task in this drawer. */
@@ -246,6 +256,13 @@ export function useTaskDetail(
   );
 
   const header = useMemo(() => buildDetailHeader(item, ctx), [item, ctx]);
+  // The Linear issue this task is linked to, the key the hosted planner and
+  // the desktop app share (each keeps its own task ids).
+  const issue = useMemo(
+    () => resolveLinearLink(item.meta.external, project.linearLinks),
+    [item.meta.external, project.linearLinks]
+  );
+  const webUrl = issue === null ? null : formatWebIssueLink(issue);
   const facts = useMemo(() => buildDetailFacts(item, ctx), [item, ctx]);
   const relations = useMemo(() => buildDetailRelations(item, ctx), [item, ctx]);
   const description = useMemo(
@@ -438,7 +455,21 @@ export function useTaskDetail(
     copyId: () => shell.copyTaskId(taskId),
     copyLink:
       deepLink === null ? undefined : () => deepLink.copyTaskLink(taskId),
+    openInDesktop: bindLink(deepLink?.openIssueInDesktop, issue?.identifier),
+    openOnWeb: bindLink(deepLink?.openWebLink, webUrl),
+    copyWebLink: bindLink(deepLink?.copyWebLink, webUrl),
     openPage: (mode, runId) => openTaskPage(taskId, mode, runId),
     peek: peekTask,
   };
+}
+
+// A link verb bound to its argument, or undefined when the surface lacks the
+// verb or the task has nothing to link to.
+function bindLink(
+  verb: ((value: string) => void) | undefined,
+  value: string | null | undefined
+): (() => void) | undefined {
+  return verb === undefined || value === null || value === undefined
+    ? undefined
+    : () => verb(value);
 }

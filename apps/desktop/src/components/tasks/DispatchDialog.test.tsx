@@ -253,6 +253,22 @@ describe('DispatchDialog', () => {
     ]);
   });
 
+  test('without ceilings it drops both fields and sends neither', async () => {
+    const many = Array.from({ length: 100 }, (_, i) => task(`t-${i}`));
+    const { confirmed, confirmButton } = mount({
+      tasks: many,
+      readyIds: new Set(many.map((t) => t.meta.id)),
+      ceilings: false,
+    });
+    expect(screen.queryByLabelText('Spend ceiling')).toBeNull();
+    expect(screen.queryByLabelText('Max runs')).toBeNull();
+    expect(screen.queryByText(/the ceiling pauses it/)).toBeNull();
+    await confirmAndSettle(confirmButton());
+    expect(confirmed).toEqual([
+      { concurrency: 3, maxSpendUsd: null, maxRuns: null },
+    ]);
+  });
+
   test('the button counts only the agents that will run', () => {
     const { confirmButton } = mount({
       readyIds: new Set(['t-1', 't-2', 't-3', 't-4', 't-5']),

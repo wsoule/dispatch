@@ -138,6 +138,8 @@ import {
 } from './api/legacyMilestone.js';
 import { isLinearWebhook, linearWebhook } from './api/linearWebhook.js';
 import { migrateMilestones } from './api/migrations.js';
+import type { DevicePairing } from './api/pairing.js';
+import { pairingRoutes } from './api/pairing.js';
 import { listPeople, rosterMembers } from './api/people.js';
 import {
   a2aParentRefusal,
@@ -518,6 +520,9 @@ export interface ApiContext {
   sessionOrigins: ReadonlySet<string>;
   /** Whether this daemon is bound beyond loopback — see shared.ts. */
   shared: boolean;
+  /** The operator's paired devices and open pairing codes (devices.ts);
+   *  absent in harnesses that build a context by hand. */
+  pairing?: DevicePairing;
   /** Who made the request being handled, when their credential resolved.
    *  Set per request by handleApi — never on the daemon-wide context. */
   caller?: TokenIdentity;
@@ -1335,6 +1340,12 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
       return errorResponse(400, 'autoCommit must be a boolean');
     }
     patch.autoCommit = body.autoCommit;
+  }
+  if ('unlimitedSpend' in body) {
+    if (typeof body.unlimitedSpend !== 'boolean') {
+      return errorResponse(400, 'unlimitedSpend must be a boolean');
+    }
+    patch.unlimitedSpend = body.unlimitedSpend;
   }
   for (const key of [
     'milestoneConcurrency',
@@ -4677,6 +4688,11 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // listing holders tells it whose to go looking for. team/routes.ts further
   // caps what a caller may issue or revoke at their own tier.
   { method: 'GET', segments: ['team', 'tokens'], tier: 'decide' },
+  // Pairing a device mints a credential that speaks for the operator; the
+  // routes also refuse anyone but the operator in person (api/pairing.ts).
+  { method: 'POST', segments: ['pair', 'offer'], tier: 'decide' },
+  { method: 'GET', segments: ['devices'], tier: 'decide' },
+  { method: 'DELETE', segments: ['devices', '*'], tier: 'decide' },
   // Lists machines, fingerprints and problems: whose to go looking for (decision 57).
   { method: 'GET', segments: ['team', 'keys'], tier: 'decide' },
   // GET team/status is absent on purpose: below decide its route answers
@@ -4730,6 +4746,10 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // Seals the team's content end to end, for good: an admin's roster op.
   { method: 'POST', segments: ['team', 'content-e2e'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'problems', 'ack'], tier: 'decide' },
+  // Hiding an item from the human's queue is an adjudication: an agent holding
+  // the on-disk token must not wave off its own stalled run.
+  { method: 'POST', segments: ['decisions', '*', 'dismiss'], tier: 'decide' },
+  { method: 'DELETE', segments: ['decisions', '*', 'dismiss'], tier: 'decide' },
   // An admin's pick between two machines that each claim a run first.
   {
     method: 'POST',
@@ -5043,6 +5063,11 @@ function requiredTier(
     segments.length === 1 &&
     segments[0] === 'session'
   ) {
+    return null;
+  }
+  // Redeeming a pairing code is how a device gets its first credential, so it
+  // cannot require one; the one-time code stands in (api/pairing.ts).
+  if (method === 'POST' && segments.length === 1 && segments[0] === 'pair') {
     return null;
   }
   // Self-authenticating routes check via resolvePrincipal in handleApi, not
@@ -5717,6 +5742,10 @@ export async function handleApi(
       }
       return jsonResponse(ctx.caller);
     }
+
+    // /api/pair and /api/devices — pairing the operator's own other devices.
+    const pairingResponse = await pairingRoutes(req, ctx, segments);
+    if (pairingResponse !== null) return pairingResponse;
 
     // POST /api/session — a teammate's browser trades the token it was given
     // for an HttpOnly session cookie, so the page never has to hold it.
@@ -6673,7 +6702,8 @@ export async function handleApi(
     // it. `?disposition=blocking|recorded` is the policy engine's filter (see
     // decisionFeed.ts); `?resolved=1` also returns the items the feed has just
     // watched resolve, so a surface can show a row settling instead of
-    // vanishing.
+    // vanishing; `?dismissed=1` also returns items a human dismissed, for a
+    // surface that offers the undo.
     if (segments[0] === 'decisions' && segments.length === 1) {
       if (method === 'GET') {
         const raw = url.searchParams.get('disposition');
@@ -6690,9 +6720,36 @@ export async function handleApi(
                 | DecisionDisposition
                 | undefined,
               includeResolved: url.searchParams.get('resolved') === '1',
+              includeDismissed: url.searchParams.get('dismissed') === '1',
             })
             .filter(decisionVisibleTo(ctx)),
         });
+      }
+    }
+
+    // POST /api/decisions/:id/dismiss hides a derived item (a stalled run,
+    // say) until the condition behind it changes; DELETE undoes that. Gates
+    // and floor holds are refused: those leave the feed only by an answer.
+    if (
+      segments[0] === 'decisions' &&
+      segments.length === 3 &&
+      segments[2] === 'dismiss'
+    ) {
+      const id = decodeURIComponent(segments[1]);
+      if (method === 'POST') {
+        const result = ctx.decisionFeed.dismiss(id);
+        if (result.ok) return jsonResponse({ item: result.item });
+        return result.error === 'not-found'
+          ? errorResponse(404, `no open decision ${id}`)
+          : errorResponse(
+              409,
+              `${id} is human-gated: answer it rather than dismissing it`
+            );
+      }
+      if (method === 'DELETE') {
+        return ctx.decisionFeed.restore(id)
+          ? jsonResponse({ ok: true })
+          : errorResponse(404, `${id} is not dismissed`);
       }
     }
 

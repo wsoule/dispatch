@@ -6,6 +6,7 @@ import {
   fetchDecisions,
   isDecisionsChanged,
   pendingDecisionCount,
+  setDecisionDismissed,
 } from './decisionFeed';
 
 function item(overrides: Partial<DecisionItem>): DecisionItem {
@@ -41,7 +42,7 @@ describe('fetchDecisions', () => {
 
     expect(result).toEqual(items);
     expect(calls[0]?.url).toBe(
-      'http://127.0.0.1:4600/api/decisions?resolved=1'
+      'http://127.0.0.1:4600/api/decisions?resolved=1&dismissed=1'
     );
     const sentHeaders = calls[0]?.init?.headers as
       | Record<string, string>
@@ -85,8 +86,53 @@ describe('pendingDecisionCount', () => {
         }),
         item({ id: 'c', disposition: 'recorded' }),
         item({ id: 'd', kind: 'approval' }),
+        item({ id: 'e', dismissedAt: '2026-09-03T10:06:00.000Z' }),
       ])
     ).toBe(2);
+  });
+});
+
+describe('setDecisionDismissed', () => {
+  test('POSTs a dismissal and DELETEs it on undo, with the id encoded', async () => {
+    const calls: { url: string; method: string | undefined }[] = [];
+    const fetchFn = ((url: string, init?: RequestInit) => {
+      calls.push({ url, method: init?.method });
+      return Promise.resolve(Response.json({ ok: true }));
+    }) as unknown as typeof fetch;
+    await setDecisionDismissed(
+      'http://x',
+      'tok',
+      'run-stalled:r-1',
+      false,
+      fetchFn
+    );
+    await setDecisionDismissed(
+      'http://x',
+      'tok',
+      'run-stalled:r-1',
+      true,
+      fetchFn
+    );
+    expect(calls).toEqual([
+      {
+        url: 'http://x/api/decisions/run-stalled%3Ar-1/dismiss',
+        method: 'POST',
+      },
+      {
+        url: 'http://x/api/decisions/run-stalled%3Ar-1/dismiss',
+        method: 'DELETE',
+      },
+    ]);
+  });
+
+  test('throws when the daemon refuses', () => {
+    const failFn = (() =>
+      Promise.resolve(
+        new Response('no', { status: 409 })
+      )) as unknown as typeof fetch;
+    expect(
+      setDecisionDismissed('http://x', 'tok', 'question:m-1', false, failFn)
+    ).rejects.toThrow('409');
   });
 });
 

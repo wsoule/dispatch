@@ -215,10 +215,12 @@ export function LandingView({ data, onBack, onOpenRun }: LandingViewProps) {
       });
     }
   };
-  const requeue = (runIds: readonly string[]) =>
+  const requeue = (runIds: readonly string[]): void => {
     void act(runIds, data.handleEnqueueMerge, 're-queue');
-  const pull = (runId: string) =>
+  };
+  const pull = (runId: string): void => {
     void act([runId], data.handleDequeueMerge, 'pull from the queue');
+  };
   const recheck = () => {
     data.handleRecheckMergeQueue().catch((err: unknown) => {
       toasts.push({

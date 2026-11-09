@@ -16,6 +16,19 @@ describe('parseActivityLine', () => {
     });
   });
 
+  it("keeps an automatic dispatch's `— auto: …` cause as event text", () => {
+    expect(
+      parseActivityLine(
+        '- 2026-09-13T10:00:00.000Z dispatched (claude, branch b) — auto: epic e-1 auto-fill, unblocked by t-2'
+      )
+    ).toEqual({
+      at: '2026-09-13T10:00:00.000Z',
+      text: 'dispatched (claude, branch b) — auto: epic e-1 auto-fill, unblocked by t-2',
+      actor: null,
+      kind: 'event',
+    });
+  });
+
   it('reads an agent task_comment as a comment', () => {
     expect(
       parseActivityLine(

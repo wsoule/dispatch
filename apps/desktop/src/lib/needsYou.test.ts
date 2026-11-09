@@ -87,6 +87,33 @@ describe('needsYou', () => {
     expect(result.teammates.map((a) => a.id)).toEqual(['a']);
   });
 
+  test('a dismissed ask is listed for undo, not counted; a teammate’s is dropped', () => {
+    const at = '2026-10-06T10:00:00.000Z';
+    const result = needsYou(
+      [
+        item({ id: 'a', kind: 'run-stalled', reason: 'interrupted-dirty' }),
+        item({
+          id: 'b',
+          kind: 'run-stalled',
+          reason: 'not-on-origin',
+          dismissedAt: at,
+        }),
+        item({
+          id: 'c',
+          kind: 'run-stalled',
+          reason: 'not-on-origin',
+          owner: 'human:priya',
+          dismissedAt: at,
+        }),
+      ],
+      ME
+    );
+    expect(result.count).toBe(1);
+    expect(result.asks.map((a) => a.id)).toEqual(['a']);
+    expect(result.dismissed.map((a) => a.id)).toEqual(['b']);
+    expect(result.teammates).toEqual([]);
+  });
+
   test('without a known me, owned items still count (solo daemon)', () => {
     const result = needsYou(
       [item({ id: 'a', kind: 'scope-request', owner: 'human:solo' })],

@@ -2,7 +2,7 @@
 import Footer from '../components/landing/Footer.astro';
 import Nav from '../components/landing/Nav.astro';
 import Landing from '../layouts/Landing.astro';
-import { DMG, RELEASES } from '../lib/downloads';
+import { DMG, RELEASES, WEB_APP } from '../lib/downloads';
 import '../styles/page.css';
 
 const repo = 'https://github.com/wsoule/dispatch';
@@ -35,6 +35,11 @@ const repo = 'https://github.com/wsoule/dispatch';
           <a href={RELEASES}>latest release</a>. Or, with Homebrew:
         </p>
         <pre><code>brew install --cask wsoule/tap/dispatch</code></pre>
+        <p>
+          Planning a Linear workspace with your team? <a href={WEB_APP}>Sign in at app.dispatch.foo</a>{' '}
+          to open it in the browser, nothing to install. A task there opens in the desktop app with
+          Open in desktop.
+        </p>
 
         <h3>2. Open it and follow Setup</h3>
         <p>Setup checks three things and fixes each with a button. Anything already in place shows a tick.</p>

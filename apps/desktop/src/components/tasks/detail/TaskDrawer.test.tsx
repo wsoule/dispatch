@@ -14,6 +14,10 @@ import { PlanningProvider } from '../../../hooks/usePlanning';
 import { dayFromNow } from '../../../lib/taskDates';
 import { taskDoc } from '../../../lib/taskDoc.test-helper';
 import {
+  type DeepLinkActions,
+  DeepLinkProvider,
+} from '../../shell/DeepLinkContext';
+import {
   fakeHost,
   type HostLog,
   newLog,
@@ -389,6 +393,86 @@ describe('TaskDrawer', () => {
     expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
       'Copy id',
     ]);
+  });
+
+  test('a Linear-linked task links across to the web or the desktop app', async () => {
+    const opened: string[] = [];
+    const copied: string[] = [];
+    const desktop: string[] = [];
+    const linked = fakeHost(newLog(), {
+      tasks: [task('t-1', { external: 'linear:uuid-66' })],
+      body: BODY,
+      project: {
+        linearLinks: {
+          'uuid-66': {
+            identifier: 'DIS-66',
+            url: 'https://linear.app/acme/issue/DIS-66/fix-it',
+          },
+        },
+      },
+    });
+    const menuOf = async (actions: DeepLinkActions) => {
+      cleanup();
+      render(
+        <PageProviders host={linked}>
+          <DeepLinkProvider value={actions}>
+            <TaskDrawer taskId="t-1" onClose={() => {}} />
+          </DeepLinkProvider>
+        </PageProviders>
+      );
+      await settle(() => {
+        fireEvent.click(
+          within(drawer()).getByRole('button', { name: 'More actions' })
+        );
+      });
+      return screen.getAllByRole('option').map((o) => o.textContent);
+    };
+
+    // The desktop app: open or copy the hosted planner's link.
+    const desktopMenu = await menuOf({
+      copyTaskLink: () => {},
+      openWebLink: (url) => opened.push(url),
+      copyWebLink: (url) => copied.push(url),
+    });
+    expect(desktopMenu).toContain('Open on web');
+    expect(desktopMenu).not.toContain('Open in desktop');
+    await settle(() => fireEvent.click(optionNamed('Copy web link')));
+    expect(copied).toEqual(['https://app.dispatch.foo/w/acme/?issue=DIS-66']);
+
+    // The hosted planner: hand the identifier to the desktop app.
+    const hostedMenu = await menuOf({
+      copyTaskLink: () => {},
+      openIssueInDesktop: (identifier) => desktop.push(identifier),
+    });
+    expect(hostedMenu).not.toContain('Open on web');
+    await settle(() => fireEvent.click(optionNamed('Open in desktop')));
+    expect(desktop).toEqual(['DIS-66']);
+    expect(opened).toEqual([]);
+  });
+
+  test('an unlinked task offers no cross-links', async () => {
+    render(
+      <PageProviders host={hostWith(newLog())}>
+        <DeepLinkProvider
+          value={{
+            copyTaskLink: () => {},
+            openWebLink: () => {},
+            copyWebLink: () => {},
+          }}
+        >
+          <TaskDrawer taskId="t-1" onClose={() => {}} />
+        </DeepLinkProvider>
+      </PageProviders>
+    );
+    await settle(() => {
+      fireEvent.click(
+        within(drawer()).getByRole('button', { name: 'More actions' })
+      );
+    });
+    const options = screen.getAllByRole('option').map((o) => o.textContent);
+    expect(options).toContain('Copy link');
+    expect(options).not.toContain('Open on web');
+    expect(options).not.toContain('Copy web link');
   });
 
   test('a task that left the list reads as gone; without a host nothing is drawn', () => {

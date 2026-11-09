@@ -3,6 +3,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 
 import type { DaemonConnection } from './daemonAuth';
+import {
+  isRemoteRoot,
+  remoteConnectionFor,
+  remoteDaemonConnection,
+} from './remoteConnections';
 import { injectedSharedConfig, readTeamSession } from './teamLocal';
 import type {
   DashboardStats,
@@ -155,6 +160,8 @@ export function getFileDiffForSessionFile(
  * dispatch's own task/board/plan surfaces are offered for it at all. Pure filesystem check on
  * the backend, no daemon involved. */
 export function hasDispatch(root: string): Promise<boolean> {
+  // A paired remote daemon is a dispatch project by construction.
+  if (isRemoteRoot(root)) return Promise.resolve(true);
   // Browser-dev fallback: dispatch-enabled if the web demo injected a config,
   // or if a `port` param points at an already-running daemon.
   if (!isTauri()) {
@@ -180,6 +187,18 @@ export function hasDispatch(root: string): Promise<boolean> {
  * `appToken` comes back non-null only on the spawn path, where the backend reads it off the
  * daemon's stdout; attaching to a daemon someone else started yields request tier only. */
 export function ensureDispatchd(root: string): Promise<DaemonConnection> {
+  // A daemon on another machine: nothing to spawn or attach to here, only the
+  // URL and device token saved when this app paired with it.
+  if (isRemoteRoot(root)) {
+    const remote = remoteConnectionFor(root);
+    return remote === null
+      ? Promise.reject(
+          new Error(
+            'this remote dispatchd is no longer saved: connect to it again from Add project'
+          )
+        )
+      : Promise.resolve(remoteDaemonConnection(remote));
+  }
   if (!isTauri()) {
     // Hosted web demo: the session manager proxies a per-sandbox dispatchd
     // behind an absolute URL, not a loopback port.
@@ -233,6 +252,11 @@ export function ensureDispatchd(root: string): Promise<DaemonConnection> {
  * a run, merge, plan, terminal or browser in flight, and keeps its port when it can. Rejects
  * in browser-dev, which has no backend to spawn anything. */
 export function restartDispatchd(root: string): Promise<DaemonConnection> {
+  if (isRemoteRoot(root)) {
+    return Promise.reject(
+      new Error('restart a remote dispatchd on the machine it runs on')
+    );
+  }
   if (!isTauri()) {
     return Promise.reject(
       new Error('restarting dispatchd requires the desktop app')
@@ -298,7 +322,8 @@ export function addProject(path: string): Promise<string> {
 /** Stamps `lastOpenedAt` for `path` in the registry (adding it if absent). Fire-and-forget on
  * every project switch; a no-op in browser-dev. */
 export function touchProjectOpened(path: string): Promise<void> {
-  if (!isTauri()) return Promise.resolve();
+  // The registry holds folders on this disk; remotes are kept apart.
+  if (!isTauri() || isRemoteRoot(path)) return Promise.resolve();
   return invoke('touch_project_opened', { path });
 }
 

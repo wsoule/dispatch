@@ -62,6 +62,9 @@ interface DispatchDialogProps {
     maxSpendUsd?: number | null;
     maxRuns?: number | null;
   };
+  /** False drops the spend and run ceiling fields and sends both as `null` — the
+   * project's `orchestrator.unlimitedSpend`. */
+  ceilings?: boolean;
   confirmLabel?: string;
   title: string;
   onConfirm: (opts: WorkMilestoneOptions) => Promise<void>;
@@ -161,6 +164,7 @@ export function DispatchDialog({
   fixLoopAuto,
   mode = 'start',
   initial,
+  ceilings = true,
   confirmLabel,
   title,
   onConfirm,
@@ -196,8 +200,8 @@ export function DispatchDialog({
     [defaultConcurrency, cap]
   );
 
-  const maxSpendUsd = parseCeiling(spend, 'spend');
-  const maxRuns = parseCeiling(runs, 'runs');
+  const maxSpendUsd = ceilings ? parseCeiling(spend, 'spend') : null;
+  const maxRuns = ceilings ? parseCeiling(runs, 'runs') : null;
   const spendInvalid = maxSpendUsd === 'invalid';
   const runsInvalid = maxRuns === 'invalid';
   // An invalid ceiling previews as none: the amber cue would be wrong, and the confirm is
@@ -261,7 +265,7 @@ export function DispatchDialog({
         : 'Reviews start by hand (fixLoop.auto is off)'
     );
   }
-  if (tasks.length >= LARGE_FANOUT_TASKS) {
+  if (ceilings && tasks.length >= LARGE_FANOUT_TASKS) {
     hints.push('Large fan-out — the ceiling pauses it, Resume raises it');
   }
   // One warning per overlap, naming the person when there is one: "wyat's run"
@@ -364,44 +368,50 @@ export function DispatchDialog({
               </select>
             </Field>
           )}
-          <Field
-            label="Spend ceiling"
-            id={`${fieldId}-spend`}
-            error={
-              spendInvalid ? 'More than $0, or empty for no ceiling' : undefined
-            }
-          >
-            <TextField
-              ref={spendRef}
-              type="number"
-              inputMode="decimal"
-              min={1}
-              step="any"
-              start="$"
-              className={styles.number}
-              value={spend.text}
-              onChange={(event) => setSpend(readCeilingField(event))}
-            />
-          </Field>
-          <Field
-            label="Max runs"
-            id={`${fieldId}-runs`}
-            error={
-              runsInvalid
-                ? 'A whole number above 0, or empty for no ceiling'
-                : undefined
-            }
-          >
-            <TextField
-              type="number"
-              inputMode="numeric"
-              min={1}
-              step={1}
-              className={styles.number}
-              value={runs.text}
-              onChange={(event) => setRuns(readCeilingField(event))}
-            />
-          </Field>
+          {ceilings && (
+            <>
+              <Field
+                label="Spend ceiling"
+                id={`${fieldId}-spend`}
+                error={
+                  spendInvalid
+                    ? 'More than $0, or empty for no ceiling'
+                    : undefined
+                }
+              >
+                <TextField
+                  ref={spendRef}
+                  type="number"
+                  inputMode="decimal"
+                  min={1}
+                  step="any"
+                  start="$"
+                  className={styles.number}
+                  value={spend.text}
+                  onChange={(event) => setSpend(readCeilingField(event))}
+                />
+              </Field>
+              <Field
+                label="Max runs"
+                id={`${fieldId}-runs`}
+                error={
+                  runsInvalid
+                    ? 'A whole number above 0, or empty for no ceiling'
+                    : undefined
+                }
+              >
+                <TextField
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  step={1}
+                  className={styles.number}
+                  value={runs.text}
+                  onChange={(event) => setRuns(readCeilingField(event))}
+                />
+              </Field>
+            </>
+          )}
         </div>
 
         {hints.length > 0 && (

@@ -24,7 +24,12 @@ import {
 } from '../../lib/models';
 import { CliAgents } from './AgentsMoreGroups';
 import styles from './AgentsSection.module.css';
-import { ChoiceSetting, ModeSetting, NumberSetting } from './fields';
+import {
+  ChoiceSetting,
+  ModeSetting,
+  NumberSetting,
+  SwitchSetting,
+} from './fields';
 import { JudgmentStatusRow } from './JudgmentStatusRow';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 
@@ -275,19 +280,31 @@ export function AgentsSection({
           allowEmpty
           onSave={(maxTurns) => void onSave({ maxTurns })}
         />
-        <NumberSetting
-          id="budget-cap-per-run"
-          title="Spend per run"
-          subtitle="Stops a run once it has spent this much. Leave empty for no limit."
-          keywords="budget cap cost dollars maxBudgetUsd"
-          value={config.orchestrator.maxBudgetUsd}
-          min={0.01}
-          integer={false}
-          suffix="USD"
-          placeholder="No limit"
-          allowEmpty
-          onSave={(maxBudgetUsd) => void onSave({ maxBudgetUsd })}
+        <SwitchSetting
+          id="unlimited-spend"
+          title="Unlimited spend"
+          subtitle="No spend cap on runs or fan-outs, and Send agents starts straight away without asking for a ceiling."
+          keywords="budget cap cost dollars unlimitedSpend ceiling no limit"
+          checked={config.orchestrator.unlimitedSpend}
+          onSave={(unlimitedSpend) => void onSave({ unlimitedSpend })}
         />
+        {/* Hidden rather than disabled: the daemon ignores the cap while the switch
+            is on, and keeps the saved value for when it goes off. */}
+        {!config.orchestrator.unlimitedSpend && (
+          <NumberSetting
+            id="budget-cap-per-run"
+            title="Spend per run"
+            subtitle="Stops a run once it has spent this much. Leave empty for no limit."
+            keywords="budget cap cost dollars maxBudgetUsd"
+            value={config.orchestrator.maxBudgetUsd}
+            min={0.01}
+            integer={false}
+            suffix="USD"
+            placeholder="No limit"
+            allowEmpty
+            onSave={(maxBudgetUsd) => void onSave({ maxBudgetUsd })}
+          />
+        )}
         <NumberSetting
           id="run-cost-estimate"
           title="Expected cost per run"
