@@ -27,6 +27,8 @@ Current version: ${appVersion()}. Platforms: macOS (Apple Silicon and Intel) and
 - Memory: agents save hazards, conventions, decisions and other lessons; the next run starts with them in its prompt. Team memories are reviewed by a person first, and unused ones fade out.
 - Milestone map: every wait between milestones, the critical path and an ETA, exportable as Mermaid.
 - In your repo: tasks are markdown in .dispatch/, or SQLite with a git receipt log.
+- On the web: app.dispatch.foo opens any Linear workspace with the same Timeline, Graph, My week and Issues views (sign in with Linear or GitHub; a demo workspace needs no sign-in). Edits reach Linear under each person's own name; a workspace admin installs Dispatch once for two-way sync; the hosted planner has no seat count. People can also reach the projects on their own signed-in machines from the browser, at the decide tier only, once they turn on web access.
+- One link everywhere: Open in desktop and Open on web follow the Linear issue identifier (dispatch://issue/DIS-66).
 
 ## Common questions
 
