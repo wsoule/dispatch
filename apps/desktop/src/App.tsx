@@ -210,7 +210,6 @@ import {
   hasDispatch,
   hostedPlanner,
   isTauri,
-  listProjects,
   listRegisteredProjects,
   openUrl,
   touchProjectOpened,
@@ -352,58 +351,40 @@ function App() {
   const root = overrideRoot ?? launchRoot;
 
   // The dropdown's project list is loaded lazily — only once the switcher is
-  // opened — and with `allSettled` so a single stale/missing path can never
-  // reject the batch. This is deliberately OFF the boot path: the app resolves
-  // its launch project and renders immediately; discovering *other* projects is
-  // a background nicety that must never be able to hang the app (the exact
-  // failure mode the single-project pivot fixed).
+  // opened — and is deliberately OFF the boot path: the app resolves its
+  // launch project and renders immediately; listing *other* projects must never
+  // be able to hang the app (the failure mode the single-project pivot fixed).
+  //
+  // The list is the registry (`~/.dispatch/projects.json`) alone: projects the
+  // user added or switched to, minus any whose folder is gone, newest first. It
+  // used to also merge every Claude Code session folder the watcher had seen
+  // with a `.dispatch/` dir, and since `.dispatch/config.yml` is checked in,
+  // every git worktree of a dispatch repo qualified — dozens of short-lived
+  // agent worktrees flooded the menu.
   const [switcherOpen, setSwitcherOpen] = useState(false);
-  const { data: switchProjects } = useQuery({
+  const { data: registeredProjects } = useQuery({
     queryKey: ['switcher-projects'],
-    queryFn: async () => {
-      // Two sources, resolved together: the persistent registry (projects the user has
-      // explicitly added/opened) and the watcher's discovered projects (dispatch-enabled paths it
-      // already knows about). `allSettled` on the discovery side so a single stale/missing
-      // path can never reject the batch.
-      const [registered, discovered] = await Promise.all([
-        listRegisteredProjects(),
-        (async () => {
-          const projects = await listProjects();
-          const checks = await Promise.allSettled(
-            projects.map(async (p) => ((await hasDispatch(p.path)) ? p : null))
-          );
-          return checks
-            .filter(
-              (
-                r
-              ): r is PromiseFulfilledResult<
-                (typeof projects)[number] | null
-              > => r.status === 'fulfilled'
-            )
-            .map((r) => r.value)
-            .filter((p): p is (typeof projects)[number] => p !== null)
-            .map((p) => ({ path: p.path, name: basename(p.path) }));
-        })(),
-      ]);
-
-      // Registry entries first, then discovered ones, deduped by path so a project that's both
-      // registered and discovered appears once (with its registry name).
-      const merged: { path: string; name: string }[] = [];
-      const seen = new Set<string>();
-      for (const p of [
-        ...registered.map((r) => ({ path: r.path, name: r.name })),
-        ...discovered,
-      ]) {
-        if (seen.has(p.path)) continue;
-        seen.add(p.path);
-        merged.push(p);
-      }
-      return merged;
-    },
+    queryFn: listRegisteredProjects,
     enabled: switcherOpen,
     staleTime: 30_000,
     retry: false,
   });
+  // A window launched with `--root` (or from a dev checkout) may be on a
+  // project the registry has never seen. It is kept reachable for this session
+  // without being registered, so switching away still offers a way back.
+  const switchProjects = useMemo(() => {
+    const projects = (registeredProjects ?? []).map((p) => ({
+      path: p.path,
+      name: p.name,
+    }));
+    if (launchRoot != null && !projects.some((p) => p.path === launchRoot)) {
+      projects.push({
+        path: launchRoot,
+        name: basename(launchRoot),
+      });
+    }
+    return projects;
+  }, [registeredProjects, launchRoot]);
 
   const [addProjectOpen, setAddProjectOpen] = useState(false);
 

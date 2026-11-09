@@ -755,9 +755,10 @@ pub fn current_project_root() -> Result<Option<String>, String> {
 
 // --- Project registry + onboarding (Task 8) ---
 
-/// Every project the user has added/opened, for the sidebar's project switcher.
-/// Reads `~/.dispatch/projects.json`; a missing/corrupt file reads as an empty
-/// list (see `registry::list`), so this never errors.
+/// Every project the user has added/opened whose folder still exists, most
+/// recently opened first, for the sidebar's project switcher. Reads
+/// `~/.dispatch/projects.json`; a missing/corrupt file reads as an empty list
+/// (see `registry::list`), so this never errors.
 #[tauri::command]
 pub fn list_registered_projects() -> Vec<registry::RegisteredProject> {
     registry::list()

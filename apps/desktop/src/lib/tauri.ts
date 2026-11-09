@@ -72,7 +72,7 @@ function injectedDemoConfig(): DemoConfig | undefined {
 export function listProjects(): Promise<ProjectSummary[]> {
   // Project enumeration is backed by Tauri IPC; in the browser dev
   // harness there's no backend, so degrade to an empty list rather than
-  // throwing (the switcher dropdown simply shows only the active project).
+  // throwing.
   if (!isTauri()) return Promise.resolve<ProjectSummary[]>([]);
   return invoke<ProjectSummary[]>('list_projects');
 }
@@ -275,9 +275,9 @@ export interface RegisteredProject {
   name: string;
 }
 
-/** Every project in the registry — the persistent half of the switcher's project list.
- * Browser-dev fallback: no backend, so an empty list (the switcher just shows the active
- * project), matching `listProjects`'s own degrade-to-empty behavior. */
+/** The registered projects whose folder still exists, most recently opened first — the
+ * switcher's project list. Browser-dev fallback: no backend, so an empty list (the switcher
+ * just shows the active project). */
 export function listRegisteredProjects(): Promise<RegisteredProject[]> {
   if (!isTauri()) return Promise.resolve<RegisteredProject[]>([]);
   return invoke<RegisteredProject[]>('list_registered_projects');
