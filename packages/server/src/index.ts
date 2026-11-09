@@ -2572,6 +2572,10 @@ async function bootServer(
         .list()
         .find((record) => record.id === conversation)
         ?.pendingApprovals.find((a) => a.requestId === requestId)?.input,
+    overseerActionBatch: (conversation, actionId) =>
+      overseerManager
+        .find(conversation)
+        ?.pendingActions.find((a) => a.id === actionId)?.batch,
     // The policy engine's classifier: a gate the project's rung auto-decides
     // shows up as `recorded` rather than `blocking`.
     policy: policyDecisionClassifier(rootDir, {

@@ -287,6 +287,35 @@ describe('receipts and batches', () => {
     expect(screen.getByText('Review 3 restored lessons')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Approve all' })).toBeTruthy();
   });
+
+  test('the actions one overseer turn queued are one card with Approve all', () => {
+    const action = (id: string, batch: string) =>
+      item({
+        id,
+        kind: 'approval',
+        reason: 'overseer-action',
+        conversation: 'c-1',
+        messageId: id,
+        batch,
+        summary: `Dispatch ${id}`,
+      });
+    mount([
+      action('a-1', 'tb-1'),
+      action('a-2', 'tb-1'),
+      action('a-3', 'tb-2'),
+    ]);
+    const batch = screen.getByTestId('needs-you-overseer-batch');
+    expect(batch.textContent).toContain(
+      '2 actions the overseer queued together'
+    );
+    expect(batch.textContent).toContain('Dispatch a-1');
+    expect(batch.textContent).toContain('Dispatch a-2');
+    expect(
+      within(batch).getByRole('button', { name: 'Approve all' })
+    ).toBeTruthy();
+    // The lone action from another turn keeps its own row.
+    expect(screen.getAllByTestId('needs-you-row')).toHaveLength(1);
+  });
 });
 
 // DIS-128: a free-text question in Needs you has no card to draw, so the row

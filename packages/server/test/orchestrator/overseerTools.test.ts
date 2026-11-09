@@ -768,6 +768,89 @@ describe('overseer mutating tools produce a pending action, never an effect', ()
     expect(h.orchestrator.pendingApprovalsFor(runId)).toHaveLength(1);
   });
 
+  it('approve_run asks every time for an irreversible call or a whole-run allow', async () => {
+    const h = makeHarness();
+    h.orchestrator.registerExecutor(
+      'gated-ls',
+      new FakeExecutor({
+        steps: [
+          {
+            approval: {
+              requestId: 'req-ls',
+              toolName: 'Bash',
+              input: { command: 'ls' },
+            },
+          },
+        ],
+        finish: { state: 'finished', sessionId: 'sess-ls' },
+      })
+    );
+    h.orchestrator.registerExecutor(
+      'gated-push',
+      new FakeExecutor({
+        steps: [
+          {
+            approval: {
+              requestId: 'req-push',
+              toolName: 'Bash',
+              input: { command: 'git push --force origin main' },
+            },
+          },
+        ],
+        finish: { state: 'finished', sessionId: 'sess-push' },
+      })
+    );
+    const plain = await dispatchUntil(
+      h,
+      'Plain',
+      'gated-ls',
+      'awaiting-approval'
+    );
+    const floor = await dispatchUntil(
+      h,
+      'Floor',
+      'gated-push',
+      'awaiting-approval'
+    );
+    const tierOf = (input: Record<string, unknown>) =>
+      h.registry.callMutatingTool('approve_run', input).tier;
+
+    expect(tierOf({ runId: plain.runId })).toBe('medium');
+    expect(tierOf({ runId: plain.runId, scope: 'session' })).toBe('high');
+    // A force-push is on the irreversibility floor.
+    expect(tierOf({ runId: floor.runId })).toBe('high');
+    // deny_run is never raised: refusing can't do irreversible harm.
+    expect(
+      h.registry.callMutatingTool('deny_run', { runId: floor.runId }).tier
+    ).toBe('medium');
+  });
+
+  it('create_plan is low unless it starts agents, which asks like a dispatch', () => {
+    const base = makeHarness();
+    const ctx = {
+      ...base,
+      milestones: { start: () => Promise.resolve() },
+    } as OverseerToolContext;
+    const registry = new OverseerToolRegistry(ctx);
+    const tasks = [{ title: 'One' }];
+    expect(registry.callMutatingTool('create_plan', { tasks }).tier).toBe(
+      'low'
+    );
+    expect(
+      registry.callMutatingTool('create_plan', {
+        milestone: { title: 'M' },
+        tasks,
+      }).tier
+    ).toBe('medium');
+    expect(
+      registry.callMutatingTool('create_plan', {
+        milestone: { title: 'M' },
+        send: false,
+        tasks,
+      }).tier
+    ).toBe('low');
+  });
+
   it('approve_run names the parked call it was given, and refuses one that is not parked', async () => {
     const h = makeHarness();
     const { runId } = await dispatchUntil(

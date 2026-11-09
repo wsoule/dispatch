@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 
 import type { DecisionItem } from './decisionFeed';
-import { askGroup, type MailboxAsk, needsYou } from './needsYou';
+import {
+  askGroup,
+  type MailboxAsk,
+  needsYou,
+  overseerActionBatches,
+} from './needsYou';
 
 const ME = 'human:wyat';
 
@@ -365,5 +370,39 @@ describe('outside A2A asks', () => {
     });
     expect(needsYou([proposal], ME).count).toBe(1);
     expect(needsYou([{ ...proposal, state: 'resolved' }], ME).count).toBe(0);
+  });
+});
+
+describe('overseer action batches', () => {
+  const action = (id: string, batch?: string) =>
+    item({
+      id,
+      kind: 'approval',
+      reason: 'overseer-action',
+      conversation: 'c-1',
+      ...(batch === undefined ? {} : { batch }),
+    });
+
+  test('groups two or more actions one turn queued; a lone or unbatched one stays alone', () => {
+    const batches = overseerActionBatches([
+      action('a', 'tb-1'),
+      action('b', 'tb-2'),
+      item({ id: 'q', kind: 'question' }),
+      action('c', 'tb-1'),
+      action('d'),
+    ]);
+    expect(
+      [...batches.entries()].map(([k, v]) => [k, v.map((i) => i.id)])
+    ).toEqual([['tb-1', ['a', 'c']]]);
+  });
+
+  test('never folds a tool approval that happens to carry a batch', () => {
+    const tool = item({
+      id: 't',
+      kind: 'approval',
+      reason: 'tool-approval',
+      batch: 'tb-1',
+    });
+    expect(overseerActionBatches([tool, action('a', 'tb-1')]).size).toBe(0);
   });
 });

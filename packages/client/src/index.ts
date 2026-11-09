@@ -275,6 +275,8 @@ export type {
   VerificationCheck,
   VerificationResult,
   OverseerAction,
+  OverseerActionTier,
+  OverseerFieldChange,
   OverseerApproval,
   OverseerAttachment,
   RunAttachment,

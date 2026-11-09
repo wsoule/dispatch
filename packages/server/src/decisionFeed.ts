@@ -114,6 +114,9 @@ export interface DecisionItem {
   fingerprint?: string;
   /** Set while a dismissal hides this item (see DecisionFeed.dismiss). */
   dismissedAt?: string;
+  /** An overseer-action gate's batch: the turn that queued it. Gates sharing
+   *  one are answered together on one card. */
+  batch?: string;
   disposition: DecisionDisposition;
 }
 
@@ -175,6 +178,11 @@ export interface DecisionFeedContext {
   /** The project's status model, so a custom completed status counts as
    *  landed. Defaults to the built-in model. */
   statusModel?: () => StatusModel;
+  /** The batch (the queuing turn) of an action an overseer conversation queued. */
+  overseerActionBatch?: (
+    conversation: string,
+    actionId: string
+  ) => string | undefined;
   /** Defaults to "everything here blocks" — see DecisionDisposition. */
   policy?: DecisionPolicy;
   /** Where dismissals persist (decisionAcks.ts). Without one, nothing can be
@@ -634,6 +642,10 @@ export class DecisionFeed {
       const taskTitle =
         run?.taskTitle ??
         (taskId === undefined ? undefined : this.taskTitle(taskId));
+      const batch =
+        gate?.type === 'overseer-action'
+          ? this.ctx.overseerActionBatch?.(gate.conversation, gate.actionId)
+          : undefined;
       const base = {
         id: `${kind}:${message.id}`,
         kind,
@@ -644,6 +656,7 @@ export class DecisionFeed {
         taskTitle,
         ...(owner === undefined ? {} : { owner }),
         ...(conversation === undefined ? {} : { conversation }),
+        ...(batch === undefined ? {} : { batch }),
         since: message.createdAt,
         ageMs: ageSince(message.createdAt, nowMs),
         state: 'open' as const,

@@ -139,6 +139,34 @@ committed.
 Beyond the board and review, the app carries the surfaces you would otherwise
 leave it for.
 
+**What the Overseer does without asking.** The Overseer's project controls come
+in three risk tiers. Low: creating, editing and planning tasks, and messaging a
+live run. Medium: dispatching a task, answering a run's approval, and queueing
+or pulling a merge. High: cancelling or discarding a run, and sending a message
+as you. `overseer.autonomy` in `.dispatch/config.yml`, also under Settings →
+Agents, picks how many of them need your approval:
+
+    overseer:
+      autonomy: balanced # cautious | balanced | trusting
+
+- `cautious`: every action waits on an approval card.
+- `balanced` (the default): low-tier actions run at once. A medium-tier tool
+  asks the first time it is used in a conversation. Choosing **Allow for this
+  conversation** on that card lets later calls of the same tool run without
+  asking, for up to four hours or until the conversation starts over.
+- `trusting`: low-tier and medium-tier actions both run at once.
+
+High-tier actions ask every time in every mode, and no grant covers them.
+Neither does approving a call on the irreversibility floor (such as a
+force-push) or allowing a tool for the rest of a run. A plan that starts its
+milestone's agents asks like a dispatch.
+
+An action that runs without asking leaves a receipt in the chat with a link to
+its task. For a task edit, the receipt shows each changed field, before and
+after. It is also written to the ledger as auto-decided, naming the setting that
+allowed it. Several actions one turn queues arrive as one card, with **Approve
+all**, in the chat and in Needs you.
+
 **Terminals.** Shells on the repo or on a run's worktree, split any number of
 ways. The child runs under a real pty, so prompts, colour and full-screen
 programs behave normally, and scrollback is kept on disk — closing the window,

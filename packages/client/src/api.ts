@@ -1731,6 +1731,22 @@ export interface OverseerMessage {
   input?: unknown;
   /** `action` entries at `applied`: the task ids the effect created or changed. */
   entities?: string[];
+  /** `action` entries for a call that ran with no card: a receipt. */
+  auto?: boolean;
+  /** `action` entries: the tool's risk tier. */
+  tier?: OverseerActionTier;
+  /** `action` entries: what an update changed, before → after. */
+  changes?: OverseerFieldChange[];
+}
+
+/** How risky an overseer action is; `high` always asks. */
+export type OverseerActionTier = 'low' | 'medium' | 'high';
+
+/** One field an overseer action changes, before → after. */
+export interface OverseerFieldChange {
+  field: string;
+  before: string;
+  after: string;
 }
 
 // Mirrors OverseerAttachment in packages/server/src/orchestrator/overseer.ts —
@@ -1817,17 +1833,25 @@ export interface OverseerAction {
   summary: string;
   createdAt: string;
   status: 'pending' | 'applied' | 'denied' | 'failed';
-  /** Once applied: the tasks it created or dispatched. */
+  tier: OverseerActionTier;
+  /** What the action would change, when its tool can say (update_task). */
+  changes?: OverseerFieldChange[];
+  /** Once applied: the tasks it created, dispatched or touched. */
   taskIds?: string[];
   /** Once applied: the task (and milestone) ids the effect created or changed, in card order. */
   entities?: string[];
+  /** The turn that queued it: actions sharing one are answered on one card. */
+  batch?: string;
+  /** Its card may also allow the tool for the rest of the conversation. */
+  grantable?: boolean;
 }
 
 // Mirrors OverseerRecord in packages/server/src/orchestrator/overseer.ts — the
 // body of `POST /api/overseer` and `GET /api/overseer/:id`.
 /** One live "Allow for this conversation" grant. */
 export interface OverseerGrant {
-  /** `Bash program "<program>"` or `Bash command "<text>"` for a command, else the tool's name. */
+  /** `Bash program "<program>"` or `Bash command "<text>"` for a command,
+   *  `overseer action <tool>` for an overseer action, else the tool's name. */
   key: string;
   grantedAt: string;
   expiresAt: string;

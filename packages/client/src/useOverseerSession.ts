@@ -1,3 +1,4 @@
+import { OVERSEER_GRANT_ANSWER } from '@dispatch-foo/core/browser';
 import type { EffortLevel } from '@dispatch-foo/core/browser';
 import {
   type QueryClient,
@@ -235,8 +236,16 @@ export interface OverseerSession {
    * resolves false when the decision did not go through or the approved
    * effect failed, so a caller deciding several in a row can stop. A second
    * call while one is in flight is a no-op that resolves false.
+   *
+   * `scope: 'session'` on an approval also allows the action's tool for the
+   * rest of the conversation; the daemon honours it only on a `grantable`
+   * action.
    */
-  confirmAction: (actionId: string, approve: boolean) => Promise<boolean>;
+  confirmAction: (
+    actionId: string,
+    approve: boolean,
+    scope?: 'once' | 'session'
+  ) => Promise<boolean>;
   /**
    * Decides one built-in tool call the running turn is parked on (see
    * `OverseerRecord.pendingApprovals`) by answering its `tool-approval` gate.
@@ -667,7 +676,11 @@ export function useOverseerSession(
   }, [client, port, queryClient]);
 
   const confirmAction = useCallback(
-    async (actionId: string, approve: boolean) => {
+    async (
+      actionId: string,
+      approve: boolean,
+      scope: 'once' | 'session' = 'once'
+    ) => {
       // The re-entrancy guard belongs here rather than on the cards: every
       // surface that renders one is unmounted by an ordinary tab flip, so a
       // component-local guard would come back open on remount and let a second
@@ -691,8 +704,10 @@ export function useOverseerSession(
         if (gate === null) {
           throw new Error('This action is no longer waiting for you.');
         }
+        // The grant rides on the confirm's body, so the gate keeps the
+        // protocol's two choices.
         await client.replyToMessage(gate.id, {
-          body: '',
+          body: approve && scope === 'session' ? OVERSEER_GRANT_ANSWER : '',
           choice: approve ? 'confirm' : 'cancel',
         });
         void queryClient.invalidateQueries({ queryKey: openGatesKey(port) });

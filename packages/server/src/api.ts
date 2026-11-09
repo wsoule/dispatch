@@ -1601,6 +1601,7 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     'receipts',
     'sync',
     'preview',
+    'overseer',
     'memory',
     'overseer',
     'runs',

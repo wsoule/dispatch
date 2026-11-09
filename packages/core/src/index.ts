@@ -276,6 +276,12 @@ export {
   SECRET_URL_MASK_SUFFIX,
 } from './config.js';
 export {
+  OVERSEER_AUTONOMY_LEVELS,
+  OVERSEER_GRANT_ANSWER,
+  overseerAutonomy,
+} from './configTypes.js';
+export type { OverseerAutonomy } from './configTypes.js';
+export {
   consultFloor,
   consultPolicy,
   DEFAULT_DIFFICULTY_POLICY,

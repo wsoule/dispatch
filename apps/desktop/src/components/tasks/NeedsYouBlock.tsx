@@ -24,6 +24,7 @@ import {
   askGroup,
   type AskGroup,
   type NeedsYou,
+  overseerActionBatches,
 } from '../../lib/needsYou';
 import type { RefAction } from '../../lib/threadSources';
 import {
@@ -281,6 +282,18 @@ export function NeedsYouBlock({
       })
     ).then(() => undefined);
 
+  // One turn's overseer actions, confirmed one after another: each confirm
+  // runs its effect before the next is sent, the order the overseer queued.
+  const confirmAll = async (batch: readonly DecisionItem[]) => {
+    for (const ask of batch) {
+      const gate =
+        ask.messageId === undefined ? undefined : gateById.get(ask.messageId);
+      if (gate !== undefined) {
+        await decide(ask, gate, { body: '', choice: 'confirm' });
+      }
+    }
+  };
+
   const groups = ASK_GROUP_ORDER.flatMap((group) => {
     const items = needs.groups.find((g) => g.group === group)?.items ?? [];
     const receipts = receiptsByGroup.get(group) ?? [];
@@ -351,6 +364,7 @@ export function NeedsYouBlock({
                 gateById={gateById}
                 card={card}
                 onApproveAll={approveAll}
+                onConfirmBatch={confirmAll}
                 canDecide={access.canDecide}
                 onOpenDecision={onOpenDecision}
                 onDismiss={(id) => handleDismissDecision(id)}
@@ -381,6 +395,7 @@ function AskGroupSection({
   gateById,
   card,
   onApproveAll,
+  onConfirmBatch,
   canDecide,
   onOpenDecision,
   onDismiss,
@@ -393,14 +408,32 @@ function AskGroupSection({
   gateById: ReadonlyMap<string, Message>;
   card: (item: DecisionItem, gate: Message) => ReactNode;
   onApproveAll: (lessons: readonly DecisionItem[]) => Promise<void>;
+  onConfirmBatch: (batch: readonly DecisionItem[]) => Promise<void>;
   canDecide: boolean;
   onOpenDecision: (item: DecisionItem) => void;
   onDismiss: (id: string) => Promise<void>;
   onOpenTask: (taskId: string) => void;
 }) {
   const [all, setAll] = useState(false);
-  const shown = all ? items : items.slice(0, MAX_ROWS);
-  const hidden = items.length - shown.length;
+  // A batch renders once, at its first action's row; the rest fold into it.
+  const batches = useMemo(() => overseerActionBatches(items), [items]);
+  const batchAt = useMemo(() => {
+    const at = new Map<string, DecisionItem[]>();
+    for (const batch of batches.values()) at.set(batch[0].id, batch);
+    return at;
+  }, [batches]);
+  const folded = useMemo(
+    () =>
+      new Set(
+        [...batches.values()].flatMap((batch) =>
+          batch.slice(1).map((i) => i.id)
+        )
+      ),
+    [batches]
+  );
+  const visible = items.filter((item) => !folded.has(item.id));
+  const shown = all ? visible : visible.slice(0, MAX_ROWS);
+  const hidden = visible.length - shown.length;
   const label = ASK_GROUP_LABEL[group];
   return (
     <div
@@ -418,7 +451,16 @@ function AskGroupSection({
         stackedColumns={STACKED_COLUMNS}
       >
         {shown.map((item) =>
-          restored.length > 1 && item.id === restored[0]?.id ? (
+          batchAt.has(item.id) ? (
+            <OverseerBatchRow
+              key={item.id}
+              actions={batchAt.get(item.id) ?? []}
+              gateById={gateById}
+              card={card}
+              onConfirmAll={onConfirmBatch}
+              canDecide={canDecide}
+            />
+          ) : restored.length > 1 && item.id === restored[0]?.id ? (
             <RestoredBatchRow
               key={item.id}
               lessons={restored}
@@ -461,7 +503,7 @@ function AskGroupSection({
           </RegisterRow>
         ))}
       </Register>
-      {items.length > MAX_ROWS && (
+      {visible.length > MAX_ROWS && (
         <div className={styles.more}>
           <Button
             size="sm"
@@ -585,6 +627,71 @@ function DismissedFooter({
         </ul>
       </Disclosure>
     </div>
+  );
+}
+
+// The actions one overseer turn queued: one row, every action's own
+// confirm/cancel card beneath it, and Approve all for the lot.
+function OverseerBatchRow({
+  actions,
+  gateById,
+  card,
+  onConfirmAll,
+  canDecide,
+}: {
+  actions: readonly DecisionItem[];
+  gateById: ReadonlyMap<string, Message>;
+  card: (item: DecisionItem, gate: Message) => ReactNode;
+  onConfirmAll: (batch: readonly DecisionItem[]) => Promise<void>;
+  canDecide: boolean;
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <RegisterRow
+      data-testid="needs-you-overseer-batch"
+      data-row="ask"
+      title={MACHINE_ONLY}
+    >
+      <RegisterCell>
+        <KindBadge>overseer</KindBadge>
+      </RegisterCell>
+      <RegisterCell data-cell="summary">
+        <span className={styles.summary}>
+          {actions.length} actions the overseer queued together
+        </span>
+      </RegisterCell>
+      <RegisterCell data-cell="actions">
+        <span className={styles.actions}>
+          <Button
+            size="sm"
+            variant="primary"
+            disabled={!canDecide || busy}
+            onClick={() => {
+              setBusy(true);
+              void onConfirmAll(actions).finally(() => setBusy(false));
+            }}
+          >
+            Approve all
+          </Button>
+        </span>
+      </RegisterCell>
+      <RegisterCell span="row" data-cell="answer">
+        <ul className={styles.lessons}>
+          {actions.map((action) => {
+            const gate =
+              action.messageId === undefined
+                ? undefined
+                : gateById.get(action.messageId);
+            return (
+              <li key={action.id}>
+                <span className={styles.summary}>{action.summary}</span>
+                {gate !== undefined && card(action, gate)}
+              </li>
+            );
+          })}
+        </ul>
+      </RegisterCell>
+    </RegisterRow>
   );
 }
 

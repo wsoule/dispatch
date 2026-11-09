@@ -21,6 +21,7 @@ function makeAction(overrides: Partial<OverseerAction> = {}): OverseerAction {
     summary: 'Cancel run r-1',
     createdAt: '2026-08-10T00:00:02Z',
     status: 'pending',
+    tier: 'high',
     ...overrides,
   };
 }
@@ -742,6 +743,71 @@ describe('groupConfirmRows', () => {
     expect(items[0]).toMatchObject({
       key: 'k-a',
       actions: [{ id: 'a' }, { id: 'b' }],
+    });
+  });
+
+  test('actions one turn queued share one card even with rows between them', () => {
+    const a = makeAction({ id: 'a', batch: 'tb-1' });
+    const b = makeAction({ id: 'b', batch: 'tb-1' });
+    const c = makeAction({ id: 'c', batch: 'tb-2' });
+    const items = groupConfirmRows([
+      { kind: 'confirm', key: 'k-a', action: a },
+      {
+        kind: 'outcome',
+        key: 'o',
+        outcome: 'applied',
+        text: 'Done: Create task',
+        at: '2026-10-20T00:00:00.000Z',
+        auto: true,
+      },
+      { kind: 'confirm', key: 'k-b', action: b },
+      { kind: 'confirm', key: 'k-c', action: c },
+    ]);
+    expect(items.map((i) => i.kind)).toEqual([
+      'confirms',
+      'outcome',
+      'confirm',
+    ]);
+    expect(items[0]).toMatchObject({
+      key: 'k-a',
+      actions: [{ id: 'a' }, { id: 'b' }],
+    });
+    expect(items[2]).toMatchObject({ key: 'k-c' });
+  });
+
+  test('a batched action never folds into an unbatched neighbour', () => {
+    const old = makeAction({ id: 'old' });
+    const fresh = makeAction({ id: 'fresh', batch: 'tb-1' });
+    const items = groupConfirmRows([
+      { kind: 'confirm', key: 'k-old', action: old },
+      { kind: 'confirm', key: 'k-fresh', action: fresh },
+    ]);
+    expect(items.map((i) => i.kind)).toEqual(['confirm', 'confirm']);
+  });
+});
+
+describe('auto-run receipts', () => {
+  test('keep the task they link to and the diff they carry', () => {
+    const record = makeRecord([
+      {
+        role: 'action',
+        tool: 'update_task',
+        actionId: 'wa-1',
+        outcome: 'applied',
+        auto: true,
+        tier: 'low',
+        taskIds: ['t-1'],
+        changes: [{ field: 'title', before: 'Old', after: 'New' }],
+        text: 'Done: Update t-1',
+        at: '2026-10-20T00:00:00.000Z',
+      },
+    ]);
+    expect(buildOverseerThread(record)[0]).toMatchObject({
+      kind: 'outcome',
+      outcome: 'applied',
+      auto: true,
+      taskIds: ['t-1'],
+      changes: [{ field: 'title', before: 'Old', after: 'New' }],
     });
   });
 });

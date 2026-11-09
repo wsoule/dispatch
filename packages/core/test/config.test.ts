@@ -497,8 +497,12 @@ describe('the overseer block', () => {
   it('streams live text when the block is absent', () => {
     expect(loadConfig(writeConfig('statuses: [todo]\n')).overseer).toEqual({
       stream: 'live',
+      autonomy: 'balanced',
     });
-    expect(overseerSettings({} as DispatchConfig)).toEqual({ stream: 'live' });
+    expect(overseerSettings({} as DispatchConfig)).toEqual({
+      stream: 'live',
+      autonomy: 'balanced',
+    });
   });
 
   it('accepts narration and off, and reads YAML booleans as live/off', () => {

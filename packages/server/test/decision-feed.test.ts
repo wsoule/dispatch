@@ -1061,6 +1061,37 @@ describe('DecisionFeed gate context', () => {
     ]);
   });
 
+  it('carries the queuing turn as the batch of an overseer-action gate', () => {
+    const action = (id: string, actionId: string) =>
+      gate(id, {
+        data: {
+          type: 'overseer-action',
+          conversation: 'c-1',
+          actionId,
+          summary: `do ${actionId}`,
+        },
+      });
+    const batches: Record<string, string> = { 'a-1': 'tb-1', 'a-2': 'tb-1' };
+    const feed = new DecisionFeed({
+      orchestrator: { list: () => [], pendingApprovalFor: () => undefined },
+      openGates: () => [
+        action('m-1', 'a-1'),
+        action('m-2', 'a-2'),
+        action('m-3', 'a-3'),
+      ],
+      fixLoopStore: { list: () => [] },
+      cache: { get: () => null },
+      events: new EventBus(),
+      overseerActionBatch: (conversation, actionId) =>
+        conversation === 'c-1' ? batches[actionId] : undefined,
+    });
+    expect(feed.list().map((i) => [i.messageId, i.batch])).toEqual([
+      ['m-1', 'tb-1'],
+      ['m-2', 'tb-1'],
+      ['m-3', undefined],
+    ]);
+  });
+
   it('names no gate message on an item that has none', () => {
     h.loops.push(cappedLoop('t-1'));
     expect(h.feed.list()[0]?.messageId).toBeUndefined();
