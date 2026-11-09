@@ -20,6 +20,7 @@ import {
   Server,
   Settings2,
   ShieldCheck,
+  Smartphone,
   Users,
   Wrench,
 } from 'lucide-react';
@@ -49,6 +50,7 @@ import {
   DaemonConfigGroups,
 } from '../components/settings/DaemonConfigGroups';
 import { DaemonSection } from '../components/settings/DaemonSection';
+import { DevicesSection } from '../components/settings/DevicesSection';
 import { DiffsSection } from '../components/settings/DiffsSection';
 import { DigestsGroup } from '../components/settings/DigestsGroup';
 import { GeneralSection } from '../components/settings/GeneralSection';
@@ -445,6 +447,15 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
             canOperate={ctx.canOperate}
           />
         )),
+      },
+      {
+        id: 'devices',
+        label: SETTINGS_PAGE_LABELS.devices,
+        icon: Smartphone,
+        intro:
+          'Your other devices on this daemon — the app on another machine, a phone — and the remote daemons this app connects to.',
+        savesConfig: false,
+        render: (ctx) => <DevicesSection data={ctx.data} />,
       },
       {
         id: 'daemon',

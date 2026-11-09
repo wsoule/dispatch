@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
-import { connectEvents } from '../src/api';
-import type { SocketLike } from '../src/api';
+import { connectEvents, reconnectDelay } from '../src/api';
+import type { EventStreamStatus, SocketLike } from '../src/api';
 
 // Plain setTimeout-based sleep rather than `Bun.sleep` — this package's
 // tsconfig deliberately excludes the ambient `Bun` global (it targets the
@@ -259,5 +259,82 @@ describe('connectEvents', () => {
     created[0].emitClose();
     await sleep(30);
     expect(created.length).toBe(1);
+  });
+});
+
+describe('reconnectDelay', () => {
+  it('doubles from the base up to the cap, jittered over the upper half', () => {
+    const low = () => 0;
+    const high = () => 0.999_999;
+    expect(reconnectDelay(1, 500, 15_000, low)).toBe(250);
+    expect(reconnectDelay(1, 500, 15_000, high)).toBe(500);
+    expect(reconnectDelay(3, 500, 15_000, high)).toBe(2000);
+    expect(reconnectDelay(20, 500, 15_000, high)).toBe(15_000);
+    expect(reconnectDelay(20, 500, 15_000, low)).toBe(7500);
+  });
+});
+
+describe('connectEvents status', () => {
+  function harness() {
+    const created: FakeSocket[] = [];
+    const statuses: EventStreamStatus[] = [];
+    const dispose = connectEvents(BASE_URL, () => {}, {
+      createSocket: () => {
+        const socket = new FakeSocket();
+        created.push(socket);
+        return socket;
+      },
+      reconnectDelayMs: 5,
+      maxReconnectDelayMs: 40,
+      random: () => 0.999_999,
+      onStatus: (status) => statuses.push(status),
+    });
+    return { created, statuses, dispose };
+  }
+
+  it('reports connecting, open on the first frame, then reconnecting', () => {
+    const { created, statuses, dispose } = harness();
+    expect(statuses.map((s) => s.state)).toEqual(['connecting']);
+    created[0].emitMessage(JSON.stringify({ type: 'hello', version: '1' }));
+    created[0].emitMessage(JSON.stringify({ type: 'task.changed' }));
+    expect(statuses.map((s) => s.state)).toEqual(['connecting', 'open']);
+    created[0].emitClose();
+    expect(statuses.at(-1)).toMatchObject({
+      state: 'reconnecting',
+      failures: 1,
+    });
+    expect(statuses.at(-1)?.retryAt).toBeGreaterThan(Date.now() - 1);
+    dispose();
+  });
+
+  it('backs off further on every failure in a row, and resets once open', async () => {
+    const { created, statuses, dispose } = harness();
+    created[0].emitClose();
+    await sleep(15);
+    created[1].emitClose();
+    await sleep(25);
+    expect(created.length).toBe(3);
+    const failures = statuses
+      .filter((s) => s.state === 'reconnecting')
+      .map((s) => s.failures);
+    expect(failures).toEqual([1, 2]);
+    created[2].emitMessage(JSON.stringify({ type: 'hello', version: '1' }));
+    created[2].emitClose();
+    expect(statuses.at(-1)).toMatchObject({
+      state: 'reconnecting',
+      failures: 1,
+    });
+    dispose();
+  });
+
+  it('ignores a replaced socket closing late', async () => {
+    const { created, dispose } = harness();
+    created[0].emitClose();
+    await sleep(15);
+    expect(created.length).toBe(2);
+    created[0].emitClose();
+    await sleep(15);
+    expect(created.length).toBe(2);
+    dispose();
   });
 });

@@ -138,6 +138,8 @@ import {
 } from './api/legacyMilestone.js';
 import { isLinearWebhook, linearWebhook } from './api/linearWebhook.js';
 import { migrateMilestones } from './api/migrations.js';
+import type { DevicePairing } from './api/pairing.js';
+import { pairingRoutes } from './api/pairing.js';
 import { listPeople, rosterMembers } from './api/people.js';
 import {
   a2aParentRefusal,
@@ -518,6 +520,9 @@ export interface ApiContext {
   sessionOrigins: ReadonlySet<string>;
   /** Whether this daemon is bound beyond loopback — see shared.ts. */
   shared: boolean;
+  /** The operator's paired devices and open pairing codes (devices.ts);
+   *  absent in harnesses that build a context by hand. */
+  pairing?: DevicePairing;
   /** Who made the request being handled, when their credential resolved.
    *  Set per request by handleApi — never on the daemon-wide context. */
   caller?: TokenIdentity;
@@ -4680,6 +4685,11 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // listing holders tells it whose to go looking for. team/routes.ts further
   // caps what a caller may issue or revoke at their own tier.
   { method: 'GET', segments: ['team', 'tokens'], tier: 'decide' },
+  // Pairing a device mints a credential that speaks for the operator; the
+  // routes also refuse anyone but the operator in person (api/pairing.ts).
+  { method: 'POST', segments: ['pair', 'offer'], tier: 'decide' },
+  { method: 'GET', segments: ['devices'], tier: 'decide' },
+  { method: 'DELETE', segments: ['devices', '*'], tier: 'decide' },
   // Lists machines, fingerprints and problems: whose to go looking for (decision 57).
   { method: 'GET', segments: ['team', 'keys'], tier: 'decide' },
   // GET team/status is absent on purpose: below decide its route answers
@@ -5050,6 +5060,11 @@ function requiredTier(
     segments.length === 1 &&
     segments[0] === 'session'
   ) {
+    return null;
+  }
+  // Redeeming a pairing code is how a device gets its first credential, so it
+  // cannot require one; the one-time code stands in (api/pairing.ts).
+  if (method === 'POST' && segments.length === 1 && segments[0] === 'pair') {
     return null;
   }
   // Self-authenticating routes check via resolvePrincipal in handleApi, not
@@ -5715,6 +5730,10 @@ export async function handleApi(
       }
       return jsonResponse(ctx.caller);
     }
+
+    // /api/pair and /api/devices — pairing the operator's own other devices.
+    const pairingResponse = await pairingRoutes(req, ctx, segments);
+    if (pairingResponse !== null) return pairingResponse;
 
     // POST /api/session — a teammate's browser trades the token it was given
     // for an HttpOnly session cookie, so the page never has to hold it.

@@ -26,6 +26,7 @@ import type {
   ApiClient,
   AuthTier,
   DraftRecord,
+  EventStreamStatus,
   ExecutorsResponse,
   FixLoopState,
   HealthPayload,
@@ -452,6 +453,12 @@ export interface DispatchProjectData {
   portError: boolean;
   portErrorDetail: unknown;
   retryEnsureDispatchd: () => void;
+  /** Where the live event stream to the daemon stands — connecting, open, or
+   *  reconnecting after a drop — or null with no daemon client yet. */
+  eventStream: EventStreamStatus | null;
+  /** The daemon's origin when it runs on another machine this app paired
+   *  with; null for a daemon on this machine. */
+  remoteOrigin: string | null;
 
   tasks: TaskListItem[];
   tasksLoading: boolean;
@@ -970,6 +977,13 @@ export function useDispatchProject(
   });
 
   const port = connection?.port;
+  const remoteOrigin =
+    connection?.remote !== undefined && connection.baseUrl != null
+      ? connection.baseUrl
+      : null;
+  const [eventStream, setEventStream] = useState<EventStreamStatus | null>(
+    null
+  );
   // The credential every call below presents. `canDecide` is false whenever the
   // app attached to a daemon it did not spawn, because the app token only ever
   // arrives on a spawned daemon's stdout.
@@ -1736,6 +1750,7 @@ export function useDispatchProject(
     // The first hello is the initial connect; any later one is a reconnect.
     let connectedBefore = false;
     const disconnect = client.connectEvents(refreshTeamKeys, {
+      onStatus: setEventStream,
       onEvent: (event) => {
         applyThreadEvent(queryClient, port, event);
         applyDocsEvent(queryClient, port, event);
@@ -2216,6 +2231,7 @@ export function useDispatchProject(
       if (listTimer !== null) clearTimeout(listTimer);
       if (milestoneTimer !== null) clearTimeout(milestoneTimer);
       disconnect();
+      setEventStream(null);
     };
   }, [
     client,
@@ -3269,6 +3285,8 @@ export function useDispatchProject(
       portError,
       portErrorDetail,
       retryEnsureDispatchd: () => void retryEnsureDispatchd(),
+      eventStream,
+      remoteOrigin,
 
       tasks: tasks ?? [],
       tasksLoading,
@@ -3415,6 +3433,8 @@ export function useDispatchProject(
       portError,
       portErrorDetail,
       retryEnsureDispatchd,
+      eventStream,
+      remoteOrigin,
       tasks,
       tasksLoading,
       allTasksFetched,

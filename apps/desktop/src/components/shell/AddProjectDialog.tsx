@@ -9,7 +9,7 @@ import {
   SearchField,
   Spinner,
 } from '@dispatch/ui';
-import { ChevronLeft, FolderOpen, GitBranch } from 'lucide-react';
+import { ChevronLeft, FolderOpen, GitBranch, Server } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import {
@@ -19,8 +19,9 @@ import {
   pickDirectory,
 } from '../../lib/tauri';
 import styles from './AddProjectDialog.module.css';
+import { ConnectRemoteForm } from './ConnectRemoteForm';
 
-type Mode = 'choose' | 'github';
+type Mode = 'choose' | 'github' | 'remote';
 
 interface AddProjectDialogProps {
   /** Called with an absolute path once a project is chosen — either a locally picked folder
@@ -28,6 +29,9 @@ interface AddProjectDialogProps {
    * `App`'s `handleAddProject`); may reject (e.g. the path isn't a directory), in which case
    * the error is surfaced here rather than closing the dialog. */
   onAdd: (path: string) => Promise<void>;
+  /** Called with the remote root once the app pairs with a dispatchd on another
+   * machine. When omitted the "Remote dispatchd" choice is not offered. */
+  onConnectRemote?: (remoteRoot: string) => void;
   onClose: () => void;
   /** Which pane to open on; 'github' skips the choice when the caller already asked for GitHub. */
   initialMode?: Mode;
@@ -46,6 +50,7 @@ interface AddProjectDialogProps {
  */
 export function AddProjectDialog({
   onAdd,
+  onConnectRemote,
   onClose,
   initialMode = 'choose',
 }: AddProjectDialogProps) {
@@ -152,7 +157,7 @@ export function AddProjectDialog({
       dismissible={busy === null}
       contentKey={mode}
       titleAction={
-        mode === 'github' ? (
+        mode !== 'choose' ? (
           <Button
             variant="quiet"
             size="sm"
@@ -165,11 +170,19 @@ export function AddProjectDialog({
           />
         ) : undefined
       }
-      title={mode === 'github' ? 'Clone from GitHub' : 'Add project'}
+      title={
+        mode === 'github'
+          ? 'Clone from GitHub'
+          : mode === 'remote'
+            ? 'Connect to a remote dispatchd'
+            : 'Add project'
+      }
       description={
         mode === 'github'
           ? 'Pick a repository to clone, then choose where to put it.'
-          : 'Open a local folder, or clone a repository from GitHub.'
+          : mode === 'remote'
+            ? 'Work with a project whose daemon runs on another machine.'
+            : 'Open a local folder, or clone a repository from GitHub.'
       }
       actions={
         <Button variant="secondary" onClick={onClose} disabled={busy !== null}>
@@ -227,7 +240,29 @@ export function AddProjectDialog({
                 </span>
               </span>
             </button>
+            {onConnectRemote !== undefined && (
+              <button
+                type="button"
+                className={styles.choice}
+                onClick={() => setMode('remote')}
+              >
+                <Server
+                  className={styles.choiceIcon}
+                  size={20}
+                  strokeWidth={1.6}
+                  aria-hidden="true"
+                />
+                <span className={styles.choiceText}>
+                  <span className={styles.choiceName}>Remote dispatchd…</span>
+                  <span className={styles.choiceNote}>
+                    Pair with a daemon on another machine
+                  </span>
+                </span>
+              </button>
+            )}
           </div>
+        ) : mode === 'remote' && onConnectRemote !== undefined ? (
+          <ConnectRemoteForm onConnected={onConnectRemote} />
         ) : (
           <div className={styles.github}>
             {/* Escape in a field with text clears it; in an empty field it

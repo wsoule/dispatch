@@ -318,6 +318,18 @@ export function teamTokensPath(rootDir: string): string {
   );
 }
 
+/** Where the operator's paired devices live across a restart, as token hashes
+ *  (see devices.ts). Beside team tokens, outside the repo for the same reason. */
+export function pairedDevicesPath(rootDir: string): string {
+  return join(
+    dispatchHome(),
+    '.dispatch',
+    'projects',
+    projectKeyOf(rootDir),
+    'paired-devices.json'
+  );
+}
+
 // Where a project's terminal sessions keep their scrollback and index (see
 // terminals.ts). Under `runs/` rather than beside the repo for the same reason
 // transcripts are: this is per-machine scratch a person never diffs, and it

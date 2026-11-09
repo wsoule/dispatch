@@ -67,6 +67,7 @@ import { LinearStep } from './components/setup/LinearStep';
 import { SetupBanner, setupProblem } from './components/setup/SetupBanner';
 import { AddProjectDialog } from './components/shell/AddProjectDialog';
 import { CommandPalette } from './components/shell/CommandPalette';
+import { ConnectionIndicator } from './components/shell/ConnectionIndicator';
 import { DaemonUnavailable } from './components/shell/DaemonUnavailable';
 import {
   DeepLinkProvider,
@@ -188,6 +189,11 @@ import {
 } from './lib/paletteEntries';
 import { buildPosts, type Post, questionToAnswer } from './lib/posts';
 import { basename } from './lib/projectName';
+import {
+  listRemoteConnections,
+  remoteConnectionFor,
+  remoteRootFor,
+} from './lib/remoteConnections';
 import { prNumberFromUrl } from './lib/reviewTarget';
 import { isTerminalRunState } from './lib/runState';
 import {
@@ -366,7 +372,18 @@ function App() {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const { data: registeredProjects } = useQuery({
     queryKey: ['switcher-projects'],
-    queryFn: listRegisteredProjects,
+    // Paired remote daemons follow the registry, marked as remote.
+    queryFn: async () => {
+      const registered = await listRegisteredProjects();
+      const merged = registered.map((r) => ({ path: r.path, name: r.name }));
+      for (const remote of listRemoteConnections()) {
+        merged.push({
+          path: remoteRootFor(remote.id),
+          name: `${remote.name} · ${new URL(remote.baseUrl).host}`,
+        });
+      }
+      return merged;
+    },
     enabled: switcherOpen,
     staleTime: 30_000,
     retry: false,
@@ -437,7 +454,10 @@ function App() {
   const activeProject = useMemo(
     () =>
       root !== undefined && root !== null && rootHasDispatch === true
-        ? { path: root, name: basename(root) }
+        ? {
+            path: root,
+            name: remoteConnectionFor(root)?.name ?? basename(root),
+          }
         : null,
     [root, rootHasDispatch]
   );
@@ -2413,16 +2433,22 @@ function App() {
       workspaceSwitcher={workspaceSwitcher}
       topbarActions={
         activeProject !== null && (
-          <PresenceStack
-            presence={data.presence}
-            onOpenPerson={(ref) =>
-              dispatchNav({ type: 'openAddress', address: ref })
-            }
-            taskTitle={(id) =>
-              data.tasksIncludingArchived.find((t) => t.meta.id === id)?.meta
-                .title
-            }
-          />
+          <>
+            <ConnectionIndicator
+              status={data.eventStream}
+              remoteOrigin={data.remoteOrigin}
+            />
+            <PresenceStack
+              presence={data.presence}
+              onOpenPerson={(ref) =>
+                dispatchNav({ type: 'openAddress', address: ref })
+              }
+              taskTitle={(id) =>
+                data.tasksIncludingArchived.find((t) => t.meta.id === id)?.meta
+                  .title
+              }
+            />
+          </>
         )
       }
       // Over a setup gate the shell shows only Settings: a gate it never
@@ -2767,6 +2793,13 @@ function App() {
                   <AddProjectDialog
                     onAdd={async (path) => {
                       await handleAddProject(path);
+                    }}
+                    onConnectRemote={(remoteRoot) => {
+                      setAddProjectOpen(false);
+                      void queryClient.invalidateQueries({
+                        queryKey: ['switcher-projects'],
+                      });
+                      selectSwitchProject(remoteRoot);
                     }}
                     onClose={() => setAddProjectOpen(false)}
                   />

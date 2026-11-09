@@ -28,6 +28,9 @@ export interface TokenIdentity {
   /** True for the built-in app token: the owner at this machine, the only
    *  caller who may re-issue another member's credential. */
   appToken?: boolean;
+  /** The paired device (devices.ts) this token belongs to: the operator
+   *  acting from another machine or a phone, at the tier it was paired with. */
+  device?: string;
 }
 
 // One of the two tokens the daemon mints at startup. They authenticate as the
@@ -121,7 +124,8 @@ export class TokenRegistry {
     pair: { agentToken: string; appToken: string },
     private readonly operatorHandle: string,
     private readonly teammates: CredentialSource | null = null,
-    private readonly operatorDevices: OperatorDeviceCredentials | null = null
+    private readonly operatorDevices: OperatorDeviceCredentials | null = null,
+    private readonly devices: Pick<CredentialSource, 'lookup'> | null = null
   ) {
     // Highest tier first, so the app token still wins if the two were ever
     // the same string — the pre-existing behaviour, kept on purpose. The app
@@ -182,6 +186,10 @@ export class TokenRegistry {
         },
       };
     }
+    // A paired device speaks for the operator by design (devices.ts), so it
+    // is asked before the teammate check below that refuses that handle.
+    const device = this.devices?.lookup(digest);
+    if (device !== undefined && device.kind !== 'unknown') return device;
     const teammate = this.teammates?.lookup(digest) ?? { kind: 'unknown' };
     // Only the built-in pair speaks for the operator; a teammate token naming
     // their handle matches no one.
