@@ -244,9 +244,15 @@ export function webHandler(
     );
     target.searchParams.set('response_type', 'code');
     // Opening and installing keep the grant, and edits go back to Linear.
+    // An app user reads initiatives only with their own scope, which a
+    // person's `read` already covers.
     target.searchParams.set(
       'scope',
-      mode === 'workspace' || mode === 'install' ? 'read,write' : 'read'
+      mode === 'install'
+        ? 'read,write,initiative:read'
+        : mode === 'workspace'
+          ? 'read,write'
+          : 'read'
     );
     if (mode === 'install') target.searchParams.set('actor', 'app');
     target.searchParams.set('state', state);

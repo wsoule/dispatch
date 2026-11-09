@@ -335,7 +335,8 @@ describe('installing Dispatch on a workspace', () => {
     });
     const target = new URL(start.headers.get('location') ?? '');
     expect(target.searchParams.get('actor')).toBe('app');
-    expect(target.searchParams.get('scope')).toBe('read,write');
+    // An app user needs its own scope to read initiatives.
+    expect(target.searchParams.get('scope')).toBe('read,write,initiative:read');
     viewer = {
       id: 'lin-app',
       name: 'Dispatch',
