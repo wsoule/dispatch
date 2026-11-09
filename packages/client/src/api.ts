@@ -2386,6 +2386,8 @@ export interface MergeQueueEntry {
   steps?: VerifyStepResult[];
   /** Failure detail — set only once an entry lands in `failed`. */
   reason?: string;
+  /** The files a failed rebase stopped on — set only when the rebase conflicted. */
+  conflicts?: string[];
   /**
    * When this entry last changed state — distinct from `enqueuedAt`, which never
    * moves. Render elapsed time from this on in-flight entries ("Verifying · 4m"):

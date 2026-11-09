@@ -94,6 +94,7 @@ describe('DispatchShell', () => {
       '#/timeline',
       '#/graph',
       '#/threads',
+      '#/landing',
       '#/docs',
       '#/runs',
     ]);

@@ -30,6 +30,7 @@ const EVERY_DESTINATION: readonly ShellDestination[] = [
   'timeline',
   'graph',
   'threads',
+  'landing',
   'docs',
   'runs',
   'settings',
@@ -62,6 +63,7 @@ describe('the route table', () => {
     expect(shellShortcut(shellRoute('timeline'), '⌘')).toEqual(['G', 'L']);
     expect(shellShortcut(shellRoute('graph'), '⌘')).toEqual(['G', 'G']);
     expect(shellShortcut(shellRoute('week'), '⌘')).toEqual(['G', 'W']);
+    expect(shellShortcut(shellRoute('landing'), '⌘')).toEqual(['G', 'Q']);
     expect(shellShortcut(shellRoute('settings'), '⌘')).toEqual(['G', 'S']);
     expect(shellShortcut(shellRoute('docs'), '⌘')).toBeUndefined();
     expect(shellShortcut(shellRoute('runs'), '⌘')).toBeUndefined();

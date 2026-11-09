@@ -146,7 +146,7 @@ function listParams(
 /** A route for a hosted view with no parameters (`#/terminals`). */
 function pageRoute(
   head: string,
-  view: 'terminals' | 'projects' | 'allocation' | 'live' | 'week'
+  view: 'terminals' | 'projects' | 'allocation' | 'live' | 'week' | 'landing'
 ): Route {
   return {
     head,
@@ -400,6 +400,7 @@ const ROUTES: readonly Route[] = [
   pageRoute('allocation', 'allocation'),
   pageRoute('week', 'week'),
   pageRoute('live', 'live'),
+  pageRoute('landing', 'landing'),
   {
     head: 'threads',
     write: (state) =>

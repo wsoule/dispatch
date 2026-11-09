@@ -69,7 +69,7 @@ export type GlobalKeyCommand =
   | 'quick-open-blocked'
   /** The `g` chords, as lib/appNav.ts keyAction routes them: `g s` Settings, `g i` the
    * Needs you preset, `g m` Threads (messages), `g t` Issues, `g l` Timeline (`t` is
-   * taken), `g g` Graph, `g f` the Moving preset (work in flight), `g r` the Review
+   * taken), `g q` Landing (the merge queue), `g g` Graph, `g f` the Moving preset (work in flight), `g r` the Review
    * preset, and `g a`, `g o`, `g h` and `g c` the Overseer. Some command names predate
    * their targets: goto-live is Moving, goto-projects is Review, and goto-home and
    * goto-control-room are the Overseer. lib/shortcutGroups.ts lists the chords the
@@ -81,6 +81,8 @@ export type GlobalKeyCommand =
   | 'goto-timeline'
   | 'goto-week'
   | 'goto-graph'
+  /** `g q`: Landing, every run headed for main (the merge queue). */
+  | 'goto-landing'
   | 'goto-tasks'
   | 'goto-projects'
   | 'goto-live'
@@ -98,6 +100,7 @@ const G_CHORDS: Record<string, GlobalKeyCommand> = {
   t: 'goto-tasks',
   l: 'goto-timeline',
   w: 'goto-week',
+  q: 'goto-landing',
   // A second `g` completes the chord rather than re-arming it: the prefix is
   // held only while `pendingPrefix` is null, so `g g` is free for the Graph.
   g: 'goto-graph',

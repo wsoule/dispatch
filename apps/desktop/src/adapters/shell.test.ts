@@ -46,7 +46,7 @@ function nav(over: Partial<Parameters<typeof buildShellNav>[0]> = {}) {
 }
 
 describe('buildShellNav', () => {
-  test('nine rows in order, the current one marked, keys as the shell prints them', () => {
+  test('ten rows in order, the current one marked, keys as the shell prints them', () => {
     const items = nav({ destination: 'threads' });
     expect(items.map((item) => item.label)).toEqual([
       'Overseer',
@@ -56,6 +56,7 @@ describe('buildShellNav', () => {
       'Timeline',
       'Graph',
       'Threads',
+      'Landing',
       'Docs',
       'Runs',
     ]);
@@ -69,14 +70,30 @@ describe('buildShellNav', () => {
       true,
       false,
       false,
+      false,
     ]);
     expect(items[0].shortcut).toEqual(['⌘', '1']);
     expect(items[2].shortcut).toEqual(['G', 'I']);
     expect(items[3].shortcut).toEqual(['G', 'W']);
     expect(items[4].shortcut).toEqual(['G', 'L']);
     expect(items[5].shortcut).toEqual(['G', 'G']);
-    expect(items[7].shortcut).toBeUndefined();
+    expect(items[7].shortcut).toEqual(['G', 'Q']);
+    expect(items[8].shortcut).toBeUndefined();
     expect(items.every((item) => item.href === `#/${item.id}`)).toBe(true);
+  });
+
+  test('Landing counts failures in red, else the runs in the queue quietly', () => {
+    const failing = nav({ landing: { active: 4, failed: 2 } }).find(
+      (item) => item.id === 'landing'
+    );
+    expect(failing?.count).toBe(2);
+    expect(failing?.countTone).toBe('danger');
+    expect(failing?.countLabel).toBe('4 in the queue, 2 failed');
+    const quiet = nav({ landing: { active: 3, failed: 0 } }).find(
+      (item) => item.id === 'landing'
+    );
+    expect(quiet?.count).toBe(3);
+    expect(quiet?.countTone).toBeUndefined();
   });
 
   test('Needs you counts the asks in amber; Threads the unread in the accent', () => {
@@ -458,6 +475,7 @@ test('every destination has a label', () => {
     'docs',
     'graph',
     'issues',
+    'landing',
     'needs-you',
     'overseer',
     'runs',

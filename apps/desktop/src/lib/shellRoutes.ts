@@ -4,6 +4,7 @@ import {
   Bot,
   CalendarDays,
   CalendarRange,
+  GitMerge,
   History,
   Inbox,
   ListTodo,
@@ -37,6 +38,7 @@ export type ShellDestination =
   | 'timeline'
   | 'graph'
   | 'threads'
+  | 'landing'
   | 'docs'
   | 'runs'
   | 'settings';
@@ -121,6 +123,15 @@ export const SHELL_ROUTES: readonly ShellRoute[] = [
     action: { type: 'setProjectView', view: 'threads' },
   },
   {
+    id: 'landing',
+    label: 'Landing',
+    icon: GitMerge,
+    // `g l` is the Timeline, so Landing takes the Q of its merge queue.
+    shortcut: ['G', 'Q'],
+    href: hrefFor('landing'),
+    action: { type: 'setProjectView', view: 'landing' },
+  },
+  {
     id: 'docs',
     label: 'Docs',
     icon: BookText,
@@ -165,8 +176,8 @@ export function shellShortcut(
  * in the main column (the views stay mounted, hidden, beneath it), so while
  * it is open it (or Runs, its page with a row of its own) is the place. The
  * Live page reads as Runs › Live (it opens from the Runs page and closes back
- * to it), so it marks Runs too. Under Tasks the Docs, Threads, Timeline and
- * Graph pages are their own rows, the Needs you preset is its row, and
+ * to it), so it marks Runs too. Under Tasks the Docs, Threads, Timeline,
+ * Graph and Landing pages are their own rows, the Needs you preset is its row, and
  * everything else (the list, a task page, Files, Terminals, Projects) is
  * Issues.
  */
@@ -227,6 +238,7 @@ function hasOwnRow(
     view === 'threads' ||
     view === 'timeline' ||
     view === 'graph' ||
-    view === 'week'
+    view === 'week' ||
+    view === 'landing'
   );
 }

@@ -63,6 +63,8 @@ export interface DispatchShellProps {
   overseerBadge: OverseerBadge;
   needsYou: number;
   threadsUnread: number;
+  /** The Landing row's merge-queue counts (`landingCounts`). */
+  landing?: { active: number; failed: number };
   adminItems: readonly AdminItem[];
   projects: ShellSection;
   /** This person's tier on the daemon, the badge beside their name. */
@@ -302,6 +304,7 @@ export function DispatchShell({
   overseerBadge,
   needsYou,
   threadsUnread,
+  landing,
   adminItems,
   projects,
   tier,
@@ -384,6 +387,7 @@ export function DispatchShell({
               overseer: overseerBadge,
               needsYou,
               threadsUnread,
+              landing,
               modLabel,
               hosted,
             })}

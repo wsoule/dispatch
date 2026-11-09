@@ -65,6 +65,9 @@ export interface ShellNavInput {
   needsYou: number;
   /** Messages to this person not yet read: the Threads row's accent count. */
   threadsUnread: number;
+  /** Runs in the merge queue and failed ones waiting on you: the Landing
+   * row's count, red while any failed, a quiet number otherwise. */
+  landing?: { active: number; failed: number };
   /** "⌘" or "Ctrl", for the shortcut hints. */
   modLabel: string;
   /** The hosted planner on app.dispatch.foo: planning destinations only. */
@@ -79,6 +82,7 @@ const NAV_DESTINATIONS: readonly ShellDestination[] = [
   'timeline',
   'graph',
   'threads',
+  'landing',
   'docs',
   'runs',
 ];
@@ -122,6 +126,11 @@ export function buildShellNav(input: ShellNavInput): ShellNavItem[] {
       item.count = input.threadsUnread;
       item.countLabel = `${input.threadsUnread} unread`;
       item.countTone = 'accent';
+    } else if (id === 'landing' && input.landing !== undefined) {
+      const { active, failed } = input.landing;
+      item.count = failed > 0 ? failed : active;
+      item.countLabel = `${active} in the queue, ${failed} failed`;
+      if (failed > 0) item.countTone = 'danger';
     }
     return item;
   });

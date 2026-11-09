@@ -218,6 +218,7 @@ export type HostedView = Extract<
   | 'allocation'
   | 'live'
   | 'week'
+  | 'landing'
 >;
 
 /** A hosted view as a page, with the parameters its route carries: the
@@ -435,11 +436,13 @@ export function projectViewDestination(view: ProjectView): NavDestination {
     case 'overview':
     case 'board':
     case 'inbox':
-    case 'landing':
     case 'runs':
     case 'review':
-    case 'landed':
       return { kind: 'tasks' };
+    // Every run headed for main; the retired 'landed' page lands here too.
+    case 'landing':
+    case 'landed':
+      return { kind: 'page', page: { kind: 'view', view: 'landing' } };
     case 'docs':
       return { kind: 'docs' };
     case 'files':
@@ -547,6 +550,8 @@ export function keyAction(
       return { type: 'setProjectView', view: 'week' };
     case 'goto-graph':
       return { type: 'openGraph', scope: DEFAULT_GRAPH_SCOPE, nodeId: null };
+    case 'goto-landing':
+      return { type: 'setProjectView', view: 'landing' };
     case 'goto-settings':
       return { type: 'openSettings' };
     case 'quick-open':

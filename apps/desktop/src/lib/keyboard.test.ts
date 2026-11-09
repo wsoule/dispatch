@@ -140,6 +140,7 @@ describe('resolveGlobalKeyCommand', () => {
     expect(resolveGlobalKeyCommand(key('a'), armed)).toBe('goto-overseer');
     expect(resolveGlobalKeyCommand(key('m'), armed)).toBe('goto-threads');
     expect(resolveGlobalKeyCommand(key('l'), armed)).toBe('goto-timeline');
+    expect(resolveGlobalKeyCommand(key('q'), armed)).toBe('goto-landing');
     // A second `g` completes the Graph chord rather than re-arming the prefix.
     expect(resolveGlobalKeyCommand(key('g'), armed)).toBe('goto-graph');
     expect(resolveChordPrefix(key('g'), armed)).toBeNull();

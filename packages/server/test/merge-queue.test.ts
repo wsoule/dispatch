@@ -89,6 +89,8 @@ class StubRunner {
   verifyResult: CommandResult = { ok: true, stdout: '', stderr: '' };
   pushResult: CommandResult = { ok: true, stdout: '', stderr: '' };
   ghMergeResult: CommandResult = { ok: true, stdout: '', stderr: '' };
+  // `git diff --name-only --diff-filter=U`: the paths a stopped rebase left unmerged.
+  conflictResult: CommandResult = { ok: true, stdout: '', stderr: '' };
 
   run = (cwd: string, cmd: string[]): Promise<CommandResult> => {
     this.calls.push({ cwd, cmd });
@@ -99,6 +101,8 @@ class StubRunner {
     }
     if (cmd[0] === 'git' && cmd[1] === 'rebase')
       return Promise.resolve(this.rebaseResult);
+    if (cmd[0] === 'git' && cmd[1] === 'diff' && cmd[3] === '--diff-filter=U')
+      return Promise.resolve(this.conflictResult);
     if (cmd[0] === 'bash' && cmd[1] === '-lc')
       return Promise.resolve(this.verifyResult);
     if (cmd[0] === 'git' && cmd[1] === 'push')
@@ -624,6 +628,28 @@ describe('MergeQueue local-run happy path', () => {
       .snapshot()
       .history.find((e) => e.runId === goodRunId);
     expect(goodEntry?.state).toBe('merged');
+  });
+
+  it('records the files a conflicted rebase stopped on, read before the abort', async () => {
+    const harness = makeHarness();
+    const { runId } = await dispatchAndFinish(harness, 'Conflicting');
+    const stub = new StubRunner();
+    stub.rebaseResult = {
+      ok: false,
+      stdout: 'CONFLICT (content): Merge conflict in a.ts',
+      stderr: 'error: could not apply 71fc328... feat: a',
+    };
+    stub.conflictResult = { ok: true, stdout: 'a.ts\nsrc/b.ts\n', stderr: '' };
+    const queue = makeQueue(harness, stub.run);
+
+    queue.enqueue(runId);
+    await waitFor(() => queue.snapshot().history.length === 1);
+
+    expect(queue.snapshot().history[0].conflicts).toEqual(['a.ts', 'src/b.ts']);
+    const diffIdx = stub.calls.findIndex((c) => c.cmd[1] === 'diff');
+    const abortIdx = stub.calls.findIndex((c) => c.cmd[2] === '--abort');
+    expect(diffIdx).toBeGreaterThan(-1);
+    expect(diffIdx).toBeLessThan(abortIdx);
   });
 });
 

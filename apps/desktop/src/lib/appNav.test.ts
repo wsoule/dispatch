@@ -69,13 +69,21 @@ describe('projectViewDestination', () => {
     'overview',
     'board',
     'inbox',
-    'landing',
     'runs',
     'review',
-    'landed',
   ] as const)('%p becomes the Tasks list', (view) => {
     expect(projectViewDestination(view)).toEqual({ kind: 'tasks' });
   });
+
+  test.each(['landing', 'landed'] as const)(
+    '%p opens the Landing page under Tasks',
+    (view) => {
+      expect(projectViewDestination(view)).toEqual({
+        kind: 'page',
+        page: { kind: 'view', view: 'landing' },
+      });
+    }
+  );
 
   test('docs becomes the All docs page', () => {
     expect(projectViewDestination('docs')).toEqual({ kind: 'docs' });
@@ -1033,6 +1041,7 @@ describe('keyAction', () => {
     ['goto-projects', { type: 'showTasks', preset: 'review' }],
     ['goto-threads', { type: 'setProjectView', view: 'threads' }],
     ['goto-timeline', { type: 'openTimeline', project: null }],
+    ['goto-landing', { type: 'setProjectView', view: 'landing' }],
     [
       'goto-graph',
       { type: 'openGraph', scope: { level: 'milestone' }, nodeId: null },

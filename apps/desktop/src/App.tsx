@@ -172,6 +172,7 @@ import {
 } from './lib/forYouDismissed';
 import type { InboxEntry, InboxTarget } from './lib/inbox';
 import { projectViewForInboxTarget, unreadCount } from './lib/inbox';
+import { buildLandingBoard, landingCounts } from './lib/landingQueue';
 import { liveCeilingsOf, spendToday } from './lib/liveSpend';
 import { countMergeReady } from './lib/mergeReady';
 import { resolveExecuteModel } from './lib/models';
@@ -230,6 +231,7 @@ import { FilesView } from './views/FilesView';
 import { FirstRunView } from './views/FirstRunView';
 import { GraphView } from './views/GraphView';
 import { IssuesView, type TasksSidePage } from './views/IssuesView';
+import { LandingView } from './views/LandingView';
 import { LiveView } from './views/LiveView';
 import { OverseerFocusView } from './views/OverseerFocusView';
 import { type OverseerFocus, OverseerView } from './views/OverseerView';
@@ -847,6 +849,19 @@ function App() {
   const blockedIds = useMemo(
     () => computeBlockedIds(data.tasks, statusModel),
     [data.tasks, statusModel]
+  );
+  // The sidebar's Landing counts, from the same read model the Landing page renders.
+  const landing = useMemo(
+    () =>
+      landingCounts(
+        buildLandingBoard(
+          data.mergeQueue,
+          data.tasksIncludingArchived,
+          statusModel,
+          Date.now()
+        )
+      ),
+    [data.mergeQueue, data.tasksIncludingArchived, statusModel]
   );
   const statusCounts = useMemo(
     () =>
@@ -1946,6 +1961,16 @@ function App() {
             onBack={closeSidePage}
           />
         );
+      case 'landing':
+        return (
+          <LandingView
+            data={data}
+            onBack={closeSidePage}
+            onOpenRun={(taskId, runId) =>
+              dispatchNav({ type: 'openTask', taskId, runId })
+            }
+          />
+        );
     }
   };
 
@@ -2361,6 +2386,7 @@ function App() {
       overseerBadge={{ count: orb.count, tone: orb.tone, label: orbTitle }}
       needsYou={needs.count}
       threadsUnread={unreadToMe}
+      landing={landing}
       adminItems={admin}
       projects={projectsSection}
       tier={data.myTier}

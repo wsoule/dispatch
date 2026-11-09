@@ -21,6 +21,7 @@ export const GOTO_CHORDS: readonly { key: string; label: string }[] = [
   { key: 'W', label: 'My week' },
   { key: 'L', label: 'Timeline' },
   { key: 'G', label: 'Graph' },
+  { key: 'Q', label: 'Landing' },
   { key: 'S', label: 'Settings' },
 ];
 

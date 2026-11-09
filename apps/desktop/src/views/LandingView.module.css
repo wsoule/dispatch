@@ -1,0 +1,97 @@
+/* Layout of the Landing page (views/LandingView.tsx): the head and filter
+   tabs in a bar ruled off from the list, the sections of runs, the bulk
+   re-queue bar and the verify-log dialog's body. Colours and type come from
+   @dispatch/ui's components and tokens; this sheet only places them. */
+
+.root {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  flex-shrink: 0;
+  padding: var(--s-2) var(--s-4) 0;
+  border-bottom: 1px solid var(--divider);
+}
+
+.empty {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s-6) var(--s-4);
+}
+
+.list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-height: 0;
+  padding: var(--s-2) var(--s-2) var(--s-4);
+  overflow: auto;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.trailing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+.steps {
+  width: 64px;
+}
+
+.failedText {
+  color: var(--red);
+}
+
+.quiet {
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+.bulk {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0 var(--s-2) var(--s-2);
+  padding: var(--s-1) var(--s-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+
+.bulkCount {
+  flex: 1;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.log {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+}
