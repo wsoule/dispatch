@@ -389,3 +389,76 @@ test('closing quick open with focus nowhere lands it on Go to file, or the edito
   // Closing quick open brings the tree back, which loads its root again.
   await settle();
 });
+
+// The fake client with one file's text replaced, to give Tab something to indent.
+function withText(data: DispatchProjectData, text: string) {
+  const client = data.client;
+  if (client === null) throw new Error('fake data has a client');
+  return {
+    ...data,
+    client: {
+      ...client,
+      fetchWorkspaceFile: (path: string) =>
+        client
+          .fetchWorkspaceFile(path)
+          .then((file) => ({ ...file, text }) satisfies WorkspaceFile),
+    },
+  } as DispatchProjectData;
+}
+
+test('opening another file inside the autosave debounce still saves the edit', async () => {
+  const recorded = recorder();
+  render(
+    <FilesView
+      data={fakeData(recorded)}
+      initialPath="src/a.ts"
+      quickOpen
+      onQuickOpenChange={() => {}}
+    />
+  );
+  const editor = await screen.findByLabelText('Editing src/a.ts');
+  fireEvent.change(editor, { target: { value: 'a edited' } });
+  // Quick open's only hit is src/b.ts.
+  fireEvent.click(await screen.findByRole('option'));
+
+  await screen.findByLabelText('Editing src/b.ts');
+  expect(recorded.saved).toEqual([{ path: 'src/a.ts', text: 'a edited' }]);
+});
+
+test('leaving the view saves an unsaved edit', async () => {
+  const recorded = recorder();
+  const { unmount } = render(
+    <FilesView data={fakeData(recorded)} initialPath="src/a.ts" />
+  );
+  const editor = await screen.findByLabelText('Editing src/a.ts');
+  fireEvent.change(editor, { target: { value: 'changed' } });
+  unmount();
+  await waitFor(() =>
+    expect(recorded.saved).toEqual([{ path: 'src/a.ts', text: 'changed' }])
+  );
+});
+
+test('⌘S saves now rather than after the debounce', async () => {
+  const recorded = recorder();
+  render(<FilesView data={fakeData(recorded)} initialPath="src/a.ts" />);
+  const editor = await screen.findByLabelText('Editing src/a.ts');
+  fireEvent.change(editor, { target: { value: 'now' } });
+  fireEvent.keyDown(window, { key: 's', metaKey: true });
+  expect(recorded.saved).toEqual([{ path: 'src/a.ts', text: 'now' }]);
+  expect(await screen.findByText('Saved')).toBeDefined();
+});
+
+test('Tab indents in the editor with the file’s own unit instead of leaving it', async () => {
+  render(
+    <FilesView
+      data={withText(fakeData(recorder()), 'if (x) {\n    y;\n}')}
+      initialPath="src/a.ts"
+    />
+  );
+  const editor =
+    await screen.findByLabelText<HTMLTextAreaElement>('Editing src/a.ts');
+  editor.setSelectionRange(8, 8);
+  fireEvent.keyDown(editor, { key: 'Tab' });
+  // The file indents by four, so Tab types four.
+  expect(editor.value).toBe('if (x) {    \n    y;\n}');
+});

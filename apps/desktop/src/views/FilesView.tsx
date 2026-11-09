@@ -2,13 +2,15 @@ import type { WorkspaceFile } from '@dispatch/client';
 import {
   Button,
   Chip,
+  detectIndentUnit,
   EmptyState,
+  handleTextEditingKey,
   KbdKeys,
   Notice,
   useModKeyLabel,
 } from '@dispatch/ui';
 import { Eye, FileCode2, Search } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { FilePreview } from '../components/files/FilePreview';
 import { FileTree } from '../components/files/FileTree';
@@ -21,6 +23,7 @@ import {
   AUTOSAVE_DEBOUNCE_MS,
   beginSave,
   editBuffer,
+  hasUnsavedChanges,
   openBuffer,
   saveFailed,
   saveSucceeded,
@@ -92,6 +95,10 @@ export function FilesView({
   // keystroke, which is what makes the debounce a debounce.
   const bufferRef = useRef<EditorBuffer | null>(null);
   bufferRef.current = buffer;
+  // The save currently on the wire, so a later save of the same file queues
+  // behind it instead of racing it.
+  const inFlight = useRef<Promise<void>>(Promise.resolve());
+  const indentUnit = useMemo(() => detectIndentUnit(file?.text ?? ''), [file]);
   const rootRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
 
@@ -103,9 +110,73 @@ export function FilesView({
     else onQuickOpenChange(open);
   };
 
+  // Saves the open buffer now if it holds unsaved text and no save is running;
+  // the autosave timer, ⌘S and nothing else start a save of the open file.
+  const saveOpenBuffer = useCallback(() => {
+    const current = bufferRef.current;
+    if (client === null || current === null || !shouldSave(current)) return;
+    const sending = beginSave(current);
+    bufferRef.current = sending;
+    setBuffer(sending);
+    inFlight.current = client
+      .saveWorkspaceFile(sending.path, sending.inFlightText ?? sending.text, {
+        runId,
+      })
+      .then(() => {
+        setBuffer((prev) =>
+          // Guard against the file having been switched mid-save: the reply
+          // belongs to the buffer that sent it, not to whatever is open now.
+          prev === null || prev.path !== sending.path
+            ? prev
+            : saveSucceeded(prev)
+        );
+      })
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : 'save failed';
+        setBuffer((prev) =>
+          prev === null || prev.path !== sending.path
+            ? prev
+            : saveFailed(prev, message)
+        );
+      });
+  }, [client, runId]);
+
+  // Writes out the edits of a buffer being closed (another file opened, the
+  // view unmounted) that the debounce has not saved yet, after any save
+  // already in flight so the newer text lands last.
+  const saveLeavingBuffer = useCallback((): Promise<void> => {
+    const leaving = bufferRef.current;
+    if (client === null || leaving === null || !hasUnsavedChanges(leaving)) {
+      return inFlight.current;
+    }
+    const { path, text } = leaving;
+    inFlight.current = inFlight.current
+      .then(async () => {
+        await client.saveWorkspaceFile(path, text, { runId });
+      })
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : 'save failed';
+        setLoadError(`Could not save ${path}: ${message}`);
+      });
+    // Handed off: the autosave timer must not send the same text again.
+    const handedOff: EditorBuffer = {
+      ...leaving,
+      savedText: text,
+      status: 'saving',
+    };
+    bufferRef.current = handedOff;
+    setBuffer((prev) => (prev?.path === path ? handedOff : prev));
+    return inFlight.current;
+  }, [client, runId]);
+
+  useEffect(() => () => void saveLeavingBuffer(), [saveLeavingBuffer]);
+
   const open = useCallback(
     async (path: string) => {
       if (client === null) return;
+      const flushed = saveLeavingBuffer();
+      // Reopening the same file must read it after its own save lands.
+      if (bufferRef.current?.path === path) await flushed;
       setSelected(path);
       try {
         const loaded = await client.fetchWorkspaceFile(path, { runId });
@@ -124,7 +195,7 @@ export function FilesView({
         );
       }
     },
-    [client, runId]
+    [client, runId, saveLeavingBuffer]
   );
 
   // Opens `initialPath` once a client is up; a later reconnect never yanks the
@@ -141,36 +212,22 @@ export function FilesView({
   // Autosave: one timer, re-armed on every edit, that saves whatever the
   // buffer holds when it fires.
   useEffect(() => {
-    if (client === null || buffer === null || !shouldSave(buffer)) return;
-    const timer = setTimeout(() => {
-      const current = bufferRef.current;
-      if (current === null || !shouldSave(current)) return;
-      const sending = beginSave(current);
-      setBuffer(sending);
-      void client
-        .saveWorkspaceFile(sending.path, sending.inFlightText ?? sending.text, {
-          runId,
-        })
-        .then(() => {
-          setBuffer((prev) =>
-            // Guard against the file having been switched mid-save: the reply
-            // belongs to the buffer that sent it, not to whatever is open now.
-            prev === null || prev.path !== sending.path
-              ? prev
-              : saveSucceeded(prev)
-          );
-        })
-        .catch((err: unknown) => {
-          const message = err instanceof Error ? err.message : 'save failed';
-          setBuffer((prev) =>
-            prev === null || prev.path !== sending.path
-              ? prev
-              : saveFailed(prev, message)
-          );
-        });
-    }, AUTOSAVE_DEBOUNCE_MS);
+    if (buffer === null || !shouldSave(buffer)) return;
+    const timer = setTimeout(saveOpenBuffer, AUTOSAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [client, buffer, runId]);
+  }, [buffer, saveOpenBuffer]);
+
+  // ⌘S / Ctrl+S saves now instead of waiting out the debounce.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.key.toLowerCase() !== 's') return;
+      event.preventDefault();
+      saveOpenBuffer();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [saveOpenBuffer]);
 
   // Quick open cannot show while the daemon is down (the page is
   // DaemonUnavailable then), so an open state is dropped rather than left
@@ -311,12 +368,16 @@ export function FilesView({
             ) : (
               /* A textarea rather than a code editor component: it is the one
                  control that gets native undo, IME input, spellcheck-off and
-                 accessibility for free, and the surrounding autosave is where
-                 the actual behaviour lives. */
+                 accessibility for free; handleTextEditingKey adds Tab indent
+                 and auto-indent on top, and the autosave is where the rest
+                 lives. */
               <textarea
                 ref={textRef}
                 value={buffer.text}
                 spellCheck={false}
+                onKeyDown={(event) =>
+                  handleTextEditingKey(event, 'code', indentUnit)
+                }
                 onChange={(event) =>
                   setBuffer((prev) =>
                     prev === null ? prev : editBuffer(prev, event.target.value)

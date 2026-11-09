@@ -4,6 +4,7 @@ import { type ReactNode, useEffect, useLayoutEffect, useRef } from 'react';
 
 import { fitHeight } from '../lib/fit-height';
 import { useMergedRef } from '../lib/refs';
+import { handleTextEditingKey } from '../lib/textEditing';
 import { cx } from '../tasks/class-names';
 import { joinIds, useFieldControl } from './field';
 import styles from './text-area.module.css';
@@ -22,6 +23,9 @@ export function TextArea({
   id,
   value,
   onInput,
+  onKeyDown,
+  editing,
+  indentUnit,
   'aria-describedby': describedBy,
   'aria-invalid': ariaInvalid,
   ref,
@@ -55,6 +59,12 @@ export function TextArea({
       onInput={(event) => {
         if (autoGrow) fitHeight(event.currentTarget);
         onInput?.(event);
+      }}
+      onKeyDown={(event) => {
+        onKeyDown?.(event);
+        if (editing !== undefined) {
+          handleTextEditingKey(event, editing, indentUnit);
+        }
       }}
     />
   );

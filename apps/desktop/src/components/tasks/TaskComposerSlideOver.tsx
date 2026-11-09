@@ -18,6 +18,7 @@ import {
   Button,
   Chip,
   cx,
+  handleTextEditingKey,
   isHexColor,
   KbdKeys,
   type LabelChoice,
@@ -513,6 +514,7 @@ function DescribeFields({
         readOnly={state.submitting}
         aria-busy={state.submitting ? 'true' : undefined}
         onChange={(event) => state.setPrompt(event.target.value)}
+        onKeyDown={(event) => handleTextEditingKey(event, 'markdown')}
       />
       {parentTitle !== null && (
         <span data-slot="draft-parent" className={styles.draftParent}>
@@ -916,6 +918,7 @@ function QuickAddFields({
         rows={4}
         value={state.description}
         onChange={(event) => state.setDescription(event.target.value)}
+        onKeyDown={(event) => handleTextEditingKey(event, 'markdown')}
       />
       {state.pendingFiles.length > 0 && (
         <div
@@ -1143,6 +1146,7 @@ function CaptureFields({
         rows={5}
         value={state.draft}
         onChange={(event) => state.setDraft(event.target.value)}
+        onKeyDown={(event) => handleTextEditingKey(event, 'markdown')}
       />
       {state.error !== null && (
         <p role="alert" className={styles.error} data-tone="danger">

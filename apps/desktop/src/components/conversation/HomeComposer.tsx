@@ -199,6 +199,7 @@ export function HomeComposer({
         rows={2}
         className={styles.text}
         aria-label={`Write to ${label}`}
+        editing="markdown"
         placeholder={disabled ? disabledReason : `Write to ${label}…`}
         value={body}
         disabled={disabled}

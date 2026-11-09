@@ -8,6 +8,7 @@ import type {
 } from 'react';
 
 import type { PickerOption, SaveResult } from '../edit/types';
+import type { TextEditingMode } from '../lib/textEditing';
 import type { DataAttributes } from '../types';
 
 // Props of the controls family: general-purpose form controls and Menu.
@@ -52,6 +53,12 @@ export interface TextAreaProps extends TextareaHTMLAttributes<HTMLTextAreaElemen
   /** Grows with its content (the default); `rows` stays the minimum. */
   autoGrow?: boolean;
   invalid?: boolean;
+  /** Opts into editor keys: list continuation, Tab indent and bold/italic for
+   *  `markdown`; auto-indent and Tab indent for `code`. The caller's own
+   *  onKeyDown runs first and wins by calling preventDefault. */
+  editing?: TextEditingMode;
+  /** What Tab inserts in `code` mode; two spaces when omitted. */
+  indentUnit?: string;
   ref?: Ref<HTMLTextAreaElement>;
 }
 

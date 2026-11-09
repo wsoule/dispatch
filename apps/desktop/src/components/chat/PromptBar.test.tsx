@@ -184,6 +184,16 @@ describe('PromptBar', () => {
     expect(submitCount).toBe(1);
   });
 
+  test('Shift+Enter on a list item starts the next item', () => {
+    render(<ControlledPromptBar onSubmit={() => {}} />);
+    const textarea = screen.getByRole<HTMLTextAreaElement>('textbox');
+
+    fireEvent.change(textarea, { target: { value: '- one' } });
+    textarea.setSelectionRange(5, 5);
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
+    expect(textarea.value).toBe('- one\n- ');
+  });
+
   // An IME's Enter confirms the character being composed; it must neither send
   // the message nor pick a command.
   test('an IME composing Enter is left alone', () => {

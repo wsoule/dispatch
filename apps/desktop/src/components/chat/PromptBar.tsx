@@ -1,4 +1,4 @@
-import { Button, Chip, cx, Spinner } from '@dispatch/ui';
+import { Button, Chip, cx, handleTextEditingKey, Spinner } from '@dispatch/ui';
 import { ArrowUp, FileText, Mic, Paperclip } from 'lucide-react';
 import {
   type ClipboardEvent,
@@ -143,7 +143,7 @@ function composing(event: KeyboardEvent<HTMLTextAreaElement>): boolean {
  * to go out and the reference chips (removable Chips), the '/' command list, an
  * auto-growing textarea (one to eight lines) and a footer with the model and
  * effort selects, attach, dictation and Send. Enter submits and Shift+Enter
- * inserts a newline; an IME's composing keys are left alone. Pasted or dropped
+ * inserts a newline (continuing a markdown list); an IME's composing keys are left alone. Pasted or dropped
  * files go to `onAttachFiles`, never into the text. Typing '/' opens an inline
  * listbox of the matching commands above the textarea (no popover: the caret
  * stays in the text box, which names the list and its active option through
@@ -288,7 +288,10 @@ export function PromptBar({
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       if (canSubmit) onSubmit();
+      return;
     }
+    // Shift+Enter on a markdown list item starts the next item.
+    handleTextEditingKey(event, 'markdown');
   }
 
   // The caller's own completion list, or the command list while it shows.

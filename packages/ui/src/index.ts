@@ -4,6 +4,11 @@
 // Import '@dispatch/ui/styles.css' once, globally, in the host.
 export * from './types';
 export { COPIED_MS, writeClipboard } from './lib/clipboard';
+export {
+  detectIndentUnit,
+  handleTextEditingKey,
+  type TextEditingMode,
+} from './lib/textEditing';
 export { Link, UiLinkProvider, type UiLinkProviderProps } from './lib/link';
 export { type ThemeChoice, themeChoiceOf, themeScript } from './lib/theme';
 export {
