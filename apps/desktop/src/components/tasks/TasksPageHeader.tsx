@@ -14,7 +14,7 @@ export function TasksPageHeader({
   crumb,
   actions,
 }: {
-  onBack: () => void;
+  onBack?: () => void;
   crumb: ReactNode[];
   actions?: ReactNode;
 }) {

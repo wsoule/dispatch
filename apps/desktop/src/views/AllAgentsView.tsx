@@ -16,6 +16,7 @@ import type { ReactNode } from 'react';
 import { memo, useMemo, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
+import { PageHead } from '../components/shell/PageHead';
 import { StateMark } from '../components/status/StateMark';
 import { ShimmerLabel } from '../components/transcript/ShimmerLabel';
 import { useEventCallback } from '../hooks/useEventCallback';
@@ -69,6 +70,8 @@ interface AllAgentsViewProps {
   /** Opens the Live page (every container with work moving), the toolbar's
    * "Live" button; the page has no sidebar row of its own. */
   onOpenLive?: () => void;
+  /** The page's h1, when it is a main-column page of its own (the sidebar's Runs). */
+  title?: string;
 }
 
 /** The one filter control, in the order work moves through it — a segmented control in the
@@ -240,6 +243,7 @@ export function AllAgentsView({
   onRetry,
   onJumpToRun,
   onOpenLive,
+  title,
 }: AllAgentsViewProps) {
   const [showAll, setShowAll] = useState(false);
   const [stateFilter, setStateFilter] = useState<AgentFilter>('all');
@@ -411,6 +415,11 @@ export function AllAgentsView({
 
   return (
     <div className={styles.root}>
+      {title === undefined ? null : (
+        <div className={styles.head}>
+          <PageHead title={title} />
+        </div>
+      )}
       {toolbar}
       <div className={styles.body}>{body}</div>
     </div>

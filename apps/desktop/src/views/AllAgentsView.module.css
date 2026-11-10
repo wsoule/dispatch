@@ -1,4 +1,4 @@
-/* Layout of Settings › Runs (views/AllAgentsView.tsx). Settings hosts the view in a body
+/* Layout of the Runs page (views/AllAgentsView.tsx). Settings hosts the view in a body
    that does not scroll (SettingsLayout.module.css .hostedBody), so the view owns its
    scroller: the toolbar stays put and the list scrolls under it. The gutters match the
    hosted page head above it (.hosted .head): 40px, and 16px at 900px and below. Colours
@@ -11,6 +11,11 @@
   flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
+}
+
+/* The page head on the Runs page, on the toolbar's gutters. */
+.head {
+  padding: var(--s-4) 40px 0;
 }
 
 .body {
@@ -114,6 +119,10 @@
 @media (width <= 900px) {
   .root {
     --view-toolbar-gutter: 16px;
+  }
+
+  .head {
+    padding: var(--s-4) 16px 0;
   }
 
   .body {

@@ -860,6 +860,9 @@ interface OverseerChatProps {
   /** Sits between the transcript and the composer: the Overseer page puts its posts
    * and docked asks here on a narrow window. */
   aboveComposer?: ReactNode;
+  /** The starter question chips on an empty start; false once posts or notes
+   * fill the space above the composer. Default true. */
+  starters?: boolean;
   /** Locks the composer, as for a revoked Overseer. */
   disabled?: boolean;
   /** Opens a show_tasks door; without it a door reads as a plain line. */
@@ -889,6 +892,7 @@ export function OverseerChat({
   overseer,
   placeholder,
   aboveComposer,
+  starters = true,
   disabled = false,
   onOpenDoor,
   work,
@@ -1275,20 +1279,22 @@ export function OverseerChat({
             waits for your approval.
           </p>
         </div>
-        <div
-          className={styles.starters}
-          aria-label="Starter questions"
-          role="group"
-        >
-          {STARTERS.map((starter) => (
-            <ChipButton
-              key={starter.label}
-              onClick={() => setDraft(starter.text)}
-            >
-              {starter.label}
-            </ChipButton>
-          ))}
-        </div>
+        {starters && (
+          <div
+            className={styles.starters}
+            aria-label="Starter questions"
+            role="group"
+          >
+            {STARTERS.map((starter) => (
+              <ChipButton
+                key={starter.label}
+                onClick={() => setDraft(starter.text)}
+              >
+                {starter.label}
+              </ChipButton>
+            ))}
+          </div>
+        )}
         {sendError !== null && <ErrorLine role="alert">{sendError}</ErrorLine>}
         {aboveComposer}
         {/* Which model the conversation opens on — remembered per device, so

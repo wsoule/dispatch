@@ -44,8 +44,8 @@ export function DocsView({
   tasksPage,
 }: {
   data: DispatchProjectData;
-  /** The Tasks back chip leads the header and "All docs" walks back to the list. */
-  tasksPage: { onBack: () => void; onOpenAllDocs: () => void };
+  /** "All docs" walks back to the list. */
+  tasksPage: { onOpenAllDocs: () => void };
   /** The open doc's discussion, under it. */
   discussion?: (docId: string) => ReactNode;
   initialDoc?: string | null;
@@ -124,15 +124,11 @@ export function DocsView({
       (d) => found.has(d.id) || byTitle.has(d.id)
     );
   }, [docs, filter, hits, query]);
-  // Every state of the page sits under the one header: the back chip, the
-  // crumb and the page's actions.
+  // Every state of the page sits under the one header: the crumb and the
+  // page's actions.
   const frame = (body: ReactNode, crumb: ReactNode[], actions?: ReactNode) => (
     <div data-testid="docs-page" className={styles.page}>
-      <TasksPageHeader
-        onBack={tasksPage.onBack}
-        crumb={crumb}
-        actions={actions}
-      />
+      <TasksPageHeader crumb={crumb} actions={actions} />
       <div className={styles.body}>{body}</div>
     </div>
   );

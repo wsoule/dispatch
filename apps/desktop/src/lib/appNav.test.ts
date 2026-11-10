@@ -13,6 +13,7 @@ import {
   navReducer,
   type NavState,
   onLivePage,
+  onRunsPage,
   type ProjectView,
   projectViewDestination,
   samePlace,
@@ -64,16 +65,12 @@ describe('projectViewDestination', () => {
     }
   );
 
-  test.each([
-    'cockpit',
-    'overview',
-    'board',
-    'inbox',
-    'runs',
-    'review',
-  ] as const)('%p becomes the Tasks list', (view) => {
-    expect(projectViewDestination(view)).toEqual({ kind: 'tasks' });
-  });
+  test.each(['cockpit', 'overview', 'board', 'inbox', 'review'] as const)(
+    '%p becomes the Tasks list',
+    (view) => {
+      expect(projectViewDestination(view)).toEqual({ kind: 'tasks' });
+    }
+  );
 
   test.each(['landing', 'landed'] as const)(
     '%p opens the Landing page under Tasks',
@@ -85,6 +82,13 @@ describe('projectViewDestination', () => {
     }
   );
 
+  test('the retired Allocation page opens Projects', () => {
+    expect(projectViewDestination('allocation')).toEqual({
+      kind: 'page',
+      page: { kind: 'view', view: 'projects' },
+    });
+  });
+
   test('docs becomes the All docs page', () => {
     expect(projectViewDestination('docs')).toEqual({ kind: 'docs' });
   });
@@ -92,15 +96,19 @@ describe('projectViewDestination', () => {
   // Threads has a sidebar row; Files, Terminals, Projects (the tree) and Live
   // (work in motion) are reached from the palette, the Projects section's
   // "All" and the Runs page. All of them are pages under Tasks.
-  test.each(['files', 'terminals', 'threads', 'projects', 'live'] as const)(
-    '%p is a page under Tasks',
-    (view) => {
-      expect(projectViewDestination(view)).toEqual({
-        kind: 'page',
-        page: { kind: 'view', view },
-      });
-    }
-  );
+  test.each([
+    'files',
+    'terminals',
+    'threads',
+    'projects',
+    'runs',
+    'live',
+  ] as const)('%p is a page under Tasks', (view) => {
+    expect(projectViewDestination(view)).toEqual({
+      kind: 'page',
+      page: { kind: 'view', view },
+    });
+  });
 
   test('the Timeline and the Graph are pages under Tasks with their route parameters', () => {
     expect(projectViewDestination('timeline')).toEqual({
@@ -145,7 +153,7 @@ describe('globalViewDestination', () => {
     ['overseer', { kind: 'overseer' }],
     ['settings', { kind: 'settings', page: 'general' }],
     ['sessions', { kind: 'settings', page: 'usage' }],
-    ['all-agents', { kind: 'settings', page: 'runs' }],
+    ['all-agents', { kind: 'page', page: { kind: 'view', view: 'runs' } }],
   ];
   test.each(cases)('%p', (view, expected) => {
     expect(globalViewDestination(view)).toEqual(expected);
@@ -485,13 +493,19 @@ describe('navReducer', () => {
     expect(run([{ type: 'openSettings', page: 'a2a' }]).settings).toBe('a2a');
   });
 
-  test('Sessions and All agents open their Settings pages', () => {
+  test('Sessions opens its Settings page; All agents and Settings › Runs open the Runs page', () => {
     expect(run([{ type: 'setGlobalView', view: 'sessions' }]).settings).toBe(
       'usage'
     );
-    expect(run([{ type: 'setGlobalView', view: 'all-agents' }]).settings).toBe(
-      'runs'
-    );
+    for (const action of [
+      { type: 'setGlobalView', view: 'all-agents' },
+      { type: 'openSettings', page: 'runs' },
+    ] as const) {
+      const state = run([action]);
+      expect(state.settings).toBeNull();
+      expect(state.mainView).toBe('tasks');
+      expect(state.tasksPage).toEqual({ kind: 'view', view: 'runs' });
+    }
   });
 
   test('navigating from inside Settings closes it; closeSettings too', () => {
@@ -785,16 +799,15 @@ describe('history', () => {
   });
 
   describe('the Live page sits under Runs', () => {
-    // Where its Live button is pressed: the Runs page over the Tasks list.
+    // Where its Live button is pressed: the Runs page.
     const runs = run([
       { type: 'showTasks' },
-      { type: 'openSettings', page: 'runs' },
+      { type: 'setProjectView', view: 'runs' },
     ]);
     const live = navReducer(runs, { type: 'setProjectView', view: 'live' });
 
-    test('opening it from Runs closes Settings and records Live as the place', () => {
+    test('opening it from Runs records Live as the place', () => {
       expect(onLivePage(live)).toBe(true);
-      expect(live.settings).toBeNull();
       expect(live.history.at(-1)).toEqual({
         mainView: 'tasks',
         tasksPage: { kind: 'view', view: 'live' },
@@ -802,30 +815,24 @@ describe('history', () => {
     });
 
     test.each([['closePage'], ['escape']] as const)(
-      '%s goes back one place and opens Runs over it, exactly where Live was opened',
+      '%s goes back one place to the Runs page, exactly where Live was opened',
       (type) => {
         const left = navReducer(live, { type });
         expect(onLivePage(left)).toBe(false);
-        expect(left.settings).toBe('runs');
-        expect(left.mainView).toBe(runs.mainView);
-        expect(left.tasksPage).toEqual(runs.tasksPage);
+        expect(onRunsPage(left)).toBe(true);
         expect(left.history).toEqual(live.history);
         expect(left.historyIndex).toBe(live.historyIndex - 1);
-        // A second Escape closes Runs for the list, never bouncing back to Live.
+        // A second Escape leaves Runs for the list, never bouncing back to Live.
         const closed = navReducer(left, { type: 'escape' });
-        expect(closed.settings).toBeNull();
         expect(closed.tasksPage).toEqual({ kind: 'list' });
       }
     );
 
-    test('opened from the Overseer by the palette, leaving it opens Runs over the Overseer', () => {
+    test('opened from elsewhere (the palette, a reload), leaving it opens the Runs page', () => {
       const fromOverseer = run([{ type: 'setProjectView', view: 'live' }]);
-      const left = navReducer(fromOverseer, { type: 'escape' });
-      expect(left.mainView).toBe('overseer');
-      expect(left.settings).toBe('runs');
-    });
-
-    test('with no place behind it (a reload on #/live), Runs opens over the Tasks list', () => {
+      expect(onRunsPage(navReducer(fromOverseer, { type: 'escape' }))).toBe(
+        true
+      );
       const reloaded = navReducer(
         {
           ...initialNavState,
@@ -837,13 +844,8 @@ describe('history', () => {
         },
         { type: 'closePage' }
       );
-      expect(reloaded.settings).toBe('runs');
-      expect(reloaded.mainView).toBe('tasks');
-      expect(reloaded.tasksPage).toEqual({ kind: 'list' });
-      // Closing Runs then shows the list, not Live again.
-      expect(navReducer(reloaded, { type: 'escape' }).tasksPage).toEqual({
-        kind: 'list',
-      });
+      expect(onRunsPage(reloaded)).toBe(true);
+      expect(reloaded.settings).toBeNull();
     });
 
     test('a peek over Live closes first; the page is left on the next Escape', () => {
@@ -851,7 +853,7 @@ describe('history', () => {
       const once = navReducer(peeked, { type: 'escape' });
       expect(once.peek).toBeNull();
       expect(onLivePage(once)).toBe(true);
-      expect(navReducer(once, { type: 'escape' }).settings).toBe('runs');
+      expect(onRunsPage(navReducer(once, { type: 'escape' }))).toBe(true);
     });
 
     test('every other page still closes to the Tasks list', () => {

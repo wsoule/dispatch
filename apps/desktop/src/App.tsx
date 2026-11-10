@@ -15,7 +15,7 @@ import {
   useModKeyLabel,
 } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bot, Coins, TriangleAlert } from 'lucide-react';
+import { Coins, TriangleAlert } from 'lucide-react';
 import {
   type ReactNode,
   useCallback,
@@ -207,6 +207,7 @@ import {
 import {
   currentShellDestination,
   currentShellPageTitle,
+  onUnlistedPage,
 } from './lib/shellRoutes';
 import { buildShortcutGroups } from './lib/shortcutGroups';
 import { useStatusModelOf } from './lib/statusModel';
@@ -232,7 +233,6 @@ import { openRefWith, type RefAction } from './lib/threadSources';
 import { checkForUpdate, installUpdateAndRelaunch } from './lib/updater';
 import { applyZoomFactor, loadZoomFactor, stepZoomFactor } from './lib/zoom';
 import { AllAgentsView } from './views/AllAgentsView';
-import { AllocationView } from './views/AllocationView';
 import { DocsView } from './views/DocsView';
 import { DraftView } from './views/DraftView';
 import { FilesView } from './views/FilesView';
@@ -1916,18 +1916,16 @@ function App() {
         return (
           <FilesView
             data={data}
-            onBack={closeSidePage}
             quickOpen={navState.quickOpen}
             onQuickOpenChange={onQuickOpenChange}
           />
         );
       case 'terminals':
-        return <TerminalsView data={data} onBack={closeSidePage} />;
+        return <TerminalsView data={data} />;
       case 'threads':
         return (
           <ThreadsView
             data={data}
-            projectName={activeProject?.name ?? null}
             focus={threadsFocus}
             onFocus={setThreadsFocus}
             onOpenRef={openRef}
@@ -1937,7 +1935,6 @@ function App() {
               submit: overseer.reply,
               open: openOverseer,
             }}
-            onBack={closeSidePage}
           />
         );
       case 'timeline':
@@ -1968,17 +1965,39 @@ function App() {
             onNavigate={navigate}
           />
         );
-      case 'allocation':
-        // What the planning's allocation would do now, and the run log.
-        return <AllocationView data={data} onBack={closeSidePage} />;
+      case 'runs':
+        // Every run, archived ones included: the sidebar's Runs row.
+        return (
+          <AllAgentsView
+            title="Runs"
+            runs={data.visibleRuns}
+            sessions={data.agentSessions}
+            archivedRunCount={archivedRunCount}
+            showArchived={data.showArchived}
+            onSetShowArchived={data.setShowArchived}
+            onArchiveRun={(runId, archived) =>
+              void data.handleArchiveRun(runId, archived)
+            }
+            portLoading={data.portLoading}
+            portError={data.portError}
+            portErrorDetail={data.portErrorDetail}
+            client={data.client}
+            onRetry={data.retryEnsureDispatchd}
+            onJumpToRun={jumpToRun}
+            // The Live page (Runs › Live); leaving it returns here.
+            onOpenLive={() =>
+              dispatchNav({ type: 'setProjectView', view: 'live' })
+            }
+          />
+        );
       case 'week':
         // One person's open issues by milestone, deadlines and attention.
         return <WeekView me={data.me} client={data.client} port={data.port} />;
       case 'projects':
         // The projects register: every open project with its status, next
-        // milestone, lead and allocation, grouped by initiative. Its rows and
-        // cells are real hrefs the shell's link provider resolves.
-        return <ProjectsView data={data} onBack={closeSidePage} />;
+        // milestone and lead, grouped by initiative. Its rows and cells are
+        // real hrefs the shell's link provider resolves.
+        return <ProjectsView data={data} />;
       case 'live':
         // Every container with work moving: dispatches in place, a node's
         // page on `o`, its quick look on Enter and Space. It reads as
@@ -2001,7 +2020,6 @@ function App() {
         return (
           <LandingView
             data={data}
-            onBack={closeSidePage}
             onOpenRun={(taskId, runId) =>
               dispatchNav({ type: 'openTask', taskId, runId })
             }
@@ -2037,7 +2055,6 @@ function App() {
             onSelectDoc={(docId) => openDoc(docId, null)}
             onOpenRef={openRef}
             tasksPage={{
-              onBack: closeSidePage,
               onOpenAllDocs: () =>
                 dispatchNav({ type: 'setProjectView', view: 'docs' }),
             }}
@@ -2123,7 +2140,6 @@ function App() {
             key={page.path}
             data={data}
             initialPath={page.path}
-            onBack={closeSidePage}
             quickOpen={navState.quickOpen}
             onQuickOpenChange={onQuickOpenChange}
           />
@@ -2168,7 +2184,7 @@ function App() {
         }
       : null;
 
-  // Usage and Runs as hosted Settings pages (SessionsHubView, AllAgentsView).
+  // Usage as a hosted Settings page (SessionsHubView); Runs is its own page.
   const hostedSettingsPages: HostedSettingsPage[] = [
     {
       id: 'usage',
@@ -2178,35 +2194,6 @@ function App() {
       // The hosted view draws no page header of its own: Settings' title sits
       // above it, and the view starts at its own toolbar row.
       render: () => <SessionsHubView />,
-    },
-    {
-      id: 'runs',
-      label: 'Runs',
-      icon: Bot,
-      intro: 'Every run, including archived ones.',
-      render: () => (
-        <AllAgentsView
-          runs={data.visibleRuns}
-          sessions={data.agentSessions}
-          archivedRunCount={archivedRunCount}
-          showArchived={data.showArchived}
-          onSetShowArchived={data.setShowArchived}
-          onArchiveRun={(runId, archived) =>
-            void data.handleArchiveRun(runId, archived)
-          }
-          portLoading={data.portLoading}
-          portError={data.portError}
-          portErrorDetail={data.portErrorDetail}
-          client={data.client}
-          onRetry={data.retryEnsureDispatchd}
-          onJumpToRun={jumpToRun}
-          // The Live page (Runs › Live), shown in the Tasks view's place;
-          // any navigation closes Settings, and leaving Live reopens Runs.
-          onOpenLive={() =>
-            dispatchNav({ type: 'setProjectView', view: 'live' })
-          }
-        />
-      ),
     },
   ];
 
@@ -2419,6 +2406,7 @@ function App() {
       view={navState.mainView}
       destination={shellDestination}
       taskTitle={currentShellPageTitle(navState, aboutTask?.title ?? null)}
+      standalonePage={onUnlistedPage(navState)}
       overseerBadge={{ count: orb.count, tone: orb.tone, label: orbTitle }}
       needsYou={needs.count}
       threadsUnread={unreadToMe}

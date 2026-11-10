@@ -25,8 +25,8 @@ the rest) and `src/lib/shellRoutes.ts`. Paths below are under
 `apps/desktop/src/`.
 
 - Sidebar destinations: Overseer, Issues, Needs you, Timeline, Graph, Threads,
-  Docs, Runs (it opens Settings' runs page), Settings, plus the Projects
-  section. Projects also appear as workspaces in the brand-row switcher.
+  Docs, Runs (its own page, `#/runs`), Settings, plus the Projects section.
+  Projects also appear as workspaces in the brand-row switcher.
 - Settings is an overlay place in the main column (`views/SettingsView.tsx`,
   `components/settings/SettingsLayout.tsx`, `lib/appNav.ts`); Escape returns to
   where you were.

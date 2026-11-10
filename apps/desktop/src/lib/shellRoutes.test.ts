@@ -13,6 +13,7 @@ import {
   currentShellPageTitle,
   hrefFor,
   MOD_KEY,
+  onUnlistedPage,
   PROJECTS_HREF,
   SHELL_ROUTES,
   type ShellDestination,
@@ -96,8 +97,8 @@ describe('the route table', () => {
       view: 'docs',
     });
     expect(shellRoute('runs').action).toEqual({
-      type: 'openSettings',
-      page: 'runs',
+      type: 'setProjectView',
+      view: 'runs',
     });
     expect(shellRoute('settings').action).toEqual({ type: 'openSettings' });
   });
@@ -210,7 +211,7 @@ describe('currentShellDestination', () => {
   });
 
   test('a page without a row does not inherit the Needs you preset', () => {
-    for (const view of ['projects', 'allocation', 'files'] as const) {
+    for (const view of ['projects', 'files'] as const) {
       const page = after([
         { type: 'showTasks', preset: 'needs-you' },
         { type: 'setProjectView', view },
@@ -220,14 +221,13 @@ describe('currentShellDestination', () => {
   });
 
   test('the live page reads as Runs › Live: Runs stays current on it and after leaving it', () => {
-    // Opened from the Runs page's Live button: any navigation closes Settings.
+    // Opened from the Runs page's Live button.
     const runs = after([
       { type: 'showTasks' },
-      { type: 'openSettings', page: 'runs' },
+      { type: 'setProjectView', view: 'runs' },
     ]);
     expect(currentShellDestination(runs)).toBe('runs');
     const live = after([{ type: 'setProjectView', view: 'live' }], runs);
-    expect(live.settings).toBeNull();
     expect(live.tasksPage).toEqual({ kind: 'view', view: 'live' });
     expect(currentShellDestination(live)).toBe('runs');
     // A node quick-looked over the bands keeps the row.
@@ -254,7 +254,7 @@ describe('currentShellDestination', () => {
   test('the topbar names the Live page after Runs, and a task page after its destination', () => {
     const runs = after([
       { type: 'showTasks' },
-      { type: 'openSettings', page: 'runs' },
+      { type: 'setProjectView', view: 'runs' },
     ]);
     const live = after([{ type: 'setProjectView', view: 'live' }], runs);
     // project / Runs (a link back to the Runs page) / Live (the current page).
@@ -271,14 +271,14 @@ describe('currentShellDestination', () => {
       { label: 'Runs', href: hrefFor('runs') },
       { label: 'Live' },
     ]);
-    // The Runs page itself ends at Runs (Settings' trail), and a task page ends at its title.
+    // The Runs page itself ends at Runs, and a task page ends at its title.
     expect(currentShellPageTitle(runs, 'Ship it')).toBeNull();
     const task = after([{ type: 'openTask', taskId: 't-1' }], live);
     expect(currentShellPageTitle(task, 'Ship it')).toBe('Ship it');
     expect(currentShellPageTitle(after([]), null)).toBeNull();
   });
 
-  test('Files, Terminals and Projects end the trail at their own name, under Issues', () => {
+  test('Files, Terminals and Projects end the trail at their own name, under the project', () => {
     for (const [view, name] of [
       ['files', 'Files'],
       ['terminals', 'Terminals'],
@@ -288,25 +288,23 @@ describe('currentShellDestination', () => {
         { type: 'showTasks' },
         { type: 'setProjectView', view },
       ]);
-      // The sidebar keeps Issues current, and the trail links back to it,
-      // so "Issues" is never announced as the current page here.
+      // The sidebar keeps Issues current; the trail reads project / page.
       expect(currentShellDestination(page)).toBe('issues');
       expect(currentShellPageTitle(page, null)).toBe(name);
+      expect(onUnlistedPage(page)).toBe(true);
       expect(
         buildCrumbs({
           projectName: 'storefront',
           destination: currentShellDestination(page),
           taskTitle: currentShellPageTitle(page, null),
           settingsPage: page.settings,
+          standalonePage: onUnlistedPage(page),
         })
-      ).toEqual([
-        { label: 'storefront', href: '#/overseer' },
-        { label: 'Issues', href: hrefFor('issues') },
-        { label: name },
-      ]);
+      ).toEqual([{ label: 'storefront', href: '#/overseer' }, { label: name }]);
       // Settings over the page has its own trail.
       const over = after([{ type: 'openSettings', page: 'general' }], page);
       expect(currentShellPageTitle(over, null)).toBeNull();
+      expect(onUnlistedPage(over)).toBe(false);
     }
     // A page with its own row ends at that row.
     const threads = after([
@@ -338,7 +336,7 @@ describe('currentShellDestination', () => {
     ).toBe('issues');
   });
 
-  test('Settings while open, Runs for its runs page, whatever view is under it', () => {
+  test('Settings while open, whatever view is under it; Runs is its own page', () => {
     const tasks = after([{ type: 'showTasks' }]);
     expect(
       currentShellDestination(after([{ type: 'openSettings' }], tasks))

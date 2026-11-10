@@ -122,7 +122,7 @@ describe('hrefForState ↔ parseHref', () => {
     ['#/pr/12', [{ type: 'openPr', number: 12 }]],
     ['#/draft/d-1', [{ type: 'openDraft', draftId: 'd-1' }]],
     ['#/room/release', [{ type: 'openAddress', address: 'channel:release' }]],
-    ['#/runs', [{ type: 'openSettings', page: 'runs' }]],
+    ['#/runs', [{ type: 'setProjectView', view: 'runs' }]],
     ['#/settings/general', [{ type: 'openSettings' }]],
     ['#/issues?project=p-1', [{ type: 'showTasks', project: 'p-1' }]],
     [
@@ -154,13 +154,6 @@ describe('hrefForState ↔ parseHref', () => {
       [
         { type: 'openTimeline', project: 'p-1' },
         { type: 'openSettings', page: 'agents' },
-      ],
-    ],
-    [
-      '#/runs?under=live',
-      [
-        { type: 'setProjectView', view: 'live' },
-        { type: 'openSettings', page: 'runs' },
       ],
     ],
     [
@@ -197,6 +190,15 @@ describe('hrefForState ↔ parseHref', () => {
   test('a retired Settings page opens the page that took it in', () => {
     expect(land('#/settings/memory')?.settings).toBe('agents');
     expect(land('#/settings/previews')?.settings).toBe('checks');
+  });
+
+  test('old links land on their successors: Settings › Runs on Runs, Allocation on Projects', () => {
+    expect(hrefForState(land('#/settings/runs') ?? initialNavState)).toBe(
+      '#/runs'
+    );
+    expect(hrefForState(land('#/allocation') ?? initialNavState)).toBe(
+      '#/projects'
+    );
   });
 
   test('a reload on the Overseer or under Settings keeps the Tasks side', () => {
@@ -350,12 +352,9 @@ describe('parseHref rejects what is not a route', () => {
     '#/overseer?tasks=',
     '#/overseer?tasks=overseer',
     `#/overseer?tasks=${enc('settings/team')}`,
-    '#/overseer?tasks=runs',
     '#/overseer?tasks=nowhere',
     `#/overseer?tasks=${enc('issues?preset=bogus')}`,
     `#/settings/team?under=${enc('settings/general')}`,
-    '#/settings/team?under=runs',
-    '#/runs?under=settings',
     '#/settings?under=nowhere',
     `#/settings/team?under=${enc('overseer?tasks=overs')}`,
     '#/task/t-1?tab=nope',

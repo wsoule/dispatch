@@ -143,7 +143,7 @@ export const SHELL_ROUTES: readonly ShellRoute[] = [
     label: 'Runs',
     icon: History,
     href: hrefFor('runs'),
-    action: { type: 'openSettings', page: 'runs' },
+    action: { type: 'setProjectView', view: 'runs' },
   },
   {
     id: 'settings',
@@ -174,17 +174,14 @@ export function shellShortcut(
 /**
  * Which destination the sidebar marks current. Settings is an overlay place
  * in the main column (the views stay mounted, hidden, beneath it), so while
- * it is open it (or Runs, its page with a row of its own) is the place. The
- * Live page reads as Runs › Live (it opens from the Runs page and closes back
- * to it), so it marks Runs too. Under Tasks the Docs, Threads, Timeline,
- * Graph and Landing pages are their own rows, the Needs you preset is its row, and
- * everything else (the list, a task page, Files, Terminals, Projects) is
- * Issues.
+ * it is open it is the place. The Live page reads as Runs › Live (it opens
+ * from the Runs page and closes back to it), so it marks Runs too. Under
+ * Tasks the Docs, Threads, Timeline, Graph, Landing and Runs pages are their
+ * own rows, the Needs you preset is its row, and everything else (the list,
+ * a task page, Files, Terminals, Projects) is Issues.
  */
 export function currentShellDestination(state: NavState): ShellDestination {
-  if (state.settings !== null) {
-    return state.settings === 'runs' ? 'runs' : 'settings';
-  }
+  if (state.settings !== null) return 'settings';
   if (state.mainView === 'overseer') return 'overseer';
   if (onLivePage(state)) return 'runs';
   const page = state.tasksPage;
@@ -196,11 +193,9 @@ export function currentShellDestination(state: NavState): ShellDestination {
 /**
  * The topbar's last crumb under the current destination: the open task's
  * title on a task page, "Live" on the Live page, and the page's own name on
- * Files, Terminals and Projects, which keep the Issues row current. So the
- * trail reads project / Runs / Live or project / Issues / Files, with the
- * destination a link back and the page the current one (the topbar marks its
- * last crumb current, so it must never be "Issues" on another page). Null
- * when the destination itself is the page.
+ * Files, Terminals and Projects, which have no row of their own and read
+ * project / Files (`buildCrumbs` drops the Issues crumb for them). Null when
+ * the destination itself is the page.
  */
 export function currentShellPageTitle(
   state: NavState,
@@ -210,7 +205,10 @@ export function currentShellPageTitle(
   if (onLivePage(state)) return LIVE_PAGE_TITLE;
   const page = state.tasksPage;
   if (state.mainView === 'tasks' && page.kind === 'view') {
-    return UNLISTED_PAGE_TITLES[page.view] ?? taskTitle;
+    return (
+      UNLISTED_PAGE_TITLES[page.view] ??
+      (hasOwnRow(page.view) ? null : taskTitle)
+    );
   }
   return taskTitle;
 }
@@ -224,8 +222,19 @@ const UNLISTED_PAGE_TITLES: Partial<Record<HostedView, string>> = {
   files: 'Files',
   terminals: 'Terminals',
   projects: 'Projects',
-  allocation: 'Allocation',
 };
+
+/** Whether an unlisted page (Files, Terminals, Projects) shows: its crumb
+ * stands under the project alone, not under Issues. */
+export function onUnlistedPage(state: NavState): boolean {
+  const page = state.tasksPage;
+  return (
+    state.settings === null &&
+    state.mainView === 'tasks' &&
+    page.kind === 'view' &&
+    UNLISTED_PAGE_TITLES[page.view] !== undefined
+  );
+}
 
 /** Whether a hosted page is one of the sidebar's rows (Threads, Timeline,
  * Graph), rather than a page reached another way (Files, Terminals, Projects),
@@ -239,6 +248,7 @@ function hasOwnRow(
     view === 'timeline' ||
     view === 'graph' ||
     view === 'week' ||
-    view === 'landing'
+    view === 'landing' ||
+    view === 'runs'
   );
 }

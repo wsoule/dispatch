@@ -1,6 +1,4 @@
-import type { MilestoneProgress } from '@dispatch/client';
 import type {
-  ProjectAllocationPlan,
   ProjectStatusType,
   TimelineLane,
   TimelineView,
@@ -13,7 +11,6 @@ import { graphHref, taskHref, timelineHref } from '../lib/routes';
 import { dueLabel, plural } from './planningFormat';
 import {
   assessmentMark,
-  blockedReasonLine,
   dueTone,
   type ProgressTone,
   progressTone,
@@ -23,10 +20,8 @@ import {
 // Dispatch's data): one row per lane of the planning's TimelineView (every
 // project that is not completed or canceled), grouped by initiative in the
 // timeline's order with "No initiative" last. Each row carries the project's
-// own status, its next milestone (mark, due line, progress), its lead and an
-// allocation cell in Dispatch's terms: how many agents are working under the
-// project right now, else what the planning's allocation plan would do with
-// it. Pure functions over plain data, so the view only filters and draws.
+// own status, its next milestone (mark, due line, progress) and its lead.
+// Pure functions over plain data, so the view only filters and draws.
 //
 // What changed in the port: a project, a milestone and an initiative are all
 // tasks, so the row opens the project's task (`taskHref`) where the planner
@@ -102,24 +97,6 @@ interface ProjectNextMilestone {
   muted: boolean;
 }
 
-export interface ProjectAllocationCell {
-  /** The chip: "2 agents working", "Allocating 2", "Blocked", "Nothing to do". */
-  label: string;
-  /** The line under it: why allocation is blocked (blockedReasonLine). */
-  detail?: string;
-  /** info = agents working or allocating, default = nothing to do, warning
-   * = blocked, muted = nothing applies (no open milestone, inactive). */
-  tone: 'default' | 'muted' | 'info' | 'warning';
-  /** Blocked is the tinted amber chip (Chip `filled`); the info cells are
-   * the blue dot pill, the muted cells plain quiet text. */
-  filled?: true;
-  /** Drawn as plain words, not a chip: "Nothing to do" is quiet meta. */
-  plain?: true;
-  /** The `detail` line takes the chip's tone too (RegisterCell `toneSub`):
-   * set for Blocked, whose reason is the point of the cell. */
-  toneDetail?: true;
-}
-
 export interface ProjectRowModel {
   id: string;
   name: string;
@@ -136,7 +113,6 @@ export interface ProjectRowModel {
   next: ProjectNextMilestone | null;
   /** null renders "No lead" in the warning tone. */
   lead: string | null;
-  allocation: ProjectAllocationCell;
   /** The register row's tone, data only: warning when allocation is
    * blocked, muted for an inactive project (its subject steps back). */
   rowTone: 'default' | 'warning' | 'muted';
@@ -159,6 +135,9 @@ export interface ProjectGroupModel {
   /** The group's dependency graph: its projects, or the workspace's projects
    * when there are no initiatives. */
   graphHref: string;
+  /** The workspace has no initiatives: the one "No initiative" group draws
+   * no heading over its rows. */
+  headless: boolean;
   rows: ProjectRowModel[];
 }
 
@@ -171,86 +150,10 @@ export interface ProjectsPageModel {
   receipts: string;
 }
 
-/** What the register reads about the agents under a container: the runs
- * live right now (`MilestoneProgress.liveRuns`), by container id. */
-export type LiveRunsByContainer = ReadonlyMap<
-  string,
-  Pick<MilestoneProgress, 'liveRuns'>
->;
-
 export interface ProjectsPageInput {
   timeline: TimelineView;
   /** The planning snapshot's projects, for each one's status name. */
   projects: ReadonlyMap<string, { statusName: string }>;
-  /** Fan-out progress per container (`DispatchProjectData.milestoneProgressById`):
-   * the runs live under a project or one of its milestones are the agents
-   * working on it. */
-  milestoneProgressById: LiveRunsByContainer;
-}
-
-/**
- * How many agents work under a project right now: the distinct runs live
- * under the project's own fan-out and under each of its milestones' (a
- * plan-wide session lists a milestone's runs under the project too, so the
- * ids are deduplicated rather than summed).
- */
-export function agentsWorking(
-  lane: Pick<TimelineLane, 'projectId' | 'bars' | 'undated'>,
-  milestoneProgressById: LiveRunsByContainer
-): number {
-  const runIds = new Set<string>();
-  const collect = (containerId: string) => {
-    const progress = milestoneProgressById.get(containerId);
-    if (progress === undefined) return;
-    for (const run of progress.liveRuns) runIds.add(run.id);
-  };
-  collect(lane.projectId);
-  for (const bar of lane.bars) collect(bar.milestoneId);
-  for (const bar of lane.undated) collect(bar.milestoneId);
-  return runIds.size;
-}
-
-/**
- * The allocation cell: agents working first (what is happening beats what
- * would), else what the planning's allocation plan says, else "Nothing to
- * do" when the planning has no plan for the project.
- */
-export function allocationCell(
-  agents: number,
-  plan: ProjectAllocationPlan | null
-): ProjectAllocationCell {
-  if (agents > 0) {
-    return { label: `${plural(agents, 'agent')} working`, tone: 'info' };
-  }
-  if (plan === null) {
-    return { label: 'Nothing to do', tone: 'default', plain: true };
-  }
-  switch (plan.outcome) {
-    case 'allocate':
-      return { label: `Allocating ${plan.actions.length}`, tone: 'info' };
-    case 'blocked':
-      // A short chip; the reason goes on the line under it, worded as on
-      // the timeline's Blocked banner.
-      return plan.blockReason === null
-        ? { label: 'Blocked', tone: 'warning', filled: true }
-        : {
-            label: 'Blocked',
-            detail: blockedReasonLine(plan.blockReason, plan.gaps),
-            tone: 'warning',
-            filled: true,
-            toneDetail: true,
-          };
-    case 'nothing_to_do':
-      return { label: 'Nothing to do', tone: 'default', plain: true };
-    case 'no_open_milestone':
-      return { label: 'No open milestone', tone: 'muted' };
-    case 'inactive':
-      return { label: 'Inactive', tone: 'muted' };
-    default: {
-      const unreachable: never = plan.outcome;
-      return unreachable;
-    }
-  }
 }
 
 /**
@@ -288,10 +191,6 @@ function toRow(
   input: ProjectsPageInput
 ): ProjectRowModel {
   const next = nextMilestone(lane, input.timeline.today);
-  const allocation = allocationCell(
-    agentsWorking(lane, input.milestoneProgressById),
-    lane.allocation
-  );
   const blocked = lane.allocation?.outcome === 'blocked';
   const atRisk =
     lane.active &&
@@ -314,7 +213,6 @@ function toRow(
     active: lane.active,
     next,
     lead: lane.leadName,
-    allocation,
     rowTone: blocked ? 'warning' : lane.active ? 'default' : 'muted',
     tags,
     timelineHref: timelineHref(lane.projectId),
@@ -328,8 +226,6 @@ function toRow(
       status,
       lane.leadName ?? 'no lead',
       next?.name ?? '',
-      allocation.label,
-      allocation.detail ?? '',
     ]
       .join(' ')
       .toLowerCase(),
@@ -344,8 +240,7 @@ export function parseProjectFilter(value: unknown): ProjectFilterId {
 /**
  * The rows that match a search and a filter, still grouped (groups left
  * empty are dropped). Every whitespace-separated word of the query must
- * appear in the row's name, initiative, status, lead, next milestone or
- * allocation.
+ * appear in the row's name, initiative, status, lead or next milestone.
  */
 export function filterProjectGroups(
   groups: readonly ProjectGroupModel[],
@@ -397,6 +292,7 @@ export function buildProjectsPage(input: ProjectsPageInput): ProjectsPageModel {
       graphHref: hasInitiatives
         ? graphHref(graphScopeFor({ kind: 'initiative', id }))
         : graphHref({ level: 'project' }),
+      headless: !hasInitiatives,
       rows,
     });
   }

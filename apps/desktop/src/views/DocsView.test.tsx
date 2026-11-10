@@ -68,7 +68,7 @@ const read = {
 } as unknown as DocRead;
 
 // The page as App mounts it: a back chip that goes nowhere and an All docs crumb.
-const PAGE = { onBack: () => {}, onOpenAllDocs: () => {} };
+const PAGE = { onOpenAllDocs: () => {} };
 
 // Opens a doc from the All docs list: each row is a button named by its title.
 async function openDoc(title: string): Promise<void> {
@@ -109,7 +109,7 @@ function renderView(opts: {
   publish?: ApiClient['publishDoc'];
   createDoc?: ApiClient['createDoc'];
   promoteDoc?: ApiClient['promoteDoc'];
-  tasksPage?: { onBack: () => void; onOpenAllDocs: () => void };
+  tasksPage?: { onOpenAllDocs: () => void };
   initialDoc?: string;
   discussion?: (docId: string) => ReactNode;
   canMessage?: boolean;
@@ -1107,12 +1107,11 @@ test('j and k start from the focused row', async () => {
   expect(await screen.findByLabelText('Editing auth')).toBeDefined();
 });
 
-test('the All docs page leads with the Tasks back chip, the section toggle and New doc', async () => {
+test('the All docs page leads with the section toggle and New doc, no back chip', async () => {
   const calls: string[] = [];
   renderView({
     canDecide: true,
     tasksPage: {
-      onBack: () => calls.push('back'),
       onOpenAllDocs: () => calls.push('all docs'),
     },
   });
@@ -1136,8 +1135,9 @@ test('the All docs page leads with the Tasks back chip, the section toggle and N
   ).toBeDefined();
   expect(screen.getByRole('list', { name: 'Docs' })).toBeDefined();
   expect(screen.getByTestId('docs-page')).toBeDefined();
-  fireEvent.click(screen.getByTestId('tasks-back'));
-  expect(calls).toEqual(['back']);
+  // Docs is a sidebar row: no back chip to Issues.
+  expect(screen.queryByTestId('tasks-back')).toBeNull();
+  expect(calls).toEqual([]);
 });
 
 test('an open doc sits under All docs › its title, and the crumb walks back', async () => {
@@ -1146,7 +1146,6 @@ test('an open doc sits under All docs › its title, and the crumb walks back', 
     canDecide: true,
     initialDoc: 'doc-1',
     tasksPage: {
-      onBack: () => calls.push('back'),
       onOpenAllDocs: () => calls.push('all docs'),
     },
   });

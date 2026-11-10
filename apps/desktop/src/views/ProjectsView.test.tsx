@@ -1,5 +1,6 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
 import type { MilestoneProgress, RunMeta } from '@dispatch/client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   cleanup,
   fireEvent,
@@ -13,6 +14,7 @@ import {
   type CreateTaskPreset,
   ShellActionsProvider,
 } from '../components/shell/ShellActionsContext';
+import { ToastProvider } from '../components/shell/Toasts';
 import { SHELL } from '../components/tasks/page/pageHost.test-helper';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { type PlanningInput, PlanningProvider } from '../hooks/usePlanning';
@@ -148,27 +150,7 @@ function many(count: number): TaskListItem[] {
   return tasks;
 }
 
-function run(id: string): RunMeta {
-  return { id, taskId: 't-cart', state: 'running' } as RunMeta;
-}
-
-/** Fan-out progress for one container with these runs live under it. */
-function progress(milestoneId: string, runIds: string[]): MilestoneProgress {
-  return {
-    milestoneId,
-    active: true,
-    session: null,
-    spend: { usd: 0, runs: 0 },
-    children: [],
-    waves: [],
-    liveRuns: runIds.map(run),
-  } as unknown as MilestoneProgress;
-}
-
-function planningInput(
-  tasks: TaskListItem[],
-  milestoneProgressById: Map<string, MilestoneProgress>
-): PlanningInput {
+function planningInput(tasks: TaskListItem[]): PlanningInput {
   return {
     tasks,
     config: null,
@@ -180,21 +162,17 @@ function planningInput(
     me: 'human:ana',
     linearLinks: {},
     latestRunByTaskId: new Map<string, RunMeta>(),
-    milestoneProgressById,
+    milestoneProgressById: new Map<string, MilestoneProgress>(),
   };
 }
 
 interface MountOptions {
   tasks?: TaskListItem[];
-  milestoneProgressById?: Map<string, MilestoneProgress>;
-  onBack?: () => void;
   daemon?: 'ready' | 'starting';
 }
 
 function mount(options: MountOptions = {}) {
   const tasks = options.tasks ?? fixture();
-  const milestoneProgressById =
-    options.milestoneProgressById ?? new Map<string, MilestoneProgress>();
   const creates: (CreateTaskPreset | undefined)[] = [];
   const starting = options.daemon === 'starting';
   const data = {
@@ -203,16 +181,19 @@ function mount(options: MountOptions = {}) {
     portError: false,
     portErrorDetail: null,
     retryEnsureDispatchd: () => {},
-    milestoneProgressById,
   } as unknown as DispatchProjectData;
   const utils = render(
-    <ShellActionsProvider
-      value={{ ...SHELL, openCreateTask: (preset) => creates.push(preset) }}
-    >
-      <PlanningProvider data={planningInput(tasks, milestoneProgressById)}>
-        <ProjectsView data={data} onBack={options.onBack} />
-      </PlanningProvider>
-    </ShellActionsProvider>
+    <QueryClientProvider client={new QueryClient()}>
+      <ToastProvider>
+        <ShellActionsProvider
+          value={{ ...SHELL, openCreateTask: (preset) => creates.push(preset) }}
+        >
+          <PlanningProvider data={planningInput(tasks)}>
+            <ProjectsView data={data} />
+          </PlanningProvider>
+        </ShellActionsProvider>
+      </ToastProvider>
+    </QueryClientProvider>
   );
   return { ...utils, creates };
 }
@@ -261,7 +242,7 @@ describe('ProjectsView', () => {
     ).toBe('#/graph?initiative=none');
   });
 
-  test('a row carries the status chip, next milestone, progress, lead and allocation', () => {
+  test('a row carries the status chip, next milestone, progress and lead', () => {
     mount();
     const store = row('Storefront');
     expect(store.getAttribute('data-tone')).toBe('default');
@@ -279,7 +260,8 @@ describe('ProjectsView', () => {
         .getAttribute('aria-valuetext')
     ).toBe('1 of 2 done');
     expect(within(store).getByText('Ana')).toBeTruthy();
-    expect(within(store).getByText('Nothing to do')).toBeTruthy();
+    // No Allocation column: the Lead cell already says what blocks it.
+    expect(within(store).queryByText('Nothing to do')).toBeNull();
 
     // Search: no lead, its next milestone overdue, allocation blocked.
     const search = row('Search');
@@ -290,13 +272,12 @@ describe('ProjectsView', () => {
     expect(noLead.closest('[data-tone]')?.getAttribute('data-tone')).toBe(
       'warning'
     );
-    expect(within(search).getByText('Blocked')).toBeTruthy();
-    expect(within(search).getByText('Project has no lead')).toBeTruthy();
+    expect(within(search).queryByText('Project has no lead')).toBeNull();
 
-    // Loose ends: no milestone, so the next-milestone and the allocation
-    // cells both say so, and there is no progress to draw.
+    // Loose ends: no milestone, so the next-milestone cell says so, and
+    // there is no progress to draw.
     const loose = row('Loose ends');
-    expect(within(loose).getAllByText('No open milestone')).toHaveLength(2);
+    expect(within(loose).getAllByText('No open milestone')).toHaveLength(1);
     expect(within(loose).getByText('—')).toBeTruthy();
 
     // Archive: a draft project is inactive; its row and chip step back.
@@ -308,7 +289,6 @@ describe('ProjectsView', () => {
         .closest('[data-tone]')
         ?.getAttribute('data-tone')
     ).toBe('muted');
-    expect(within(archive).getByText('Inactive')).toBeTruthy();
   });
 
   test('the row and its cells are real hrefs: the timeline lane, the issues, the graph, the page', () => {
@@ -352,7 +332,7 @@ describe('ProjectsView', () => {
     expect(within).toBe(900);
     const columns = register.style.getPropertyValue('--register-cols');
     const tracks = columns.match(/minmax\([^)]*\)|\S+/g) ?? [];
-    expect(tracks.length).toBe(7);
+    expect(tracks.length).toBe(6);
     const floors = tracks.map((track) =>
       Number(/^(?:minmax\()?(\d+)px/.exec(track)?.[1])
     );
@@ -362,17 +342,6 @@ describe('ProjectsView', () => {
     expect(total).toBeLessThanOrEqual(within);
     // The end cell's floor holds its three 26px buttons and their 2px gaps.
     expect(floors.at(-1)).toBeGreaterThanOrEqual(3 * 26 + 2 * 2);
-  });
-
-  test('agents working under a project or its milestones fill the allocation cell', () => {
-    mount({
-      milestoneProgressById: new Map([
-        ['p-store', progress('p-store', ['r-1'])],
-        ['ms-beta', progress('ms-beta', ['r-1', 'r-2'])],
-      ]),
-    });
-    const cell = within(row('Storefront')).getByText('2 agents working');
-    expect(cell.closest('[data-tone]')?.getAttribute('data-tone')).toBe('info');
   });
 
   test('the filter and the search narrow the rows and the count says so', () => {
@@ -427,17 +396,11 @@ describe('ProjectsView', () => {
     expect(creates).toEqual([{ kind: 'project' }]);
   });
 
-  test('hosted under Tasks, the header leads with the Tasks back chip and offers New project', () => {
-    const backs: string[] = [];
-    const { creates } = mount({ onBack: () => backs.push('back') });
-    fireEvent.click(screen.getByTestId('tasks-back'));
-    expect(backs).toEqual(['back']);
+  test('the header offers New project and no back chip (Projects is a sidebar page)', () => {
+    const { creates } = mount();
+    expect(screen.queryByTestId('tasks-back')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'New project' }));
     expect(creates).toEqual([{ kind: 'project' }]);
-    cleanup();
-    // On its own (no host) the header has no back chip.
-    mount();
-    expect(screen.queryByTestId('tasks-back')).toBeNull();
   });
 
   test('without a daemon it shows the daemon state instead of the register', () => {

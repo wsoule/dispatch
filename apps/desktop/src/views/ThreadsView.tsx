@@ -19,10 +19,7 @@ import { participantLabel, replyRoute } from '../lib/threadSources';
 import styles from './ThreadsView.module.css';
 
 export interface ThreadsViewProps {
-  /** The back chip to the Tasks list the page leads with; omitted, no chip. */
-  onBack?: () => void;
   data: DispatchProjectData;
-  projectName: string | null;
   /** A message id whose thread is open, from navigation; null for none. */
   focus: string | null;
   onFocus: (messageId: string | null) => void;
@@ -41,12 +38,10 @@ export interface ThreadsViewProps {
 /** Every conversation I am part of: Needs you, Channels and Direct, one open at a time. */
 export function ThreadsView({
   data,
-  projectName,
   focus,
   onFocus,
   onOpenRef,
   overseer,
-  onBack,
 }: ThreadsViewProps) {
   const { client, port, me, messageAccess: access } = data;
   const rail = useThreadRail(client, port, me, access);
@@ -70,6 +65,17 @@ export function ThreadsView({
     setComposing(true);
     onFocus(null);
   };
+  // On a desktop-wide window the page never opens on an empty pane: the
+  // newest thread waiting on you, else the newest of the rest.
+  const firstThread =
+    rail.groups['needs-you'][0] ??
+    rail.groups.channels[0] ??
+    rail.groups.direct[0];
+  useEffect(() => {
+    if (focus !== null || composing || firstThread === undefined) return;
+    if (!wideWindow()) return;
+    onFocus(firstThread.thread);
+  }, [focus, composing, firstThread, onFocus]);
   // Nothing to list once the rail has loaded without error.
   const railEmpty =
     !rail.loading && rail.error === null && rail.summaries.length === 0;
@@ -77,12 +83,7 @@ export function ThreadsView({
   const header = (
     <div className={styles.head}>
       <PageHead
-        onBack={onBack}
-        crumbs={
-          onBack === undefined
-            ? [projectName ?? 'Project', 'Threads']
-            : ['Threads']
-        }
+        crumbs={['Threads']}
         actions={
           <Button
             ref={newThreadRef}
@@ -260,6 +261,15 @@ export function ThreadsView({
         </section>
       </div>
     </div>
+  );
+}
+
+/** Wider than the phone layout, where the rail and the thread sit side by
+ * side (ThreadsView.module.css stacks them at 640px and below). */
+function wideWindow(): boolean {
+  return (
+    typeof window.matchMedia !== 'function' ||
+    !window.matchMedia('(width <= 640px)').matches
   );
 }
 

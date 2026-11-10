@@ -428,6 +428,8 @@ export function OverseerView({
           <OverseerChat
             overseer={routed}
             placeholder="say something"
+            // The starter chips are for an empty start, not over posts or notes.
+            starters={postsCount === 0}
             aboveComposer={
               <>
                 <div className={styles.narrowOnly}>{posts}</div>
