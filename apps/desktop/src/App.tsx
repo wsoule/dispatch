@@ -190,8 +190,9 @@ import {
   docHitEntries,
 } from './lib/paletteEntries';
 import { buildPosts, type Post, questionToAnswer } from './lib/posts';
-import { basename } from './lib/projectName';
+import { basename, parentDir } from './lib/projectName';
 import {
+  isRemoteRoot,
   listRemoteConnections,
   remoteConnectionFor,
   remoteRootFor,
@@ -2803,6 +2804,12 @@ function App() {
                       selectSwitchProject(remoteRoot);
                     }}
                     onClose={() => setAddProjectOpen(false)}
+                    // A remote root names no folder on this disk.
+                    startIn={
+                      root === undefined || root === null || isRemoteRoot(root)
+                        ? null
+                        : parentDir(root)
+                    }
                   />
                 )}
 

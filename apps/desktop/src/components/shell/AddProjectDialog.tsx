@@ -35,6 +35,9 @@ interface AddProjectDialogProps {
   onClose: () => void;
   /** Which pane to open on; 'github' skips the choice when the caller already asked for GitHub. */
   initialMode?: Mode;
+  /** Folder both pickers open in — the current project's parent, so a new project starts
+   * beside it rather than inside it. `null` or omitted opens the home folder. */
+  startIn?: string | null;
 }
 
 /**
@@ -53,6 +56,7 @@ export function AddProjectDialog({
   onConnectRemote,
   onClose,
   initialMode = 'choose',
+  startIn = null,
 }: AddProjectDialogProps) {
   const [mode, setMode] = useState<Mode>(initialMode);
   const [error, setError] = useState<string | null>(null);
@@ -110,7 +114,7 @@ export function AddProjectDialog({
   async function pickLocalFolder() {
     setError(null);
     try {
-      const path = await pickDirectory();
+      const path = await pickDirectory(startIn);
       if (path === null) return; // user cancelled the picker
       await register(path, 'Adding project…');
     } catch (err) {
@@ -122,7 +126,7 @@ export function AddProjectDialog({
     setError(null);
     let parent: string | null;
     try {
-      parent = await pickDirectory();
+      parent = await pickDirectory(startIn);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       return;
