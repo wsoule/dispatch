@@ -202,6 +202,8 @@ export function currentShellPageTitle(
   taskTitle: string | null
 ): string | null {
   if (state.settings !== null) return null;
+  // The task page stays mounted under the Overseer; its title isn't the place.
+  if (state.mainView === 'overseer') return null;
   if (onLivePage(state)) return LIVE_PAGE_TITLE;
   const page = state.tasksPage;
   if (state.mainView === 'tasks' && page.kind === 'view') {

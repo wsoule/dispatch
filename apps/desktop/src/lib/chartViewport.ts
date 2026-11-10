@@ -71,14 +71,15 @@ export function panBy(t: ViewTransform, dx: number, dy: number): ViewTransform {
 /**
  * The transform that centres world `box` inside `viewport`, leaving `padding` screen px on
  * each side (default 36). The scale is the largest that fits, capped at `maxScale` (default
- * 1.1) and then clamped to [MIN_SCALE, MAX_SCALE]. A viewport without area (unmounted,
+ * 1.1) and then clamped to [MIN_SCALE, MAX_SCALE]. Below `minScale` it holds that
+ * scale and anchors the box's top-left instead of centring it. A viewport without area (unmounted,
  * hidden, or happy-dom, which lays nothing out) has nothing to fit into and yields IDENTITY;
  * a box with no area is treated as 1 world px wide/tall so the fit never divides by zero.
  */
 export function fitBox(
   box: Box,
   viewport: Size,
-  opts: { padding?: number; maxScale?: number } = {}
+  opts: { padding?: number; maxScale?: number; minScale?: number } = {}
 ): ViewTransform {
   const { width, height } = viewport;
   // Written as a positive test so NaN sizes also land here.
@@ -88,6 +89,11 @@ export function fitBox(
     Math.max(width - padding * 2, 1) / Math.max(box.width, 1),
     Math.max(height - padding * 2, 1) / Math.max(box.height, 1)
   );
+  // Too big to fit legibly: hold the floor and start at the top-left, to pan from there.
+  if (opts.minScale !== undefined && fit < opts.minScale) {
+    const k = clampScale(opts.minScale);
+    return { x: padding - box.x * k, y: padding - box.y * k, k };
+  }
   const k = clampScale(Math.min(fit, opts.maxScale ?? FIT_MAX_SCALE));
   return {
     x: width / 2 - (box.x + box.width / 2) * k,

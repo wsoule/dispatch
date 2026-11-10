@@ -540,6 +540,8 @@ function TaskPageLoaded({
       <div className={styles.pane}>
         <TaskDetail
           layout="page"
+          // The Flight Plan's chart needs the width more than the properties do.
+          wide={view === 'plan'}
           header
           headingLevel={headingLevel}
           className={styles.detail}

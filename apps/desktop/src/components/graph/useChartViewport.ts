@@ -23,7 +23,12 @@ export interface ChartViewportApi {
   /** Fit a world box; animate defaults to true. */
   fit: (
     box: Box,
-    opts?: { maxScale?: number; padding?: number; animate?: boolean }
+    opts?: {
+      maxScale?: number;
+      minScale?: number;
+      padding?: number;
+      animate?: boolean;
+    }
   ) => void;
   /** The stage's current client size (0x0 before mount or in happy-dom). */
   size: () => Size;

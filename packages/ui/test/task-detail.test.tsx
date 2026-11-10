@@ -181,10 +181,10 @@ describe('TaskDetail', () => {
       'Properties',
       'Description',
       'Blocked by, 1',
-      'Blocks, 0',
       'Activity',
     ]);
-    expect(screen.getByText('Nothing waits on this task.')).toBeTruthy();
+    // An empty Blocks section is left out.
+    expect(screen.queryByText('Nothing waits on this task.')).toBeNull();
     expect(screen.getByRole('list', { name: 'Blocked by' })).toBeTruthy();
     expect(screen.getByRole('list', { name: 'Activity' })).toBeTruthy();
   });
@@ -328,12 +328,13 @@ describe('TaskDetail', () => {
     render(
       <TaskDetail
         {...baseProps()}
-        labels={{ blockedBy: 'Bloqué par', blocksNothing: 'Rien.' }}
+        labels={{ blockedBy: 'Bloqué par', nothingBlocks: 'Rien.' }}
+        relations={{ blockedBy: [], blocks: [] }}
       />
     );
     expect(
       screen.getByRole('heading', { level: 3, name: /^Bloqué par/ }).textContent
-    ).toBe('Bloqué par, 1');
+    ).toBe('Bloqué par, 0');
     expect(screen.getByText('Rien.')).toBeTruthy();
   });
 
@@ -849,7 +850,6 @@ describe('review fixes', () => {
       'Labels',
       'Description',
       'Blocked by, 1',
-      'Blocks, 0',
       'Activity',
     ]);
     rerender(<TaskDetail {...baseProps()} layout="page" rail={railSection} />);
@@ -1071,7 +1071,6 @@ describe('TaskDetail: host sections', () => {
       'Work',
       'Description',
       'Blocked by, 1',
-      'Blocks, 0',
       'Comments, 0',
       'Activity',
       'Acceptance criteria, 3',
@@ -1147,10 +1146,7 @@ describe('TaskDetail: host sections', () => {
     expect(note?.nextElementSibling?.getAttribute('aria-label')).toBe(
       'Blocked by'
     );
-    // Blocks has no note.
-    const blocks = screen
-      .getByRole('heading', { name: /^Blocks/ })
-      .closest('section');
-    expect(blocks?.querySelector('[data-slot=section-note]')).toBeNull();
+    // Blocks, empty here, isn't drawn at all.
+    expect(screen.queryByRole('heading', { name: /^Blocks/ })).toBeNull();
   });
 });

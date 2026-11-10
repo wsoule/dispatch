@@ -182,6 +182,7 @@ import { countMergeReady } from './lib/mergeReady';
 import { resolveExecuteModel } from './lib/models';
 import { awayDigest } from './lib/narrator';
 import { needsYou } from './lib/needsYou';
+import { isAskNotification } from './lib/notificationEdges';
 import type { OverseerDoor } from './lib/overseerThread';
 import {
   addressEntries,
@@ -2479,7 +2480,9 @@ function App() {
           notifications={
             sidePanelNotifications && (
               <NotificationsSection
-                entries={notificationInbox.entries}
+                entries={notificationInbox.entries.filter(
+                  (entry) => !isAskNotification(entry)
+                )}
                 unreadCount={unreadCount(notificationInbox)}
                 onMarkAllRead={markNotificationInboxRead}
                 onOpen={openNotification}

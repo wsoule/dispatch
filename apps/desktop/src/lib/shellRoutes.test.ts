@@ -210,6 +210,15 @@ describe('currentShellDestination', () => {
     expect(currentShellDestination(page)).toBe('issues');
   });
 
+  test('the Overseer crumb ends at Overseer even with a task page open beneath it', () => {
+    const state = after([
+      { type: 'showTasks' },
+      { type: 'openTask', taskId: 't-1' },
+      { type: 'showOverseer' },
+    ]);
+    expect(currentShellPageTitle(state, 'Some task')).toBeNull();
+  });
+
   test('a page without a row does not inherit the Needs you preset', () => {
     for (const view of ['projects', 'files'] as const) {
       const page = after([

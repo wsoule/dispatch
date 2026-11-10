@@ -95,14 +95,13 @@ describe('TaskDetail: comments', () => {
     expect(
       within(section).getByRole('textbox', { name: 'New comment' })
     ).toBeTruthy();
-    // Order: after Blocks, before Activity.
+    // Order: after the relations (an empty Blocks is left out), before Activity.
     const headings = screen
       .getAllByRole('heading', { level: 3 })
       .map((h) => h.textContent);
     expect(headings).toEqual([
       'Properties',
       'Blocked by, 0',
-      'Blocks, 0',
       'Comments, 2',
       'Activity',
     ]);

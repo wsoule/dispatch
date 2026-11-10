@@ -586,13 +586,8 @@ describe('the planning sections of a container', () => {
         .getByRole('progressbar', { name: 'Milestone progress' })
         .getAttribute('aria-valuetext')
     ).toBe('0 of 2 done');
-    // Every rubric item is met, each with what is there.
-    const rubric = within(section).getByRole('list', { name: 'Rubric' });
-    expect(within(rubric).getAllByRole('listitem')).toHaveLength(4);
-    expect(rubric.querySelectorAll('[data-met="true"]')).toHaveLength(4);
-    expect(within(rubric).getByText('Wyat')).toBeTruthy();
-    expect(within(rubric).getByText('From the description')).toBeTruthy();
-    expect(within(rubric).getByText('2 issues')).toBeTruthy();
+    // Every rubric item is met, so there is no Missing list to read.
+    expect(within(section).queryByRole('list', { name: 'Missing' })).toBeNull();
     // Schema is the project's next milestone; its button quick-looks it.
     fireEvent.click(within(section).getByRole('button', { name: 'Schema' }));
     expect(log.peeks).toEqual(['ms-0']);

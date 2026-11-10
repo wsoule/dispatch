@@ -369,6 +369,8 @@ export interface TaskDetailProps {
   children?: ReactNode;
   /** Default 'drawer'. */
   layout?: TaskDetailLayout;
+  /** Page layout only: leave the rail out so the body spans the page (a wide chart). */
+  wide?: boolean;
   /**
    * Draw the header (breadcrumb bar, actions and title). Default true.
    * Pass false when a container already draws them, e.g. inside SlideOver

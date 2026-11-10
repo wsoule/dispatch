@@ -48,7 +48,7 @@ interface AllocationPreviewItem {
 }
 
 /** One project in the preview: what its plan comes to and its items. */
-export interface AllocationPreviewProject {
+interface AllocationPreviewProject {
   projectId: string;
   projectName: string;
   outcome: ProjectAllocationOutcome;

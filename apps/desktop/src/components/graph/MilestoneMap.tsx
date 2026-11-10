@@ -86,6 +86,10 @@ import { CHART_STATE, STATE_ORDER } from './chartTones';
 import styles from './MilestoneMap.module.css';
 import { type ChartViewportApi, useChartViewport } from './useChartViewport';
 
+// The smallest scale an embedded chart's automatic fit goes to: cards stay readable and
+// a bigger plan pans instead of shrinking.
+const COMPACT_MIN_SCALE = 0.85;
+
 /** The chart's two views: milestones as cards, or every linked task. */
 export type ChartView = 'milestones' | 'tasks';
 
@@ -518,6 +522,8 @@ export function MilestoneMapView({
   className,
 }: MilestoneMapViewProps) {
   const compact = variant === 'compact';
+  // An embed's automatic fit stops at a legible scale; the fit button still shows all.
+  const autoFitFloor = compact ? COMPACT_MIN_SCALE : undefined;
   const storageKey = `dispatch:graph-mode:${projectKey}`;
   const prefsKey = `dispatch:graph-chart:${projectKey}`;
   const [mode, setMode] = useState<ChartView>(() =>
@@ -827,7 +833,10 @@ export function MilestoneMapView({
       if (headBox !== null) {
         viewport.fit(headBox, { maxScale: 0.6, animate: false });
       } else {
-        viewport.fit(wholeBox(next), { animate: false });
+        viewport.fit(wholeBox(next), {
+          animate: false,
+          minScale: autoFitFloor,
+        });
       }
       return;
     }
@@ -841,9 +850,9 @@ export function MilestoneMapView({
       const { k } = viewport.transform();
       viewport.pan((before.x - after.x) * k, (before.y - after.y) * k);
     } else if (!viewport.moved()) {
-      viewport.fit(wholeBox(next), { animate: false });
+      viewport.fit(wholeBox(next), { animate: false, minScale: autoFitFloor });
     }
-  }, [placed, spec, viewport, framingKey, chart, view, anchorId]);
+  }, [placed, spec, viewport, framingKey, chart, view, anchorId, autoFitFloor]);
 
   const fitAll = useCallback(() => {
     if (current !== null) viewport.fit(wholeBox(current));
@@ -865,7 +874,10 @@ export function MilestoneMapView({
           });
         }
       } else if (!viewport.moved()) {
-        viewport.fit(wholeBox(current), { animate: false });
+        viewport.fit(wholeBox(current), {
+          animate: false,
+          minScale: autoFitFloor,
+        });
       }
     };
   });

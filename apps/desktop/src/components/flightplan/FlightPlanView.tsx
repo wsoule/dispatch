@@ -18,7 +18,7 @@ import {
   SkeletonRows,
   Tooltip,
 } from '@dispatch/ui';
-import { ChevronDown, Waypoints, Zap } from 'lucide-react';
+import { ChevronDown, Network, Waypoints, Zap } from 'lucide-react';
 import {
   type ReactNode,
   useCallback,
@@ -843,7 +843,23 @@ export function FlightPlan({
       {/* The container's fan-out covers the whole plan, every band included. */}
       <FlightPlanHeader
         stats={stats}
-        controls={fanoutFor(container, false)}
+        controls={
+          <>
+            <span className={styles.verbs}>{fanoutFor(container, false)}</span>
+            {/* Beside Send agents, so the chart keeps the row a toolbar would take. */}
+            {nodes.length > 0 && (
+              <Button
+                variant="quiet"
+                size="sm"
+                href={containerGraphHref(container)}
+                data-testid="chart-open-graph"
+                icon={<Network aria-hidden size={14} strokeWidth={1.8} />}
+              >
+                Open in Graph
+              </Button>
+            )}
+          </>
+        }
         slotsPicker={slotsPickerFor(container)}
       />
       {nodes.length === 0 ? (
@@ -873,7 +889,6 @@ export function FlightPlan({
             renderTooLarge={renderTooLarge}
             onOpenTask={openFromChart}
             variant="compact"
-            graphHref={containerGraphHref(container)}
             className={styles.chart}
           />
           {showBranches && (
