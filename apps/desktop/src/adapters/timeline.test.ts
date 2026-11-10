@@ -278,14 +278,14 @@ describe('chart bars', () => {
 });
 
 describe('lanes', () => {
-  test('sublabel: lead, No lead and a deactivated lead as warnings, inactive quiet', () => {
+  test('sublabel: a deactivated lead warns; No lead is quiet (the banner says it); inactive quiet', () => {
     expect(laneSublabel(lane())).toEqual({
       sublabel: 'Chloe Diaz',
       tone: 'default',
     });
     expect(laneSublabel(lane({ leadId: null, leadName: null }))).toEqual({
       sublabel: 'No lead',
-      tone: 'warning',
+      tone: 'default',
     });
     // A lead the view knows no name for is still a lead.
     expect(laneSublabel(lane({ leadName: null }))).toEqual({
@@ -650,17 +650,13 @@ describe('banners', () => {
     // Every banner is a warning (amber): a missing input, or open issues no
     // milestone counts.
     expect(banners.every((b) => b.tone === 'warning')).toBe(true);
-    expect(banners[0]?.text).toBe(
-      '2 active projects have no lead, so their milestones fail the rubric.'
-    );
+    expect(banners[0]?.text).toBe('2 projects have no lead.');
     expect(banners[0]?.items).toEqual([
       { id: 'p-delta', label: 'Delta exports', href: '#/task/p-delta' },
       { id: 'p-echo', label: 'Echo', href: '#/task/p-echo' },
     ]);
     expect(banners[0]?.action).toBeUndefined();
-    expect(banners[1]?.text).toBe(
-      '1 milestone has no target date, so it fails the rubric and sits undated at the end of its lane.'
-    );
+    expect(banners[1]?.text).toBe('1 milestone has no target date.');
     expect(banners[1]?.items).toEqual([
       {
         id: 'ms-loc',
@@ -668,9 +664,7 @@ describe('banners', () => {
         href: '#/task/ms-loc',
       },
     ]);
-    expect(banners[2]?.text).toBe(
-      '3 open issues in 2 projects have no milestone, so no milestone counts them. Move them into one, or cancel them.'
-    );
+    expect(banners[2]?.text).toBe('3 open issues have no milestone.');
     // Rows follow the core's order (by project, then issue), not the list's.
     expect(banners[2]?.items).toEqual([
       { id: 'i1', label: 'Atlas › Write both ledgers', href: '#/task/i1' },
@@ -705,9 +699,9 @@ describe('banners', () => {
       HREFS
     );
     expect(banners.map((b) => b.text)).toEqual([
-      '1 active project has no lead, so its milestones fail the rubric.',
-      '1 milestone has no target date, so it fails the rubric and sits undated at the end of its lane.',
-      '1 open issue has no milestone, so no milestone counts it. Move it into one, or cancel it.',
+      '1 project has no lead.',
+      '1 milestone has no target date.',
+      '1 open issue has no milestone.',
     ]);
     // An issue the list does not know is counted but not listed.
     expect(banners[2]?.count).toBe(1);

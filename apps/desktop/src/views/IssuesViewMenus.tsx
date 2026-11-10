@@ -550,7 +550,7 @@ export function GroupMenu({
   onAction: (action: GroupAction, group: TaskGroupData) => void;
 }): ReactNode {
   const options: PickerOption[] = [
-    { value: 'new-task', label: 'New task here' },
+    { value: 'new-task', label: 'New issue here' },
   ];
   if (container)
     options.push({ value: 'open-plan', label: 'Open flight plan' });

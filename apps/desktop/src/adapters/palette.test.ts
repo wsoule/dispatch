@@ -138,7 +138,7 @@ describe('toPaletteItems', () => {
         }),
         entry({
           id: 'action-new-task',
-          label: 'New task',
+          label: 'New issue',
           sublabel: undefined,
           kind: 'action',
           section: 'actions',

@@ -553,7 +553,7 @@ function ColumnHeader({
       <Button
         variant="quiet"
         size="sm"
-        aria-label={`New task in ${status}`}
+        aria-label={`New issue in ${status}`}
         onClick={onAdd}
         icon={<Plus {...ICON} />}
       />

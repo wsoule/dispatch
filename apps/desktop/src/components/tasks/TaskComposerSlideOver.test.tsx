@@ -207,10 +207,10 @@ function mount(options: MountOptions = {}) {
   };
 }
 
-/** The open composer: "New task" in Describe and Quick add, "Quick capture" in Drop a
+/** The open composer: "New issue" in Describe and Quick add, "Quick capture" in Drop a
  * thought. */
 function composer() {
-  return screen.queryByRole('dialog', { name: /^(New task|Quick capture)$/ });
+  return screen.queryByRole('dialog', { name: /^(New issue|Quick capture)$/ });
 }
 
 /** The focused element as "<tag> <aria-label>" ("body" when focus fell out), so a failed
@@ -279,7 +279,7 @@ async function settle() {
 
 // ---- Quick add (the old CreateTaskModal) --------------------------------
 
-test('a modal dialog named New task with the crumb, fields and property pickers', () => {
+test('a modal dialog named New issue with the crumb, fields and property pickers', () => {
   mount();
   const dialog = composer();
   expect(dialog?.getAttribute('aria-modal')).toBe('true');
@@ -1002,7 +1002,7 @@ test('the capture mode opens straight into its box', () => {
   expect(captureField().placeholder).toBe('Dump it here…');
 });
 
-test('Drop a thought keeps the quick capture name and Notes crumb; the others say New task', () => {
+test('Drop a thought keeps the quick capture name and Notes crumb; the others say New issue', () => {
   mount({ mode: 'capture', projectName: 'Audiobook' });
   const dialog = screen.getByRole('dialog', { name: 'Quick capture' });
   expect(dialog.getAttribute('aria-modal')).toBe('true');
@@ -1014,10 +1014,10 @@ test('Drop a thought keeps the quick capture name and Notes crumb; the others sa
     hintId === null ? null : document.getElementById(hintId)?.textContent
   ).toContain('Notes inbox');
   fireEvent.click(screen.getByRole('radio', { name: 'Quick add' }));
-  const quickAdd = screen.getByRole('dialog', { name: 'New task' });
+  const quickAdd = screen.getByRole('dialog', { name: 'New issue' });
   expect(within(quickAdd).getByText('Audiobook')).toBeTruthy();
   fireEvent.click(screen.getByRole('radio', { name: 'Describe' }));
-  expect(screen.getByRole('dialog', { name: 'New task' })).toBeTruthy();
+  expect(screen.getByRole('dialog', { name: 'New issue' })).toBeTruthy();
 });
 
 test('capturing hands the draft to onCapture, then clears and closes', async () => {

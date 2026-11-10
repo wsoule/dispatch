@@ -77,69 +77,81 @@ export function TasksExtraGroups({
   const personalDocs = useDocList(docsClient, data.port, PERSONAL_DOCS).docs;
   const unreviewed = teamDocs.filter((d) => d.unreviewed).length;
 
+  // Each group shows once it has something in it: an empty "Pull requests 0"
+  // under the list is noise.
+  if (notes.length === 0 && prs.length === 0 && teamDocs.length === 0)
+    return null;
   return (
     <div data-testid="tasks-extra-groups" className={styles.root}>
-      <Section name="Notes" count={notes.length} testId="tasks-group-notes">
-        {notes.length > 0 && (
-          <Register label="Notes" columns={NOTE_COLUMNS} stackWithin={480}>
-            {notes.map((note) => (
-              <RegisterRow key={note.id}>
-                <RegisterCell>
-                  <span className={styles.line} title={note.text}>
-                    {note.text}
-                  </span>
-                </RegisterCell>
-                <RegisterCell align="end">
-                  <span className={styles.actions}>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => void data.handleConvertInbox([note.id])}
-                    >
-                      Convert
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="quiet"
-                      onClick={() => void data.handleDismissInbox([note.id])}
-                    >
-                      Dismiss
-                    </Button>
-                  </span>
-                </RegisterCell>
-              </RegisterRow>
-            ))}
-          </Register>
-        )}
-      </Section>
-      <Section name="Pull requests" count={prs.length} testId="tasks-group-prs">
-        {prs.length > 0 && (
-          <Register
-            label="Pull requests"
-            columns={PR_COLUMNS}
-            stackWithin={480}
-          >
-            {prs.map((pr) => (
-              <RegisterRow
-                key={pr.number}
-                onActivate={() => onOpenPr(pr.number)}
-                rowLabel={`#${pr.number} ${pr.title}`}
-              >
-                <RegisterCell variant="mono">
-                  <span className="mono">#{pr.number}</span>
-                </RegisterCell>
-                <RegisterCell variant="name">
-                  <span className={styles.line}>{pr.title}</span>
-                </RegisterCell>
-                <RegisterCell variant="mono" align="end">
-                  {pr.author}
-                </RegisterCell>
-              </RegisterRow>
-            ))}
-          </Register>
-        )}
-      </Section>
-      {docsClient !== null && (
+      {notes.length > 0 && (
+        <Section name="Notes" count={notes.length} testId="tasks-group-notes">
+          {notes.length > 0 && (
+            <Register label="Notes" columns={NOTE_COLUMNS} stackWithin={480}>
+              {notes.map((note) => (
+                <RegisterRow key={note.id}>
+                  <RegisterCell>
+                    <span className={styles.line} title={note.text}>
+                      {note.text}
+                    </span>
+                  </RegisterCell>
+                  <RegisterCell align="end">
+                    <span className={styles.actions}>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => void data.handleConvertInbox([note.id])}
+                      >
+                        Convert
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="quiet"
+                        onClick={() => void data.handleDismissInbox([note.id])}
+                      >
+                        Dismiss
+                      </Button>
+                    </span>
+                  </RegisterCell>
+                </RegisterRow>
+              ))}
+            </Register>
+          )}
+        </Section>
+      )}
+      {prs.length > 0 && (
+        <Section
+          name="Pull requests"
+          count={prs.length}
+          testId="tasks-group-prs"
+        >
+          {prs.length > 0 && (
+            <Register
+              label="Pull requests"
+              columns={PR_COLUMNS}
+              stackWithin={480}
+            >
+              {prs.map((pr) => (
+                <RegisterRow
+                  key={pr.number}
+                  onActivate={() => onOpenPr(pr.number)}
+                  rowLabel={`#${pr.number} ${pr.title}`}
+                >
+                  <RegisterCell variant="mono">
+                    <span className="mono">#{pr.number}</span>
+                  </RegisterCell>
+                  <RegisterCell variant="name">
+                    <span className={styles.line}>{pr.title}</span>
+                  </RegisterCell>
+                  <RegisterCell variant="mono" align="end">
+                    {pr.author}
+                  </RegisterCell>
+                </RegisterRow>
+              ))}
+            </Register>
+          )}
+        </Section>
+      )}
+      {docsClient !== null && teamDocs.length > 0 && (
         <Section
           name="Docs"
           icon={<FileText size={14} strokeWidth={1.8} aria-hidden="true" />}

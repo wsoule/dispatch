@@ -1220,6 +1220,15 @@ describe('presetTabs', () => {
     expect(tabs.find((t) => t.id === 'all')?.current).toBe(true);
     expect(tabs.every((t) => t.href === undefined)).toBe(true);
   });
+
+  test('an empty preset has no tab, unless it is All or the open one', () => {
+    const ids = (current: 'all' | 'starred') =>
+      presetTabs(counts, { current, mine: 0, starred: 0 }).map((t) => t.id);
+    expect(ids('all')).not.toContain('mine');
+    expect(ids('all')).not.toContain('starred');
+    expect(ids('all')).toContain('all');
+    expect(ids('starred')).toContain('starred');
+  });
 });
 
 describe('filterChips', () => {

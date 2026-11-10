@@ -157,7 +157,8 @@ export function laneSublabel(lane: CoreLane): {
       tone: 'default',
     };
   }
-  if (lead === null) return { sublabel: 'No lead', tone: 'warning' };
+  // Quiet here: the "No lead" warning above the chart says it once for every lane.
+  if (lead === null) return { sublabel: 'No lead', tone: 'default' };
   if (lane.allocation?.blockReason === 'lead_inactive') {
     return { sublabel: `${lead} · deactivated`, tone: 'warning' };
   }
@@ -344,8 +345,9 @@ export function timelineReceipts(view: TimelineView): string {
       ? `${plural(lanes, 'project')} (${inactive} inactive)`
       : plural(lanes, 'project'),
     plural(milestones, 'milestone'),
-    `${overdue} overdue`,
-    `${atRisk} at risk`,
+    // A zero is no news: the line names only what is late or slipping.
+    ...(overdue > 0 ? [`${overdue} overdue`] : []),
+    ...(atRisk > 0 ? [`${atRisk} at risk`] : []),
     `${formatDate(view.windowStart, view.today)} – ${formatDate(view.windowEnd, view.today)}`,
   ].join(' · ');
 }
@@ -410,8 +412,8 @@ export function buildTimelineBanners(
       count: noLead.length,
       text:
         noLead.length === 1
-          ? '1 active project has no lead, so its milestones fail the rubric.'
-          : `${noLead.length} active projects have no lead, so their milestones fail the rubric.`,
+          ? '1 project has no lead.'
+          : `${noLead.length} projects have no lead.`,
       items: noLead.map((project) => ({
         id: project.projectId,
         label: project.name,
@@ -429,8 +431,8 @@ export function buildTimelineBanners(
       count: noDate.length,
       text:
         noDate.length === 1
-          ? '1 milestone has no target date, so it fails the rubric and sits undated at the end of its lane.'
-          : `${noDate.length} milestones have no target date, so they fail the rubric and sit undated at the end of their lanes.`,
+          ? '1 milestone has no target date.'
+          : `${noDate.length} milestones have no target date.`,
       items: noDate.map((milestone) => ({
         id: milestone.milestoneId,
         label: `${milestone.projectName} › ${milestone.name}`,
@@ -463,8 +465,8 @@ export function buildTimelineBanners(
       count: unplanned.count,
       text:
         unplanned.count === 1
-          ? '1 open issue has no milestone, so no milestone counts it. Move it into one, or cancel it.'
-          : `${unplanned.count} open issues in ${plural(unplanned.byProject.length, 'project')} have no milestone, so no milestone counts them. Move them into one, or cancel them.`,
+          ? '1 open issue has no milestone.'
+          : `${unplanned.count} open issues have no milestone.`,
       items,
       action: { label: 'Plan in Issues', href: hrefs.issues() },
     });

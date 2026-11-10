@@ -706,7 +706,7 @@ test('a collapsed column folds to a strip that expands on click', () => {
 test('a column header "+" opens the creator pre-set to that status', () => {
   const presets: CreateTaskPreset[] = [];
   render(<Harness presets={presets} />);
-  fireEvent.click(screen.getByRole('button', { name: 'New task in done' }));
+  fireEvent.click(screen.getByRole('button', { name: 'New issue in done' }));
   expect(presets).toEqual([{ status: 'done' }]);
 });
 
@@ -714,7 +714,7 @@ test('a lane header "+" presets the milestone', () => {
   const presets: CreateTaskPreset[] = [];
   render(<Harness presets={presets} />);
   fireEvent.click(
-    screen.getByRole('button', { name: 'New task in Payments milestone' })
+    screen.getByRole('button', { name: 'New issue in Payments milestone' })
   );
   expect(presets).toEqual([{ milestone: 'e-1' }]);
 });
@@ -791,12 +791,12 @@ test('assignee lanes put agents first and Unassigned last, avatar on every heade
   // preset to an assignee.
   expect(
     screen
-      .getAllByRole('button', { name: /^New task in/ })
+      .getAllByRole('button', { name: /^New issue in/ })
       .map((b) => b.getAttribute('aria-label'))
   ).toEqual([
-    'New task in todo',
-    'New task in in-progress',
-    'New task in done',
+    'New issue in todo',
+    'New issue in in-progress',
+    'New issue in done',
   ]);
 });
 

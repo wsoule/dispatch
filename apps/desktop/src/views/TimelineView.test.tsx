@@ -280,9 +280,7 @@ describe('TimelineView', () => {
   test('the banners name the project without a lead, the undated milestone and the unplanned issue', () => {
     mount();
     const banners = screen.getByRole('region', { name: 'Missing inputs' });
-    expect(
-      within(banners).getByText(/1 active project has no lead/)
-    ).toBeTruthy();
+    expect(within(banners).getByText(/1 project has no lead/)).toBeTruthy();
     expect(
       within(banners).getByText(/1 milestone has no target date/)
     ).toBeTruthy();

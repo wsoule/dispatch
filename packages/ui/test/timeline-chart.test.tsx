@@ -19,6 +19,27 @@ import {
 
 afterEach(cleanup);
 
+// The statuses a fixture draws, in the legend's order: the default legend keys only those.
+function legendStatuses(groups: TimelineGroup[]): string[] {
+  const present = new Set<string>();
+  for (const group of groups) {
+    for (const lane of group.lanes) {
+      for (const bar of lane.bars) present.add(bar.status);
+      for (const chip of lane.undated) present.add(chip.status);
+    }
+  }
+  return ['overdue', 'at_risk', 'on_track', 'done', 'missing'].filter((s) =>
+    present.has(s)
+  );
+}
+const LEGEND_WORDS: Record<string, string> = {
+  overdue: 'Overdue',
+  at_risk: 'At risk',
+  on_track: 'On track',
+  done: 'Complete',
+  missing: 'Missing input',
+};
+
 const GROUPS: TimelineGroup[] = [
   {
     id: 'ini-payments',
@@ -646,7 +667,7 @@ describe('announcements and spoken text', () => {
     );
   });
 
-  test('the legend says each status in words; its marks are drawing only', () => {
+  test('the legend says each shown status in words; its marks are drawing only', () => {
     const { getByRole } = renderChart();
     const legend = getByRole('list', { name: 'Legend' });
     expect(within(legend).queryAllByRole('img')).toHaveLength(0);
@@ -655,13 +676,26 @@ describe('announcements and spoken text', () => {
         .getAllByRole('listitem')
         .map((item) => item.textContent)
     ).toEqual([
-      'Overdue',
-      'At risk',
-      'On track',
-      'Complete',
-      'Missing input',
+      ...legendStatuses(GROUPS).map((status) => LEGEND_WORDS[status]),
       'Due date',
     ]);
+  });
+
+  test('the legend keys only the statuses on the chart', () => {
+    const onTrack = GROUPS.map((group) => ({
+      ...group,
+      lanes: group.lanes.map((lane) => ({
+        ...lane,
+        bars: lane.bars.map((bar) => ({ ...bar, status: 'on_track' as const })),
+        undated: [],
+      })),
+    }));
+    const { getByRole } = renderChart({ groups: onTrack });
+    expect(
+      within(getByRole('list', { name: 'Legend' }))
+        .getAllByRole('listitem')
+        .map((item) => item.textContent)
+    ).toEqual(['On track', 'Due date']);
   });
 
   test('edge cues are drawn, not read: the arrows are aria-hidden', () => {

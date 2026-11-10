@@ -356,12 +356,24 @@ export function IssuesTable({
       for (const group of section.groups) {
         const source = groupByKey.get(group.id);
         if (source === undefined || source.archived) continue;
-        group.addLabel = `New task in ${group.title}`;
+        group.addLabel = `New issue in ${group.title}`;
         group.onAdd = () => shell.openCreateTask(source.preset);
       }
     }
     return built;
   }, [groups, ctx, columns, groupByKey, shell]);
+  // A Due column with no dates is a column of dashes: it shows once an issue has one.
+  const shownColumns = useMemo(
+    () =>
+      sections.some((section) =>
+        section.groups.some((group) =>
+          group.rows.some((row) => row.due !== undefined)
+        )
+      )
+        ? columns
+        : columns.filter((column) => column !== 'due'),
+    [sections, columns]
+  );
   const defaultCollapsed = useMemo(
     () =>
       defaultCollapsedGroups(groups, (status) => isDoneStatus(status, model)),
@@ -912,7 +924,7 @@ export function IssuesTable({
       <TaskGroupTable
         sections={sections}
         scrollParent={scrollParentOf}
-        columns={columns}
+        columns={shownColumns}
         columnLabels={COLUMN_LABELS}
         dropColumns={DROP_COLUMNS}
         label="Tasks"
