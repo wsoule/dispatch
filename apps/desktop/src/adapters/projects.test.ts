@@ -9,6 +9,8 @@ import { noProjectId } from '@dispatch/planning';
 import { describe, expect, test } from 'bun:test';
 
 import {
+  buildInitiativeRows,
+  buildMilestoneRows,
   buildProjectsPage,
   countProjectRows,
   filterProjectGroups,
@@ -406,5 +408,63 @@ describe('buildProjectsPage', () => {
     expect(parseProjectFilter('at_risk')).toBe('at_risk');
     expect(parseProjectFilter('nope')).toBe('all');
     expect(parseProjectFilter(undefined)).toBe('all');
+  });
+});
+
+describe('the Initiatives and Milestones levels', () => {
+  test('an initiative rolls up its projects: count, issues landed, active risk', () => {
+    const view = timeline([
+      [
+        lane({ projectId: 'p-a', bars: [bar({ status: 'at_risk' })] }),
+        lane({
+          projectId: 'p-b',
+          bars: [
+            bar({
+              milestoneId: 'ms-2',
+              progress: progress({ completed: 3, scope: 5 }),
+            }),
+          ],
+        }),
+      ],
+      [lane({ projectId: 'p-c' })],
+    ]);
+    const rows = buildInitiativeRows(view);
+    // "No initiative" is not an initiative.
+    expect(rows.map((r) => r.id)).toEqual(['init-0']);
+    expect(rows[0]).toMatchObject({
+      name: 'Initiative 0',
+      projects: '2 projects',
+      done: 4,
+      total: 9,
+      atRisk: 1,
+      openHref: '#/task/init-0',
+    });
+  });
+
+  test('milestones list soonest first, undated last, each with its project', () => {
+    const view = timeline([
+      [
+        lane({
+          projectId: 'p-a',
+          name: 'Atlas',
+          bars: [bar({ milestoneId: 'late', end: '2026-12-01' })],
+          undated: [bar({ milestoneId: 'undated', end: null, daysLeft: null })],
+        }),
+        lane({
+          projectId: 'p-b',
+          name: 'Beacon',
+          bars: [bar({ milestoneId: 'soon', end: '2026-10-25' })],
+        }),
+      ],
+    ]);
+    const rows = buildMilestoneRows(view);
+    expect(rows.map((r) => [r.id, r.project])).toEqual([
+      ['soon', 'Beacon'],
+      ['late', 'Atlas'],
+      ['undated', 'Atlas'],
+    ]);
+    // A missing date is quiet, not a warning.
+    expect(rows[2]?.dueLabel).toBe('No target date');
+    expect(rows[2]?.dueTone).toBe('muted');
   });
 });

@@ -251,7 +251,8 @@ describe('ProjectsView', () => {
     expect(status.closest('[data-tone]')?.getAttribute('data-tone')).toBe(
       'info'
     );
-    expect(within(store).getByText('Growth')).toBeTruthy();
+    // The initiative is the group's heading, not a line under the name.
+    expect(within(store).queryByText('Growth')).toBeNull();
     expect(within(store).getByText('Beta')).toBeTruthy();
     expect(within(store).getByRole('img', { name: 'On track' })).toBeTruthy();
     expect(
@@ -353,7 +354,7 @@ describe('ProjectsView', () => {
         .getAllByRole('radio')
         .map((option) => option.textContent)
     ).toEqual(['All4', 'Blocked1', 'At risk1', 'Inactive1']);
-    // Unnarrowed, the header carries the count; the toolbar adds none.
+    // With no filter or search, the header carries the count; the toolbar adds none.
     expect(screen.queryByText('4 projects')).toBeNull();
 
     fireEvent.click(within(filters).getByRole('radio', { name: /Blocked/ }));
@@ -370,6 +371,24 @@ describe('ProjectsView', () => {
     fireEvent.change(search, { target: { value: 'dev' } });
     expect(rowNames()).toEqual(['Open Loose ends', 'Open Archive']);
     expect(screen.getByText('2 of 4 projects')).toBeTruthy();
+  });
+
+  test('the level switch shows initiatives and milestones in place of projects', () => {
+    mount();
+    const levels = screen.getByRole('radiogroup', { name: 'Level' });
+    fireEvent.click(within(levels).getByRole('radio', { name: 'Initiatives' }));
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Initiatives' })
+    ).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open Growth' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'New initiative' })).toBeTruthy();
+
+    fireEvent.click(within(levels).getByRole('radio', { name: 'Milestones' }));
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Milestones' })
+    ).toBeTruthy();
+    expect(screen.getByRole('list', { name: 'Milestones' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'New milestone' })).toBeTruthy();
   });
 
   test('no match offers Show all, which clears the search and the filter', () => {
