@@ -66,24 +66,36 @@ function roleStorageKey(role: PickableRole): string {
   return `dispatch:model:${role}`;
 }
 
+// Beside each pick: the configured model it was made against, so a Settings
+// change outranks a pick made before it.
+function roleBaseKey(role: PickableRole): string {
+  return `dispatch:model:${role}:over`;
+}
+
 // The model the user last picked for `role` on this device, if it is still a
-// valid choice.
+// valid choice and Settings has not changed since. `configured` is the
+// project's model for the role; leave it out while config is still loading.
 export function readRoleModelOverride(
   role: PickableRole,
-  storage: KeyValueStore
+  storage: KeyValueStore,
+  configured?: string
 ): string | undefined {
+  if (configured !== undefined && storage.get(roleBaseKey(role)) !== configured)
+    return undefined;
   return offered(storage.get(roleStorageKey(role)));
 }
 
 // Remembers a composer pick for `role` on this device, so "always Fable for
-// planning" sticks without a trip to Settings. Best-effort: a storage failure
-// only costs the memory, not the pick itself.
+// planning" sticks without a trip to Settings, until Settings itself changes.
+// Best-effort: a storage failure only costs the memory, not the pick itself.
 export function storeRoleModelOverride(
   role: PickableRole,
   id: string,
-  storage: KeyValueStore
+  storage: KeyValueStore,
+  configured?: string
 ): void {
   storage.set(roleStorageKey(role), id);
+  if (configured !== undefined) storage.set(roleBaseKey(role), configured);
 }
 
 // The model a plan or overseer conversation opens on when the composer has
@@ -94,9 +106,10 @@ export function resolveRoleModel(
   config: { models?: Partial<Record<PickableRole, string>> } | null | undefined,
   storage: KeyValueStore
 ): string {
+  const configured = config?.models?.[role];
   return (
-    readRoleModelOverride(role, storage) ??
-    config?.models?.[role] ??
+    readRoleModelOverride(role, storage, configured) ??
+    configured ??
     DEFAULT_MODEL
   );
 }

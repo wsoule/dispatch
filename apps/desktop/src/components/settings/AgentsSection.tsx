@@ -58,7 +58,7 @@ interface AgentsSectionProps {
 const ROLE_INFO: Record<keyof ModelConfig, { label: string; hint: string }> = {
   execute: { label: 'Coding runs', hint: 'Agents that change your code.' },
   overseer: {
-    label: 'Assistant',
+    label: 'Overseer',
     hint: 'The chat that watches your project and can act on it.',
   },
   plan: {
@@ -240,12 +240,12 @@ export function AgentsSection({
 
       <SettingsGroup
         title="Streaming"
-        hint="How a chat shows an agent's text while it works. Live is the default; the others are for when streaming misbehaves. A change applies from the assistant's next turn, and to runs started after it."
+        hint="How a chat shows an agent's text while it works. Live is the default; the others are for when streaming misbehaves. A change applies from the Overseer's next turn, and to runs started after it."
         keywords="stream live text typing chat"
       >
         <ModeSetting<OverseerStreamMode>
           id="overseer-stream"
-          title="Assistant"
+          title="Overseer"
           subtitle={streamHint(OVERSEER_STREAM, overseerStream)}
           keywords="overseer.stream overseer narration"
           value={overseerStream}

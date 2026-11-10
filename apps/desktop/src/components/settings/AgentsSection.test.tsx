@@ -218,7 +218,7 @@ function streamMode(row: string, mode: string): HTMLElement {
 
 test('both chats stream live when config.yml says nothing', () => {
   renderAgents();
-  expect(streamMode('Assistant', 'Live').getAttribute('aria-checked')).toBe(
+  expect(streamMode('Overseer', 'Live').getAttribute('aria-checked')).toBe(
     'true'
   );
   expect(streamMode('Runs', 'Live').getAttribute('aria-checked')).toBe('true');
@@ -227,7 +227,7 @@ test('both chats stream live when config.yml says nothing', () => {
       'Its reply appears as it writes, and what it says between steps stays in the chat.'
     )
   ).toBeTruthy();
-  // Narration is the Assistant's alone.
+  // Narration is the Overseer's alone.
   expect(
     within(screen.getByRole('radiogroup', { name: 'Runs' }))
       .getAllByRole('radio')
@@ -238,7 +238,7 @@ test('both chats stream live when config.yml says nothing', () => {
 test('pressing a mode saves it under its own block', () => {
   const r = recorder();
   renderAgents({ onSave: r.onSave });
-  fireEvent.click(streamMode('Assistant', 'Narration'));
+  fireEvent.click(streamMode('Overseer', 'Narration'));
   fireEvent.click(streamMode('Runs', 'Off'));
   expect(r.saved).toEqual([
     { overseer: { stream: 'narration' } },
@@ -256,7 +256,7 @@ test('the configured mode is pressed and described, and pressing it again saves 
     },
     onSave: r.onSave,
   });
-  expect(streamMode('Assistant', 'Off').getAttribute('aria-checked')).toBe(
+  expect(streamMode('Overseer', 'Off').getAttribute('aria-checked')).toBe(
     'true'
   );
   expect(
@@ -267,7 +267,7 @@ test('the configured mode is pressed and described, and pressing it again saves 
       "Each part of the agent's text appears once it is finished."
     )
   ).toBeTruthy();
-  fireEvent.click(streamMode('Assistant', 'Off'));
+  fireEvent.click(streamMode('Overseer', 'Off'));
   expect(r.saved).toEqual([]);
 });
 
@@ -283,7 +283,7 @@ test('a viewer who may not save config cannot press a mode', () => {
       />
     </SettingsAccessProvider>
   );
-  const narration = streamMode('Assistant', 'Narration');
+  const narration = streamMode('Overseer', 'Narration');
   expect(narration.hasAttribute('disabled')).toBe(true);
   fireEvent.click(narration);
   expect(r.saved).toEqual([]);

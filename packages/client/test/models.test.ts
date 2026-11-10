@@ -102,6 +102,38 @@ describe('device model picks', () => {
     ).toBe('claude-haiku-5-5');
   });
 
+  test('a Settings change outranks a pick made before it', () => {
+    const store = memoryStorage();
+    const opus = { models: { overseer: 'claude-opus-5-5' } };
+    storeRoleModelOverride(
+      'overseer',
+      'claude-haiku-5-5',
+      store,
+      'claude-sonnet-5-5'
+    );
+    expect(resolveRoleModel('overseer', opus, store)).toBe('claude-opus-5-5');
+    storeRoleModelOverride(
+      'overseer',
+      'claude-haiku-5-5',
+      store,
+      'claude-opus-5-5'
+    );
+    expect(resolveRoleModel('overseer', opus, store)).toBe('claude-haiku-5-5');
+  });
+
+  test('a pick saved before picks recorded their base yields to config', () => {
+    const store = memoryStorage({
+      'dispatch:model:overseer': 'claude-haiku-5-5',
+    });
+    expect(
+      resolveRoleModel(
+        'overseer',
+        { models: { overseer: 'claude-opus-5-5' } },
+        store
+      )
+    ).toBe('claude-opus-5-5');
+  });
+
   test('a stored id the picker replaced resolves to its successor', () => {
     const store = memoryStorage({
       'dispatch:model:plan': 'claude-haiku-4-5-20251001',

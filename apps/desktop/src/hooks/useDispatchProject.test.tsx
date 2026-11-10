@@ -1721,8 +1721,8 @@ test('a parked call is read in full by its run and request id', async () => {
   resetGateFixtures();
 });
 
-// An Assistant call's gate carries a preview too; its conversation holds the call whole.
-test('a parked Assistant call is read in full from its conversation', async () => {
+// An Overseer call's gate carries a preview too; its conversation holds the call whole.
+test('a parked Overseer call is read in full from its conversation', async () => {
   const result = await mountWithGates([approvalGate]);
 
   const input = await result.current.fetchOverseerApprovalInput('o-1', 'req-9');
@@ -1734,7 +1734,7 @@ test('a parked Assistant call is read in full from its conversation', async () =
     );
 
   expect(input).toEqual({ command: 'make clean' });
-  expect(gone).toBe('The Assistant is no longer waiting on this call.');
+  expect(gone).toBe('The Overseer is no longer waiting on this call.');
   resetGateFixtures();
 });
 

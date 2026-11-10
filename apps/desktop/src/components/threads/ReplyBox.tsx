@@ -31,18 +31,18 @@ export type ReplyBoxProps = Pick<
 
 export type OverseerVoice = 'assistant' | 'agent';
 
-// The Overseer's name in each place: the Threads page says Assistant, the thread peek says
+// The Overseer's name in each place: the Threads page says Overseer, the thread peek says
 // your agent (ThreadPane's `overseerVoice`).
 const VOICE: Record<
   OverseerVoice,
   { elsewhere: string; open: string; to: string; busy: string; reply: string }
 > = {
   assistant: {
-    elsewhere: 'This Assistant conversation takes no replies here.',
-    open: 'Open Assistant',
-    to: 'To the Assistant',
-    busy: 'The Assistant is answering…',
-    reply: 'Reply to the Assistant…',
+    elsewhere: 'This Overseer conversation takes no replies here.',
+    open: 'Open Overseer',
+    to: 'To the Overseer',
+    busy: 'The Overseer is answering…',
+    reply: 'Reply to the Overseer…',
   },
   agent: {
     elsewhere: 'This conversation with your agent takes no replies here.',

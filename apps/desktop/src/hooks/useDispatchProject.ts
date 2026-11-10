@@ -780,7 +780,7 @@ export interface DispatchProjectData {
   ) => Promise<void>;
   /** The full input of a call a run is parked on, which its gate may only preview. */
   fetchApprovalInput: (runId: string, requestId: string) => Promise<unknown>;
-  /** The same for a call an Assistant conversation is parked on. */
+  /** The same for a call an Overseer conversation is parked on. */
   fetchOverseerApprovalInput: (
     conversation: string,
     requestId: string
@@ -2530,7 +2530,7 @@ export function useDispatchProject(
       const { pendingApprovals } = await client.getOverseer(conversation);
       const parked = pendingApprovals.find((a) => a.requestId === requestId);
       if (parked === undefined) {
-        throw new Error('The Assistant is no longer waiting on this call.');
+        throw new Error('The Overseer is no longer waiting on this call.');
       }
       return parked.input;
     },

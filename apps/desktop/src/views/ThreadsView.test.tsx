@@ -344,7 +344,7 @@ test('Cancel closes a new thread without sending', async () => {
   expect(document.activeElement === newThread).toBe(true);
 });
 
-test("a cut-off Assistant call is read in full from the Assistant's conversation", async () => {
+test("a cut-off Overseer call is read in full from the Overseer's conversation", async () => {
   const gate: Message = {
     ...question,
     id: 'm-g',
