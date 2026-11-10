@@ -80,6 +80,11 @@
   .grid {
     grid-template-columns: minmax(0, 1fr) 340px;
   }
+
+  /* No side column to draw: the list takes the width. */
+  .grid[data-solo='true'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @container (700px <= width < 1040px) {
