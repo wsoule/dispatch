@@ -2814,8 +2814,9 @@ export class Orchestrator {
     return this.requestChanges(meta, WAKE_PROMPT, opts.actor, opts.operator);
   }
 
-  // The model a fresh dispatch runs on. Anything the caller NAMED wins, so
-  // the named-vs-defaulted distinction resume turns on is untouched
+  // The model a fresh dispatch runs on. The caller's named model wins, then
+  // the task's persisted model. Both bypass judgment, while the
+  // named-vs-defaulted distinction resume turns on is untouched
   // (resumeHonoursRequest has already run, on the raw request). With nothing
   // named, the executor's own configured tiers decide (see executorModels): a
   // judgment may lower routine, small work to the `plan` tier when the
@@ -2831,8 +2832,11 @@ export class Orchestrator {
     if (request.model !== undefined) {
       return { model: request.model, reason: null };
     }
-    const models = executorModels(loadConfig(this.ctx.rootDir), executorName);
     const task = this.ctx.store.get(taskId);
+    if (task?.meta.model != null) {
+      return { model: task.meta.model, reason: null };
+    }
+    const models = executorModels(loadConfig(this.ctx.rootDir), executorName);
     const judgments = this.ctx.judgments ?? null;
     if (
       task !== null &&

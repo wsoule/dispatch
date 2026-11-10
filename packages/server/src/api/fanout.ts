@@ -1,4 +1,4 @@
-import { getSection } from '@dispatch-foo/core';
+import { executorModels, getSection, loadConfig } from '@dispatch-foo/core';
 import type { TaskDoc } from '@dispatch-foo/core';
 
 import type { ApiContext } from '../api.js';
@@ -25,6 +25,7 @@ import { decidingHuman } from './proposalFence.js';
 
 type FanoutRouteContext = Pick<
   ApiContext,
+  | 'rootDir'
   | 'store'
   | 'cache'
   | 'events'
@@ -111,7 +112,10 @@ export async function fanoutTask(
         task.meta.id,
         variant.executor,
         {
-          ...(variant.model === undefined ? {} : { model: variant.model }),
+          // Comparisons dispatch fresh without tier judgment.
+          model:
+            variant.model ??
+            executorModels(loadConfig(ctx.rootDir), variant.executor).execute,
           // Each variant acts for whoever the caller's credential names, as a
           // dispatch does.
           operator: humanOperator(ctx),
