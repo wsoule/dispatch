@@ -76,7 +76,7 @@ import { IssuesTable } from './IssuesViewTable';
 // The Issues hub in Gr8r's layout (architecture §8.4 "Issues"): the view
 // toolbar (search, the Filter menu, the Display popover, group by person,
 // List | Board, the saved views, New task), the preset tabs with their counts,
-// the applied filters as chips, every ask of mine pinned on top, then the list
+// the applied filters as chips, my asks on the Needs you preset, then the list
 // (IssuesViewTable on @dispatch/ui's TaskGroupTable) or the board, and the
 // composer at the foot. A row click quick-looks its task in the shell's
 // slide-over (App's peek slot, over this view); Enter, o and "Open" go to the
@@ -615,16 +615,19 @@ export function IssuesView({
       ) : (
         <div className={styles.body}>
           <div className={styles.column}>
-            <div className={styles.needs}>
-              <NeedsYouBlock
-                flush
-                data={data}
-                needs={needs}
-                decided={decided}
-                onOpenRef={onOpenRef}
-                onOpenDecision={onOpenDecision}
-              />
-            </div>
+            {/* The asks belong to the Needs you page; other presets leave them to its sidebar badge. */}
+            {preset === 'needs-you' && (
+              <div className={styles.needs}>
+                <NeedsYouBlock
+                  flush
+                  data={data}
+                  needs={needs}
+                  decided={decided}
+                  onOpenRef={onOpenRef}
+                  onOpenDecision={onOpenDecision}
+                />
+              </div>
+            )}
             <div className={styles.main}>
               {mode === 'board' ? (
                 <BoardPane

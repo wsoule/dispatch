@@ -28,7 +28,6 @@ import {
   dropVerdict,
   filterChips,
   fromTaskPriority,
-  NEEDS_ASSIGNEE_LABEL,
   presetTabs,
   type RowContext,
   rowGroupIndex,
@@ -615,7 +614,7 @@ describe('toTaskRow: the assignee', () => {
     }
   });
 
-  test('nobody on open, specified work is amber and reads Needs assignee', () => {
+  test('nobody on open, specified work is a quiet Unassigned, never amber', () => {
     const doc = taskDoc({ id: 't', title: 't', assignee: 'none' });
     for (const bucket of [
       'ready',
@@ -625,8 +624,8 @@ describe('toTaskRow: the assignee', () => {
     ] as TaskBucket[]) {
       const out = toTaskRow(row(doc), context({ buckets: { t: bucket } }));
       expect(out.assignee).toBeNull();
-      expect(out.assigneeTone).toBe('warning');
-      expect(out.unassignedLabel).toBe(NEEDS_ASSIGNEE_LABEL);
+      expect(out.assigneeTone).toBeUndefined();
+      expect(out.unassignedLabel).toBeUndefined();
     }
   });
 
@@ -1202,7 +1201,6 @@ describe('presetTabs', () => {
     expect(tabs.map((t) => [t.id, t.label, t.count, t.current])).toEqual([
       ['all', 'All', undefined, false],
       ['mine', 'Mine', 11, false],
-      ['needs-you', 'Needs you', 2, false],
       ['failed', 'Failed', 1, false],
       ['moving', 'Moving', 3, false],
       ['review', 'Review', 4, true],
@@ -1216,14 +1214,9 @@ describe('presetTabs', () => {
     );
   });
 
-  test('an explicit needs-you count wins over the bucket; no hrefFor gives no links', () => {
-    const tabs = presetTabs(counts, {
-      current: 'all',
-      mine: 0,
-      starred: 0,
-      needsYou: 7,
-    });
-    expect(tabs.find((t) => t.id === 'needs-you')?.count).toBe(7);
+  test('Needs you stays the sidebar row, not a tab; no hrefFor gives no links', () => {
+    const tabs = presetTabs(counts, { current: 'all', mine: 0, starred: 0 });
+    expect(tabs.some((t) => t.id === 'needs-you')).toBe(false);
     expect(tabs.find((t) => t.id === 'all')?.current).toBe(true);
     expect(tabs.every((t) => t.href === undefined)).toBe(true);
   });
