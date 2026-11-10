@@ -2675,7 +2675,10 @@ function App() {
           }
           renderPage={renderSidePage}
           composer={
-            hosted ? undefined : (
+            // Threads carries its own reply box: one composer per screen.
+            hosted ||
+            (tasksPage.kind === 'view' &&
+              tasksPage.view === 'threads') ? undefined : (
               <TasksComposer
                 overseer={overseer}
                 about={aboutTask}
