@@ -98,15 +98,23 @@ beforeEach(() => {
   };
   online.add(ada.device);
   online.add(bob.device);
-  handler = machinesHandler({
+  handler = make();
+});
+
+function make(secret?: string) {
+  return machinesHandler({
     db,
     hubs: hubs(),
     origin: ORIGIN,
     distDir: dist,
     userOf: (req) => webUserOf(db, req),
     signIn: () => new Response('sign in', { status: 200 }),
+    ...(secret === undefined ? {} : { secret }),
   });
-});
+}
+
+const userOf = (cookie: string) =>
+  webUserOf(db, new Request(ORIGIN, { headers: { cookie } }))!;
 
 afterEach(() => {
   db.close();
@@ -132,9 +140,34 @@ async function openPage(who: { cookie: string; device: string }) {
 
 describe('your machines from the web', () => {
   it('lists only your own machines and their projects', async () => {
-    const page = await (await get('/machines', ada.cookie))!.text();
-    expect(page).toContain(`/m/${ada.device}/a1b2c3d4e5f60718/`);
-    expect(page).not.toContain(bob.device);
+    const rows = await handler.list(userOf(ada.cookie));
+    expect(rows.map((r) => r.id)).toEqual([ada.device]);
+    expect(rows[0]?.projects).toEqual([
+      { key: 'a1b2c3d4e5f60718', name: 'dispatch' },
+    ]);
+  });
+
+  it('sends /machines to the list on Home', async () => {
+    const res = await get('/machines', ada.cookie);
+    expect(res!.status).toBe(303);
+    expect(res!.headers.get('location')).toBe('/#machines');
+  });
+
+  it('keeps working after a reload, and across a restart with a secret', async () => {
+    const api = `/m/${ada.device}/a1b2c3d4e5f60718/api/whoami`;
+    const first = await openPage(ada);
+    const again = await openPage(ada);
+    expect((await get(api, ada.cookie, again.token))!.status).toBe(200);
+    expect((await get(api, ada.cookie, first.token))!.status).toBe(200);
+
+    handler = make('server-secret');
+    const { token } = await openPage(ada);
+    handler = make('server-secret');
+    expect((await get(api, ada.cookie, token))!.status).toBe(200);
+    // Still bound to its owner, and refused by a server with another secret.
+    expect((await get(api, bob.cookie, token))!.status).toBe(401);
+    handler = make('other-secret');
+    expect((await get(api, ada.cookie, token))!.status).toBe(401);
   });
 
   it("serves a machine's page only to its owner", async () => {

@@ -4,7 +4,6 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { Identity, TeamDb, User } from './db.js';
 import type { TeamLinear } from './linear.js';
 import {
-  accountPage,
   APP_JS,
   devicePage,
   homePage,
@@ -15,7 +14,7 @@ import {
   signInPage,
   teamPage,
 } from './pages.js';
-import type { LiveSession } from './pages.js';
+import type { LiveSession, MachineRow } from './pages.js';
 import type {
   GrantTokens,
   LinearGrants,
@@ -55,6 +54,8 @@ export interface WebDeps {
   /** Installs Dispatch on a Linear workspace (its own hosted dispatchd);
    * absent when this server hosts none. */
   install?: (userId: string, record: LinearAccountRecord) => Promise<void>;
+  /** Your own machines and their projects, for Home (machines.ts). */
+  machines?: (user: User) => Promise<MachineRow[]>;
   /** GitHub's and Linear's endpoints, swappable in tests. */
   fetch?: typeof fetch;
 }
@@ -66,7 +67,7 @@ const LINEAR_AUTHORIZE = 'https://linear.app/oauth/authorize';
 const LINEAR_API = 'https://api.linear.app';
 
 // What an OAuth round trip is for: signing in, adding the provider to the
-// account signed in (only ever started from a form on /account), or opening a
+// account signed in (only ever started from a form on Home), or opening a
 // Linear workspace in the hosted planner (which keeps the person's grant), or
 // installing Dispatch on a workspace (an `actor=app` grant, by an admin).
 type OAuthMode = 'signin' | 'link' | 'workspace' | 'install';
@@ -548,7 +549,7 @@ export function webHandler(
         ),
         409
       );
-    return redirect('/account');
+    return redirect('/');
   }
 
   return async (req) => {
@@ -649,8 +650,8 @@ export function webHandler(
           403
         );
       return path === '/auth/github/link'
-        ? startGithub('/account', 'link')
-        : startLinear('/account', 'link');
+        ? startGithub('/', 'link')
+        : startLinear('/', 'link');
     }
     if (path === '/auth/github/callback' && method === 'GET') {
       const [state, next, mode] = (cookies(req).get(STATE_COOKIE) ?? '').split(
@@ -772,23 +773,29 @@ export function webHandler(
         403
       );
 
-    if (path === '/account' && method === 'GET')
-      return html(
-        accountPage(user, db.identities(user.id), {
-          github: config.githubClientId !== null,
-          linear: linearClientId !== null,
-        })
-      );
+    // The account's sign-ins live on Home now.
+    if (path === '/account' && method === 'GET') return redirect('/');
     if (path === '/' && method === 'GET') {
       // Home: the planner, your machines and your teams, in that order, so
       // signing in lands on what you came to use rather than one team's page.
-      const teams = db.teamsOf(user.id);
       return html(
-        homePage(user, teams, {
-          workspaces: deps.grants?.workspacesOf(user.id) ?? [],
-          canOpen: deps.grants !== undefined,
-          canInstall: deps.grants !== undefined && deps.install !== undefined,
-        })
+        homePage({
+          user,
+          teams: db.teamsOf(user.id),
+          planner: {
+            workspaces: deps.grants?.workspacesOf(user.id) ?? [],
+            canOpen: deps.grants !== undefined,
+            canInstall: deps.grants !== undefined && deps.install !== undefined,
+          },
+          machines: (await deps.machines?.(user)) ?? [],
+          identities: db.identities(user.id),
+          available: {
+            github: config.githubClientId !== null,
+            linear: linearClientId !== null,
+          },
+        }),
+        200,
+        { 'cache-control': 'no-store' }
       );
     }
     if (path === '/teams' && method === 'POST') {

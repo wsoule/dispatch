@@ -112,6 +112,30 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
     linearClientId === null
       ? null
       : new HostedWorkspaces(db.db, sealer, host, grants, linearClientId);
+  // Your own machines from the web, over their hub links (machines.ts).
+  const machines = machinesHandler({
+    db,
+    hubs,
+    origin: config.origin,
+    distDir: config.desktopDistDir ?? null,
+    userOf: (req) => webUserOf(db, req),
+    secret: config.teamSecret,
+    signIn: (next) =>
+      new Response(
+        signInPage(
+          next,
+          config.devLogin,
+          (config.linearClientId ?? null) !== null
+        ),
+        {
+          headers: {
+            'content-type': 'text/html; charset=utf-8',
+            'content-security-policy': PAGE_CSP,
+          },
+        }
+      ),
+  });
+
   const web = webHandler({
     db,
     ...(grants === undefined ? {} : { grants }),
@@ -125,6 +149,7 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
     linear,
     sessions: (teamId) => hubs.sessions(teamId),
     deviceRevoked: (deviceId, teamId) => hubs.revoke(deviceId, teamId),
+    machines: (user) => machines.list(user),
   });
   const mcp = mcpHandler({
     db,
@@ -166,29 +191,6 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
       )
         ws.close(1008, 'open the workspace again');
   }, 5 * 60_000);
-
-  // Your own machines from the web, over their hub links (machines.ts).
-  const machines = machinesHandler({
-    db,
-    hubs,
-    origin: config.origin,
-    distDir: config.desktopDistDir ?? null,
-    userOf: (req) => webUserOf(db, req),
-    signIn: (next) =>
-      new Response(
-        signInPage(
-          next,
-          config.devLogin,
-          (config.linearClientId ?? null) !== null
-        ),
-        {
-          headers: {
-            'content-type': 'text/html; charset=utf-8',
-            'content-security-policy': PAGE_CSP,
-          },
-        }
-      ),
-  });
 
   const server = Bun.serve<SocketData>({
     port: config.port,

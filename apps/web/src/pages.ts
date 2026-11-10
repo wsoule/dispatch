@@ -62,6 +62,9 @@ form.inline{display:flex;gap:8px;margin:0}form.inline input{flex:1}
 .note{padding:12px;border:1px solid var(--warn);color:var(--ink-soft)}.err{padding:12px;border:1px solid var(--bad);color:var(--ink);margin-bottom:16px}
 .ok{color:var(--live)}
 .foot{margin-top:64px;color:var(--ink-3);font:400 .72rem var(--mono)}
+details.fold{margin-top:40px}details.fold>summary{list-style:none;cursor:pointer}details.fold>summary::-webkit-details-marker{display:none}
+details.fold>summary .label{margin:0}details.fold>summary .label::after{content:' +';color:var(--ink-3)}details.fold[open]>summary .label::after{content:' −'}
+details.fold:not([open])>summary .label{border-bottom:1px solid var(--border)}
 `;
 
 const FONTS =
@@ -74,7 +77,7 @@ function page(title: string, user: User | null, body: string): string {
 <div class="bar"><a href="/">Dispatch / Teams</a>${
     user === null
       ? '<a href="https://dispatch.foo">dispatch.foo</a>'
-      : `<form method="post" action="/auth/logout"><a class="who" href="/machines">Machines</a><a class="who" href="/account">${esc(user.login)}</a><button class="small">Sign out</button></form>`
+      : `<form method="post" action="/auth/logout"><a class="who" href="/">${esc(user.login)}</a><button class="small">Sign out</button></form>`
   }</div>
 <main>${body}<p class="foot">Dispatch · agents that work together, whatever they run on</p></main></body></html>`;
 }
@@ -113,39 +116,6 @@ ${devLogin ? `<form method="get" action="/auth/dev" class="inline" style="margin
   );
 }
 
-/** The ways an account signs in, and buttons to connect the others. */
-export function accountPage(
-  user: User,
-  identities: { github: boolean; linear: boolean },
-  available: { github: boolean; linear: boolean }
-): string {
-  const row = (
-    label: string,
-    connected: boolean,
-    offered: boolean,
-    action: string
-  ): string =>
-    `<div class="row"><span>${label}</span>${
-      connected
-        ? '<span class="meta">Connected</span>'
-        : offered
-          ? `<form method="post" action="${action}" style="margin:0"><button class="small">Connect ${label}</button></form>`
-          : '<span class="meta">Not set up on this server</span>'
-    }</div>`;
-  return page(
-    'Account',
-    user,
-    `<h1>${esc(user.login)}</h1>
-<p class="lede">Either one signs you in to this account. Your agents keep the address agent:${esc(user.login)}/… whichever you use.</p>
-<div class="label">Sign-in</div><div class="box">${row('GitHub', identities.github, available.github, '/auth/github/link')}${row(
-      'Linear',
-      identities.linear,
-      available.linear,
-      '/auth/linear/link'
-    )}</div>`
-  );
-}
-
 /** The hosted planner's part of the home page: your Linear workspaces. */
 export interface PlannerLinks {
   workspaces: { urlKey: string; name: string }[];
@@ -155,36 +125,107 @@ export interface PlannerLinks {
   canInstall?: boolean;
 }
 
+// Your Linear workspaces, then one way to add one. The demo shows only to
+// someone with no workspace of their own.
 function plannerBox(planner: PlannerLinks): string {
   const rows = planner.workspaces
     .map(
       (w) =>
-        `<div class="row"><a href="/w/${esc(w.urlKey)}/">${esc(w.name)}</a><span class="meta">Linear</span></div>`
+        `<div class="row"><a href="/w/${esc(w.urlKey)}/">${esc(w.name)}</a><span class="meta">Linear workspace</span></div>`
     )
     .join('');
-  return `<div class="label">Planner</div><div class="box">${rows}<div class="row"><a href="/w/demo/">Northwind (demo)</a><span class="meta">Try it</span></div>${
-    planner.canOpen
-      ? '<div class="row"><span>Your timeline, projects and dependency graph, from Linear.</span><a class="btn small" href="/auth/linear/workspace">Open a Linear workspace</a></div>'
-      : ''
-  }${
+  const demo =
+    planner.workspaces.length === 0
+      ? '<div class="row"><a href="/w/demo/">Northwind (demo)</a><span class="meta">Try it</span></div>'
+      : '';
+  const install =
     planner.canInstall === true
-      ? '<div class="row"><span>Linear admin? Install Dispatch on your workspace so everyone can plan, and edits sync back to Linear.</span><a class="btn small" href="/auth/linear/install">Install Dispatch</a></div>'
-      : ''
-  }</div>`;
+      ? ' Admins can <a href="/auth/linear/install">install Dispatch</a> so edits sync back for everyone.'
+      : '';
+  const open = planner.canOpen
+    ? `<div class="row"><span class="muted">Timeline, projects and dependency graph, from Linear.${install}</span><a class="btn small" href="/auth/linear/workspace">${planner.workspaces.length === 0 ? 'Open' : 'Add'} a workspace</a></div>`
+    : '';
+  return `<div class="label">Planner</div><div class="box">${rows}${demo}${open}</div>`;
 }
 
-export function homePage(
-  user: User,
-  teams: (Team & { role: string })[],
-  planner: PlannerLinks = { workspaces: [], canOpen: false }
+/** One of your signed-in machines, as Home lists it. */
+export interface MachineRow {
+  id: string;
+  client: string;
+  teamName: string;
+  lastSeen: string | null;
+  online: boolean;
+  /** The projects it lets the web reach; null when it could not say. */
+  projects: { key: string; name: string }[] | null;
+  /** Why it lists none, when it answered with a reason. */
+  note?: string;
+}
+
+// Your own machines and the projects open on them, each one a link.
+function machinesBox(machines: MachineRow[]): string {
+  if (machines.length === 0)
+    return '<div class="box pad"><p class="muted">No machine signed in yet. Run <code>dispatch-mcp login</code> on one, then turn on Web access in the desktop app’s Settings, under This machine.</p></div>';
+  const rows = machines
+    .map((m) => {
+      const head = `<div class="row"><span><span class="dot${m.online ? ' on' : ''}"></span><span class="ink">${esc(m.client)}</span> <span class="muted">${esc(m.teamName)}</span></span><span class="meta">${m.online ? 'online' : m.lastSeen === null ? 'never seen' : `last seen ${esc(m.lastSeen.slice(0, 16).replace('T', ' '))}`}</span></div>`;
+      if (!m.online) return head;
+      if (m.projects === null || m.projects.length === 0)
+        return `${head}<div class="row"><span class="meta">${esc(m.note ?? 'No project is open on this machine.')}</span></div>`;
+      return (
+        head +
+        m.projects
+          .map(
+            (p) =>
+              `<div class="row"><a href="/m/${esc(m.id)}/${esc(p.key)}/">${esc(p.name)}</a><span class="meta">Open</span></div>`
+          )
+          .join('')
+      );
+    })
+    .join('');
+  return `<div class="box">${rows}</div>`;
+}
+
+// How this account signs in, with a button for each provider it could add.
+function signInLine(
+  identities: { github: boolean; linear: boolean },
+  available: { github: boolean; linear: boolean }
 ): string {
+  const using = [
+    identities.github ? 'GitHub' : null,
+    identities.linear ? 'Linear' : null,
+  ].filter((v): v is string => v !== null);
+  const add = (
+    [
+      ['GitHub', !identities.github && available.github, '/auth/github/link'],
+      ['Linear', !identities.linear && available.linear, '/auth/linear/link'],
+    ] as const
+  )
+    .filter(([, offered]) => offered)
+    .map(
+      ([label, , action]) =>
+        `<form method="post" action="${action}" style="display:inline;margin:0"><button class="small">Connect ${label}</button></form>`
+    )
+    .join(' ');
+  return `<div class="row"><span class="muted">Signed in with ${using.join(' · ')}</span><span>${add}</span></div>`;
+}
+
+export function homePage(input: {
+  user: User;
+  teams: (Team & { role: string })[];
+  planner?: PlannerLinks;
+  machines?: MachineRow[];
+  identities: { github: boolean; linear: boolean };
+  available: { github: boolean; linear: boolean };
+}): string {
+  const { user, teams, identities, available } = input;
+  const planner = input.planner ?? { workspaces: [], canOpen: false };
   const list =
     teams.length === 0
       ? ''
       : `<div class="box">${teams
           .map(
             (t) =>
-              `<div class="row"><a href="/teams/${esc(t.id)}">${esc(t.name)}</a><span class="meta">${esc(t.role)}</span></div>`
+              `<div class="row"><a href="/teams/${esc(t.id)}">${esc(t.name)}</a><span class="meta">Team · ${esc(t.role)}</span></div>`
           )
           .join('')}</div>`;
   return page(
@@ -193,9 +234,10 @@ export function homePage(
     `<h1>Dispatch</h1>
 <p class="lede">Plan your Linear workspaces, reach your own machines, and run your team's agents.</p>
 ${plannerBox(planner)}
-<div class="label">Machines</div><div class="box"><div class="row"><span>The machines you signed in, and the projects open on them.</span><a class="btn small" href="/machines">Your machines</a></div></div>
+<div class="label" id="machines">Your machines</div>${machinesBox(input.machines ?? [])}
 <div class="label">Teams</div>${list}
-<div class="box pad"><form method="post" action="/teams" class="inline"><input name="name" required maxlength="80" placeholder="New team name"><button class="primary">Create</button></form></div>`
+<div class="box pad"><form method="post" action="/teams" class="inline"><input name="name" required maxlength="80" placeholder="New team name"><button class="primary">Create</button></form></div>
+<div class="label">Account</div><div class="box">${signInLine(identities, available)}</div>`
   );
 }
 
@@ -236,7 +278,7 @@ export function teamPage(input: {
   const mine = devices.filter((d) => d.userId === user.id);
   const live = sessions.filter((s) => s.online).length;
 
-  const connect = `<div class="label">Connect your agents${mine.length > 0 ? ' <span class="ok">· this account has a machine signed in</span>' : ''}</div><div class="box">
+  const steps = `<div class="box">
 <div class="step"><div class="n">1</div><div><h3>On each machine, run one command</h3>
 <p>It connects Claude Code, Codex, Cursor, Gemini CLI, Claude Desktop and Windsurf, sets up wake-ups for idle Claude Code sessions, and signs the machine in to ${esc(team.name)} in your browser.</p>${cmd('npx @dispatch-foo/mcp setup')}</div></div>
 <div class="step"><div class="n">2</div><div><h3>Claude on the web or phone</h3>
@@ -251,6 +293,11 @@ ${
       }`
     : '<p>Ask an admin of this team for an invite link.</p>'
 }</div></div></div>`;
+  // Once a machine of yours is signed in, the setup steps fold away.
+  const connect =
+    mine.length > 0
+      ? `<details class="fold"><summary><div class="label">Connect your agents <span class="ok">· this account has a machine signed in</span></div></summary>${steps}</details>`
+      : `<div class="label">Connect your agents</div>${steps}`;
 
   const sessionRows =
     sessions.length === 0
@@ -281,7 +328,7 @@ ${
         ? '<div class="pad"><p class="muted">Not connected yet. A team admin connects Linear here, once, for everyone.</p></div>'
         : !linear.available
           ? '<div class="pad"><p class="muted">This server is not set up to hold Linear keys.</p></div>'
-          : `<div class="pad"><p>Connect once and every agent on the team can work your Linear issues, with no key on anyone’s machine.</p>
+          : `<div class="pad"><p>A team API key: connect it once and every agent on ${esc(team.name)} can work your Linear issues, with no key on anyone’s machine. It is separate from the Linear workspaces you plan in on <a href="/">Home</a>.</p>
 <form method="post" action="/teams/${esc(team.id)}/linear" class="inline"><input name="key" type="password" required placeholder="lin_api_…" autocomplete="off"><button class="primary">Connect</button></form>
 <p class="muted" style="margin-top:12px">Make a key in Linear under Settings → Security &amp; access → Personal API keys. It is stored encrypted and never shown again. A workspace admin’s key also tells agents when the issues they watch change.</p></div>`;
 
@@ -320,7 +367,7 @@ ${
     }</p>
 ${connect}
 <div class="label">Agent sessions</div>${sessionRows}
-<div class="label">Linear</div><div class="box">${linear.error === null ? '' : `<div class="pad"><div class="err">${esc(linear.error)}</div></div>`}${linearBody}</div>
+<div class="label">Linear API key for agents</div><div class="box">${linear.error === null ? '' : `<div class="pad"><div class="err">${esc(linear.error)}</div></div>`}${linearBody}</div>
 <div class="label">People</div><div class="box">${memberRows}</div>
 <div class="label">Signed-in machines</div><div class="box">${deviceRows === '' ? '<div class="pad"><p class="muted">None yet: run the setup command above.</p></div>' : deviceRows}</div>`
   );
@@ -424,46 +471,5 @@ ${
     : `<p><select name="team">${teams.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}</select></p>`
 }
 <p style="display:flex;gap:8px"><button class="primary" name="decision" value="allow">Allow</button><button name="decision" value="deny">Deny</button></p></form>`
-  );
-}
-
-/** One of your signed-in machines, as the machines page lists it. */
-export interface MachineRow {
-  id: string;
-  client: string;
-  teamName: string;
-  lastSeen: string | null;
-  online: boolean;
-  /** The projects it lets the web reach; null when it could not say. */
-  projects: { key: string; name: string }[] | null;
-  /** Why it lists none, when it answered with a reason. */
-  note?: string;
-}
-
-/** Your own machines and their projects: open one in the browser. */
-export function machinesPage(user: User, machines: MachineRow[]): string {
-  const rows = machines
-    .map((m) => {
-      const head = `<div class="row"><span><strong>${esc(m.client)}</strong> <span class="meta">${esc(m.teamName)}</span></span><span class="meta${m.online ? ' ok' : ''}">${m.online ? 'online' : m.lastSeen === null ? 'never seen' : `last seen ${esc(m.lastSeen.slice(0, 16).replace('T', ' '))}`}</span></div>`;
-      if (!m.online) return head;
-      if (m.projects === null || m.projects.length === 0)
-        return `${head}<div class="row"><span class="meta">${esc(m.note ?? 'No project is open on this machine.')}</span></div>`;
-      return (
-        head +
-        m.projects
-          .map(
-            (p) =>
-              `<div class="row"><a href="/m/${esc(m.id)}/${esc(p.key)}/">${esc(p.name)}</a><span class="meta">Open</span></div>`
-          )
-          .join('')
-      );
-    })
-    .join('');
-  return page(
-    'Machines',
-    user,
-    `<h1>Your machines</h1>
-<p class="lede">The machines you signed in with <code>dispatch-mcp login</code>, and the projects open on them. Only you see them. A machine is reachable only after you turn on Web access in the desktop app's Settings, under This machine.</p>
-${machines.length === 0 ? '<div class="box pad">No machine is signed in yet. Run <code>dispatch-mcp login</code> on one.</div>' : `<div class="box">${rows}</div>`}`
   );
 }
