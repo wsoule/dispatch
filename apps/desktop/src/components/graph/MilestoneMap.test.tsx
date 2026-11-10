@@ -617,3 +617,46 @@ describe('MilestoneMapView cards above milestones', () => {
     );
   });
 });
+
+describe('MilestoneMapView chrome', () => {
+  test('the toolbar chips carry the counts; help and Mermaid sit behind buttons', async () => {
+    mount();
+    await node('Search');
+    // The overview lists, with no stat tiles repeating the chips.
+    const overview = screen.getByTestId('chart-inspector-overview');
+    expect(overview.querySelector('dl')).toBeNull();
+    expect(screen.queryByTestId('chart-help')).toBeNull();
+    expect(screen.queryByText('Copy as Mermaid')).toBeNull();
+    fireEvent.click(screen.getByTestId('chart-help-toggle'));
+    expect(screen.getByTestId('chart-help').textContent).toContain(
+      'to see its neighbours'
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Display' }));
+    expect(screen.getByTestId('chart-copy-mermaid').textContent).toBe(
+      'Copy as Mermaid'
+    );
+  });
+
+  test('compact: the view switch and Open in Graph, no Find, chips, Display or inspector', async () => {
+    mount({ variant: 'compact', graphHref: '#/graph?milestone=m1' });
+    const search = await node('Search');
+    expect(screen.getByRole('radio', { name: 'Tasks' })).toBeTruthy();
+    expect(screen.queryByTestId('chart-search')).toBeNull();
+    expect(screen.queryByTestId('chart-preset-chain')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Display' })).toBeNull();
+    expect(screen.queryByTestId('milestone-map-summary')).toBeNull();
+    expect(screen.queryByTestId('chart-inspector')).toBeNull();
+    expect(screen.getByTestId('chart-open-graph').getAttribute('href')).toBe(
+      '#/graph?milestone=m1'
+    );
+    // A selection still opens the inspector, for the host's verbs.
+    fireEvent.click(search);
+    expect(screen.getByTestId('chart-inspector')).toBeTruthy();
+  });
+
+  test('compact with one view and no link draws no toolbar at all', async () => {
+    mount({ variant: 'compact', views: ['tasks'] });
+    await taskNode('b1');
+    expect(screen.queryByTestId('chart-toolbar')).toBeNull();
+  });
+});

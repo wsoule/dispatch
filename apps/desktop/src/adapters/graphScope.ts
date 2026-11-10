@@ -195,6 +195,19 @@ export const graphHref: GraphScopeHref = (scope, options = {}) => {
   return query === '' ? GRAPH_PATH : `${GRAPH_PATH}?${query}`;
 };
 
+/** The Graph page scoped to a container (an embedded chart's "Open in Graph"): its own
+ * scope for an initiative, project or milestone; a parent issue selects itself on the
+ * workspace's Issues level, since the Graph has no parent-issue scope. */
+export function containerGraphHref(container: {
+  meta: { id: string; kind: string };
+}): string {
+  const { id, kind } = container.meta;
+  if (kind === 'initiative' || kind === 'project' || kind === 'milestone') {
+    return graphHref(graphScopeFor({ kind, id }));
+  }
+  return graphHref({ level: 'issue' }, { node: id });
+}
+
 /** One issue's blocking chain, by identifier ("#/graph?chain=ENG-24"). */
 export function chainHref(key: string): string {
   return graphHref({ level: 'issue', issueId: key });

@@ -12,7 +12,13 @@ import {
   Switch,
   writeClipboard,
 } from '@dispatch/ui';
-import { PanelRight, SearchIcon, SlidersHorizontal } from 'lucide-react';
+import {
+  CircleHelp,
+  Network,
+  PanelRight,
+  SearchIcon,
+  SlidersHorizontal,
+} from 'lucide-react';
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -60,6 +66,7 @@ import {
 } from './ChartCanvas';
 import {
   capital,
+  ChartHelp,
   type ChartUnit,
   InspectorOverview,
   LinkInspector,
@@ -473,6 +480,11 @@ export interface MilestoneMapViewProps {
   };
   /** With the inspector toggled off, a selection still opens it, for the host's verbs. */
   inspectorOnSelect?: boolean;
+  /** `compact` is an embed (a plan, a Live band): the canvas, zoom and legend, the
+   * view switch when there are two, and `graphHref`; no Find, chips, Display or help. */
+  variant?: 'full' | 'compact';
+  /** The Graph page scoped to this chart: a compact chart's "Open in Graph" link. */
+  graphHref?: string;
   className?: string;
 }
 
@@ -501,8 +513,11 @@ export function MilestoneMapView({
   unit = MILESTONE_UNIT,
   onDrill,
   cardParents,
+  variant = 'full',
+  graphHref,
   className,
 }: MilestoneMapViewProps) {
+  const compact = variant === 'compact';
   const storageKey = `dispatch:graph-mode:${projectKey}`;
   const prefsKey = `dispatch:graph-chart:${projectKey}`;
   const [mode, setMode] = useState<ChartView>(() =>
@@ -510,14 +525,18 @@ export function MilestoneMapView({
       ? 'tasks'
       : storedMode(storageKey, views)
   );
-  const [prefs, setPrefs] = useState<ChartPrefs>(() =>
-    storedPrefs(prefsKey, { ...DEFAULT_PREFS, ...defaultPrefs })
-  );
+  // A compact chart has no Display menu, so it draws the host's defaults, never a
+  // remembered choice it offers no way to undo.
+  const [prefs, setPrefs] = useState<ChartPrefs>(() => {
+    const defaults = { ...DEFAULT_PREFS, ...defaultPrefs };
+    return compact ? defaults : storedPrefs(prefsKey, defaults);
+  });
   const view: ChartView = mode;
   const [copied, setCopied] = useState(false);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [displayOpen, setDisplayOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const viewport = useChartViewport({ pageScroll: embedded });
 
   const map = useMemo(() => milestoneMap(groups), [groups]);
@@ -870,7 +889,7 @@ export function MilestoneMapView({
   const updatePrefs = (patch: Partial<ChartPrefs>) => {
     const next = { ...prefs, ...patch };
     setPrefs(next);
-    storePrefs(prefsKey, next);
+    if (!compact) storePrefs(prefsKey, next);
   };
 
   const pick = (next: ChartView) => {
@@ -1019,7 +1038,7 @@ export function MilestoneMapView({
       return;
     }
     let handled = true;
-    if (event.key === '/') setSearchOpen(true);
+    if (event.key === '/' && !compact) setSearchOpen(true);
     else if (event.key === 'Escape' && active !== null) clear();
     else if (event.key === '0') fitAll();
     else if (event.key === '+' || event.key === '=') viewport.zoomBy(ZOOM_STEP);
@@ -1238,7 +1257,6 @@ export function MilestoneMapView({
         chart={chart}
         view={view}
         unlinkedHidden={unlinkedHidden}
-        unit={unit}
         onPick={goTo}
         onShowUnlinked={() => updatePrefs({ showUnlinked: true })}
       />
@@ -1324,8 +1342,10 @@ export function MilestoneMapView({
   const modes = GRAPH_MODES.filter((m) => views.includes(m.id));
   // A tasks-only chart counts tasks and waits; with the Milestones view, milestones too.
   const taskSummary = `${chart.tasks.size} ${chart.tasks.size === 1 ? 'task' : 'tasks'} · ${chart.edges.length} ${chart.edges.length === 1 ? 'wait' : 'waits'} · ${landed}/${total} landed`;
-  const showInspector =
-    prefs.inspector || (inspectorOnSelect && active !== null);
+  // A compact chart has no inspector toggle: the inspector opens on a selection only.
+  const showInspector = compact
+    ? active !== null
+    : prefs.inspector || (inspectorOnSelect && active !== null);
   const summary = !views.includes('milestones')
     ? taskSummary
     : `${map.nodes.length} ${map.nodes.length === 1 ? unit.one : unit.many} · ${
@@ -1334,131 +1354,190 @@ export function MilestoneMapView({
           : `${waits} ${waits === 1 ? 'wait' : 'waits'} between them`
       } · ${landed}/${total} landed`;
 
-  return (
-    <div data-testid="milestone-map" className={cx(styles.root, className)}>
-      <div data-testid="chart-toolbar" className={styles.toolbar}>
-        {modes.length > 1 && (
-          <SegmentedControl
-            label="Graph of"
-            size="sm"
-            options={modes}
-            value={mode}
-            onChange={(next) => {
-              const picked = modes.find((m) => m.id === next);
-              if (picked !== undefined) pick(picked.id);
-            }}
-          />
-        )}
-        {empty === null && (
-          <>
-            <PickerPopover
-              label="Find on the chart"
-              appearance="quiet"
-              action
-              value={null}
-              options={searchOptions}
-              open={searchOpen}
-              onOpenChange={setSearchOpen}
-              shortcut="/"
-              searchPlaceholder="Find a task or milestone"
-              emptyLabel="Nothing on this chart matches."
-              triggerLabel="Find on the chart"
-              trigger={
-                <span className={styles.find} data-testid="chart-search">
-                  <SearchIcon aria-hidden size={14} strokeWidth={1.8} />
-                  Find
-                </span>
-              }
-              onChange={onSearchPick}
-            />
-            <span className={styles.presets}>
-              {PRESETS.map((preset) => {
-                const count = preset
-                  .ids(chart)
-                  .filter((id) => findableSet.has(id)).length;
-                const pressed =
-                  active?.kind === 'preset' && active.id === preset.id;
-                return (
-                  <ChipButton
-                    key={preset.id}
-                    data-testid={`chart-preset-${preset.id}`}
-                    selected={pressed}
-                    // A pressed preset stays clickable even once it empties, so it can be let go.
-                    disabled={count === 0 && !pressed}
-                    onClick={() => {
-                      if (pressed) clear();
-                      else showSet({ kind: 'preset', id: preset.id }, view);
-                    }}
-                  >
-                    {preset.label} <span className={styles.count}>{count}</span>
-                  </ChipButton>
-                );
-              })}
-            </span>
-          </>
-        )}
+  const viewSwitch =
+    modes.length > 1 ? (
+      <SegmentedControl
+        label="Graph of"
+        size="sm"
+        options={modes}
+        value={mode}
+        onChange={(next) => {
+          const picked = modes.find((m) => m.id === next);
+          if (picked !== undefined) pick(picked.id);
+        }}
+      />
+    ) : null;
+  const toolbar = compact ? (
+    (viewSwitch !== null || graphHref !== undefined) && (
+      <div
+        data-testid="chart-toolbar"
+        data-variant="compact"
+        className={styles.toolbar}
+      >
+        {viewSwitch}
         <span className={styles.spacer} />
-        <span data-testid="milestone-map-summary" className={styles.summary}>
-          {summary}
-        </span>
-        {empty === null && (view === 'tasks' || cardParents !== undefined) && (
-          <Popover
-            open={displayOpen}
-            onOpenChange={setDisplayOpen}
-            label="Chart display"
-            align="end"
-            width={240}
-            trigger={
-              <Button
-                variant="quiet"
-                size="sm"
-                icon={
-                  <SlidersHorizontal aria-hidden size={14} strokeWidth={1.8} />
-                }
-              >
-                Display
-              </Button>
-            }
+        {graphHref !== undefined && (
+          <Button
+            variant="quiet"
+            size="sm"
+            href={graphHref}
+            data-testid="chart-open-graph"
+            icon={<Network aria-hidden size={14} strokeWidth={1.8} />}
           >
-            <div className={styles.display}>
-              {view === 'tasks' && (
-                <>
-                  <Switch
-                    label="Hide landed tasks"
-                    checked={prefs.hideLanded}
-                    onChange={(checked) => updatePrefs({ hideLanded: checked })}
-                  />
-                  <Switch
-                    label="Show unlinked tasks"
-                    checked={prefs.showUnlinked}
-                    onChange={(checked) =>
-                      updatePrefs({ showUnlinked: checked })
-                    }
-                  />
-                </>
-              )}
+            Open in Graph
+          </Button>
+        )}
+      </div>
+    )
+  ) : (
+    <div data-testid="chart-toolbar" className={styles.toolbar}>
+      {viewSwitch}
+      {empty === null && (
+        <>
+          <PickerPopover
+            label="Find on the chart"
+            appearance="quiet"
+            action
+            value={null}
+            options={searchOptions}
+            open={searchOpen}
+            onOpenChange={setSearchOpen}
+            shortcut="/"
+            searchPlaceholder="Find a task or milestone"
+            emptyLabel="Nothing on this chart matches."
+            triggerLabel="Find on the chart"
+            trigger={
+              <span className={styles.find} data-testid="chart-search">
+                <SearchIcon aria-hidden size={14} strokeWidth={1.8} />
+                Find
+              </span>
+            }
+            onChange={onSearchPick}
+          />
+          <span className={styles.presets}>
+            {PRESETS.map((preset) => {
+              const count = preset
+                .ids(chart)
+                .filter((id) => findableSet.has(id)).length;
+              const pressed =
+                active?.kind === 'preset' && active.id === preset.id;
+              return (
+                <ChipButton
+                  key={preset.id}
+                  data-testid={`chart-preset-${preset.id}`}
+                  selected={pressed}
+                  // A pressed preset stays clickable even once it empties, so it can be let go.
+                  disabled={count === 0 && !pressed}
+                  onClick={() => {
+                    if (pressed) clear();
+                    else showSet({ kind: 'preset', id: preset.id }, view);
+                  }}
+                >
+                  {preset.label} <span className={styles.count}>{count}</span>
+                </ChipButton>
+              );
+            })}
+          </span>
+        </>
+      )}
+      <span className={styles.spacer} />
+      <span data-testid="milestone-map-summary" className={styles.summary}>
+        {summary}
+      </span>
+      {empty === null && (
+        <Popover
+          open={helpOpen}
+          onOpenChange={setHelpOpen}
+          label="Reading the chart"
+          align="end"
+          width={300}
+          trigger={
+            <Button
+              variant="quiet"
+              size="sm"
+              data-testid="chart-help-toggle"
+              aria-label="Reading the chart"
+              icon={<CircleHelp aria-hidden size={14} strokeWidth={1.8} />}
+            />
+          }
+        >
+          <div className={styles.help}>
+            <ChartHelp view={view} unit={unit} />
+          </div>
+        </Popover>
+      )}
+      {empty === null && (
+        <Popover
+          open={displayOpen}
+          onOpenChange={setDisplayOpen}
+          label="Chart display"
+          align="end"
+          width={240}
+          trigger={
+            <Button
+              variant="quiet"
+              size="sm"
+              icon={
+                <SlidersHorizontal aria-hidden size={14} strokeWidth={1.8} />
+              }
+            >
+              Display
+            </Button>
+          }
+        >
+          <div className={styles.display}>
+            {view === 'tasks' && (
+              <>
+                <Switch
+                  label="Hide landed tasks"
+                  checked={prefs.hideLanded}
+                  onChange={(checked) => updatePrefs({ hideLanded: checked })}
+                />
+                <Switch
+                  label="Show unlinked tasks"
+                  checked={prefs.showUnlinked}
+                  onChange={(checked) => updatePrefs({ showUnlinked: checked })}
+                />
+              </>
+            )}
+            {(view === 'tasks' || cardParents !== undefined) && (
               <Switch
                 label={`Box by ${view === 'tasks' ? 'milestone' : (cardParents?.one ?? 'parent')}`}
                 checked={prefs.grouped}
                 onChange={(checked) => updatePrefs({ grouped: checked })}
               />
-            </div>
-          </Popover>
-        )}
-        {empty === null && (
-          <Button
-            variant="quiet"
-            size="sm"
-            icon={<PanelRight aria-hidden size={14} strokeWidth={1.8} />}
-            aria-label="Inspector"
-            aria-pressed={prefs.inspector}
-            onClick={() => updatePrefs({ inspector: !prefs.inspector })}
-          />
-        )}
-        <Button variant="secondary" size="sm" onClick={copy}>
-          {copied ? 'Copied' : 'Copy as Mermaid'}
-        </Button>
-      </div>
+            )}
+            <Button
+              variant="secondary"
+              size="sm"
+              data-testid="chart-copy-mermaid"
+              onClick={copy}
+            >
+              {copied ? 'Copied' : 'Copy as Mermaid'}
+            </Button>
+          </div>
+        </Popover>
+      )}
+      {empty === null && (
+        <Button
+          variant="quiet"
+          size="sm"
+          icon={<PanelRight aria-hidden size={14} strokeWidth={1.8} />}
+          aria-label="Inspector"
+          aria-pressed={prefs.inspector}
+          onClick={() => updatePrefs({ inspector: !prefs.inspector })}
+        />
+      )}
+    </div>
+  );
+
+  return (
+    <div
+      data-testid="milestone-map"
+      data-variant={variant}
+      className={cx(styles.root, className)}
+    >
+      {toolbar}
       {empty !== null ? (
         <div className={styles.empty}>
           <EmptyState label={empty.heading}>{empty.description}</EmptyState>

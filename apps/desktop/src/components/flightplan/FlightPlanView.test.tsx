@@ -233,9 +233,13 @@ describe('FlightPlan', () => {
     // One milestone's plan: the Tasks chart alone, its inspector shut until a pick.
     expect(screen.queryByRole('radio', { name: 'Milestones' })).toBeNull();
     expect(screen.queryByTestId('chart-inspector')).toBeNull();
-    expect(screen.getByTestId('milestone-map-summary').textContent).toBe(
-      '6 tasks · 3 waits · 1/6 landed'
-    );
+    // The compact chart: no Find, chips, summary or Mermaid, one link to the Graph.
+    expect(screen.queryByTestId('chart-search')).toBeNull();
+    expect(screen.queryByTestId('milestone-map-summary')).toBeNull();
+    expect(screen.queryByText('Copy as Mermaid')).toBeNull();
+    expect(
+      screen.getByTestId('chart-open-graph').getAttribute('href')
+    ).toStartWith('#/graph?milestone=');
   });
   test('under an active session the header counts the slots in use', async () => {
     await mount(dataWith(plan({ 't-g': {} }), [LIVE], [progress('active', 2)]));

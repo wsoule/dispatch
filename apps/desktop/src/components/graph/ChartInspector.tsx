@@ -196,67 +196,57 @@ export interface OverviewProps {
   view: 'milestones' | 'tasks';
   /** Open tasks left off the Tasks chart because nothing links them. */
   unlinkedHidden: number;
-  /** What the card view's cards are. */
-  unit?: ChartUnit;
   onPick: (id: string) => void;
   onShowUnlinked: () => void;
 }
 
-/** What the inspector shows with nothing selected: how to read the chart, the headline
- * numbers, and the lists worth starting from (the longest chain, what can start now). */
+/** How to read the chart and its keys, behind the Graph toolbar's help button. */
+export function ChartHelp({
+  view,
+  unit = MILESTONE_UNIT,
+}: {
+  view: 'milestones' | 'tasks';
+  unit?: ChartUnit;
+}) {
+  return (
+    <div data-testid="chart-help" className={styles.howTo}>
+      {view === 'tasks' ? (
+        <p>
+          Click a task to trace it. Lines turn{' '}
+          <span className={styles.up}>amber</span> back through everything it
+          waits on and <span className={styles.down}>teal</span> forward through
+          everything it unblocks. Double-click a task to open it.
+        </p>
+      ) : (
+        <p>
+          Click {article(unit.one)} {unit.one} to see its neighbours. Lines turn{' '}
+          <span className={styles.up}>amber</span> to the {unit.many} it waits
+          on and <span className={styles.down}>teal</span> to the ones it
+          unblocks. The number on a line counts the task waits behind it; click
+          it to list them.
+          {unit.drill !== undefined &&
+            ` Double-click ${article(unit.one)} ${unit.one} to go into it.`}
+        </p>
+      )}
+      <p className={styles.keys}>
+        <Kbd>/</Kbd> find · <Kbd>Esc</Kbd> clear · <Kbd>0</Kbd> fit ·{' '}
+        <Kbd>+</Kbd> <Kbd>−</Kbd> zoom
+      </p>
+    </div>
+  );
+}
+
+/** What the inspector shows with nothing selected: the lists worth starting from (the
+ * longest chain, what can start now). The toolbar's chips carry the counts. */
 export function InspectorOverview({
   chart,
   view,
   unlinkedHidden,
-  unit = MILESTONE_UNIT,
   onPick,
   onShowUnlinked,
 }: OverviewProps) {
-  const open = [...chart.tasks.values()].filter(
-    (t) => t.state !== 'landed'
-  ).length;
-  const facts: [string, number][] = [
-    ['Open', open],
-    ['Ready', chart.readyNow.length],
-    ['In progress', chart.inProgress.length],
-    ['Needs you', chart.needsYou.length],
-    ['Waits', chart.edges.length],
-    ['Longest chain', chart.longestChain.length],
-  ];
   return (
     <div data-testid="chart-inspector-overview" className={styles.frame}>
-      <div className={styles.howTo}>
-        {view === 'tasks' ? (
-          <p>
-            Click a task to trace it. Lines turn{' '}
-            <span className={styles.up}>amber</span> back through everything it
-            waits on and <span className={styles.down}>teal</span> forward
-            through everything it unblocks. Double-click a task to open it.
-          </p>
-        ) : (
-          <p>
-            Click {article(unit.one)} {unit.one} to see its neighbours. Lines
-            turn <span className={styles.up}>amber</span> to the {unit.many} it
-            waits on and <span className={styles.down}>teal</span> to the ones
-            it unblocks. The number on a line counts the task waits behind it;
-            click it to list them.
-            {unit.drill !== undefined &&
-              ` Double-click ${article(unit.one)} ${unit.one} to go into it.`}
-          </p>
-        )}
-        <p className={styles.keys}>
-          <Kbd>/</Kbd> find · <Kbd>Esc</Kbd> clear · <Kbd>0</Kbd> fit ·{' '}
-          <Kbd>+</Kbd> <Kbd>−</Kbd> zoom
-        </p>
-      </div>
-      <dl className={styles.facts}>
-        {facts.map(([label, n]) => (
-          <div key={label} className={styles.fact}>
-            <dt>{label}</dt>
-            <dd>{n}</dd>
-          </div>
-        ))}
-      </dl>
       <Section label="Longest open chain" count={chart.longestChain.length}>
         <TaskList
           ids={chart.longestChain}

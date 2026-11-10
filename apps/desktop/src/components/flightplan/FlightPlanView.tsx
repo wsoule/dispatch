@@ -29,6 +29,7 @@ import {
   useState,
 } from 'react';
 
+import { containerGraphHref } from '../../adapters/graphScope';
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { useOptimisticDispatch } from '../../hooks/useOptimisticDispatch';
 import type { TaskTab } from '../../lib/appNav';
@@ -871,6 +872,8 @@ export function FlightPlan({
             inspectorOnSelect
             renderTooLarge={renderTooLarge}
             onOpenTask={openFromChart}
+            variant="compact"
+            graphHref={containerGraphHref(container)}
             className={styles.chart}
           />
           {showBranches && (
