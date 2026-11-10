@@ -201,12 +201,12 @@ function mount(options: MountOptions = {}) {
 /** The rows on screen, by their accessible row link name. */
 function rowNames(): string[] {
   return screen
-    .getAllByRole('link', { name: / on the timeline$/ })
+    .getAllByRole('link', { name: /^Open / })
     .map((link) => link.getAttribute('aria-label') ?? '');
 }
 
 function row(name: string): HTMLElement {
-  const link = screen.getByRole('link', { name: `${name} on the timeline` });
+  const link = screen.getByRole('link', { name: `Open ${name}` });
   const item = link.closest('li');
   if (item === null) throw new Error(`no row for ${name}`);
   return item;
@@ -221,10 +221,10 @@ describe('ProjectsView', () => {
       .map((section) => section.getAttribute('aria-label'));
     expect(groups).toEqual(['Growth', 'No initiative']);
     expect(rowNames()).toEqual([
-      'Storefront on the timeline',
-      'Search on the timeline',
-      'Loose ends on the timeline',
-      'Archive on the timeline',
+      'Open Storefront',
+      'Open Search',
+      'Open Loose ends',
+      'Open Archive',
     ]);
     expect(
       screen.getByText('4 projects in 1 initiative · 1 at risk')
@@ -268,9 +268,10 @@ describe('ProjectsView', () => {
     expect(search.getAttribute('data-tone')).toBe('warning');
     expect(within(search).getByRole('img', { name: 'Overdue' })).toBeTruthy();
     expect(within(search).getByText(/days overdue$/)).toBeTruthy();
+    // "No lead" is quiet: the row's own tone and the filter carry the warning.
     const noLead = within(search).getByText('No lead');
     expect(noLead.closest('[data-tone]')?.getAttribute('data-tone')).toBe(
-      'warning'
+      'muted'
     );
     expect(within(search).queryByText('Project has no lead')).toBeNull();
 
@@ -352,24 +353,22 @@ describe('ProjectsView', () => {
         .getAllByRole('radio')
         .map((option) => option.textContent)
     ).toEqual(['All4', 'Blocked1', 'At risk1', 'Inactive1']);
-    expect(screen.getByText('4 projects')).toBeTruthy();
+    // Unnarrowed, the header carries the count; the toolbar adds none.
+    expect(screen.queryByText('4 projects')).toBeNull();
 
     fireEvent.click(within(filters).getByRole('radio', { name: /Blocked/ }));
-    expect(rowNames()).toEqual(['Search on the timeline']);
+    expect(rowNames()).toEqual(['Open Search']);
     expect(screen.getByText('1 of 4 projects')).toBeTruthy();
     // Groups left empty are gone with their rows.
     expect(screen.queryByRole('region', { name: 'No initiative' })).toBeNull();
 
     fireEvent.click(within(filters).getByRole('radio', { name: /Inactive/ }));
-    expect(rowNames()).toEqual(['Archive on the timeline']);
+    expect(rowNames()).toEqual(['Open Archive']);
 
     fireEvent.click(within(filters).getByRole('radio', { name: /All/ }));
     const search = screen.getByRole('searchbox', { name: 'Search projects' });
     fireEvent.change(search, { target: { value: 'dev' } });
-    expect(rowNames()).toEqual([
-      'Loose ends on the timeline',
-      'Archive on the timeline',
-    ]);
+    expect(rowNames()).toEqual(['Open Loose ends', 'Open Archive']);
     expect(screen.getByText('2 of 4 projects')).toBeTruthy();
   });
 

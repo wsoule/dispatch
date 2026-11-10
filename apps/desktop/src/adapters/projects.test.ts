@@ -258,7 +258,7 @@ describe('buildProjectsPage', () => {
       ])
     );
     expect(loose.groups.map((g) => g.id)).toEqual(['none']);
-    expect(loose.receipts).toBe('1 project · 0 at risk');
+    expect(loose.receipts).toBe('1 project');
   });
 
   test("uses the project's own status name, falling back to the type's", () => {
@@ -315,8 +315,8 @@ describe('buildProjectsPage', () => {
     expect(row('proj-2').next?.progressTone).toBe('warning');
     expect(row('proj-2').next?.status).toBe('at_risk');
     expect(row('proj-3').next?.dueLabel).toBe('No target date');
-    // Undated: the missing date is a warning.
-    expect(row('proj-3').next?.dueTone).toBe('warning');
+    // Undated: a missing date is a quiet fact (the status mark says missing).
+    expect(row('proj-3').next?.dueTone).toBe('muted');
     expect(row('proj-3').next?.status).toBe('missing');
     expect(row('proj-5').next).toBeNull();
   });

@@ -173,9 +173,11 @@ function nextMilestone(
     id: bar.milestoneId,
     name: bar.name,
     dueLabel: dueLabel(bar.end, bar.daysLeft, today, bar.status),
-    dueTone: loud
-      ? dueTone(bar.status, bar.daysLeft, bar.end === null)
-      : 'muted',
+    // A missing date is a fact, not an alarm: amber is for due soon or late.
+    dueTone:
+      loud && bar.end !== null
+        ? dueTone(bar.status, bar.daysLeft, false)
+        : 'muted',
     status: mark.status,
     statusLabel: loud ? mark.label : `${mark.label} · inactive project`,
     done: bar.progress.completed,
@@ -284,7 +286,8 @@ export function buildProjectsPage(input: ProjectsPageInput): ProjectsPageModel {
     const synthetic = noProjectId(group.initiativeId);
     const rows = group.lanes
       .filter((lane) => lane.projectId !== synthetic)
-      .map((lane) => toRow(lane, group.name, input));
+      // With no initiatives anywhere, "No initiative" under every name says nothing.
+      .map((lane) => toRow(lane, hasInitiatives ? group.name : '', input));
     if (rows.length === 0) continue;
     groups.push({
       id,
@@ -308,7 +311,7 @@ export function buildProjectsPage(input: ProjectsPageInput): ProjectsPageModel {
     initiatives === 0
       ? plural(rows.length, 'project')
       : `${plural(rows.length, 'project')} in ${plural(initiatives, 'initiative')}`,
-    `${count('at_risk')} at risk`,
+    ...(count('at_risk') > 0 ? [`${count('at_risk')} at risk`] : []),
   ].join(' · ');
   return {
     groups,

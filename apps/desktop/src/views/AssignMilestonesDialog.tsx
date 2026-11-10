@@ -68,12 +68,13 @@ export function AssignMilestones({ data, planning }: AssignMilestonesProps) {
         })
     );
 
+  // Nothing to assign is a dialog that says so: the button shows once there is work.
+  if (preview.actions === 0 && !open) return null;
+
   return (
     <>
       <Button variant="quiet" size="sm" onClick={() => setOpen(true)}>
-        {preview.actions === 0
-          ? 'Assign next milestones'
-          : `Assign next milestones · ${preview.actions}`}
+        {`Assign next milestones · ${preview.actions}`}
       </Button>
       <Dialog
         open={open}

@@ -12,7 +12,7 @@ import {
   Tooltip,
   ViewToolbar,
 } from '@dispatch/ui';
-import { ArrowUpRight, ListTodo, Network } from 'lucide-react';
+import { CalendarRange, ListTodo, Network } from 'lucide-react';
 import { memo, useMemo, useRef, useState } from 'react';
 
 import { plural } from '../adapters/planningFormat';
@@ -175,18 +175,25 @@ function ProjectsLoaded({
             controls={
               <SegmentedControl
                 label="Project status"
-                options={page.filters}
+                // An empty filter is a tab with nothing behind it; All and the open one stay.
+                options={page.filters.filter(
+                  (option) =>
+                    option.count > 0 ||
+                    option.id === 'all' ||
+                    option.id === filter
+                )}
                 value={filter}
                 onChange={(id) => setFilter(parseProjectFilter(id))}
                 size="sm"
               />
             }
+            // The header already counts them; the toolbar says so only when narrowed.
             end={
-              <p className={styles.count} aria-live="polite">
-                {narrowed
-                  ? `${shownCount} of ${plural(page.total, 'project')}`
-                  : plural(page.total, 'project')}
-              </p>
+              narrowed ? (
+                <p className={styles.count} aria-live="polite">
+                  {`${shownCount} of ${plural(page.total, 'project')}`}
+                </p>
+              ) : undefined
             }
           />
           {shown.length === 0 ? (
@@ -249,11 +256,16 @@ const ProjectRow = memo(function ProjectRow({ row }: { row: ProjectRowModel }) {
   const { next } = row;
   return (
     <RegisterRow
-      href={row.timelineHref}
-      rowLabel={`${row.name} on the timeline`}
+      // The row opens the project, as every other list's row opens its item.
+      href={row.openHref}
+      rowLabel={`Open ${row.name}`}
       tone={row.rowTone}
     >
-      <RegisterCell label="Project" variant="name" sub={row.initiative}>
+      <RegisterCell
+        label="Project"
+        variant="name"
+        sub={row.initiative === '' ? undefined : row.initiative}
+      >
         {row.name}
       </RegisterCell>
       {/* An inactive project's status is muted (no status hue in the row)
@@ -306,7 +318,7 @@ const ProjectRow = memo(function ProjectRow({ row }: { row: ProjectRowModel }) {
       <RegisterCell
         label="Lead"
         variant={row.lead === null ? 'mono' : 'value'}
-        tone={row.lead !== null ? 'default' : row.active ? 'warning' : 'muted'}
+        tone={row.lead === null ? 'muted' : 'default'}
       >
         {row.lead ?? 'No lead'}
       </RegisterCell>
@@ -330,13 +342,13 @@ const ProjectRow = memo(function ProjectRow({ row }: { row: ProjectRowModel }) {
               aria-label={`Graph of ${row.name}`}
             />
           </Tooltip>
-          <Tooltip content="Open project">
+          <Tooltip content="Timeline">
             <Button
-              href={row.openHref}
+              href={row.timelineHref}
               variant="quiet"
               size="sm"
-              icon={<ArrowUpRight {...ICON} />}
-              aria-label={`Open ${row.name}`}
+              icon={<CalendarRange {...ICON} />}
+              aria-label={`${row.name} on the timeline`}
             />
           </Tooltip>
         </span>
