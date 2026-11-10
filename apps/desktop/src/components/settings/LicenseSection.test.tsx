@@ -47,6 +47,28 @@ test('the free plan says how many people it fits and how many are here', async (
   expect(screen.getByText(/2 of 3 seats used/)).toBeTruthy();
 });
 
+// A daemon that cannot report a license still gets a true line, not a blank page.
+test('with no license to read, it says free plan and still offers a key', async () => {
+  const client = {
+    baseUrl: 'http://127.0.0.1:1',
+    fetchLicense: mock(() => Promise.reject(new Error('not found'))),
+    getTeamStatus: mock(() => Promise.resolve({ state: 'off' })),
+  };
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <LicenseSection
+        data={dataWith({ client: client as never, myTier: 'operator' })}
+      />
+    </QueryClientProvider>
+  );
+  expect(await screen.findByText('Free plan')).toBeTruthy();
+  expect(screen.getByText('No license on this project.')).toBeTruthy();
+  expect(screen.getByLabelText('Paste a key')).toBeTruthy();
+});
+
 test('a licensed plan names who it is for and until when', () => {
   expect(
     planLine({

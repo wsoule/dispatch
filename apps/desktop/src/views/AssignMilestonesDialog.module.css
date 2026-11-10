@@ -1,0 +1,14 @@
+/* The Assign next milestones dialog (AssignMilestonesDialog.tsx): one block
+   per project it would assign in, then the skipped projects. */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.project {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}

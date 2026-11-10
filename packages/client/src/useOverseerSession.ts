@@ -25,7 +25,6 @@ import { type LiveFrame, liveTextStore, overseerLiveKey } from './liveText';
 import {
   DEFAULT_EFFORT_ID,
   effortFromId,
-  readRoleModelOverride,
   resolveRoleModel,
   storeRoleModelOverride,
 } from './models';
@@ -405,27 +404,24 @@ export function useOverseerSession(
   );
   const [decideError, setDecideError] = useState<string | null>(null);
 
-  // The human's own pick, if any; `null` defers to the project's config. Read
-  // once from device storage — later picks write through `setModel` below.
-  const [chosenModel, setChosenModel] = useState<string | null>(
-    () => readRoleModelOverride('overseer', storage) ?? null
+  // The human's own pick on this device, re-read each render so a Settings
+  // change (a new `configuredModel`) outranks a pick made before it.
+  // `pickCount` re-renders after `setModel` writes through to storage.
+  const [, setPickCount] = useState(0);
+  const model = resolveRoleModel(
+    'overseer',
+    {
+      models:
+        configuredModel !== undefined ? { overseer: configuredModel } : {},
+    },
+    storage
   );
-  const model =
-    chosenModel ??
-    resolveRoleModel(
-      'overseer',
-      {
-        models:
-          configuredModel !== undefined ? { overseer: configuredModel } : {},
-      },
-      storage
-    );
   const setModel = useCallback(
     (id: string) => {
-      setChosenModel(id);
-      storeRoleModelOverride('overseer', id, storage);
+      storeRoleModelOverride('overseer', id, storage, configuredModel);
+      setPickCount((n) => n + 1);
     },
-    [storage]
+    [storage, configuredModel]
   );
   const [effortId, setEffortId] = useState(DEFAULT_EFFORT_ID);
 

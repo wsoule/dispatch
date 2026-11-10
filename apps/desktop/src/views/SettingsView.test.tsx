@@ -125,8 +125,6 @@ test('the rail groups every page, and the page title is the H1', () => {
     'Agents',
     'Checks',
     'Autonomy',
-    'Memory',
-    'Previews',
     'Planning',
     'Notifications',
     'Members',
@@ -142,7 +140,7 @@ test('the rail groups every page, and the page title is the H1', () => {
     'Diff display',
   ]);
   expect(
-    screen.getByText(/The theme in this browser, the board's columns/)
+    screen.getByText(/The theme in this browser and the board's columns/)
   ).toBeDefined();
   selectPage('Autonomy');
   expect(screen.getByRole('slider', { name: 'Autonomy' })).toBeDefined();
@@ -153,8 +151,8 @@ test('the rail groups every page, and the page title is the H1', () => {
   expect(screen.getByLabelText('Webhook URL')).toBeDefined();
 });
 
-// Memory's page reads the store's health on its own, beside its run settings.
-test('the Memory page shows the store and the run settings', async () => {
+// Memory's groups sit on Agents: the store's health beside its run settings.
+test('the Agents page shows the memory store and run settings', async () => {
   const memoryData = dataWith({
     port: 4321,
     client: {
@@ -185,11 +183,11 @@ test('the Memory page shows the store and the run settings', async () => {
     <SettingsView
       activeProject={project}
       data={memoryData}
-      initialPage="memory"
+      initialPage="agents"
     />,
     { wrapper: withQueryClient() }
   );
-  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Memory');
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Agents');
   expect(
     await screen.findByText('3 entries · no open proposals · full-text search')
   ).toBeDefined();
@@ -201,7 +199,7 @@ test('a page renders its sections as level-2 headings', () => {
   render(<SettingsView activeProject={project} data={data} />);
   expect(
     screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
-  ).toEqual(['Appearance', 'Board columns', 'Pull requests']);
+  ).toEqual(['Appearance', 'Board columns']);
 });
 
 // The theme is a per-computer preference, not config, so General shows it
@@ -286,6 +284,40 @@ test('search shows matching settings from every page, editable in place', async 
   expect(await screen.findByText('Saved')).toBeDefined();
 });
 
+// Rarely changed groups start folded, but a search reaches into the fold.
+test('Advanced starts closed, and search still finds what it holds', async () => {
+  render(
+    <SettingsView
+      activeProject={project}
+      data={searchData}
+      initialPage="planning"
+    />,
+    { wrapper: withQueryClient() }
+  );
+  const fold = screen.getByRole('button', { name: 'Advanced' });
+  expect(fold.getAttribute('aria-expanded')).toBe('false');
+  expect(screen.queryByLabelText('Warn ahead')).toBeNull();
+  fireEvent.click(fold);
+  expect(screen.getByLabelText('Warn ahead')).toBeDefined();
+
+  search('warn ahead');
+  await settleReads();
+  expect(screen.getByLabelText('Warn ahead')).toBeDefined();
+  expect(screen.queryByRole('button', { name: 'Advanced' })).toBeNull();
+});
+
+// Previews live on Checks now; searching for them still finds them. (A bare
+// "preview" also matches Diff display's sample, which happy-dom can't draw.)
+test('a search for live previews finds the Previews group on Checks', async () => {
+  render(<SettingsView activeProject={project} data={searchData} />, {
+    wrapper: withQueryClient(),
+  });
+  search('live previews');
+  await settleReads();
+  expect(screen.getByLabelText('Allow previews')).toBeDefined();
+  expect(screen.getByLabelText('Time to start')).toBeDefined();
+});
+
 // A page or group that matches by name shows everything in it.
 test('a search that names a group shows the whole group', async () => {
   render(<SettingsView activeProject={project} data={searchData} />, {
@@ -329,7 +361,9 @@ test('picking a page from the rail ends the search', () => {
 // AgentsSection has no saving/saved state of its own, so this passes only
 // because the shell's shared indicator rendered the text.
 test('a save reports through the shared indicator', async () => {
-  render(<SettingsView activeProject={project} data={data} />);
+  render(<SettingsView activeProject={project} data={data} />, {
+    wrapper: withQueryClient(),
+  });
   selectPage('Agents');
   fireEvent.click(screen.getByLabelText('Ask me every time'));
   expect(await screen.findByText('Saved')).toBeDefined();
@@ -338,7 +372,9 @@ test('a save reports through the shared indicator', async () => {
 // Diff display is a browser preference with no config write behind it, so
 // the indicator has nothing to say there.
 test('the Diff display page shows no save state', async () => {
-  render(<SettingsView activeProject={project} data={data} />);
+  render(<SettingsView activeProject={project} data={data} />, {
+    wrapper: withQueryClient(),
+  });
   selectPage('Agents');
   fireEvent.click(screen.getByLabelText('Ask me every time'));
   expect(await screen.findByText('Saved')).toBeDefined();
@@ -411,7 +447,7 @@ test('Board sync offers sharing on a database board and committing on a file boa
   expect(
     screen.queryByRole('switch', { name: 'Share this board with teammates' })
   ).toBeNull();
-  expect(screen.getByText("Sharing isn't available")).toBeDefined();
+  expect(screen.getByText(/reaches teammates through commits/)).toBeDefined();
 });
 
 // Whether a control can't be used: disabled itself, or a native control inside
@@ -542,10 +578,16 @@ interface PageLocks {
   controls: () => HTMLElement[];
 }
 
+// Opens a page's Advanced fold, so the groups inside are on screen to check.
+function openAdvanced() {
+  const fold = screen.queryByRole('button', { name: 'Advanced' });
+  if (fold !== null) fireEvent.click(fold);
+}
+
 const CONFIG_PAGES: PageLocks[] = [
   {
     page: 'general',
-    locked: ['Board columns', 'Pull requests'],
+    locked: ['Board columns'],
     controls: () => [
       screen.getByLabelText('Add a column'),
       screen.getByRole('button', { name: 'Move backlog down' }),
@@ -561,6 +603,7 @@ const CONFIG_PAGES: PageLocks[] = [
       'Permissions',
       'Defaults',
       'Command-line agents',
+      'Memory',
     ],
     controls: () => [
       selectTrigger('Coding runs model'),
@@ -573,9 +616,17 @@ const CONFIG_PAGES: PageLocks[] = [
   },
   {
     page: 'checks',
-    locked: ['Before merging', 'Trying the change', 'Fix loop', 'Escalation'],
+    locked: [
+      'Before merging',
+      'Trying the change',
+      'Previews',
+      'Fix loop',
+      'Escalation',
+    ],
     controls: () => [
       screen.getByLabelText('Time limit per check'),
+      screen.getByRole('switch', { name: 'Allow previews' }),
+      screen.getByLabelText('Stop when unused for'),
       screen.getByLabelText('Address'),
       screen.getByLabelText('Notes for the agent'),
       screen.getByRole('switch', { name: 'Start fixing automatically' }),
@@ -591,15 +642,6 @@ const CONFIG_PAGES: PageLocks[] = [
       screen.getByRole('slider', { name: 'Autonomy' }),
       ...screen.getAllByRole('button', { name: / override: / }),
       ...within(group('Task ranking')).getAllByRole('textbox'),
-    ],
-  },
-  {
-    page: 'previews',
-    locked: ['Live previews', 'Timing'],
-    controls: () => [
-      screen.getByRole('switch', { name: 'Allow previews' }),
-      screen.getByLabelText('Time to start'),
-      screen.getByLabelText('Stop when unused for'),
     ],
   },
   {
@@ -640,7 +682,7 @@ const CONFIG_PAGES: PageLocks[] = [
   },
   {
     page: 'daemon',
-    locked: ['Receipt log', 'Code understanding'],
+    locked: ['Receipt log', 'Code understanding', 'Pull requests'],
     open: ['Status'],
     controls: () => [
       screen.getByRole('switch', { name: 'Keep a receipt log' }),
@@ -655,6 +697,7 @@ describe('below the decide tier, config is read-only', () => {
   for (const spec of CONFIG_PAGES) {
     test(`${spec.page}: every config control is locked, with the reason`, async () => {
       renderAt(tierData({ myTier: 'request' }), spec.page);
+      openAdvanced();
       await settleReads();
       // Board sync's status line arrives from a query.
       if (spec.page === 'sync') await screen.findByText('Not sharing');
@@ -698,6 +741,7 @@ describe('below the decide tier, config is read-only', () => {
         tierData({ myTier: 'request', handleUpdateConfig }),
         spec.page
       );
+      openAdvanced();
       if (spec.page === 'sync') await screen.findByText('Not sharing');
       for (const toggle of screen.queryAllByRole('switch')) {
         fireEvent.click(toggle);
@@ -748,14 +792,14 @@ describe('below the decide tier, config is read-only', () => {
   // Can approve access isn't enough for an owner-only row, so its own lock
   // stays; in an attached window, restarting from the app unlocks both.
   test('owner-only rows keep their own lock inside a locked group', () => {
-    const { unmount } = renderAt(tierData({ myTier: 'request' }), 'general');
+    const { unmount } = renderAt(tierData({ myTier: 'request' }), 'daemon');
     expect(headingLock('Pull requests')).toBe(NEEDS_DECIDE);
     expect(rowLock('Checkout folder')).toBe(OPERATOR_ONLY);
     unmount();
 
     renderAt(
       tierData({ myTier: 'request', attachedWithoutAppToken: true }),
-      'general'
+      'daemon'
     );
     expect(headingLock('Pull requests')).toBe(ATTACHED_READ_ONLY);
     expect(rowLock('Checkout folder')).toBeNull();
@@ -943,10 +987,13 @@ describe('at the decide tier', () => {
     expect(screen.queryAllByLabelText(NEEDS_DECIDE)).toHaveLength(0);
     expect(headingLock('Board columns')).toBeNull();
     expect(isDisabled(screen.getByLabelText('Add a column'))).toBe(false);
+    unmount();
+
     // Read-only text behind a lock, never an input.
+    const daemon = renderAt(tierData({ myTier: 'decide' }), 'daemon');
     expect(rowLock('Checkout folder')).toBe(OPERATOR_ONLY);
     expect(document.getElementById('pr-worktree-dir')).toBeNull();
-    unmount();
+    daemon.unmount();
 
     renderAt(tierData({ myTier: 'decide' }), 'checks');
     expect(screen.queryByRole('note')).toBeNull();
@@ -990,6 +1037,7 @@ describe('at the operator tier', () => {
   for (const spec of CONFIG_PAGES) {
     test(`${spec.page}: nothing is locked`, async () => {
       renderAt(tierData({ myTier: 'operator' }), spec.page);
+      openAdvanced();
       await settleReads();
       if (spec.page === 'sync') await screen.findByText('Not sharing');
       expect(screen.queryByRole('note')).toBeNull();
@@ -1011,7 +1059,7 @@ describe('at the operator tier', () => {
   }
 
   test('the owner-only fields are real, enabled inputs', () => {
-    const { unmount } = renderAt(tierData({ myTier: 'operator' }), 'general');
+    const { unmount } = renderAt(tierData({ myTier: 'operator' }), 'daemon');
     expect(isDisabled(screen.getByLabelText('Checkout folder'))).toBe(false);
     unmount();
     renderAt(tierData({ myTier: 'operator' }), 'checks');
@@ -1164,7 +1212,7 @@ describe('Board sync by storage backend', () => {
       'sync'
     );
     expect(screen.queryByRole('switch')).toBeNull();
-    expect(screen.queryByText("Sharing isn't available")).toBeNull();
+    expect(screen.queryByText('Task files')).toBeNull();
   });
 
   // An older daemon doesn't name its backend; its receipt log being off does.
@@ -1187,7 +1235,7 @@ describe('Board sync by storage backend', () => {
     ).toBeNull();
   });
 
-  test('a file board with no main branch says so beside the switch', () => {
+  test('a file board with no main branch says why in one line, with no switch', () => {
     renderAt(
       tierData({
         myTier: 'operator',
@@ -1196,7 +1244,8 @@ describe('Board sync by storage backend', () => {
       }),
       'sync'
     );
-    expect(screen.getByText('No main branch to commit to')).toBeDefined();
+    expect(screen.getByText('Nothing to sync yet')).toBeDefined();
+    expect(screen.queryByRole('switch')).toBeNull();
   });
 
   test('a daemon that says sqlite offers sharing, not committing', async () => {
@@ -1214,7 +1263,7 @@ describe('Board sync by storage backend', () => {
     expect(
       screen.queryByRole('switch', { name: /Commit task files/ })
     ).toBeNull();
-    expect(screen.queryByText("Sharing isn't available")).toBeNull();
+    expect(screen.queryByText('Task files')).toBeNull();
   });
 
   test('search finds the commit switch by its config key on a file board', async () => {

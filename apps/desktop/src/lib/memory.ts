@@ -1,5 +1,6 @@
 // Pure view models for memory surfaces: the memory gate's card, the Inbox's
-// undo list, Settings → Memory, and the query keys `memory.changed` refetches.
+// undo list, Settings → Agents' memory groups, and the query keys
+// `memory.changed` refetches.
 import type {
   ApiClient,
   MemoryActivityRow,
@@ -170,7 +171,7 @@ export function activityItems(
   });
 }
 
-/** What Settings → Memory shows about the store and the imports, from the
+/** What Settings → Agents shows about memory's store and imports, from the
  *  daemon's health report. */
 export interface MemorySettingsModel {
   status: 'ok' | 'unavailable';
@@ -201,7 +202,7 @@ function counted(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-/** Settings → Memory's view of the daemon's memory health. */
+/** Settings → Agents' view of the daemon's memory health. */
 export function memorySettingsModel(health: MemoryHealth): MemorySettingsModel {
   const search =
     health.search === 'like' ? 'plain search (no FTS5)' : 'full-text search';

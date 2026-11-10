@@ -1,6 +1,5 @@
 /* Layout of the Projects page (views/ProjectsView.tsx): a full-height
-   column that scrolls inside itself, with the page head (the back chip,
-   title, receipts and New project), the toolbar, then one panel per
+   column that scrolls inside itself, with the page head (title, receipts and New project), the toolbar, then one panel per
    initiative under its section title, and the cell contents (milestone name
    with its mark, the toned due line, the end cell's ghost icon buttons).
    Colours and type come from @dispatch/ui's components and tokens; this
@@ -83,15 +82,6 @@
 
 .dash {
   color: var(--text-3);
-}
-
-/* A value printed as quiet meta, not a badge ("Nothing to do"): the neutral
-   secondary text, a step above the muted cells' --text-3. */
-.plainValue {
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-medium);
-  line-height: 16px;
-  color: var(--text-2);
 }
 
 /* End-cell buttons sit above the row's stretched link (the register lifts

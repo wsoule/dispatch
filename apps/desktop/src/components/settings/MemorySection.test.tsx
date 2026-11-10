@@ -22,7 +22,7 @@ import {
   selectTrigger,
   testConfig,
 } from './fixtures.test-helper';
-import { MemorySection } from './MemorySection';
+import { MemoryParityGroup, MemorySection } from './MemorySection';
 
 type Identity = Awaited<ReturnType<ApiClient['memoryIdentity']>>;
 
@@ -90,16 +90,18 @@ function renderSection(
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  const data = dataWith({
+    client: client as unknown as ApiClient,
+    port: 4321,
+  });
   render(
     <QueryClientProvider client={queryClient}>
       <MemorySection
-        data={dataWith({
-          client: client as unknown as ApiClient,
-          port: 4321,
-        })}
+        data={data}
         config={testConfig}
         onSave={(patch) => Promise.resolve(void saved.push(patch))}
       />
+      <MemoryParityGroup data={data} />
     </QueryClientProvider>
   );
   return saved;
@@ -132,7 +134,7 @@ describe('MemorySection', () => {
       memoryProjectKeys: () =>
         Promise.resolve({ current: 'aaaaaaaaaaaa', others: [] }),
     } as unknown as ReturnType<typeof memoryClient>);
-    expect(await screen.findByText('Lessons')).toBeTruthy();
+    expect(await screen.findByText('Memory')).toBeTruthy();
     expect(screen.queryByText('Moved checkouts')).toBeNull();
   });
 

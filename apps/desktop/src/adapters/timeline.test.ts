@@ -384,6 +384,9 @@ describe('lanes', () => {
       EDITOR
     );
     expect(odd[0]?.lanes[0]?.bars.map((b) => b.id)).toEqual(['ms-1']);
+    // No initiatives anywhere: the one catch-all group draws no header.
+    expect(odd[0]?.headless).toBe(true);
+    expect(groups[0]?.headless).toBeUndefined();
   });
 
   test("timelineWindow is the chart's calendar", () => {

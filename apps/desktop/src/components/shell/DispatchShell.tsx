@@ -60,6 +60,8 @@ export interface DispatchShellProps {
   /** The last crumb, the page open under the destination: the open task's title
    * under Issues, or "Live" under Runs (`currentShellPageTitle`). */
   taskTitle: string | null;
+  /** Files, Terminals or Projects: no Issues crumb before the title. */
+  standalonePage?: boolean;
   overseerBadge: OverseerBadge;
   needsYou: number;
   threadsUnread: number;
@@ -301,6 +303,7 @@ export function DispatchShell({
   view,
   destination,
   taskTitle,
+  standalonePage = false,
   overseerBadge,
   needsYou,
   threadsUnread,
@@ -408,6 +411,8 @@ export function DispatchShell({
               destination,
               taskTitle,
               settingsPage,
+              hosted,
+              standalonePage,
             })}
             onSearch={onSearch}
             topbarActions={topbarActions}

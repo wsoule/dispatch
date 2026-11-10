@@ -18,19 +18,21 @@ import {
 } from '@testing-library/react';
 import { afterEach, describe, expect, test } from 'bun:test';
 
-import { recentAllocationsFrom, runRow } from '../adapters/allocation';
-import { ShellActionsProvider } from '../components/shell/ShellActionsContext';
+import { recentAllocationsFrom } from '../adapters/allocation';
 import { ToastProvider } from '../components/shell/Toasts';
-import { SHELL } from '../components/tasks/page/pageHost.test-helper';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import { type PlanningInput, PlanningProvider } from '../hooks/usePlanning';
+import {
+  type PlanningInput,
+  PlanningProvider,
+  usePlanningContext,
+} from '../hooks/usePlanning';
 import { dayFromNow } from '../lib/taskDates';
 import { taskDoc } from '../lib/taskDoc.test-helper';
-import { AllocationView } from './AllocationView';
+import { AssignMilestones } from './AssignMilestonesDialog';
 
-// The Allocation page over a fixture planning: Storefront (lead Ana) has a
-// next milestone with one unassigned backlog issue; Search has no lead, so it
-// is blocked. A fake client records what the page asks the daemon to do.
+// Projects' Assign next milestones over a fixture planning: Storefront (lead
+// Ana) has a next milestone with one unassigned backlog issue; Search has no
+// lead, so it is skipped. A fake client records what the dialog asks for.
 
 afterEach(cleanup);
 
@@ -88,9 +90,6 @@ interface FakeLog {
 function fakeClient(log: FakeLog, refuse: string[] = []): ApiClient {
   const runs: AllocationRun[] = [];
   return {
-    fetchAllocationRuns: () => Promise.resolve(runs),
-    fetchAllocationRun: (id: string) =>
-      Promise.resolve(runs.find((run) => run.id === id)),
     recordAllocationRun: (input: AllocationRunInput) => {
       log.recorded.push(input);
       const run: AllocationRun = {
@@ -136,24 +135,24 @@ function planningInput(): PlanningInput {
   };
 }
 
+function Host({ data }: { data: DispatchProjectData }) {
+  const planning = usePlanningContext();
+  return planning === null ? null : (
+    <AssignMilestones data={data} planning={planning} />
+  );
+}
+
 function mount(log: FakeLog, tier: 'operator' | 'request' = 'operator') {
   const data = {
     client: fakeClient(log),
-    port: 1,
-    portLoading: false,
-    portError: false,
-    portErrorDetail: null,
-    retryEnsureDispatchd: () => {},
     myTier: tier,
   } as unknown as DispatchProjectData;
   return render(
     <QueryClientProvider client={new QueryClient()}>
       <ToastProvider>
-        <ShellActionsProvider value={SHELL}>
-          <PlanningProvider data={planningInput()}>
-            <AllocationView data={data} />
-          </PlanningProvider>
-        </ShellActionsProvider>
+        <PlanningProvider data={planningInput()}>
+          <Host data={data} />
+        </PlanningProvider>
       </ToastProvider>
     </QueryClientProvider>
   );
@@ -163,48 +162,32 @@ function newLog(): FakeLog {
   return { updates: [], comments: [], recorded: [] };
 }
 
-describe('AllocationView', () => {
-  test('previews the issue it would assign and the blocked project', () => {
+describe('AssignMilestones', () => {
+  test('the button previews the count; the dialog lists what is assigned and what is skipped', () => {
     mount(newLog());
-    expect(
-      screen.getByText('1 issue to assign in 1 project · 1 project blocked')
-    ).toBeTruthy();
-    const store = screen.getByRole('region', { name: 'Storefront' });
-    expect(within(store).getByText('Allocating 1')).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Assign next milestones · 1' })
+    );
+    const dialog = screen.getByRole('dialog', {
+      name: 'Assign next milestones',
+    });
+    const store = within(dialog).getByRole('region', { name: 'Storefront' });
     expect(within(store).getByText('Take payments')).toBeTruthy();
     expect(within(store).getByText('Ana')).toBeTruthy();
-    const search = screen.getByRole('region', { name: 'Search' });
-    expect(within(search).getByText('Blocked')).toBeTruthy();
+    const skipped = within(dialog).getByRole('region', { name: 'Skipped' });
+    expect(within(skipped).getByText('Search')).toBeTruthy();
+    expect(within(skipped).getByText('Blocked')).toBeTruthy();
+    expect(within(skipped).getByText('Project has no lead')).toBeTruthy();
   });
 
-  test('records a dry run without changing anything', async () => {
+  test('applies: assigns, moves out of Backlog, comments, records', async () => {
     const log = newLog();
     mount(log);
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Record dry run' }));
-      await Promise.resolve();
-    });
-    await waitFor(() => expect(log.recorded).toHaveLength(1));
-    expect(log.recorded[0]?.mode).toBe('dry_run');
-    expect(log.recorded[0]?.items.map((i) => i.outcome)).toEqual([
-      'would_assign',
-    ]);
-    expect(log.updates).toEqual([]);
-    await waitFor(() =>
-      expect(screen.getByText('1 would assign')).toBeTruthy()
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Assign next milestones · 1' })
     );
-  });
-
-  test('applies after confirming: assigns, moves out of Backlog, comments, records', async () => {
-    const log = newLog();
-    mount(log);
-    fireEvent.click(screen.getByRole('button', { name: 'Apply 1 change' }));
     await act(async () => {
-      fireEvent.click(
-        within(screen.getByRole('alertdialog')).getByRole('button', {
-          name: 'Apply',
-        })
-      );
+      fireEvent.click(screen.getByRole('button', { name: 'Assign 1 issue' }));
       await Promise.resolve();
     });
     await waitFor(() => expect(log.recorded).toHaveLength(1));
@@ -219,12 +202,15 @@ describe('AllocationView', () => {
 
   test('a request-tier window only previews', () => {
     mount(newLog(), 'request');
-    expect(screen.queryByRole('button', { name: /^Apply/ })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Record dry run' })).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Assign next milestones · 1' })
+    );
+    expect(screen.queryByRole('button', { name: /^Assign 1/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy();
   });
 });
 
-describe('the run log helpers', () => {
+describe('recentAllocationsFrom', () => {
   const run: AllocationRun = {
     id: 'ar-1',
     trigger: 'manual',
@@ -266,16 +252,6 @@ describe('the run log helpers', () => {
       },
     ],
   };
-
-  test('a row says what the run did', () => {
-    const row = runRow(run, () => 'Ana');
-    expect(row.summary).toBe('2 assigned · 1 failed');
-    expect(row.modeLabel).toBe('Applied');
-    expect(runRow({ ...run, trigger: 'daily' }, () => 'Ana').modeLabel).toBe(
-      'Daily'
-    );
-    expect(row.by).toBe('Ana');
-  });
 
   test('only assigned items of applied runs count as recent allocations', () => {
     expect(recentAllocationsFrom([run])).toEqual([

@@ -100,6 +100,29 @@ describe('team web', () => {
     expect(db.deviceByToken(done.token)?.teamId).toBe(teamId);
   });
 
+  it('folds the setup steps once a machine of yours is signed in', async () => {
+    const ada = await signIn('ada');
+    const teamPath =
+      (await post('/teams', ada, { name: 'Core' })).headers.get('location') ??
+      '';
+    const before = await (
+      await call(teamPath, { headers: { cookie: ada } })
+    ).text();
+    expect(before).not.toContain('<details');
+    expect(before).toContain('Linear API key for agents');
+
+    const user = db.webSessionUser(ada.slice('dt_session='.length))!;
+    const { deviceCode, userCode } = db.startDeviceCode('laptop');
+    db.approveDevice(userCode, user.id, teamPath.slice('/teams/'.length));
+    db.claimDevice(deviceCode);
+    const after = await (
+      await call(teamPath, { headers: { cookie: ada } })
+    ).text();
+    expect(after).toContain('<details class="fold">');
+    expect(after).not.toContain('<details class="fold" open');
+    expect(after).toContain('this account has a machine signed in');
+  });
+
   it('refuses a form posted from another origin', async () => {
     const ada = await signIn('ada');
     const res = await post(

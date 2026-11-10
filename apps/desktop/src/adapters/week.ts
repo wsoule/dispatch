@@ -143,8 +143,12 @@ export function resolveWeekUserId(input: {
   return first ?? null;
 }
 
+// The name to greet by: the first word, or an email's local part when the
+// registry only knows the address ("wsoule679@gmail.com" reads "wsoule679").
 function firstName(name: string): string {
-  return name.trim().split(/\s+/)[0] ?? '';
+  const first = name.trim().split(/\s+/)[0] ?? '';
+  const at = first.indexOf('@');
+  return at > 0 ? first.slice(0, at) : first;
 }
 
 /** "+1 in an inactive project", "+2 in inactive projects". */

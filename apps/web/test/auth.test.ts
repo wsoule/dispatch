@@ -110,9 +110,7 @@ async function complete(
 }
 
 async function me(session: string): Promise<string> {
-  const page = await (
-    await call('/account', { headers: { cookie: session } })
-  ).text();
+  const page = await (await call('/', { headers: { cookie: session } })).text();
   return page;
 }
 
@@ -209,7 +207,7 @@ describe('linking accounts', () => {
       session
     );
     expect(linked.status).toBe(303);
-    expect(linked.headers.get('location')).toBe('/account');
+    expect(linked.headers.get('location')).toBe('/');
     expect(await me(session)).not.toContain('Connect Linear');
 
     const viaLinear = cookieOf(
@@ -305,7 +303,16 @@ describe('opening a Linear workspace', () => {
     expect(db.identities(ada.id)).toEqual({ github: true, linear: true });
   });
 
-  it('lists your workspaces and the demo on the home page', async () => {
+  it('lists your workspaces on the home page, and the demo only without one', async () => {
+    const fresh = cookieOf(
+      await complete(await call('/auth/github'), 'github')
+    );
+    const empty = await (
+      await call('/', { headers: { cookie: fresh } })
+    ).text();
+    expect(empty).toContain('href="/w/demo/"');
+    expect(empty).toContain('Open a workspace');
+
     const session = cookieOf(
       await complete(await call('/auth/linear/workspace'), 'linear')
     );
@@ -313,8 +320,26 @@ describe('opening a Linear workspace', () => {
       await call('/?all=1', { headers: { cookie: session } })
     ).text();
     expect(home).toContain('href="/w/acme/"');
-    expect(home).toContain('href="/w/demo/"');
-    expect(home).toContain('href="/auth/linear/workspace"');
+    expect(home).toContain('Linear workspace');
+    expect(home).not.toContain('href="/w/demo/"');
+    // One way in, not two near-identical buttons.
+    expect(home.match(/href="\/auth\/linear\/workspace"/g)).toHaveLength(1);
+    expect(home).toContain('Add a workspace');
+  });
+
+  it('folds the account page into Home', async () => {
+    const session = cookieOf(
+      await complete(await call('/auth/linear/workspace'), 'linear')
+    );
+    const res = await call('/account', { headers: { cookie: session } });
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/');
+    const home = await (
+      await call('/', { headers: { cookie: session } })
+    ).text();
+    expect(home).toContain('Signed in with Linear');
+    expect(home).toContain('Connect GitHub');
+    expect(home).not.toContain('href="/account"');
   });
 
   it('lands someone in one team on home, not that team’s page', async () => {
@@ -327,8 +352,9 @@ describe('opening a Linear workspace', () => {
     expect(res.status).toBe(200);
     const home = await res.text();
     expect(home).toContain('href="/w/acme/"');
-    expect(home).toContain('href="/machines"');
+    expect(home).toContain('id="machines"');
     expect(home).toContain(`href="/teams/${team.id}"`);
+    expect(home).toContain('Team · admin');
   });
 });
 

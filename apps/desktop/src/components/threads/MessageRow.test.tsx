@@ -191,7 +191,7 @@ test('shows a gate read-only, with the reason and no buttons, to a viewer who ca
   expect(screen.queryByRole('button', { name: 'approve' })).toBeNull();
 });
 
-test('a truncated tool call loads its full input for a decider, from its run or its Assistant conversation', async () => {
+test('a truncated tool call loads its full input for a decider, from its run or its Overseer conversation', async () => {
   const approval = (parkedOn: { runId: string } | { conversation: string }) =>
     msg('m-a', {
       from: 'agent:dispatch',

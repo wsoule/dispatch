@@ -495,6 +495,10 @@ export interface DispatchProjectData {
   // consumer of run data (countMergeReady, liveRunStateByTaskId, latestRunByTaskId, the merge
   // queue) reads the unfiltered `runs` above on purpose.
   visibleRuns: RunMeta[];
+  /** Why the task list failed to load, or null. Views fall back to empty
+   *  lists, so the shell shows this instead of letting them read as an empty
+   *  project. */
+  readError: string | null;
   /** GET /api/health, undefined until it loads. `storageBackend` is absent
    *  on daemons older than it; `originWebUrl` without a GitHub remote. */
   health:
@@ -780,7 +784,7 @@ export interface DispatchProjectData {
   ) => Promise<void>;
   /** The full input of a call a run is parked on, which its gate may only preview. */
   fetchApprovalInput: (runId: string, requestId: string) => Promise<unknown>;
-  /** The same for a call an Assistant conversation is parked on. */
+  /** The same for a call an Overseer conversation is parked on. */
   fetchOverseerApprovalInput: (
     conversation: string,
     requestId: string
@@ -1065,6 +1069,7 @@ export function useDispatchProject(
     data: listedTasks,
     isLoading: tasksLoading,
     isFetched: allTasksFetched,
+    error: tasksError,
   } = useQuery({
     queryKey: tasksQueryKey,
     queryFn: () => {
@@ -2530,7 +2535,7 @@ export function useDispatchProject(
       const { pendingApprovals } = await client.getOverseer(conversation);
       const parked = pendingApprovals.find((a) => a.requestId === requestId);
       if (parked === undefined) {
-        throw new Error('The Assistant is no longer waiting on this call.');
+        throw new Error('The Overseer is no longer waiting on this call.');
       }
       return parked.input;
     },
@@ -3299,6 +3304,7 @@ export function useDispatchProject(
       executors: executors ?? null,
       runs: runs ?? [],
       visibleRuns,
+      readError: tasksError === null ? null : tasksError.message,
       health,
       readyIds,
       blockedIds,
@@ -3446,6 +3452,7 @@ export function useDispatchProject(
       executors,
       runs,
       visibleRuns,
+      tasksError,
       health,
       readyIds,
       blockedIds,

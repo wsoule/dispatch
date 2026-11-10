@@ -50,8 +50,10 @@ export function WebAccessSection({ data }: WebAccessSectionProps) {
     >
       {state.isError ? (
         <SettingsHint>
-          No Dispatch hub is running on this machine. Sign it in with{' '}
-          <code>dispatch-mcp login</code> to reach it from the web.
+          The Dispatch hub isn&apos;t running on this machine. It starts with
+          any agent that uses Dispatch, or run <code>dispatch-mcp hub</code>. A
+          machine that was never signed in needs <code>dispatch-mcp login</code>{' '}
+          first.
         </SettingsHint>
       ) : state.data === undefined ? null : (
         <SwitchSetting

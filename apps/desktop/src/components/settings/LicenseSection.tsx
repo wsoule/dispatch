@@ -67,8 +67,10 @@ export function LicenseSection({ data }: LicenseSectionProps) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Blank only while the first read is in flight; a daemon that cannot say
+  // (none running, or no license route) still gets the free plan's line.
+  if (license.isLoading) return null;
   const status = license.data;
-  if (status === undefined) return null;
   const canInstall = myTier === 'operator';
 
   async function share() {
@@ -110,29 +112,36 @@ export function LicenseSection({ data }: LicenseSectionProps) {
         hint="Free for up to three people, with every feature. More people need a license key."
         keywords="seats billing"
       >
-        <SettingsRow
-          title={planLine(status)}
-          subtitle={`${status.used} of ${status.seats} seats used: you and everyone with an active invite.`}
-        >
-          {status.kind === 'expired' && (
-            <SettingsHint tone="warning">
-              The license for {status.org} expired on{' '}
-              {status.expiresAt?.slice(0, 10)}. The free plan applies until you
-              add a new key; the people invited first keep their seats.
-            </SettingsHint>
-          )}
-          {status.kind === 'invalid' && status.reason !== null && (
-            <SettingsHint tone="warning">
-              The installed key was not accepted: {status.reason}.
-            </SettingsHint>
-          )}
-        </SettingsRow>
+        {status === undefined ? (
+          <SettingsRow
+            title="Free plan"
+            subtitle="No license on this project."
+          />
+        ) : (
+          <SettingsRow
+            title={planLine(status)}
+            subtitle={`${status.used} of ${status.seats} seats used: you and everyone with an active invite.`}
+          >
+            {status.kind === 'expired' && (
+              <SettingsHint tone="warning">
+                The license for {status.org} expired on{' '}
+                {status.expiresAt?.slice(0, 10)}. The free plan applies until
+                you add a new key; the people invited first keep their seats.
+              </SettingsHint>
+            )}
+            {status.kind === 'invalid' && status.reason !== null && (
+              <SettingsHint tone="warning">
+                The installed key was not accepted: {status.reason}.
+              </SettingsHint>
+            )}
+          </SettingsRow>
+        )}
       </SettingsGroup>
 
       {team.data?.team != null && (
         <TeamLicenseGroup
           keys={team.data}
-          licensed={status.kind === 'licensed'}
+          licensed={status?.kind === 'licensed'}
           canShare={canInstall}
           sharing={sharing}
           error={shareError}
@@ -140,56 +149,58 @@ export function LicenseSection({ data }: LicenseSectionProps) {
         />
       )}
 
-      <SettingsGroup title="License key" keywords="install" requires="none">
-        {canInstall ? (
-          <SettingsRow title="Paste a key" htmlFor="license-key" stacked>
-            <form
-              className={styles.form}
-              onSubmit={(e) => {
-                e.preventDefault();
-                void install();
-              }}
-            >
-              <TextField
-                id="license-key"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                placeholder="dispatch1.…"
-                spellCheck={false}
-                autoComplete="off"
-                className={styles.key}
-              />
-              <Button
-                type="submit"
-                variant="primary"
-                icon={<KeyRound size={14} strokeWidth={1.8} />}
-                disabled={draft.trim() === '' || pending}
+      {client !== null && (
+        <SettingsGroup title="License key" keywords="install" requires="none">
+          {canInstall ? (
+            <SettingsRow title="Paste a key" htmlFor="license-key" stacked>
+              <form
+                className={styles.form}
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void install();
+                }}
               >
-                {pending ? 'Checking…' : 'Install'}
-              </Button>
-            </form>
-            <SettingsHint className={styles.spaced}>
-              Checked on this machine; nothing is sent anywhere. An invalid key
-              is refused and the current one stays.
-            </SettingsHint>
-            {error !== null && (
-              <p
-                role="alert"
-                className={cx('toneText', styles.error)}
-                data-tone="danger"
-              >
-                {error}
-              </p>
-            )}
-          </SettingsRow>
-        ) : (
-          <SettingsRow
-            title="Add a key"
-            subtitle="Ask the person running Dispatch for this project to add it here, or with dispatch license set."
-            locked
-          />
-        )}
-      </SettingsGroup>
+                <TextField
+                  id="license-key"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  placeholder="dispatch1.…"
+                  spellCheck={false}
+                  autoComplete="off"
+                  className={styles.key}
+                />
+                <Button
+                  type="submit"
+                  variant="primary"
+                  icon={<KeyRound size={14} strokeWidth={1.8} />}
+                  disabled={draft.trim() === '' || pending}
+                >
+                  {pending ? 'Checking…' : 'Install'}
+                </Button>
+              </form>
+              <SettingsHint className={styles.spaced}>
+                Checked on this machine; nothing is sent anywhere. An invalid
+                key is refused and the current one stays.
+              </SettingsHint>
+              {error !== null && (
+                <p
+                  role="alert"
+                  className={cx('toneText', styles.error)}
+                  data-tone="danger"
+                >
+                  {error}
+                </p>
+              )}
+            </SettingsRow>
+          ) : (
+            <SettingsRow
+              title="Add a key"
+              subtitle="Ask the person running Dispatch for this project to add it here, or with dispatch license set."
+              locked
+            />
+          )}
+        </SettingsGroup>
+      )}
     </>
   );
 }

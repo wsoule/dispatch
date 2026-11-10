@@ -148,7 +148,7 @@ describe('DispatchShell', () => {
     );
     expect(log.actions[1]).toEqual({ type: 'setProjectView', view: 'threads' });
     fireEvent.click(screen.getByRole('link', { name: 'Runs' }));
-    expect(log.actions[2]).toEqual({ type: 'openSettings', page: 'runs' });
+    expect(log.actions[2]).toEqual({ type: 'setProjectView', view: 'runs' });
     fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
     expect(log.actions[3]).toEqual({ type: 'openSettings' });
     fireEvent.click(within(primaryNav()).getByRole('link', { name: 'Graph' }));

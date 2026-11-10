@@ -129,6 +129,15 @@ describe('fitBox', () => {
     expect(centre.y).toBeCloseTo(300);
   });
 
+  it('holds a minScale floor and anchors the top-left instead of shrinking further', () => {
+    const box = { x: 20, y: 10, width: 1000, height: 500 };
+    const t = fitBox(box, { width: 536, height: 336 }, { minScale: 0.85 });
+    expect(t.k).toBeCloseTo(0.85);
+    const corner = screenOf(t, box.x, box.y);
+    expect(corner.x).toBeCloseTo(36);
+    expect(corner.y).toBeCloseTo(36);
+  });
+
   it('scales a large box down to fit inside the padding', () => {
     const box = { x: 0, y: 0, width: 1000, height: 500 };
     const t = fitBox(box, { width: 536, height: 336 });

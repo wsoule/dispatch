@@ -2,9 +2,10 @@ import type { TaskListItem } from '@dispatch-foo/core/browser';
 import type { StatusModel } from '@dispatch-foo/core/browser';
 import type { MilestoneProgress } from '@dispatch/client';
 import { Button, cx } from '@dispatch/ui';
-import { Shapes, Waypoints } from 'lucide-react';
+import { Network, Shapes, Waypoints } from 'lucide-react';
 import { memo, type ReactNode, useDeferredValue, useMemo } from 'react';
 
+import { containerGraphHref } from '../../adapters/graphScope';
 import type { TaskTab } from '../../lib/appNav';
 import type { ListGroup } from '../../lib/listGrouping';
 import { kindLabel } from '../../lib/taskDisplay';
@@ -171,6 +172,15 @@ function BandHead({
             icon={<Waypoints {...ICON} />}
             onClick={() => actions.onOpenPlan(container.meta.id)}
           />
+          <Button
+            variant="quiet"
+            size="sm"
+            data-slot="live-band-open-graph"
+            href={containerGraphHref(container)}
+            aria-label={`Open ${container.meta.title} in Graph`}
+            title="Open in Graph"
+            icon={<Network {...ICON} />}
+          />
         </div>
       )}
     </div>
@@ -179,8 +189,8 @@ function BandHead({
 
 /**
  * One container's work in motion: a title row (what it is, the mini wave bar, counts, its
- * fan-out verbs and a way into the full Flight Plan) over the dependency chart of its
- * scope (the Graph page's chart, embedded: a plain scroll scrolls the page, a pinch or
+ * fan-out verbs and ways into the full Flight Plan and the Graph) over the compact
+ * dependency chart of its scope (the Graph page's chart, embedded: a plain scroll scrolls the page, a pinch or
  * the zoom buttons zoom, a drag pans). Landed tasks start hidden; a click traces a card,
  * a double click quick-looks it, and the inspector sends an agent where one may start.
  */
@@ -232,6 +242,7 @@ export const LiveBand = memo(function LiveBand({
               onOpenTask={actions.onOpenTask}
               embedded
               inspectorOnSelect
+              variant="compact"
               className={styles.chart}
             />
           )}

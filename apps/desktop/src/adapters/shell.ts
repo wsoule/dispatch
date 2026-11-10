@@ -305,12 +305,17 @@ export interface CrumbsInput {
   /** The Settings page showing in the main column (`NavState.settings`), or
    * null while Settings is closed. */
   settingsPage?: NavSettingsPage | null;
+  /** The hosted planner: no Overseer, so the project crumb opens the Timeline. */
+  hosted?: boolean;
+  /** A page with no sidebar row (Files, Terminals, Projects): its title
+   * follows the project crumb directly (`onUnlistedPage`). */
+  standalonePage?: boolean;
 }
 
 /**
- * The topbar breadcrumb: project / destination / open task. While Settings
- * fills the main column it reads project / Settings / page instead (Runs,
- * which has a sidebar row of its own, is still a Settings page here): the
+ * The topbar breadcrumb: project / destination / open task, or project / page
+ * for a page with no sidebar row (Files, Terminals, Projects). While Settings
+ * fills the main column it reads project / Settings / page instead: the
  * crumbs name the place, since the page itself has no header row, and a task
  * open beneath Settings is not what shows.
  */
@@ -319,14 +324,11 @@ export function buildCrumbs(input: CrumbsInput): ShellCrumb[] {
   if (input.projectName !== null && input.projectName !== '') {
     crumbs.push({
       label: input.projectName,
-      href: shellRoute('overseer').href,
+      href: shellRoute(input.hosted === true ? 'timeline' : 'overseer').href,
     });
   }
   const page = input.settingsPage ?? null;
-  if (
-    page !== null &&
-    (input.destination === 'settings' || input.destination === 'runs')
-  ) {
+  if (page !== null && input.destination === 'settings') {
     crumbs.push({
       label: shellRoute('settings').label,
       href: hrefFor('settings'),
@@ -335,7 +337,9 @@ export function buildCrumbs(input: CrumbsInput): ShellCrumb[] {
     return crumbs;
   }
   const route = shellRoute(input.destination);
-  crumbs.push({ label: route.label, href: route.href });
+  if (input.standalonePage !== true) {
+    crumbs.push({ label: route.label, href: route.href });
+  }
   if (input.taskTitle !== undefined && input.taskTitle !== null) {
     crumbs.push({ label: input.taskTitle });
   }

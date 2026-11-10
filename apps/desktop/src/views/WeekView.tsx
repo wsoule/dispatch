@@ -218,7 +218,11 @@ function WeekLoaded({
           <aside className={styles.side} aria-label="Deadlines and attention">
             <section aria-label="Upcoming deadlines">
               <BlockBar title="Upcoming deadlines" meta="Next 7 days" />
-              <DeadlineList groups={page.deadlines} />
+              {page.deadlines.every((group) => group.items.length === 0) ? (
+                <EmptyState>Nothing due in the next 7 days</EmptyState>
+              ) : (
+                <DeadlineList groups={page.deadlines} />
+              )}
             </section>
             <section aria-label="Needs attention">
               <BlockBar

@@ -292,6 +292,14 @@
       / minmax(0, 1fr) 340px;
   }
 
+  /* No rail: the body takes the page's full width. */
+  .grid.wide {
+    grid-template:
+      'head' auto
+      'body' 1fr
+      / minmax(0, 1fr);
+  }
+
   .page .bar,
   .head {
     padding-left: 32px;

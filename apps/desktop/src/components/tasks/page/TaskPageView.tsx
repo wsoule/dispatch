@@ -11,6 +11,7 @@ import {
   SkeletonText,
   TaskDetail,
   TaskDetailSection,
+  Tooltip,
   useWidthBelow,
 } from '@dispatch/ui';
 import { useQuery } from '@tanstack/react-query';
@@ -19,11 +20,9 @@ import {
   FileDiff,
   FileText,
   Flag,
-  FolderTree,
   type LucideIcon,
   Maximize2,
   MessagesSquare,
-  MonitorPlay,
   SquareTerminal,
   Star,
   Waypoints,
@@ -94,9 +93,8 @@ const PICKER_FOR_KEY: Partial<Record<ListKeyCommand, DetailPicker>> = {
   'list-set-milestone': 'parent',
 };
 
-// Below this header width the header's icon toggles (Files, Terminal, Preview, Favorite)
-// move into More actions, so the actions keep to one row: in the Overseer's focus column
-// (about 330px) the full set wrapped onto several lines.
+// Below this header width the star moves into More actions too, so the actions keep to
+// one row in the Overseer's focus column (about 330px).
 const NARROW_HEADER_BELOW = 480;
 // `.pane`'s side padding (TaskPageView.module.css): the header card spans the frame less this.
 const PANE_GUTTERS = 32;
@@ -154,7 +152,7 @@ function TaskPageResolver({
     return (
       <div className={styles.gone}>
         <EmptyState
-          label="That task is no longer available."
+          label={`No task ${props.taskId} in this project.`}
           action={
             props.onBack === undefined ? undefined : (
               <Button size="sm" onClick={props.onBack}>
@@ -163,7 +161,7 @@ function TaskPageResolver({
             )
           }
         >
-          It was archived or deleted while it was open.
+          It may have been deleted, or the link belongs to another project.
         </EmptyState>
       </div>
     );
@@ -323,56 +321,52 @@ function TaskPageLoaded({
     NARROW_HEADER_BELOW + PANE_GUTTERS,
     { measureOnMount: true }
   );
-  // A narrow header (the Overseer's focus column) lists the icon toggles in More actions
-  // instead. Their state is in the label, as on the wide buttons ("Unfavorite" while
-  // starred, "Hide …" while a side view is open), never a tick: an action menu starts the
-  // keyboard on its ticked row, so a ticked toggle would put Enter on "Unfavorite" and
-  // take the star off. Picked rows come back through the menu's onChange, keyed by value
-  // in `movedRuns`.
+  // The run's side views (files, terminal, preview) always live in More actions, and the
+  // star joins them in a narrow header. Their state is in the label ("Hide …",
+  // "Unfavorite"), never a tick: an action menu starts the keyboard on its ticked row.
+  // Picked rows come back through the menu's onChange, keyed by value in `movedRuns`.
   const movedActions: PickerOption[] = [];
   const movedRuns = new Map<string, () => void>();
-  if (narrowHeader) {
-    const toggleOption = (
-      next: PageView,
-      show: string,
-      hide: string
-    ): PickerOption => {
-      movedRuns.set(`show-${next}`, () => toggle(next));
-      return {
-        value: `show-${next}`,
-        label: view === next ? hide : show,
-        group: 'This page',
-        groupTitleHidden: true,
-      };
+  const toggleOption = (
+    next: PageView,
+    show: string,
+    hide: string
+  ): PickerOption => {
+    movedRuns.set(`show-${next}`, () => toggle(next));
+    return {
+      value: `show-${next}`,
+      label: view === next ? hide : show,
+      group: 'This page',
+      groupTitleHidden: true,
     };
-    if (sideViews.files) {
-      movedActions.push(
-        toggleOption('files', "The run's files", "Hide the run's files")
-      );
-    }
-    if (sideViews.terminal) {
-      movedActions.push(
-        toggleOption(
-          'terminal',
-          "A terminal in the run's worktree",
-          'Hide the terminal'
-        )
-      );
-    }
-    if (sideViews.preview) {
-      movedActions.push(
-        toggleOption('preview', "Preview the run's app", 'Hide the preview')
-      );
-    }
-    if (savedViews !== null) {
-      movedRuns.set('favorite', () => savedViews.toggleFavorite(favoriteRef));
-      movedActions.push({
-        value: 'favorite',
-        label: favorite ? 'Unfavorite' : 'Favorite',
-        group: 'This page',
-        groupTitleHidden: true,
-      });
-    }
+  };
+  if (sideViews.files) {
+    movedActions.push(
+      toggleOption('files', "Show the run's files", "Hide the run's files")
+    );
+  }
+  if (sideViews.terminal) {
+    movedActions.push(
+      toggleOption(
+        'terminal',
+        "Open a terminal in the run's worktree",
+        'Hide the terminal'
+      )
+    );
+  }
+  if (sideViews.preview) {
+    movedActions.push(
+      toggleOption('preview', "Preview the run's app", 'Hide the preview')
+    );
+  }
+  if (narrowHeader && savedViews !== null) {
+    movedRuns.set('favorite', () => savedViews.toggleFavorite(favoriteRef));
+    movedActions.push({
+      value: 'favorite',
+      label: favorite ? 'Unfavorite' : 'Favorite',
+      group: 'This page',
+      groupTitleHidden: true,
+    });
   }
   const headerActions = (
     <>
@@ -395,49 +389,17 @@ function TaskPageLoaded({
           )}
         </Button>
       )}
-      {!narrowHeader && sideViews.files && (
-        <Button
-          variant="quiet"
-          size="sm"
-          icon={<FolderTree {...ICON} />}
-          aria-label="The run's files"
-          title="The run's files"
-          aria-pressed={view === 'files'}
-          onClick={() => toggle('files')}
-        />
-      )}
-      {!narrowHeader && sideViews.terminal && (
-        <Button
-          variant="quiet"
-          size="sm"
-          icon={<SquareTerminal {...ICON} />}
-          aria-label="A terminal in the run's worktree"
-          title="A terminal in the run's worktree"
-          aria-pressed={view === 'terminal'}
-          onClick={() => toggle('terminal')}
-        />
-      )}
-      {!narrowHeader && sideViews.preview && (
-        <Button
-          variant="quiet"
-          size="sm"
-          icon={<MonitorPlay {...ICON} />}
-          aria-label="Preview the run's app"
-          title="Preview the run's app"
-          aria-pressed={view === 'preview'}
-          onClick={() => toggle('preview')}
-        />
-      )}
       {!narrowHeader && savedViews !== null && (
-        <Button
-          variant="quiet"
-          size="sm"
-          icon={<Star {...ICON} />}
-          aria-label={favorite ? 'Unfavorite' : 'Favorite'}
-          title={favorite ? 'Unfavorite' : 'Favorite'}
-          aria-pressed={favorite}
-          onClick={() => savedViews.toggleFavorite(favoriteRef)}
-        />
+        <Tooltip content={favorite ? 'Unfavorite' : 'Favorite'}>
+          <Button
+            variant="quiet"
+            size="sm"
+            icon={<Star {...ICON} />}
+            aria-label={favorite ? 'Unfavorite' : 'Favorite'}
+            aria-pressed={favorite}
+            onClick={() => savedViews.toggleFavorite(favoriteRef)}
+          />
+        </Tooltip>
       )}
       <PickerPopover
         label="More actions"
@@ -453,6 +415,7 @@ function TaskPageLoaded({
         }
         trigger={<Ellipsis {...ICON} />}
         triggerLabel="More actions"
+        tooltip="More actions"
         onChange={(value) => {
           if (value === null) return;
           const moved = movedRuns.get(value);
@@ -461,24 +424,26 @@ function TaskPageLoaded({
         }}
       />
       {embedded && onExpand !== undefined && (
-        <Button
-          variant="quiet"
-          size="sm"
-          icon={<Maximize2 {...ICON} />}
-          aria-label="Open the full page"
-          title="Open the full page"
-          onClick={onExpand}
-        />
+        <Tooltip content="Open the full page">
+          <Button
+            variant="quiet"
+            size="sm"
+            icon={<Maximize2 {...ICON} />}
+            aria-label="Open the full page"
+            onClick={onExpand}
+          />
+        </Tooltip>
       )}
       {onBack !== undefined && (
-        <Button
-          variant="quiet"
-          size="sm"
-          icon={<X {...ICON} />}
-          aria-label="Close"
-          title="Close (Esc)"
-          onClick={onBack}
-        />
+        <Tooltip content="Close (Esc)">
+          <Button
+            variant="quiet"
+            size="sm"
+            icon={<X {...ICON} />}
+            aria-label="Close"
+            onClick={onBack}
+          />
+        </Tooltip>
       )}
     </>
   );
@@ -575,6 +540,8 @@ function TaskPageLoaded({
       <div className={styles.pane}>
         <TaskDetail
           layout="page"
+          // The Flight Plan's chart needs the width more than the properties do.
+          wide={view === 'plan'}
           header
           headingLevel={headingLevel}
           className={styles.detail}

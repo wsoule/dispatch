@@ -72,22 +72,14 @@ function liveSpend(
   };
 }
 
-// The agent slots across every live fan-out: a ProgressRule meter (warning once every
-// slot is taken), else a quiet "None" whose hint says no fan-out is live.
-function slotsCell(slots: LiveTotals['slots']): StatCell {
-  if (slots.total <= 0) {
-    return {
-      id: 'slots',
-      label: 'Slots',
-      value: 'None',
-      tone: 'muted',
-      title: 'No fan-out is live, so no agent slots are held',
-    };
-  }
+// The agent slots across every live fan-out: a ProgressRule meter, warning once every
+// slot is taken. With no fan-out live no slot is held, so there is no cell at all.
+function slotsCell(slots: LiveTotals['slots']): StatCell | null {
+  if (slots.total <= 0) return null;
   const used = Math.min(slots.used, slots.total);
   return {
     id: 'slots',
-    label: 'Slots',
+    label: 'Agent slots',
     value: (
       <ProgressRule
         data-slot="live-slots"
@@ -102,15 +94,16 @@ function slotsCell(slots: LiveTotals['slots']): StatCell {
   };
 }
 
-// Every cell of the strip, in reading order: slots, running, queued, waiting on a
+// Every cell of the strip, in reading order: slots (while a fan-out is live), running, queued, waiting on a
 // teammate, landing, then the spend when there is any. A count takes its status tone
 // only while it is above zero (blue running and landing, amber blocked behind a teammate).
 // Keys stay short so the cells and Pause all share the header's row at common widths, but
 // each still says what it counts on its own; the hints only add detail, and hold the
 // spend's note.
 function headerCells(totals: LiveTotals, spend: LiveSpend | null): StatCell[] {
+  const slots = slotsCell(totals.slots);
   const cells: StatCell[] = [
-    slotsCell(totals.slots),
+    ...(slots === null ? [] : [slots]),
     {
       id: 'running',
       'data-slot': 'live-running',

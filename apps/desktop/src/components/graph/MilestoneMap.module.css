@@ -1,6 +1,7 @@
 /* The Graph view's dependency chart (MilestoneMap.tsx): one dense toolbar
-   (the view switch, Find, the highlight chips, then the summary, Display,
-   the inspector toggle and the Mermaid copy), and under it the canvas with
+   (the view switch, Find, the highlight chips, then the summary, help,
+   Display with the Mermaid copy, and the inspector toggle; a compact embed
+   keeps only the view switch and Open in Graph), and under it the canvas with
    the inspector beside it when the chart is wide enough, under it when not.
    Controls and type come from @dispatch/ui; this sheet places them. */
 
@@ -60,6 +61,10 @@
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
+  padding: var(--s-1) 0;
+}
+
+.help {
   padding: var(--s-1) 0;
 }
 

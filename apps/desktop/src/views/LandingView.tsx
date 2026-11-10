@@ -41,7 +41,6 @@ import styles from './LandingView.module.css';
 
 export interface LandingViewProps {
   data: DispatchProjectData;
-  onBack: () => void;
   /** Opens the task page on this run. */
   onOpenRun: (taskId: string, runId: string) => void;
 }
@@ -147,7 +146,7 @@ function LandingLogDialog({
  * Failures lead because they need you; in-progress rows say their stage, position and
  * what holds them; today's landings close the page.
  */
-export function LandingView({ data, onBack, onOpenRun }: LandingViewProps) {
+export function LandingView({ data, onOpenRun }: LandingViewProps) {
   const toasts = useToasts();
   const statuses = useStatusModelOf(data.config);
   const now = useNow(5_000);
@@ -170,7 +169,10 @@ export function LandingView({ data, onBack, onOpenRun }: LandingViewProps) {
       ),
     [data.mergeQueue, data.tasksIncludingArchived, statuses]
   );
-  const sections = landingSections(board, filter);
+  const total =
+    board.inProgress.length + board.failed.length + board.landedToday.length;
+  // With the tabs hidden (all empty) a stale filter must not hide the empty state.
+  const sections = landingSections(board, total === 0 ? 'all' : filter);
   const logItem =
     logRunId === null
       ? null
@@ -232,10 +234,7 @@ export function LandingView({ data, onBack, onOpenRun }: LandingViewProps) {
   };
 
   const tabs = [
-    {
-      id: 'all',
-      label: `All ${board.inProgress.length + board.failed.length + board.landedToday.length}`,
-    },
+    { id: 'all', label: `All ${total}` },
     { id: 'in-progress', label: `In progress ${board.inProgress.length}` },
     { id: 'failed', label: `Failed ${board.failed.length}` },
     { id: 'landed-today', label: `Landed today ${board.landedToday.length}` },
@@ -244,7 +243,6 @@ export function LandingView({ data, onBack, onOpenRun }: LandingViewProps) {
   const header = (
     <div className={styles.bar}>
       <PageHead
-        onBack={onBack}
         crumbs={['Landing']}
         actions={
           <>
@@ -273,13 +271,16 @@ export function LandingView({ data, onBack, onOpenRun }: LandingViewProps) {
           </>
         }
       />
-      <Tabs
-        flush
-        label="Landing filter"
-        items={tabs}
-        value={filter}
-        onChange={(id) => setFilter(id as LandingFilter)}
-      />
+      {/* Nothing to filter while the queue and today's landings are empty. */}
+      {total > 0 && (
+        <Tabs
+          flush
+          label="Landing filter"
+          items={tabs}
+          value={filter}
+          onChange={(id) => setFilter(id as LandingFilter)}
+        />
+      )}
     </div>
   );
 

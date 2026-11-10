@@ -98,7 +98,6 @@ test('a question waiting on me is under Needs you, and its choice answers it', a
     <QueryClientProvider client={queryClient}>
       <ThreadsView
         data={data}
-        projectName="storefront"
         focus={focus}
         onFocus={onFocus}
         onOpenRef={() => {}}
@@ -108,6 +107,9 @@ test('a question waiting on me is under Needs you, and its choice answers it', a
   );
   const { rerender } = render(view(null));
 
+  // With nothing open, the page opens the newest thread waiting on me.
+  await waitFor(() => expect(onFocus).toHaveBeenCalledWith('m-q'));
+  onFocus.mockClear();
   const needsYou = await screen.findByRole('group', { name: 'Needs you' });
   fireEvent.click(
     await within(needsYou).findByRole('option', {
@@ -148,7 +150,6 @@ function renderRail(client: Record<string, unknown>) {
           runs: [],
           presence: [],
         })}
-        projectName="storefront"
         focus={null}
         onFocus={() => {}}
         onOpenRef={() => {}}
@@ -177,7 +178,7 @@ test('while the rail loads it is busy and says so, and the pane asks for nothing
   expect(screen.queryByText('Pick a thread')?.textContent).toBeUndefined();
 });
 
-test('the page leads with its head: the project and Threads as the trail, and New thread', async () => {
+test('the page leads with its head: Threads as the trail, no back chip, and New thread', async () => {
   renderRail({
     getMailbox: mock(() => Promise.resolve({ items: [] })),
     listRecentThreads: mock(() => Promise.resolve({ threads: [] })),
@@ -189,7 +190,8 @@ test('the page leads with its head: the project and Threads as the trail, and Ne
   if (!(head instanceof HTMLElement)) throw new Error('no page header');
   expect(
     head.querySelector('[data-slot="page-header-crumb"]')?.textContent
-  ).toBe('storefront›Threads');
+  ).toBe('Threads');
+  expect(screen.queryByTestId('tasks-back')).toBeNull();
   expect(within(head).getByText('Threads').getAttribute('aria-current')).toBe(
     'page'
   );
@@ -216,50 +218,6 @@ test('a rail that failed to load says why, in the danger tone', async () => {
   const alert = await within(rail).findByRole('alert');
   expect(alert.textContent).toBe('mailbox is down');
   expect(alert.getAttribute('data-tone')).toBe('danger');
-});
-
-test('with onBack the head leads with the back chip and names only Threads', () => {
-  const onBack = mock(() => {});
-  render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
-      <ThreadsView
-        data={dataWith({
-          client: {} as unknown as ApiClient,
-          port: 4000,
-          me: 'human:wyat',
-          messageAccess: {
-            canDecide: false,
-            canMessage: false,
-            explanation: 'This window cannot send messages.',
-          },
-          scopeDecide: decideAvailability(
-            { token: 'agent', canDecide: false, canMessage: false },
-            []
-          ),
-          tasks: [],
-          runs: [],
-          presence: [],
-        })}
-        projectName="storefront"
-        focus={null}
-        onFocus={() => {}}
-        onOpenRef={() => {}}
-        overseer={OVERSEER}
-        onBack={onBack}
-      />
-    </QueryClientProvider>
-  );
-  const head = document.querySelector('[data-slot="page-header"]');
-  if (!(head instanceof HTMLElement)) throw new Error('no page header');
-  expect(
-    head.querySelector('[data-slot="page-header-crumb"]')?.textContent
-  ).toBe('Threads');
-  fireEvent.click(within(head).getByRole('button', { name: 'Back to tasks' }));
-  expect(onBack).toHaveBeenCalledTimes(1);
 });
 
 test('the rail stays loading until recent threads and open gates are in too', async () => {
@@ -344,7 +302,7 @@ test('Cancel closes a new thread without sending', async () => {
   expect(document.activeElement === newThread).toBe(true);
 });
 
-test("a cut-off Assistant call is read in full from the Assistant's conversation", async () => {
+test("a cut-off Overseer call is read in full from the Overseer's conversation", async () => {
   const gate: Message = {
     ...question,
     id: 'm-g',
@@ -399,7 +357,6 @@ test("a cut-off Assistant call is read in full from the Assistant's conversation
           runs: [],
           presence: [],
         })}
-        projectName="storefront"
         focus="m-g"
         onFocus={() => {}}
         onOpenRef={() => {}}
@@ -445,7 +402,6 @@ test('an attached agent-token window queries nothing and says why', () => {
     >
       <ThreadsView
         data={data}
-        projectName="storefront"
         focus="m-q"
         onFocus={() => {}}
         onOpenRef={() => {}}
@@ -497,7 +453,6 @@ test('a teammate waits for the daemon to say who they are, with no reason given 
     >
       <ThreadsView
         data={data}
-        projectName="storefront"
         focus={null}
         onFocus={() => {}}
         onOpenRef={() => {}}
@@ -555,7 +510,6 @@ test('a failed whoami says so and asks again from Retry, instead of loading for 
           runs: [],
           presence: [],
         })}
-        projectName="storefront"
         focus={null}
         onFocus={() => {}}
         onOpenRef={() => {}}
@@ -632,7 +586,6 @@ test('a run moving on re-renders no row of the open thread until what a row offe
             runs,
             presence,
           })}
-          projectName="storefront"
           focus="m-q"
           onFocus={() => {}}
           onOpenRef={() => {}}
@@ -687,7 +640,6 @@ test('a focus that names no message says the thread did not load', async () => {
     >
       <ThreadsView
         data={data}
-        projectName="storefront"
         focus="m-gone"
         onFocus={() => {}}
         onOpenRef={() => {}}

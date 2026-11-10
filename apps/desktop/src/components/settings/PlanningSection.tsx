@@ -95,28 +95,8 @@ interface Props {
 
 export function PlanningSection({ config, people, onSave }: Props) {
   const tuning = tuningFrom(config.planning);
-  const set = config.planning?.tuning ?? {};
   const watchers = new Set(config.planning?.watchers ?? []);
   const active = new Set<string>(tuning.activeProjectStatuses);
-
-  const numberRow = (field: TuningField) => (
-    <NumberSetting
-      key={field.key}
-      id={`planning-${field.key}`}
-      title={field.title}
-      subtitle={field.subtitle}
-      keywords="planning tuning"
-      value={set[field.key]}
-      placeholder={String(tuning[field.key])}
-      min={field.min}
-      max={365}
-      suffix="days"
-      allowEmpty
-      onSave={(value) =>
-        void onSave({ planning: { tuning: { [field.key]: value } } })
-      }
-    />
-  );
 
   const toggleStatus = (status: PlanningProjectStatus, on: boolean) => {
     const next = PROJECT_STATUSES.filter((each) =>
@@ -149,13 +129,6 @@ export function PlanningSection({ config, people, onSave }: Props) {
           onSave={(allocation) => void onSave({ planning: { allocation } })}
         />
       </SettingsGroup>
-      <SettingsGroup
-        title="Risk"
-        hint="Empty fields use the default shown in grey."
-        keywords="warnings milestones"
-      >
-        {RISK_FIELDS.map(numberRow)}
-      </SettingsGroup>
       <SettingsGroup title="Active projects" keywords="allocation statuses">
         <SettingsRow
           title="Statuses that count as active"
@@ -175,9 +148,6 @@ export function PlanningSection({ config, people, onSave }: Props) {
             </div>
           }
         />
-      </SettingsGroup>
-      <SettingsGroup title="Timeline" keywords="window">
-        {TIMELINE_FIELDS.map(numberRow)}
       </SettingsGroup>
       <SettingsGroup
         title="Watchers"
@@ -204,6 +174,48 @@ export function PlanningSection({ config, people, onSave }: Props) {
             }
           />
         )}
+      </SettingsGroup>
+    </>
+  );
+}
+
+/** Planning's day counts: the risk thresholds and the timeline's window.
+ *  Their defaults suit most teams, so the page folds them under Advanced. */
+export function PlanningTuningGroups({
+  config,
+  onSave,
+}: Pick<Props, 'config' | 'onSave'>) {
+  const tuning = tuningFrom(config.planning);
+  const set = config.planning?.tuning ?? {};
+  const numberRow = (field: TuningField) => (
+    <NumberSetting
+      key={field.key}
+      id={`planning-${field.key}`}
+      title={field.title}
+      subtitle={field.subtitle}
+      keywords="planning tuning"
+      value={set[field.key]}
+      placeholder={String(tuning[field.key])}
+      min={field.min}
+      max={365}
+      suffix="days"
+      allowEmpty
+      onSave={(value) =>
+        void onSave({ planning: { tuning: { [field.key]: value } } })
+      }
+    />
+  );
+  return (
+    <>
+      <SettingsGroup
+        title="Risk"
+        hint="Empty fields use the default shown in grey."
+        keywords="warnings milestones"
+      >
+        {RISK_FIELDS.map(numberRow)}
+      </SettingsGroup>
+      <SettingsGroup title="Timeline" keywords="window">
+        {TIMELINE_FIELDS.map(numberRow)}
       </SettingsGroup>
     </>
   );

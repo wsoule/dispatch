@@ -9,6 +9,7 @@ import {
   RegisterRow,
   SegmentedControl,
   StatusMark,
+  Tooltip,
   ViewToolbar,
 } from '@dispatch/ui';
 import { ArrowUpRight, ListTodo, Network } from 'lucide-react';
@@ -25,40 +26,36 @@ import {
 } from '../adapters/projects';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { useShellActions } from '../components/shell/ShellActionsContext';
-import { TasksBackButton } from '../components/tasks/TasksPageHeader';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { type Planning, usePlanningContext } from '../hooks/usePlanning';
 import { issuesHref } from '../lib/routes';
+import { AssignMilestones } from './AssignMilestonesDialog';
 import styles from './ProjectsView.module.css';
 
 // The Projects register (the planner's /projects page, ported): every project
 // that is not completed or canceled, grouped by initiative, with its status,
-// next milestone, lead and allocation (agents working, else what the planning
-// would do), on @dispatch/ui's Register. The data is the planning App computed
+// next milestone and lead, on @dispatch/ui's Register. The data is the planning App computed
 // once over the open project (hooks/usePlanning, through PlanningContext)
 // mapped by adapters/projects; this view keeps only the toolbar's search and
 // filter. Every link is a real href: the row opens the project's timeline
 // lane, the end cell its issues (the Issues list narrowed to the project),
 // its graph and its page, the group's Graph button the initiative's graph;
 // DispatchShell's link provider resolves them to routes.
-// A page under Tasks (the Projects section's "All", the palette's Open
-// Projects), led by the Tasks back chip when hosted and carrying New project.
+// Opened from the sidebar's Projects "All" or the palette; its head carries
+// Assign next milestones (AssignMilestonesDialog) and New project.
 
 const ICON = { size: 14, strokeWidth: 1.8 } as const;
 
-/** The allocation preview and run log (views/AllocationView). */
-const ALLOCATION_HREF = '#/allocation';
-
-/* Seven columns readable down to a register 900px wide (stackWithin 900):
-   each keeps a floor that fits its content (a "2 agents working" chip on
-   one line, the end cell its three 26px ghost icon buttons and their two
-   2px gaps, the milestone's name wrapping). The floors add up to 752px,
-   which with six 20px gaps and the row's 28px of padding is the 900px the
-   register stacks under (ProjectsView.test.tsx checks the sum). Narrower,
-   the rows become cards: the project on top, the other cells in as many
-   150px columns as fit. */
+/* Six columns readable down to a register 900px wide (stackWithin 900):
+   each keeps a floor that fits its content (the end cell its three 26px
+   ghost icon buttons and their two 2px gaps, the milestone's name
+   wrapping). The floors add up to 636px, which with five 20px gaps and the
+   row's 28px of padding fits well inside the 900px the register stacks
+   under (ProjectsView.test.tsx checks the sum). Narrower, the rows become
+   cards: the project on top, the other cells in as many 150px columns as
+   fit. */
 const COLUMNS =
-  'minmax(150px, 1.3fr) 100px minmax(124px, 1.4fr) 96px minmax(84px, 0.8fr) minmax(116px, 1fr) 82px';
+  'minmax(150px, 1.3fr) 100px minmax(124px, 1.4fr) 96px minmax(84px, 0.8fr) 82px';
 const STACKED_COLUMNS = 'repeat(auto-fill, minmax(150px, 1fr))';
 
 const HEADER = [
@@ -67,21 +64,18 @@ const HEADER = [
   { id: 'next', label: 'Next milestone' },
   { id: 'progress', label: 'Progress' },
   { id: 'lead', label: 'Lead' },
-  { id: 'allocation', label: 'Allocation' },
   { id: 'links', label: 'Links', align: 'end' as const },
 ];
 
 export interface ProjectsViewProps {
   data: DispatchProjectData;
-  /** Hosted under Tasks: the page leads with the back chip to the Tasks list. */
-  onBack?: () => void;
 }
 
 /**
- * The Projects page under Tasks. Without a daemon it shows the daemon state;
+ * The Projects page. Without a daemon it shows the daemon state;
  * without a planning (outside App) it says so instead of an empty register.
  */
-export function ProjectsView({ data, onBack }: ProjectsViewProps) {
+export function ProjectsView({ data }: ProjectsViewProps) {
   const planning = usePlanningContext();
   const daemonReady =
     !data.portLoading && !data.portError && data.client !== null;
@@ -101,29 +95,27 @@ export function ProjectsView({ data, onBack }: ProjectsViewProps) {
       </div>
     );
   }
-  return <ProjectsLoaded planning={planning} data={data} onBack={onBack} />;
+  return <ProjectsLoaded planning={planning} data={data} />;
 }
 
 function ProjectsLoaded({
   planning,
   data,
-  onBack,
 }: ProjectsViewProps & { planning: Planning }) {
   const shell = useShellActions();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<ProjectFilterId>('all');
   const searchRef = useRef<HTMLInputElement>(null);
 
-  // The page model is rebuilt only with the planning or the fan-out progress
-  // (what agents are doing): typing in the search never rebuilds the rows.
+  // The page model is rebuilt only with the planning: typing in the search
+  // never rebuilds the rows.
   const page = useMemo(
     () =>
       buildProjectsPage({
         timeline: planning.timeline,
         projects: planning.snapshot.projects,
-        milestoneProgressById: data.milestoneProgressById,
       }),
-    [planning, data.milestoneProgressById]
+    [planning]
   );
   const shown = useMemo(
     () => filterProjectGroups(page.groups, query, filter),
@@ -144,14 +136,11 @@ function ProjectsLoaded({
   return (
     <div className={styles.root} data-testid="projects-view">
       <header className={styles.head}>
-        {onBack === undefined ? null : <TasksBackButton onBack={onBack} />}
         <h1 className={styles.title}>Projects</h1>
         <p className={styles.receipts}>{page.receipts}</p>
         {page.total > 0 ? (
           <span className={styles.headActions}>
-            <Button href={ALLOCATION_HREF} variant="quiet" size="sm">
-              Allocation
-            </Button>
+            <AssignMilestones data={data} planning={planning} />
             <Button size="sm" onClick={newProject}>
               New project
             </Button>
@@ -218,22 +207,24 @@ function ProjectsLoaded({
                 className={styles.group}
                 aria-label={group.name}
               >
-                <BlockBar
-                  title={group.name}
-                  meta={plural(group.rows.length, 'project')}
-                >
-                  <Button
-                    href={group.graphHref}
-                    variant="quiet"
-                    size="sm"
-                    icon={<Network {...ICON} />}
-                    aria-label={`Dependency graph of ${group.name}`}
+                {group.headless ? null : (
+                  <BlockBar
+                    title={group.name}
+                    meta={plural(group.rows.length, 'project')}
                   >
-                    Graph
-                  </Button>
-                </BlockBar>
+                    <Button
+                      href={group.graphHref}
+                      variant="quiet"
+                      size="sm"
+                      icon={<Network {...ICON} />}
+                      aria-label={`Dependency graph of ${group.name}`}
+                    >
+                      Graph
+                    </Button>
+                  </BlockBar>
+                )}
                 <Register
-                  label={`${group.name} projects`}
+                  label={group.headless ? 'Projects' : `${group.name} projects`}
                   columns={COLUMNS}
                   header={HEADER}
                   stackWithin={900}
@@ -255,7 +246,7 @@ function ProjectsLoaded({
 // One register row, memoized on its model: a search that narrows the groups
 // redraws only the rows that come and go.
 const ProjectRow = memo(function ProjectRow({ row }: { row: ProjectRowModel }) {
-  const { next, allocation } = row;
+  const { next } = row;
   return (
     <RegisterRow
       href={row.timelineHref}
@@ -319,54 +310,35 @@ const ProjectRow = memo(function ProjectRow({ row }: { row: ProjectRowModel }) {
       >
         {row.lead ?? 'No lead'}
       </RegisterCell>
-      {/* The chip carries the tone; a blocked project's reason line under it
-          takes the amber too (the adapter's toneDetail opts it in). A muted
-          cell greys its value; the blue and neutral chips colour only
-          themselves. */}
-      <RegisterCell
-        label="Allocation"
-        tone={
-          allocation.tone === 'warning' || allocation.tone === 'muted'
-            ? allocation.tone
-            : 'default'
-        }
-        toneSub={allocation.toneDetail === true}
-        sub={allocation.detail}
-      >
-        {allocation.plain === true ? (
-          <span className={styles.plainValue}>{allocation.label}</span>
-        ) : (
-          <Chip tone={allocation.tone} filled={allocation.filled}>
-            {allocation.label}
-          </Chip>
-        )}
-      </RegisterCell>
       <RegisterCell align="end">
         <span className={styles.links}>
-          <Button
-            href={issuesHref('all', row.id)}
-            variant="quiet"
-            size="sm"
-            icon={<ListTodo {...ICON} />}
-            title="Issues in the project"
-            aria-label={`Issues of ${row.name}`}
-          />
-          <Button
-            href={row.graphHref}
-            variant="quiet"
-            size="sm"
-            icon={<Network {...ICON} />}
-            title="Dependency graph"
-            aria-label={`Graph of ${row.name}`}
-          />
-          <Button
-            href={row.openHref}
-            variant="quiet"
-            size="sm"
-            icon={<ArrowUpRight {...ICON} />}
-            title="Open the project"
-            aria-label={`Open ${row.name}`}
-          />
+          <Tooltip content="Issues">
+            <Button
+              href={issuesHref('all', row.id)}
+              variant="quiet"
+              size="sm"
+              icon={<ListTodo {...ICON} />}
+              aria-label={`Issues of ${row.name}`}
+            />
+          </Tooltip>
+          <Tooltip content="Dependency graph">
+            <Button
+              href={row.graphHref}
+              variant="quiet"
+              size="sm"
+              icon={<Network {...ICON} />}
+              aria-label={`Graph of ${row.name}`}
+            />
+          </Tooltip>
+          <Tooltip content="Open project">
+            <Button
+              href={row.openHref}
+              variant="quiet"
+              size="sm"
+              icon={<ArrowUpRight {...ICON} />}
+              aria-label={`Open ${row.name}`}
+            />
+          </Tooltip>
         </span>
       </RegisterCell>
     </RegisterRow>

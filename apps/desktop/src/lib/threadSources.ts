@@ -55,7 +55,7 @@ export interface ThreadLookups {
   task: (taskId: string) => TaskListItem | null;
   taskIdOfRun: (runId: string) => string | null;
   agentStatus: (address: string) => 'revoked' | 'muted' | null;
-  /** Whether an address is the daemon's own overseer (the Assistant). */
+  /** Whether an address is the daemon's own overseer (the Overseer). */
   isOverseer: (address: string) => boolean;
 }
 
@@ -80,7 +80,7 @@ export function threadLookups(
     task: (id) => docs.get(id) ?? null,
     taskIdOfRun: (id) => taskOfRun.get(id) ?? null,
     agentStatus: (address) => status.get(address) ?? null,
-    // Until the roster loads, any overseer-named agent reads as the Assistant.
+    // Until the roster loads, any overseer-named agent reads as the Overseer.
     isOverseer: (address) =>
       overseer === undefined ? OVERSEER.test(address) : address === overseer,
   };
@@ -200,7 +200,7 @@ export function knownAddresses(input: {
   };
 }
 
-/** Where a tool call waits for its answer: a run, or an Assistant conversation. */
+/** Where a tool call waits for its answer: a run, or an Overseer conversation. */
 export type ParkedCall =
   | { runId: string; requestId: string }
   | { conversation: string; requestId: string };
@@ -230,7 +230,7 @@ export type RowControl =
     }
   | { kind: 'choices'; choices: string[]; gate: boolean };
 
-// The run or Assistant conversation a tool-approval gate's call is parked on.
+// The run or Overseer conversation a tool-approval gate's call is parked on.
 function parkedCall(gate: {
   requestId: string;
   runId?: string;

@@ -340,10 +340,9 @@ function rowChips(
  * Linear), else the task id; the state is the status's label and workflow type
  * (an unknown status types as backlog, as core does); the project and
  * milestone cells name the nearest containers above the task; the due date
- * is toned against `ctx.now`; the chips are `rowChips`; an open, specified
- * task with nobody on it reads "Needs assignee" in amber (a draft is not yet
- * anyone's to pick up, and a container or finished task needs nobody); a
- * pending dispatch marks the row busy with "Dispatching…", a failed save
+ * is toned against `ctx.now`; the chips are `rowChips`; a task with nobody
+ * on it reads a quiet "Unassigned" (amber is kept for real trouble); a pending
+ * dispatch marks the row busy with "Dispatching…", a failed save
  * prints "Not saved · why" in red. `indent` is the group's nesting.
  */
 export function toTaskRow(
@@ -398,10 +397,6 @@ export function toTaskRow(
   }
   const chips = rowChips(doc, bucket, ctx, archived);
   if (chips.length > 0) out.chips = chips;
-  if (unassigned && bucket !== null && bucket !== 'draft') {
-    out.assigneeTone = 'warning';
-    out.unassignedLabel = NEEDS_ASSIGNEE_LABEL;
-  }
   if (!archived) {
     const saveError = ctx.saveErrorByTaskId?.get(id);
     if (ctx.pendingDispatch?.has(id) === true) {
@@ -698,8 +693,6 @@ export interface PresetTabsExtra {
   mine: number;
   /** Starred tasks. */
   starred: number;
-  /** Tasks with an ask of mine; the need-you bucket's count by default. */
-  needsYou?: number;
   /** Each tab's link; a tab without one is drawn as not followable, so a
    * view that navigates itself passes `onFollow` on the result instead. */
   hrefFor?: (preset: TasksPreset) => string;
@@ -718,7 +711,7 @@ function presetCount(
     case 'mine':
       return extra.mine;
     case 'needs-you':
-      return extra.needsYou ?? counts.buckets['need-you'];
+      return counts.buckets['need-you'];
     case 'failed':
       return counts.buckets.failed;
     case 'moving':
@@ -737,18 +730,21 @@ function presetCount(
 }
 
 /** The preset strip as NavTabs: `TASKS_PRESETS` in order, each with its
- * count and the current one marked. */
+ * count and the current one marked. Needs you is the sidebar's own row, so
+ * the strip leaves it out. */
 export function presetTabs(
   counts: TaskStatusCounts,
   extra: PresetTabsExtra
 ): NavTabItem[] {
-  return TASKS_PRESETS.map(({ id, label }) => {
-    const item: NavTabItem = { id, label, current: id === extra.current };
-    const count = presetCount(id, counts, extra);
-    if (count !== undefined) item.count = count;
-    if (extra.hrefFor !== undefined) item.href = extra.hrefFor(id);
-    return item;
-  });
+  return TASKS_PRESETS.filter(({ id }) => id !== 'needs-you').map(
+    ({ id, label }) => {
+      const item: NavTabItem = { id, label, current: id === extra.current };
+      const count = presetCount(id, counts, extra);
+      if (count !== undefined) item.count = count;
+      if (extra.hrefFor !== undefined) item.href = extra.hrefFor(id);
+      return item;
+    }
+  );
 }
 
 /** One applied filter as FilterChips draws it, without the callbacks (the

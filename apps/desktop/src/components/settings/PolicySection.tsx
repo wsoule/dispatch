@@ -307,19 +307,6 @@ export function PolicySection({
       </SettingsGroup>
 
       <SettingsGroup
-        title="Overrides"
-        hint="Make one kind of decision always wait for you, or always go ahead, whatever the level."
-        keywords="gate table pin"
-      >
-        <GateTable
-          policy={policy}
-          onPinGate={(gate, pin) =>
-            void onSave({ policy: { gates: { [gate]: pin } } })
-          }
-        />
-      </SettingsGroup>
-
-      <SettingsGroup
         title="Easy tasks"
         hint="Tasks rated easy can run, get reviewed and merge without you, at any level. Elevated and critical tasks always wait. Label a task no-auto-land to keep it manual."
         keywords="difficulty auto-land autopilot easy low"
@@ -396,5 +383,28 @@ export function PolicySection({
           })}
       </SettingsGroup>
     </>
+  );
+}
+
+/** Autonomy's per-decision overrides. Each follows the level unless pinned,
+ *  so the page folds them under Advanced. */
+export function GateOverridesGroup({
+  config,
+  onSave,
+}: Pick<PolicySectionProps, 'config' | 'onSave'>) {
+  const policy = projectPolicy(config);
+  return (
+    <SettingsGroup
+      title="Overrides"
+      hint="Make one kind of decision always wait for you, or always go ahead, whatever the level."
+      keywords="gate table pin follow level"
+    >
+      <GateTable
+        policy={policy}
+        onPinGate={(gate, pin) =>
+          void onSave({ policy: { gates: { [gate]: pin } } })
+        }
+      />
+    </SettingsGroup>
   );
 }

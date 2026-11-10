@@ -188,6 +188,7 @@ test('the groups are sentence-case level-2 headings', () => {
   expect(headings.map((h) => h.textContent)).toEqual([
     'Before merging',
     'Trying the change',
+    'Previews',
     'Fix loop',
     'Escalation',
   ]);

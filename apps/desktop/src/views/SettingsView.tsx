@@ -5,7 +5,6 @@ import {
   Bell,
   Bot,
   BotMessageSquare,
-  Brain,
   CalendarRange,
   Cpu,
   FileDiff,
@@ -13,7 +12,6 @@ import {
   Gauge,
   Globe,
   KeyRound,
-  MonitorPlay,
   Network,
   Plug,
   RefreshCw,
@@ -40,7 +38,10 @@ import {
   SettingsAccessProvider,
 } from '../components/settings/access';
 import { AgentRosterSection } from '../components/settings/AgentRosterSection';
-import { AgentsSection } from '../components/settings/AgentsSection';
+import {
+  AgentsSection,
+  AgentStreamingGroup,
+} from '../components/settings/AgentsSection';
 import { AppearanceRow } from '../components/settings/AppearanceRow';
 import { BoardSyncGroup } from '../components/settings/BoardSyncGroup';
 import { ChecksSection } from '../components/settings/ChecksSection';
@@ -54,21 +55,33 @@ import { DaemonSection } from '../components/settings/DaemonSection';
 import { DevicesSection } from '../components/settings/DevicesSection';
 import { DiffsSection } from '../components/settings/DiffsSection';
 import { DigestsGroup } from '../components/settings/DigestsGroup';
-import { GeneralSection } from '../components/settings/GeneralSection';
 import { IntegrationsSection } from '../components/settings/IntegrationsSection';
 import { LicenseSection } from '../components/settings/LicenseSection';
-import { MemorySection } from '../components/settings/MemorySection';
+import {
+  MemoryParityGroup,
+  MemorySection,
+} from '../components/settings/MemorySection';
 import { NotificationsSection } from '../components/settings/NotificationsSection';
 import { PlanningAuditGroup } from '../components/settings/PlanningAuditGroup';
-import { PlanningSection } from '../components/settings/PlanningSection';
-import { PolicySection } from '../components/settings/PolicySection';
-import { PreviewsSection } from '../components/settings/PreviewsSection';
+import {
+  PlanningSection,
+  PlanningTuningGroups,
+} from '../components/settings/PlanningSection';
+import {
+  GateOverridesGroup,
+  PolicySection,
+} from '../components/settings/PolicySection';
+import {
+  PullRequestsGroup,
+  StatusesGroup,
+} from '../components/settings/ProjectGroups';
 import { QueueWeightsGroup } from '../components/settings/QueueWeightsGroup';
 import { RemotesSection } from '../components/settings/RemotesSection';
 import {
   SearchScopeProvider,
   SettingsSearchProvider,
 } from '../components/settings/search';
+import { SettingsAdvanced } from '../components/settings/SettingsGroup';
 import {
   SettingsEmptyFrame,
   SettingsHostedBody,
@@ -105,12 +118,15 @@ interface SettingsViewProps {
   initialPage?: SettingsPage | HostedSettingsPage['id'];
   /** Whole views shown as extra pages (App folds Usage and Runs in here). */
   hostedPages?: readonly HostedSettingsPage[];
-  /** Shown after a page's own groups (App puts memory's Recent under Memory). */
+  /** Shown after a page's own groups (App puts memory's Recent under Agents). */
   pageExtras?: Partial<Record<SettingsPage, ReactNode>>;
   /** A page picked in the rail or from search results. App dispatches
    *  `openSettings` with it, so the hash and the crumbs follow; the view also
    *  switches at once on its own, so it works without a host. */
   onSelectPage?: (page: SettingsPage | HostedSettingsPage['id']) => void;
+  /** The hosted planner (app.dispatch.foo, no machine behind it): pages that
+   *  need a daemon on a machine are left out rather than shown stuck. */
+  planner?: boolean;
 }
 
 /** A page that is a whole view: full width, its own state, left out of search. Its
@@ -139,6 +155,8 @@ interface PageContext {
   onOpenTask?: (taskId: string) => void;
   /** Moves to another Settings page (Setup's Linear step opens Linear). */
   selectPage: (page: SettingsPage) => void;
+  /** The hosted planner: no machine behind it, so machine-only groups hide. */
+  planner: boolean;
 }
 
 interface PageSpec {
@@ -154,6 +172,9 @@ interface PageSpec {
    *  config groups under it only, and shown before config has loaded. */
   preferences?: () => ReactNode;
   render: (ctx: PageContext) => ReactNode;
+  /** Groups few people change, folded under Advanced at the page's foot
+   *  (search still shows them inline). */
+  advanced?: (ctx: PageContext) => ReactNode;
 }
 
 // Renders a config-backed page body once config has loaded, and nothing before.
@@ -204,16 +225,11 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
         id: 'general',
         label: SETTINGS_PAGE_LABELS.general,
         icon: Settings2,
-        intro:
-          "The theme in this browser, the board's columns and where pull-request checkouts go.",
+        intro: "The theme in this browser and the board's columns.",
         savesConfig: true,
         preferences: () => <AppearanceRow />,
         render: withConfig((ctx) => (
-          <GeneralSection
-            config={ctx.config}
-            onSave={ctx.save}
-            canOperate={ctx.canOperate}
-          />
+          <StatusesGroup config={ctx.config} onSave={ctx.save} />
         )),
       },
       {
@@ -221,17 +237,31 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
         label: SETTINGS_PAGE_LABELS.agents,
         icon: Bot,
         intro:
-          'Which models do the work, how hard they think, and the limits they run under.',
+          'Which models do the work, how hard they think, the limits they run under, and what they remember.',
         savesConfig: true,
         render: withConfig((ctx) => (
-          <AgentsSection
-            config={ctx.config}
-            executors={ctx.data.executors}
-            onSave={ctx.save}
-            canOperate={ctx.canOperate}
-            client={ctx.data.client}
-            port={ctx.data.port}
-          />
+          <>
+            <AgentsSection
+              config={ctx.config}
+              executors={ctx.data.executors}
+              onSave={ctx.save}
+              canOperate={ctx.canOperate}
+              client={ctx.data.client}
+              port={ctx.data.port}
+            />
+            <MemorySection
+              data={ctx.data}
+              config={ctx.config}
+              onSave={ctx.save}
+              planner={ctx.planner}
+            />
+          </>
+        )),
+        advanced: withConfig((ctx) => (
+          <>
+            <AgentStreamingGroup config={ctx.config} onSave={ctx.save} />
+            <MemoryParityGroup data={ctx.data} planner={ctx.planner} />
+          </>
         )),
       },
       {
@@ -267,35 +297,8 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
             <QueueWeightsGroup config={ctx.config} onSave={ctx.save} />
           </>
         )),
-      },
-      {
-        id: 'memory',
-        label: SETTINGS_PAGE_LABELS.memory,
-        icon: Brain,
-        intro:
-          'What runs remember between tasks, where it came from, and how much of it each prompt carries.',
-        savesConfig: true,
-        // The store's health renders without config, so a closed store still says why.
-        render: (ctx) => (
-          <MemorySection
-            data={ctx.data}
-            config={ctx.config}
-            onSave={ctx.save}
-          />
-        ),
-      },
-      {
-        id: 'previews',
-        label: SETTINGS_PAGE_LABELS.previews,
-        icon: MonitorPlay,
-        intro: "Start a run's app from its own checkout to try the change.",
-        savesConfig: true,
-        render: withConfig((ctx) => (
-          <PreviewsSection
-            config={ctx.config}
-            onSave={ctx.save}
-            canOperate={ctx.canOperate}
-          />
+        advanced: withConfig((ctx) => (
+          <GateOverridesGroup config={ctx.config} onSave={ctx.save} />
         )),
       },
       {
@@ -319,6 +322,9 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
             />
             <PlanningAuditGroup data={ctx.data} />
           </>
+        )),
+        advanced: withConfig((ctx) => (
+          <PlanningTuningGroups config={ctx.config} onSave={ctx.save} />
         )),
       },
       {
@@ -473,18 +479,25 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
         label: SETTINGS_PAGE_LABELS.daemon,
         icon: Cpu,
         intro:
-          "Dispatch's own process for this project, and the work it does in the background.",
+          "Dispatch's own process for this project, the work it does in the background, and where pull-request checkouts go.",
         savesConfig: true,
         // Status renders without config, so a daemon that is down still says so.
         render: (ctx) => (
           <>
             <DaemonSection activeProject={ctx.activeProject} data={ctx.data} />
             {ctx.config !== null && (
-              <DaemonConfigGroups
-                config={ctx.config}
-                onSave={ctx.save}
-                canOperate={ctx.canOperate}
-              />
+              <>
+                <DaemonConfigGroups
+                  config={ctx.config}
+                  onSave={ctx.save}
+                  canOperate={ctx.canOperate}
+                />
+                <PullRequestsGroup
+                  config={ctx.config}
+                  onSave={ctx.save}
+                  canOperate={ctx.canOperate}
+                />
+              </>
             )}
           </>
         ),
@@ -501,7 +514,33 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
   },
 ];
 
-const ALL_PAGES = SETTINGS_GROUPS.flatMap((group) => group.pages);
+// Pages that read or change a machine's daemon, its team link or its files:
+// on the hosted planner they could only show "Checking…" forever.
+const MACHINE_PAGES: ReadonlySet<SettingsPage> = new Set<SettingsPage>([
+  'setup',
+  'team',
+  'sync',
+  'license',
+  'connected-agents',
+  'a2a',
+  'remotes',
+  'web',
+  'devices',
+  'daemon',
+  'diffs',
+]);
+
+// The rail's groups for this host: everything on a machine, the planning
+// pages alone on the hosted planner (empty groups dropped).
+function visibleGroups(
+  planner: boolean
+): { label: string; pages: PageSpec[] }[] {
+  if (!planner) return SETTINGS_GROUPS;
+  return SETTINGS_GROUPS.map((group) => ({
+    ...group,
+    pages: group.pages.filter((entry) => !MACHINE_PAGES.has(entry.id)),
+  })).filter((group) => group.pages.length > 0);
+}
 
 /** Settings for the active project, in the main column: a grouped rail of
  *  pages beside the selected page (SettingsLayout). Typing in the rail's
@@ -516,6 +555,7 @@ export function SettingsView({
   onOpenTask,
   initialPage,
   hostedPages = [],
+  planner = false,
   pageExtras,
   onSelectPage,
 }: SettingsViewProps) {
@@ -618,8 +658,11 @@ export function SettingsView({
     );
   }
 
-  const hosted = hostedPages.find((entry) => entry.id === page);
-  const spec = ALL_PAGES.find((entry) => entry.id === page) ?? ALL_PAGES[0];
+  const groups = visibleGroups(planner);
+  const pages = groups.flatMap((group) => group.pages);
+  const activityPages = planner ? [] : hostedPages;
+  const hosted = activityPages.find((entry) => entry.id === page);
+  const spec = pages.find((entry) => entry.id === page) ?? pages[0];
   const ctx: PageContext = {
     data,
     config: data.config,
@@ -632,13 +675,14 @@ export function SettingsView({
     activeProject,
     onOpenTask,
     selectPage,
+    planner,
   };
 
   const navGroups: SettingsNavGroup[] = [
-    ...SETTINGS_GROUPS,
-    ...(hostedPages.length === 0
+    ...groups,
+    ...(activityPages.length === 0
       ? []
-      : [{ label: 'Activity', pages: hostedPages }]),
+      : [{ label: 'Activity', pages: activityPages }]),
   ];
   const saveLine = <SettingsSaveLine state={saveState} />;
   const showHosted = hosted !== undefined && !searching;
@@ -667,7 +711,7 @@ export function SettingsView({
             />
             <SettingsSearchProvider query={query}>
               <SettingsResults ref={resultsRef}>
-                {ALL_PAGES.map((entry) => (
+                {pages.map((entry) => (
                   <SearchScopeProvider key={entry.id} text={entry.label}>
                     <SettingsResultPage
                       page={entry}
@@ -675,6 +719,7 @@ export function SettingsView({
                     >
                       {entry.preferences?.()}
                       {entry.render(ctx)}
+                      {entry.advanced?.(ctx)}
                     </SettingsResultPage>
                   </SearchScopeProvider>
                 ))}
@@ -713,6 +758,9 @@ export function SettingsView({
             )}
             {spec.render(ctx)}
             {pageExtras?.[spec.id]}
+            {spec.advanced !== undefined && ctx.config !== null && (
+              <SettingsAdvanced>{spec.advanced(ctx)}</SettingsAdvanced>
+            )}
           </>
         )}
       </SettingsLayout>

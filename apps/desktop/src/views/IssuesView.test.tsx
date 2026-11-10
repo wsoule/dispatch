@@ -432,9 +432,8 @@ test('the list stays grouped by milestone by default, with a row per task', () =
 test('the preset tabs narrow the rows: Mine keeps only my work', () => {
   mount();
   const tabs = screen.getByRole('navigation', { name: 'Presets' });
-  expect(
-    within(tabs).getByRole('link', { name: /^Needs you/ }).textContent
-  ).toBe('Needs you1');
+  // Needs you is the sidebar's row, not a tab here.
+  expect(within(tabs).queryByRole('link', { name: /^Needs you/ })).toBeNull();
   fireEvent.click(within(tabs).getByRole('link', { name: /^Mine/ }));
   expect(rowIds()).toEqual(['t-1']);
   expect(

@@ -93,7 +93,7 @@ test('the reply box says where the text goes', () => {
   expect(screen.getByText('To #general')).toBeTruthy();
   cleanup();
   renderPane({ route: 'overseer' });
-  expect(screen.getByText('To the Assistant')).toBeTruthy();
+  expect(screen.getByText('To the Overseer')).toBeTruthy();
 });
 
 test('a typed reply answers the open question put to me', async () => {
@@ -294,7 +294,7 @@ test('an answered daemon gate offers no reply box', () => {
   expect(screen.queryByLabelText('Reply')).toBeNull();
 });
 
-test('a failed Assistant reply says why and keeps the draft', async () => {
+test('a failed Overseer reply says why and keeps the draft', async () => {
   renderPane({
     route: 'overseer',
     onOverseerReply: () =>
@@ -310,26 +310,26 @@ test('a failed Assistant reply says why and keeps the draft', async () => {
   expect(replyBox().value).toBe('try the new cart');
 });
 
-test('the Assistant reply box waits while the Assistant is answering', () => {
+test('the Overseer reply box waits while the Overseer is answering', () => {
   renderPane({ route: 'overseer', overseerBusy: true });
   expect(replyBox().disabled).toBe(true);
-  expect(replyBox().placeholder).toBe('The Assistant is answering…');
+  expect(replyBox().placeholder).toBe('The Overseer is answering…');
 });
 
-test('an Assistant conversation this pane cannot reply to is read-only, with a way to the Assistant', () => {
+test('an Overseer conversation this pane cannot reply to is read-only, with a way to the Overseer', () => {
   const onOpenOverseer = mock(() => {});
   renderPane({ route: 'overseer-elsewhere', onOpenOverseer });
   // The task tab routes even the live conversation here, so it is never called earlier.
   expect(
-    screen.getByText('This Assistant conversation takes no replies here.')
+    screen.getByText('This Overseer conversation takes no replies here.')
   ).toBeTruthy();
   expect(screen.queryByText(/earlier/)).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Open Assistant' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Open Overseer' }));
   expect(onOpenOverseer).toHaveBeenCalledTimes(1);
   expect(screen.queryByLabelText('Reply')).toBeNull();
 });
 
-test('in the agent voice (the thread peek) the reply box names your agent, never the Assistant', () => {
+test('in the agent voice (the thread peek) the reply box names your agent, never the Overseer', () => {
   renderPane({ route: 'overseer', overseerVoice: 'agent' });
   expect(screen.getByText('To your agent')).toBeTruthy();
   expect(replyBox().placeholder).toBe('Reply to your agent…');

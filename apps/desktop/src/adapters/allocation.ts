@@ -5,7 +5,6 @@ import type {
   AllocationRunItem,
   AllocationRunMode,
   AllocationRunProject,
-  AllocationRunSummary,
 } from '@dispatch/client';
 import type {
   AllocationAction,
@@ -20,11 +19,10 @@ import { taskHref } from '../lib/routes';
 import { formatDate, plural } from './planningFormat';
 import { blockedReasonLine } from './planningStatus';
 
-// The Allocation page (Better Tracker's /runs, ported): the planning's
-// allocation plan as a preview (each unassigned issue in a project's next
-// milestone, the lead it goes to, the status it moves to), the run record the
-// daemon keeps when someone previews or applies it, and the run log. Pure
-// functions over the planning and the recorded runs.
+// Allocation for Projects' "Assign next milestones": the planning's plan as a
+// preview (each unassigned issue in a project's next milestone, the lead it
+// goes to, the status it moves to, the projects skipped and why) and the run
+// record the daemon keeps when it is applied. Pure functions.
 
 /** What a project's plan comes to, in a word, with its tone. */
 const OUTCOME_WORDS: Record<
@@ -50,7 +48,7 @@ interface AllocationPreviewItem {
 }
 
 /** One project in the preview: what its plan comes to and its items. */
-export interface AllocationPreviewProject {
+interface AllocationPreviewProject {
   projectId: string;
   projectName: string;
   outcome: ProjectAllocationOutcome;
@@ -239,46 +237,6 @@ export function allocationNote(
       ? ''
       : `, due ${formatDate(milestone.targetDate)}`;
   return `Assigned by allocation: you lead ${project} and this is in its next milestone ${milestone?.name ?? ''}${due}.`;
-}
-
-/** One row of the run log. */
-export interface AllocationRunRow {
-  id: string;
-  at: string;
-  by: string;
-  mode: AllocationRunMode;
-  modeLabel: string;
-  modeTone: UiTone;
-  /** "2 assigned · 1 failed", "3 would assign", "Nothing to assign". */
-  summary: string;
-  blocked: number;
-}
-
-/** A recorded run as a log row. */
-export function runRow(
-  run: AllocationRunSummary,
-  nameFor: (ref: string) => string
-): AllocationRunRow {
-  const { counts } = run;
-  const parts: string[] = [];
-  if (counts.assigned > 0) parts.push(`${counts.assigned} assigned`);
-  if (counts.wouldAssign > 0) parts.push(`${counts.wouldAssign} would assign`);
-  if (counts.failed > 0) parts.push(`${counts.failed} failed`);
-  return {
-    id: run.id,
-    at: run.at,
-    by: nameFor(run.by),
-    mode: run.mode,
-    modeLabel:
-      run.mode === 'dry_run'
-        ? 'Dry run'
-        : run.trigger === 'daily'
-          ? 'Daily'
-          : 'Applied',
-    modeTone: run.mode === 'applied' ? 'success' : 'default',
-    summary: parts.length === 0 ? 'Nothing to assign' : parts.join(' · '),
-    blocked: counts.blocked,
-  };
 }
 
 /** Applied items as the planning's recent allocations (My week's "New"). */

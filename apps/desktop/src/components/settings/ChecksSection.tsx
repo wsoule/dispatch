@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 
 import { EscalationEditor } from './EscalationEditor';
 import { NumberSetting, SwitchSetting } from './fields';
+import { PreviewsGroup } from './PreviewsGroup';
 import { VerifyStepsList } from './ProjectGroups';
 import styles from './settings.module.css';
 import { SettingsGroup, SettingsRow } from './SettingsGroup';
@@ -21,7 +22,8 @@ interface ChecksSectionProps {
 /**
  * Settings → Checks: everything about proving a change works. The checks the
  * merge queue runs before a branch merges, how an agent starts the app to try
- * a change by hand, and the fix loop that sends failed work back.
+ * a change by hand, how a run's Preview tab starts it for you, and the fix
+ * loop that sends failed work back.
  */
 export function ChecksSection({
   config,
@@ -182,6 +184,8 @@ export function ChecksSection({
           }
         />
       </SettingsGroup>
+
+      <PreviewsGroup config={config} onSave={onSave} canOperate={canOperate} />
 
       <SettingsGroup
         title="Fix loop"

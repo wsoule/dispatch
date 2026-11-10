@@ -1,4 +1,3 @@
-import type { RunMeta } from '@dispatch/client';
 import type {
   Progress,
   ProjectAllocationPlan,
@@ -10,12 +9,9 @@ import { noProjectId } from '@dispatch/planning';
 import { describe, expect, test } from 'bun:test';
 
 import {
-  agentsWorking,
-  allocationCell,
   buildProjectsPage,
   countProjectRows,
   filterProjectGroups,
-  type LiveRunsByContainer,
   parseProjectFilter,
 } from './projects';
 
@@ -112,157 +108,17 @@ function timeline(lanes: TimelineLane[][]): TimelineView {
   };
 }
 
-function run(id: string): RunMeta {
-  return { id } as RunMeta;
-}
-
-function liveRuns(
-  entries: [containerId: string, runIds: string[]][]
-): LiveRunsByContainer {
-  return new Map(
-    entries.map(([containerId, ids]) => [
-      containerId,
-      { liveRuns: ids.map(run) },
-    ])
-  );
-}
-
-const NO_RUNS: LiveRunsByContainer = new Map();
-
 function page(
   view: TimelineView,
-  options: {
-    projects?: [string, string][];
-    milestoneProgressById?: LiveRunsByContainer;
-  } = {}
+  options: { projects?: [string, string][] } = {}
 ) {
   return buildProjectsPage({
     timeline: view,
     projects: new Map(
       (options.projects ?? []).map(([id, statusName]) => [id, { statusName }])
     ),
-    milestoneProgressById: options.milestoneProgressById ?? NO_RUNS,
   });
 }
-
-describe('agentsWorking', () => {
-  test('counts the distinct live runs under the project and its milestones', () => {
-    const one = lane({
-      bars: [bar(), bar({ milestoneId: 'ms-2', isNext: false })],
-      undated: [bar({ milestoneId: 'ms-3', end: null, isNext: false })],
-    });
-    expect(agentsWorking(one, NO_RUNS)).toBe(0);
-    // A plan-wide session lists a milestone's run under the project too:
-    // r-1 is counted once.
-    expect(
-      agentsWorking(
-        one,
-        liveRuns([
-          ['proj-1', ['r-1', 'r-2']],
-          ['ms-1', ['r-1']],
-          ['ms-3', ['r-3']],
-          ['elsewhere', ['r-9']],
-        ])
-      )
-    ).toBe(3);
-  });
-});
-
-describe('allocationCell', () => {
-  test('agents working beats what the plan would do', () => {
-    expect(
-      allocationCell(1, plan({ outcome: 'blocked', blockReason: 'no_lead' }))
-    ).toEqual({ label: '1 agent working', tone: 'info' });
-    expect(allocationCell(3, null)).toEqual({
-      label: '3 agents working',
-      tone: 'info',
-    });
-  });
-
-  test('says what the plan would do', () => {
-    expect(
-      allocationCell(
-        0,
-        plan({
-          outcome: 'allocate',
-          actions: [
-            {
-              issueId: 'i1',
-              identifier: 'ENG-1',
-              title: 'One',
-              projectId: 'proj-1',
-              milestoneId: 'ms-1',
-              assigneeId: 'agent',
-              fromStateId: 's1',
-              toStateId: null,
-            },
-            {
-              issueId: 'i2',
-              identifier: 'ENG-2',
-              title: 'Two',
-              projectId: 'proj-1',
-              milestoneId: 'ms-1',
-              assigneeId: 'agent',
-              fromStateId: 's1',
-              toStateId: 's2',
-            },
-          ],
-        })
-      )
-    ).toEqual({ label: 'Allocating 2', tone: 'info' });
-    expect(allocationCell(0, plan())).toEqual({
-      label: 'Nothing to do',
-      tone: 'default',
-      plain: true,
-    });
-    expect(allocationCell(0, plan({ outcome: 'no_open_milestone' }))).toEqual({
-      label: 'No open milestone',
-      tone: 'muted',
-    });
-    expect(allocationCell(0, plan({ outcome: 'inactive' }))).toEqual({
-      label: 'Inactive',
-      tone: 'muted',
-    });
-    // No plan for the project: nothing to do, in plain words.
-    expect(allocationCell(0, null)).toEqual({
-      label: 'Nothing to do',
-      tone: 'default',
-      plain: true,
-    });
-  });
-
-  test('blocked is a short chip; the reason and missing items go under it', () => {
-    expect(
-      allocationCell(0, plan({ outcome: 'blocked', blockReason: 'no_lead' }))
-    ).toEqual({
-      label: 'Blocked',
-      detail: 'Project has no lead',
-      tone: 'warning',
-      filled: true,
-      toneDetail: true,
-    });
-    expect(
-      allocationCell(
-        0,
-        plan({
-          outcome: 'blocked',
-          blockReason: 'next_milestone_invalid',
-          gaps: ['no_done_means', 'no_issues'],
-        })
-      )
-    ).toEqual({
-      label: 'Blocked',
-      detail: 'Next milestone is missing: done means…, issues',
-      tone: 'warning',
-      filled: true,
-      toneDetail: true,
-    });
-    // Without a recorded reason the chip still says Blocked.
-    expect(
-      allocationCell(0, plan({ outcome: 'blocked', blockReason: null }))
-    ).toEqual({ label: 'Blocked', tone: 'warning', filled: true });
-  });
-});
 
 describe('buildProjectsPage', () => {
   const view = timeline([
@@ -363,7 +219,6 @@ describe('buildProjectsPage', () => {
       ['proj-1', 'Working'],
       ['proj-4', 'Working'],
     ],
-    milestoneProgressById: liveRuns([['ms-1', ['r-1', 'r-2']]]),
   });
   const rows = built.groups.flatMap((g) => g.rows);
   const row = (id: string) => {
@@ -389,9 +244,10 @@ describe('buildProjectsPage', () => {
     // Without initiatives the only group is "No initiative" and its graph
     // is the workspace's projects.
     const flat = page(timeline([[lane({ projectId: 'proj-9' })]]));
-    expect(flat.groups.map((g) => [g.id, g.graphHref])).toEqual([
-      ['none', '#/graph?level=project'],
+    expect(flat.groups.map((g) => [g.id, g.graphHref, g.headless])).toEqual([
+      ['none', '#/graph?level=project', true],
     ]);
+    expect(built.groups.every((g) => !g.headless)).toBe(true);
   });
 
   test('a group left with no project is dropped', () => {
@@ -489,20 +345,6 @@ describe('buildProjectsPage', () => {
     expect(row('proj-1').tags).toEqual([]);
   });
 
-  test('the allocation cell: agents working, else the plan', () => {
-    // Two runs live under proj-1's next milestone.
-    expect(row('proj-1').allocation).toEqual({
-      label: '2 agents working',
-      tone: 'info',
-    });
-    expect(row('proj-3').allocation.label).toBe('Blocked');
-    expect(row('proj-3').allocation.detail).toBe('Project has no lead');
-    expect(row('proj-2').allocation.detail).toBe(
-      'Next milestone is missing: done means…'
-    );
-    expect(row('proj-5').allocation.label).toBe('No open milestone');
-  });
-
   test('links each row to its timeline lane, its graph and its page', () => {
     expect(row('proj-2').timelineHref).toBe('#/timeline?project=proj-2');
     expect(row('proj-2').graphHref).toBe('#/graph?project=proj-2');
@@ -550,10 +392,6 @@ describe('buildProjectsPage', () => {
     expect(ids(filterProjectGroups(built.groups, 'no lead', 'all'))).toEqual([
       'proj-3',
     ]);
-    // The blocked reason under the chip is searchable too.
-    expect(
-      ids(filterProjectGroups(built.groups, 'missing: done', 'all'))
-    ).toEqual(['proj-2']);
     // Groups left empty are dropped.
     const onlyInactive = filterProjectGroups(built.groups, '', 'inactive');
     expect(onlyInactive.map((g) => g.id)).toEqual(['none']);

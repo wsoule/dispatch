@@ -56,7 +56,7 @@ export function TaskDrawer({ taskId, onClose }: TaskDrawerProps) {
       >
         <p className={styles.gone}>
           {host.project.tasksReady
-            ? 'That task is no longer available. It was archived or deleted while it was open.'
+            ? `No task ${taskId} in this project. It may have been deleted, or the link belongs to another project.`
             : 'Loading the task…'}
         </p>
       </SlideOver>

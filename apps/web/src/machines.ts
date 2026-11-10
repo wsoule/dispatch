@@ -6,10 +6,9 @@ import { join } from 'node:path';
 import type { TeamDb, User } from './db.js';
 import type { TeamHubs } from './hub.js';
 import type { MachineRow } from './pages.js';
-import { machinesPage, PAGE_CSP } from './pages.js';
 import { injected } from './planner/routes.js';
 
-// Your own machines from the web (phase 4). `/machines` lists the machines
+// Your own machines from the web (phase 4). `list` gives Home the machines
 // you signed in and the projects open on them; `/m/<device>/<project>/`
 // serves the desktop app against that project's daemon, and its
 // `/api/*` calls travel over the machine hub's team link (hub/web.ts on the
@@ -19,6 +18,8 @@ import { injected } from './planner/routes.js';
 
 const VIEW_TOKEN_MS = 12 * 3_600_000;
 const PROJECTS_WAIT_MS = 5_000;
+/** Home waits on this list, so a silent machine holds it up only briefly. */
+const LIST_WAIT_MS = 2_000;
 const CALL_WAIT_MS = 60_000;
 /** Base64 grows a body by a third, and a frame is capped at 4 MiB. */
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
@@ -34,12 +35,18 @@ export interface MachinesDeps {
   userOf: (req: Request) => User | null;
   /** The sign-in page, returning to `next` after. */
   signIn: (next: string) => Response;
+  /** The server's secret: view tokens signed with a key derived from it
+   * outlive a restart, so an open or reloaded page keeps working. */
+  secret?: string | null;
   now?: () => number;
 }
 
 export interface Machines {
-  /** Answers `/machines` and `/m/*`; null for any other path. */
+  /** Answers `/machines` (now a redirect to Home) and `/m/*`; null for any
+   * other path. */
   fetch: (req: Request) => Promise<Response | null>;
+  /** Your signed-in machines and the projects open on them, for Home. */
+  list: (user: User) => Promise<MachineRow[]>;
   /** Whether `token` may open `/m/<device>/<project>/ws` for this session. */
   watches: (
     device: string,
@@ -58,8 +65,12 @@ function json(body: unknown, status: number): Response {
 
 export function machinesHandler(deps: MachinesDeps): Machines {
   const now = deps.now ?? Date.now;
-  // Signed, not stored: they die with the process, as the planner's do.
-  const signingKey = randomBytes(32);
+  // Signed, not stored. Without a server secret they die with the process.
+  const secret = deps.secret ?? '';
+  const signingKey =
+    secret === ''
+      ? randomBytes(32)
+      : createHmac('sha256', secret).update('machine view tokens').digest();
   const sign = (payload: string): string =>
     createHmac('sha256', signingKey).update(payload).digest('base64url');
 
@@ -113,13 +124,16 @@ export function machinesHandler(deps: MachinesDeps): Machines {
           projects: null,
         };
         if (conn === null) return row;
-        const answer = await conn.call('projects', {}, PROJECTS_WAIT_MS);
+        const answer = await conn.call('projects', {}, LIST_WAIT_MS);
         if (!answer.ok)
           return {
             ...row,
             note:
-              answer.error === 'unknown frame kind'
-                ? 'This machine runs an older Dispatch; update it to reach it from the web.'
+              // Hubs older than web access drop the frame without a reply, so
+              // a silent machine most likely needs the same update.
+              answer.error === 'unknown frame kind' ||
+              answer.error === 'the machine did not answer'
+                ? 'This machine did not answer. Its Dispatch hub is probably older than web access; update it to reach it from the web.'
                 : (answer.error ?? 'The machine did not answer.'),
           };
         const projects = (answer.result as { projects?: LinkProject[] })
@@ -193,17 +207,12 @@ export function machinesHandler(deps: MachinesDeps): Machines {
   const fetch = async (req: Request): Promise<Response | null> => {
     const url = new URL(req.url);
     const path = url.pathname;
-    if (path === '/machines' && req.method === 'GET') {
-      const user = deps.userOf(req);
-      if (user === null) return deps.signIn('/machines');
-      return new Response(machinesPage(user, await list(user)), {
-        headers: {
-          'content-type': 'text/html; charset=utf-8',
-          'content-security-policy': PAGE_CSP,
-          'cache-control': 'no-store',
-        },
+    // The machine list lives on Home now.
+    if (path === '/machines' && req.method === 'GET')
+      return new Response(null, {
+        status: 303,
+        headers: { location: '/#machines' },
       });
-    }
     const match = /^\/m\/(dev[A-Za-z0-9_-]{1,64})\/([0-9a-f]{16})(\/.*)?$/.exec(
       path
     );
@@ -221,11 +230,11 @@ export function machinesHandler(deps: MachinesDeps): Machines {
         req
       );
       if (user === null)
-        return json({ error: 'Open the machine again to continue.' }, 401);
+        return json({ error: 'Reload the page to continue.' }, 401);
       return forward(deviceId, project, rest + url.search, req, user);
     }
     if (rest === '/ws')
-      return json({ error: 'Open the machine again to continue.' }, 401);
+      return json({ error: 'Reload the page to continue.' }, 401);
     if (rest === '')
       return Response.redirect(`${deps.origin}/m/${scope}/`, 303);
     if (rest !== '/' || req.method !== 'GET') return null;
@@ -265,6 +274,7 @@ export function machinesHandler(deps: MachinesDeps): Machines {
 
   return {
     fetch,
+    list,
     watches: (device, project, token, req) =>
       valid(`${device}/${project}`, token, req) !== null,
   };

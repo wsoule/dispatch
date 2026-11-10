@@ -4,6 +4,7 @@ import {
   type NavAction,
   type NavSettingsPage,
   type NavState,
+  RETIRED_SETTINGS_PAGES,
   TASK_TABS,
   type TaskTab,
 } from './appNav';
@@ -20,8 +21,8 @@ import { TASKS_PRESETS, type TasksPreset } from './tasksPresets';
 // overlay place that takes the main column over it, so neither is in the
 // URL, with two exceptions that are destinations in their own right:
 // `#/threads?message=` opens Threads with that thread's peek, and
-// `#/settings/<page>` (or `#/runs`) opens Settings on a page, since the
-// sidebar has rows for both.
+// `#/settings/<page>` opens Settings on a page, since the sidebar has a row
+// for it (an old `#/settings/runs` lands on the Runs page, `#/runs`).
 //
 // Across a reload the hash is the whole memory, so a place that sits over
 // another carries the one beneath in a parameter, written as that place's
@@ -49,9 +50,9 @@ export function timelineHref(projectId: string): string {
   return `#/timeline?project=${encodeURIComponent(projectId)}`;
 }
 
-/** The Projects page under Tasks (the projects register: every open project
- * with its status, next milestone, lead and allocation, grouped by
- * initiative), which has no sidebar row. */
+/** The Projects page (the projects register: every open project with its
+ * status, next milestone and lead, grouped by initiative), opened from the
+ * sidebar's Projects "All". */
 export const PROJECTS_HREF = '#/projects';
 
 /** The Issues list narrowed to one preset, and to one container's issues
@@ -76,7 +77,7 @@ export function docHref(docId: string, anchor: string | null = null): string {
     : `${base}?anchor=${encodeURIComponent(anchor)}`;
 }
 
-/** Settings open on one page; the Runs page keeps the sidebar's own href. */
+/** Settings open on one page; Runs is a page of its own (`#/runs`). */
 export function settingsHref(page: NavSettingsPage): string {
   return page === 'runs' ? '#/runs' : `#/settings/${encodeURIComponent(page)}`;
 }
@@ -146,7 +147,7 @@ function listParams(
 /** A route for a hosted view with no parameters (`#/terminals`). */
 function pageRoute(
   head: string,
-  view: 'terminals' | 'projects' | 'allocation' | 'live' | 'week' | 'landing'
+  view: 'terminals' | 'projects' | 'runs' | 'live' | 'week' | 'landing'
 ): Route {
   return {
     head,
@@ -167,11 +168,10 @@ const BARE_LIST = '#/issues';
 const BARE_OVERSEER = '#/overseer';
 
 /** The heads that cannot be the place under Settings: Settings itself. */
-const NOT_UNDER_SETTINGS: ReadonlySet<string> = new Set(['runs', 'settings']);
+const NOT_UNDER_SETTINGS: ReadonlySet<string> = new Set(['settings']);
 /** The heads that cannot be Tasks' side of the Overseer: anything not Tasks. */
 const NOT_UNDER_OVERSEER: ReadonlySet<string> = new Set([
   'overseer',
-  'runs',
   'settings',
 ]);
 
@@ -211,18 +211,9 @@ function underParam(state: NavState): Record<string, string | null> {
 }
 
 // In write order: Settings takes the main column over the views, so while
-// it is open it (or Runs, its page with a row of its own) is the place; then
-// the Overseer; then Tasks' list and each page under it.
+// it is open it is the place; then the Overseer; then Tasks' list and each
+// page under it.
 const ROUTES: readonly Route[] = [
-  {
-    head: 'runs',
-    write: (state) =>
-      state.settings === 'runs' ? href('runs', [], underParam(state)) : null,
-    read: (rest, params) =>
-      rest.length === 0
-        ? settingsActions(params, { type: 'openSettings', page: 'runs' })
-        : null,
-  },
   {
     head: 'settings',
     write: (state) =>
@@ -233,8 +224,9 @@ const ROUTES: readonly Route[] = [
       if (rest.length === 0) {
         return settingsActions(params, { type: 'openSettings' });
       }
-      const [page] = rest;
-      return rest.length === 1 && page !== undefined && isSettingsPage(page)
+      if (rest.length !== 1 || rest[0] === undefined) return null;
+      const page = RETIRED_SETTINGS_PAGES[rest[0]] ?? rest[0];
+      return isSettingsPage(page)
         ? settingsActions(params, { type: 'openSettings', page })
         : null;
     },
@@ -397,7 +389,14 @@ const ROUTES: readonly Route[] = [
   },
   pageRoute('terminals', 'terminals'),
   pageRoute('projects', 'projects'),
-  pageRoute('allocation', 'allocation'),
+  pageRoute('runs', 'runs'),
+  // The retired Allocation page: its action is on Projects now.
+  {
+    head: 'allocation',
+    write: () => null,
+    read: (rest) =>
+      rest.length === 0 ? [{ type: 'setProjectView', view: 'projects' }] : null,
+  },
   pageRoute('week', 'week'),
   pageRoute('live', 'live'),
   pageRoute('landing', 'landing'),

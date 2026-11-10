@@ -122,7 +122,7 @@ describe('LiveHeader', () => {
     // beside Pause all at 1024px; its key says "Today" on the row, so the value reads as
     // today's spend at a glance, without a hover.
     expect(cells.map(rowText)).toEqual([
-      'Slots2/4',
+      'Agent slots2/4',
       'Running2',
       'Queued3',
       'Blocked on teammates1',
@@ -197,7 +197,7 @@ describe('LiveHeader', () => {
     );
   });
 
-  test('no fan-out live, no spend today and no ceiling: the keys and hints say so', () => {
+  test('no fan-out live, no spend today and no ceiling: no slots cell, and the spend hint says so', () => {
     const { getAllByRole } = render(
       <LiveHeader
         totals={{ ...totals, slots: { used: 0, total: 0 } }}
@@ -212,14 +212,13 @@ describe('LiveHeader', () => {
       />
     );
     const cells = getAllByRole('listitem');
-    expect(cells[0]?.textContent).toBe('SlotsNone');
-    expect(cells[0]?.firstElementChild?.getAttribute('title')).toBe(
-      'No fan-out is live, so no agent slots are held'
-    );
+    // No fan-out holds a slot, so the strip has no slots cell to say "None" in.
+    expect(cells[0] && rowText(cells[0])).toBe('Running2');
+    expect(document.querySelector('[data-slot=live-slots]')).toBeNull();
     // With no spend today the value is the live fan-outs' settled spend, under "Spend".
-    expect(cells[5] && rowText(cells[5])).toBe('Spend$8.10');
-    expect(spokenNote(cells[5])).toBe('no ceiling');
-    expect(describedBy(cells[5])).toBe(
+    expect(cells[4] && rowText(cells[4])).toBe('Spend$8.10');
+    expect(spokenNote(cells[4])).toBe('no ceiling');
+    expect(describedBy(cells[4])).toBe(
       '$8.10 settled in the live fan-outs, which set no ceiling'
     );
   });

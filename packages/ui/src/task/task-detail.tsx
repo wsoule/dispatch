@@ -157,6 +157,7 @@ export function TaskDetail({
   activityLimit,
   children,
   layout = 'drawer',
+  wide = false,
   header = true,
   headingLevel = 2,
   labels: labelOverrides,
@@ -286,26 +287,30 @@ export function TaskDetail({
               notSavedLabel={labels.notSaved}
             />
           </TaskDetailSection>
-          <TaskDetailSection
-            title={labels.blocks}
-            headingLevel={sectionLevel}
-            count={relations.blocks.length}
-            meta={sectionMeta?.blocks}
-            note={sectionNotes?.blocks}
-          >
-            <TaskRelationList
-              items={relations.blocks}
-              label={labels.blocks}
-              emptyLabel={labels.blocksNothing}
-              onOpen={onOpenRelation}
-              externalLabel={labels.external}
-              resolvedLabel={labels.resolved}
-              unassignedLabel={labels.unassigned}
-              newTabLabel={labels.opensInNewTab}
-              removeLabel={labels.remove}
-              notSavedLabel={labels.notSaved}
-            />
-          </TaskDetailSection>
+          {/* An empty "Blocks" says nothing a reader needs; it shows once something waits. */}
+          {(relations.blocks.length > 0 ||
+            sectionMeta?.blocks !== undefined) && (
+            <TaskDetailSection
+              title={labels.blocks}
+              headingLevel={sectionLevel}
+              count={relations.blocks.length}
+              meta={sectionMeta?.blocks}
+              note={sectionNotes?.blocks}
+            >
+              <TaskRelationList
+                items={relations.blocks}
+                label={labels.blocks}
+                emptyLabel={labels.blocksNothing}
+                onOpen={onOpenRelation}
+                externalLabel={labels.external}
+                resolvedLabel={labels.resolved}
+                unassignedLabel={labels.unassigned}
+                newTabLabel={labels.opensInNewTab}
+                removeLabel={labels.remove}
+                notSavedLabel={labels.notSaved}
+              />
+            </TaskDetailSection>
+          )}
         </>
       ) : null}
       {comments !== undefined ? (
@@ -323,26 +328,36 @@ export function TaskDetail({
           meta={sectionMeta?.comments}
           note={sectionNotes?.comments}
         >
-          <TaskCommentList
-            items={comments.items}
-            label={labels.comments}
-            emptyLabel={labels.noComments}
-            loading={comments.loading}
-            loadingLabel={labels.loadingComments}
-            error={comments.error}
-            errorLabel={labels.error}
-            onRetry={comments.onRetry}
-            retryLabel={labels.retry}
-            openLabel={labels.openComment}
-            newTabLabel={labels.opensInNewTab}
-            replyLabel={labels.reply}
-          />
+          {/* With a composer under it, an empty list's "No comments yet." says nothing. */}
+          {comments.items.length > 0 ||
+          comments.loading === true ||
+          !hasNode(comments.composer) ||
+          (comments.error !== undefined &&
+            comments.error !== null &&
+            comments.error !== '') ? (
+            <TaskCommentList
+              items={comments.items}
+              label={labels.comments}
+              emptyLabel={labels.noComments}
+              loading={comments.loading}
+              loadingLabel={labels.loadingComments}
+              error={comments.error}
+              errorLabel={labels.error}
+              onRetry={comments.onRetry}
+              retryLabel={labels.retry}
+              openLabel={labels.openComment}
+              newTabLabel={labels.opensInNewTab}
+              replyLabel={labels.reply}
+            />
+          ) : null}
           {hasNode(comments.composer) ? (
             <div className={commentStyles.composer}>{comments.composer}</div>
           ) : null}
         </TaskDetailSection>
       ) : null}
-      {activity !== undefined ? (
+      {/* No activity yet is nothing to read: the section shows once there is some. */}
+      {activity !== undefined &&
+      (activity.length > 0 || sectionMeta?.activity !== undefined) ? (
         <TaskDetailSection
           title={labels.activity}
           headingLevel={sectionLevel}
@@ -381,15 +396,17 @@ export function TaskDetail({
     >
       {bar}
       {layout === 'page' ? (
-        <div className={styles.grid}>
+        <div className={cx(styles.grid, wide && styles.wide)}>
           <div className={styles.head}>
             {lead}
             {tabRow}
           </div>
-          <div className={styles.rail}>
-            {propertySheet}
-            {rail}
-          </div>
+          {!wide && (
+            <div className={styles.rail}>
+              {propertySheet}
+              {rail}
+            </div>
+          )}
           <div className={styles.body}>{sections}</div>
         </div>
       ) : (

@@ -97,7 +97,6 @@ function setup(snapshot: MergeQueueSnapshot | null = SNAPSHOT) {
     <ToastProvider>
       <LandingView
         data={data}
-        onBack={() => calls.push('back')}
         onOpenRun={(taskId, runId) => calls.push(`open:${taskId}/${runId}`)}
       />
     </ToastProvider>
@@ -190,6 +189,8 @@ describe('LandingView', () => {
   test('an empty queue says so, and a missing snapshot says it is loading', () => {
     setup({ entries: [], history: [] });
     expect(screen.getByText('Nothing is headed for main')).toBeTruthy();
+    // Every count is 0: no filter tabs over the empty state.
+    expect(screen.queryByRole('tablist')).toBeNull();
   });
 
   test('before the first snapshot it is loading', () => {

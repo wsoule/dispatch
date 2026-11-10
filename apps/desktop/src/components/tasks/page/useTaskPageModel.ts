@@ -206,7 +206,12 @@ export function useTaskPageModel(
     latestRun,
   };
   const autoMode = defaultTaskPageMode(stateInput);
-  const modes = taskPageModes(container);
+  // Before any run, Run, Review and Summary have nothing to show: Spec alone, plus the
+  // state's own mode (a task closed without a run opens on its Summary).
+  const noRun = !container && allRuns.length === 0;
+  const modes = noRun
+    ? [...new Set<TaskPageMode>(['spec', autoMode])]
+    : taskPageModes(container);
   const requested = controlledMode ?? localMode;
   const { threadView, filesView, terminalView } = host;
   const sideViews: TaskPageSideViews = {
@@ -361,7 +366,7 @@ export function useTaskPageModel(
         return run !== undefined && !isTerminalRunState(run.state);
       }).length,
     },
-  });
+  }).filter((stage) => modes.includes(stage.mode));
 
   return {
     page,

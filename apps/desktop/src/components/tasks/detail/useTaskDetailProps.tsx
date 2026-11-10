@@ -435,6 +435,12 @@ function MilestoneSections({
   peek: (taskId: string) => void;
 }) {
   const { status, progress, next, muted } = section;
+  // The checklist lists what is missing, so the status line drops its "Missing: …"
+  // copy; "Done means…" is left out of the list since its own field says so.
+  const lines = status.lines.filter((line) => !line.startsWith('Missing:'));
+  const missing = section.rubric.filter(
+    (item) => !item.met && item.id !== 'no_done_means'
+  );
   return (
     <>
       <TaskDetailSection title="Milestone">
@@ -445,9 +451,9 @@ function MilestoneSections({
             showLabel
             muted={muted}
           />
-          {status.lines.length > 0 && (
+          {lines.length > 0 && (
             <PlanningNote tone={muted ? 'default' : 'warning'}>
-              {status.lines.join(' · ')}
+              {lines.join(' · ')}
             </PlanningNote>
           )}
           <ProgressRule
@@ -456,9 +462,7 @@ function MilestoneSections({
             tone={progress.tone}
             aria-label="Milestone progress"
           />
-          {section.isNext ? (
-            <PlanningNote>The project's next milestone.</PlanningNote>
-          ) : next !== null ? (
+          {!section.isNext && next !== null ? (
             <p className={styles.planningNext}>
               <span className={styles.planningNote}>Next</span>
               <Button variant="quiet" size="sm" onClick={() => peek(next.id)}>
@@ -471,9 +475,11 @@ function MilestoneSections({
             {doneMeans}
           </div>
           {weight}
-          <div className={styles.rubric}>
-            <Checklist label="Rubric" items={section.rubric} />
-          </div>
+          {missing.length > 0 && (
+            <div className={styles.rubric}>
+              <Checklist label="Missing" items={missing} />
+            </div>
+          )}
         </div>
       </TaskDetailSection>
       {section.waitsOn.length > 0 && (

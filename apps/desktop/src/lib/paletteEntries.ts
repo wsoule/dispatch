@@ -83,7 +83,6 @@ const TASKS_PAGES: (PaletteView & { href: string })[] = [
   { id: 'files', label: 'Files', href: '#/files' },
   { id: 'terminals', label: 'Terminals', href: '#/terminals' },
   { id: 'projects', label: 'Projects', href: PROJECTS_HREF },
-  { id: 'allocation', label: 'Allocation', href: '#/allocation' },
   { id: 'live', label: 'Live', href: '#/live' },
 ];
 

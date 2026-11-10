@@ -5,6 +5,7 @@ import { describe, expect, test } from 'bun:test';
 import { demoWorkspace } from './graphFixture.test-helper';
 import {
   chainHref,
+  containerGraphHref,
   DEFAULT_GRAPH_HIGHLIGHT,
   GRAPH_DRAW_LIMITS,
   GRAPH_HIGHLIGHT_LABEL,
@@ -453,5 +454,18 @@ describe('the highlight', () => {
         'highlight'
       );
     }
+  });
+});
+
+describe('containerGraphHref', () => {
+  const of = (kind: string, id: string) =>
+    containerGraphHref({ meta: { kind, id } });
+  test('an initiative, project or milestone opens its own scope', () => {
+    expect(of('milestone', 'e-1')).toBe('#/graph?milestone=e-1');
+    expect(of('project', 'p-1')).toStartWith('#/graph?project=p-1');
+    expect(of('initiative', 'i-1')).toStartWith('#/graph?initiative=i-1');
+  });
+  test('a parent issue selects itself on the Issues level', () => {
+    expect(of('task', 't-1')).toBe('#/graph?level=issue&node=t-1');
   });
 });

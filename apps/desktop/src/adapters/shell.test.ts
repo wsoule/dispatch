@@ -147,7 +147,7 @@ describe('buildSettingsLink', () => {
         destination: 'settings',
         adminItems: [
           { label: '1 machine waiting to join', page: 'team', count: 1 },
-          { label: '2 Claude files skipped', page: 'memory', count: 2 },
+          { label: '2 Claude files skipped', page: 'agents', count: 2 },
         ],
       })
     ).toEqual({ href: '#/settings', label: 'Settings · 3', current: true });
@@ -425,14 +425,13 @@ describe('buildCrumbs', () => {
     ]);
   });
 
-  test('the Runs row is still a Settings page in the crumbs', () => {
+  test('the Runs row is a page of its own in the crumbs', () => {
     expect(
-      buildCrumbs({
-        projectName: null,
-        destination: 'runs',
-        settingsPage: 'runs',
-      })
-    ).toEqual([{ label: 'Settings', href: '#/settings' }, { label: 'Runs' }]);
+      buildCrumbs({ projectName: 'storefront', destination: 'runs' })
+    ).toEqual([
+      { label: 'storefront', href: '#/overseer' },
+      { label: 'Runs', href: '#/runs' },
+    ]);
   });
 
   test('without a Settings page, Settings is a plain destination crumb', () => {

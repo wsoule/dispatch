@@ -1,4 +1,4 @@
-import { cx, Tooltip, type UiTone } from '@dispatch/ui';
+import { cx, Disclosure, Tooltip, type UiTone } from '@dispatch/ui';
 import { LockIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { createContext, useContext } from 'react';
@@ -200,5 +200,17 @@ export function SettingsRow({
       </div>
       {children}
     </div>
+  );
+}
+
+/** A page's rarely changed groups, folded under "Advanced" until opened. A
+ *  search shows them inline instead, so a match never hides in a closed fold. */
+export function SettingsAdvanced({ children }: { children: ReactNode }) {
+  const searching = useSearching();
+  if (searching) return <>{children}</>;
+  return (
+    <Disclosure summary="Advanced" data-testid="settings-advanced">
+      <div className={styles.advanced}>{children}</div>
+    </Disclosure>
   );
 }

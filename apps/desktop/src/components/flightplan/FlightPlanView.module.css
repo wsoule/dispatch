@@ -42,3 +42,8 @@
 .chart {
   min-height: 240px;
 }
+
+/* The fan-out's own verbs, kept a group of their own beside Open in Graph. */
+.verbs {
+  display: contents;
+}

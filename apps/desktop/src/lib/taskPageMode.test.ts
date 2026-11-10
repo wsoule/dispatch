@@ -262,6 +262,15 @@ describe('lifecycleStages', () => {
     ]);
   });
 
+  test('no criteria leaves the spec caption quiet', () => {
+    expect(lifecycleStages({ ...base, criteriaCount: 0 })[0]?.caption).toBe(
+      '2 writes'
+    );
+    expect(
+      lifecycleStages({ ...base, criteriaCount: 0, writesCount: 0 })[0]?.caption
+    ).toBe('');
+  });
+
   test('blockers lead the spec caption', () => {
     expect(lifecycleStages({ ...base, unmetBlockers: 2 })[0]?.caption).toBe(
       'Waits on 2 tasks'

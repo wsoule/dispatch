@@ -37,17 +37,16 @@ export type ProjectView =
   | 'overview'
   | 'board'
   /** The projects register: every open project with its status, next
-   * milestone, lead and allocation, grouped by initiative; a page under
-   * Tasks, reached from the Projects section's "All". */
+   * milestone and lead, grouped by initiative; reached from the Projects
+   * section's "All". */
   | 'projects'
-  /** The allocation preview and run log; a page under Tasks, reached from
-   * the Projects page and the palette. */
+  /** retired — normalized to 'projects' (its Assign next milestones). */
   | 'allocation'
   /** Everything in motion at once: a Flight Plan band per container with work
    * moving; a page under Runs (Runs › Live), reached from the Runs page's Live
    * button and the palette, and left back to the Runs page. */
   | 'live'
-  /** retired — normalized to 'inbox' */
+  /** Every run, archived ones included (AllAgentsView): the sidebar's Runs. */
   | 'runs'
   /** retired — normalized to 'cockpit' */
   | 'branches'
@@ -143,8 +142,6 @@ export type SettingsPage =
   | 'agents'
   | 'checks'
   | 'autonomy'
-  | 'memory'
-  | 'previews'
   | 'planning'
   | 'notifications'
   | 'team'
@@ -173,8 +170,6 @@ export const SETTINGS_PAGE_LABELS: Readonly<Record<NavSettingsPage, string>> = {
   agents: 'Agents',
   checks: 'Checks',
   autonomy: 'Autonomy',
-  memory: 'Memory',
-  previews: 'Previews',
   planning: 'Planning',
   notifications: 'Notifications',
   team: 'Members',
@@ -191,6 +186,13 @@ export const SETTINGS_PAGE_LABELS: Readonly<Record<NavSettingsPage, string>> = {
   setup: 'Setup',
   usage: 'Usage',
   runs: 'Runs',
+};
+
+/** Pages folded into another, so an old `#/settings/<page>` link still lands:
+ * Memory's groups now sit on Agents, Previews on Checks. */
+export const RETIRED_SETTINGS_PAGES: Readonly<Record<string, SettingsPage>> = {
+  memory: 'agents',
+  previews: 'checks',
 };
 
 /** Every Settings page a route may open, for `#/settings/<page>`. */
@@ -219,7 +221,7 @@ export type HostedView = Extract<
   | 'timeline'
   | 'graph'
   | 'projects'
-  | 'allocation'
+  | 'runs'
   | 'live'
   | 'week'
   | 'landing'
@@ -410,6 +412,7 @@ export type NavDestination =
   | { kind: 'none' };
 
 const LIST: TasksPage = { kind: 'list' };
+const RUNS_PAGE: TasksPage = { kind: 'view', view: 'runs' };
 
 /** Where the Graph opens with nothing named: the workspace's milestones. */
 export const DEFAULT_GRAPH_SCOPE: GraphScope = graphScopeFor({
@@ -440,7 +443,6 @@ export function projectViewDestination(view: ProjectView): NavDestination {
     case 'overview':
     case 'board':
     case 'inbox':
-    case 'runs':
     case 'review':
       return { kind: 'tasks' };
     // Every run headed for main; the retired 'landed' page lands here too.
@@ -453,10 +455,12 @@ export function projectViewDestination(view: ProjectView): NavDestination {
     case 'terminals':
     case 'threads':
     case 'projects':
-    case 'allocation':
+    case 'runs':
     case 'live':
     case 'week':
       return { kind: 'page', page: { kind: 'view', view } };
+    case 'allocation':
+      return { kind: 'page', page: { kind: 'view', view: 'projects' } };
     case 'timeline':
       return {
         kind: 'page',
@@ -506,7 +510,7 @@ export function globalViewDestination(
     case 'sessions':
       return { kind: 'settings', page: 'usage' };
     case 'all-agents':
-      return { kind: 'settings', page: 'runs' };
+      return { kind: 'page', page: { kind: 'view', view: 'runs' } };
     default: {
       const unhandled: never = view;
       return unhandled;
@@ -635,7 +639,9 @@ function applyDestination(
         merge: null,
       });
     case 'settings':
-      return { ...state, settings: destination.page, quickOpen: false };
+      return destination.page === 'runs'
+        ? toTasks(state, RUNS_PAGE)
+        : { ...state, settings: destination.page, quickOpen: false };
     case 'page':
       return toTasks(state, destination.page);
     case 'none':
@@ -739,16 +745,21 @@ export function onLivePage(state: NavState): boolean {
 }
 
 // Leaves the page under Tasks (the back chip's `closePage`, or Escape) for its
-// parent. Every page but Live returns to the Tasks list. Live returns to the
-// Runs page it reads as a child of: one place back in history, with Settings
-// open on Runs over it, which is where its Live button was pressed. With no
-// place behind it (a reload on #/live) Runs opens over the Tasks list instead,
-// never over Live itself, so a second Escape cannot bounce back to Live.
+// parent. Every page but Live returns to the Tasks list; Live returns to the
+// Runs page: one step back when that is where its Live button was pressed,
+// else a fresh visit (a reload on #/live), never bouncing back to Live.
 function leavePage(state: NavState): NavState {
   if (!onLivePage(state)) return toTasks(state, LIST);
   const stepped = step(state, -1);
-  const under = stepped === state ? toTasks(state, LIST) : stepped;
-  return { ...under, settings: 'runs' };
+  return onRunsPage(stepped) ? stepped : toTasks(state, RUNS_PAGE);
+}
+
+/** Whether the Runs page shows (the sidebar's Runs row). */
+export function onRunsPage(state: NavState): boolean {
+  const page = state.tasksPage;
+  return (
+    state.mainView === 'tasks' && page.kind === 'view' && page.view === 'runs'
+  );
 }
 
 // Back or forward from Settings. Settings is an overlay place that hides any
@@ -897,7 +908,10 @@ export function navReducer(state: NavState, action: NavAction): NavState {
     case 'setTasksMode':
       return { ...state, tasksMode: action.mode };
     case 'openSettings':
-      return { ...state, settings: action.page ?? 'general', quickOpen: false };
+      // Runs is a page of its own now; an old Settings › Runs link lands there.
+      return action.page === 'runs'
+        ? toTasks({ ...state, quickOpen: false }, RUNS_PAGE)
+        : { ...state, settings: action.page ?? 'general', quickOpen: false };
     case 'closeSettings':
       return state.settings === null ? state : { ...state, settings: null };
     case 'closePage':

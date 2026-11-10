@@ -183,15 +183,18 @@ function toChartLane(lane: CoreLane, opts: ChartOptions): TimelineLane {
 }
 
 /** Every initiative group (and "No initiative") and its lanes, in the
- * planning core's timeline order. */
+ * planning core's timeline order. A workspace with no initiatives gets its
+ * one catch-all group headless: no "No initiative" row over every lane. */
 export function toChartGroups(
   view: TimelineView,
   opts: ChartOptions
 ): TimelineGroup[] {
+  const headless = view.groups.every((group) => group.initiativeId === null);
   return view.groups.map((group) => ({
     id: group.initiativeId ?? NO_INITIATIVE_ID,
     label: group.name,
     lanes: group.lanes.map((lane) => toChartLane(lane, opts)),
+    ...(headless ? { headless: true } : {}),
   }));
 }
 
